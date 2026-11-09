@@ -403,7 +403,7 @@ impl Totals {
             && self.alignment_ok
             && self.max_datagram_ok
             && self.start_play_ids.iter().all(|&id| id > 0);
-        let tone_ok = tone.as_ref().map_or(true, |tone| tone.present);
+        let tone_ok = tone.as_ref().is_none_or(|tone| tone.present);
         let heartbeats_ok = self.heartbeat_misses == 0;
         let close_ok = !args.expect_server_close || self.server_closed;
         let expected_format_ok = self.format.as_ref().is_some_and(|format| {
@@ -670,7 +670,7 @@ async fn run_session(
                         if length > MAX_PAYLOAD_BYTES {
                             outcome.max_datagram_ok = false;
                         }
-                        if length % block_align != 0 {
+                        if !length.is_multiple_of(block_align) {
                             outcome.alignment_ok = false;
                         }
                         continue;
@@ -835,7 +835,7 @@ pub fn validate_datagram(length: usize, block_align: usize) -> Result<(), String
             "datagram of {length} bytes exceeds the {aligned_payload}-byte payload aligned to block_align {block_align}"
         ));
     }
-    if length % block_align != 0 {
+    if !length.is_multiple_of(block_align) {
         return Err(format!(
             "datagram of {length} bytes is not aligned to block_align {block_align}"
         ));

@@ -38,7 +38,7 @@ only affects MSI/NSIS bundles. It does nothing for the portable exe.
 ## Prerequisites
 
 - Windows 10 or 11, x64.
-- Rust stable with the default Rust Windows target
+- Rust stable 1.90 or newer (workspace MSRV) with the default Rust Windows target
   (`rustup default stable-x86_64-pc-windows-msvc`).
 - Visual Studio 2022 Build Tools with the **Desktop development with C++**
   workload (the linker and Windows SDK used by the default Rust Windows

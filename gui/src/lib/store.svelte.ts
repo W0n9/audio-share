@@ -13,6 +13,8 @@ import { t } from "./i18n.svelte";
 export type View = "main" | "settings";
 
 const EMPTY_STATUS: ServerStatus = { state: "stopped", address: null, lastError: null };
+// Pre-bootstrap fallback only; the Rust bootstrap always supplies the real
+// settings. Keep in sync with `audio_share_core::config::DEFAULT_PORT`.
 const DEFAULT_SETTINGS: Settings = {
   host: "0.0.0.0",
   port: 65530,

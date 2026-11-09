@@ -419,7 +419,7 @@ fn validate_frame_length(format: &AudioFormat, frame_bytes: usize) -> Result<()>
             "capture frame must not be empty".to_owned(),
         ));
     }
-    if frame_bytes % block_align != 0 {
+    if !frame_bytes.is_multiple_of(block_align) {
         return Err(Error::InvalidConfig(format!(
             "capture frame of {frame_bytes} bytes is not a multiple of block_align {block_align}"
         )));

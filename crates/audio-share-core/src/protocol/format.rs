@@ -100,3 +100,24 @@ impl AudioFormat {
         bytes_per_sample.saturating_mul(self.channels as usize)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_encoding_round_trips_and_only_invalid_has_no_sample_size() {
+        for encoding in Encoding::ALL {
+            assert_eq!(
+                Encoding::try_from(encoding as i32),
+                Ok(encoding),
+                "{encoding:?} must round-trip through the protobuf value"
+            );
+            assert_eq!(
+                encoding.bytes_per_sample().is_some(),
+                encoding != Encoding::Invalid,
+                "{encoding:?}"
+            );
+        }
+    }
+}

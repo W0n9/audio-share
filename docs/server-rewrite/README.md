@@ -12,7 +12,7 @@ The repository is one Cargo workspace:
 | Path | Purpose |
 |---|---|
 | `crates/audio-share-core` | Capture abstraction, PipeWire and WASAPI backends, frozen v0.3.4 Wire Protocol, MTU segmentation, settings/config migration, server lifecycle. Public API returns `Result`; library code never calls `exit()`. |
-| `crates/as-cmd` | Headless CLI entry point. Thin wrapper over the core; preserves the v0.3.4 flags and adds `server.log`, graceful Ctrl-C, and validated arguments. |
+| `crates/as-cmd` | Headless command-line entry point. Thin wrapper over the core; preserves the v0.3.4 flags and adds `server.log`, graceful Ctrl-C, and validated arguments. |
 | `gui/` | Tauri v2 + Svelte 5 Server GUI. The Rust controller lives in `gui/src-tauri/src/lib.rs`; Tauri commands/tray are thin adapters. See [`gui/README.md`](../../gui/README.md). |
 | `tools/protocol-harness` | Scripted Wire Protocol client, fixture recorder/replayer, and fake v0.3.4 server. |
 | `tools/pipewire-spike`, `tools/wasapi-spike` | Audio backend spikes retained as verification tools. |

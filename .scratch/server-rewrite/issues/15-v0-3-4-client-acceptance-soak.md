@@ -11,7 +11,7 @@
 - [ ] 8 小时 soak 无 crash、无明显 glitch 倒退。已执行 12 分钟 release soak（PASS）；8 小时运行 **NOT EXECUTED**，见 `docs/server-rewrite/soak.md`。
 - [ ] 设备热插拔与睡眠恢复后能恢复采集。headless 热插拔 + 操作员 Stop/Start 已验证；当前 core 没有自动重启 supervisor，睡眠/恢复未执行。见 `docs/server-rewrite/hotplug-sleep.md`。
 - [ ] GUI 手工验收清单全部通过。Xvfb/DBus/截图可执行部分已标记；真实桌面托盘、Windows 运行时和手机项未执行，见 `docs/server-rewrite/gui-acceptance-checklist.md`。
-- [x] 记录 A/B 结果与已知差异。见 `docs/server-rewrite/ab-linux.md`（旧 s8 退出 1；其余 encoding 的格式/分片一致，PCM 不声明逐字节相同）。
+- [x] 记录 A/B 结果与已知差异。见 `docs/server-rewrite/ab-linux.md`（旧 s8 退出 1；其余 encoding 的格式/分片一致，PCM 不声明逐字节相同；fix pass 增加了 30 s 的 CPU、PCM 吞吐/漂移和 datagram 到达间隔代理测量）。
 
 Additional executed assets:
 
@@ -100,5 +100,7 @@ Residual release gates (Status: ready-for-human):
    tray left-click/menu/toast, Wayland; Windows WASAPI A/B, firewall/UAC,
    WebView2; re-run the Linux deb/AppImage packaging checks if artifacts
    change.
-5. The 3-hour update-check interval was not observed in real time (startup
-   check and interval loop are covered by tests).
+5. The 3-hour update-check interval was not observed in real time. The
+   fix-pass restored v0.3.4 timing (first automatic check after one full
+   3-hour interval, no startup check) and covers the scheduling decision with
+   a unit test; the interval itself remains a real-time manual check.

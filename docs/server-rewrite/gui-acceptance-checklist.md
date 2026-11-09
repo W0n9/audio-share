@@ -52,7 +52,7 @@ desktop session.
   commands are async; Xvfb clicks returned immediately.)
 - [~] Endpoint and Encoding selectors list real values; default is marked.
   Endpoint list against the null sink was observed at Start; the encoding list
-  is the frozen six-entry list. A real device list needs a desktop.
+  is the frozen six-entry list. A real Endpoint list needs a desktop.
 - [ ] Host and Port are editable; invalid host/port starts fail with a readable
   error, not a crash. [env]
 - [ ] Changing settings while stopped persists; changing while running is
@@ -112,10 +112,12 @@ desktop session.
   version and opens the release page when newer. (Ticket 10 local mock
   `v9.9.9` and same-version checks.)
 - [x] AutoUpdate off: no background checks/prompts. (Ticket 10.)
-- [~] AutoUpdate on: checks at startup and every 3 hours; notification/balloon
-  appears; clicking opens the release page. Startup check and banner observed;
-  the 3-hour interval was not observed in real time, and the native toast
-  click is not wired by the Tauri notification plugin (documented).
+- [~] AutoUpdate on: checks every 3 hours (the first check is one full
+  interval after launch, matching v0.3.4; there is no startup check);
+  notification/balloon appears; clicking opens the release page. The scheduling
+  decision is unit-tested; the 3-hour interval was not observed in real time,
+  and the native toast click is not wired by the Tauri notification plugin
+  (documented).
 - [x] Network failure during update check yields a readable error only for
   manual checks; background failures are silent/logged. (Ticket 10 HTTP
   500/malformed JSON checks; the real GitHub API returned 403 on this IP.)

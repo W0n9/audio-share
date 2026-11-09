@@ -26,11 +26,6 @@ export function setLocale(locale: Locale): void {
   current = locale;
 }
 
-/** The active locale. */
-export function getLocale(): Locale {
-  return current;
-}
-
 /**
  * The system-locale fallback used only if the Rust bootstrap is unavailable.
  * Rust performs the authoritative resolution.

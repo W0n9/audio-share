@@ -48,7 +48,7 @@
   "settings.onCloseExit": "退出",
   "settings.onCloseTray": "最小化到托盘",
   "settings.autoUpdate": "自动检查更新",
-  "settings.autoUpdateHint": "启动时检查，之后每 3 小时一次",
+  "settings.autoUpdateHint": "每 3 小时检查一次（首次在启动 3 小时后）",
   "settings.language": "语言",
   "settings.languageHint": "界面语言",
   "settings.languageDefault": "默认（系统）",

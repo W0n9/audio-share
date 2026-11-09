@@ -140,7 +140,7 @@ pub struct Bootstrap {
     pub settings: Settings,
     /// Structured migration/recovery warnings; empty when clean.
     pub config_notices: Vec<Notice>,
-    /// An update already found by the startup check, if any.
+    /// An update already found by a background check, if any.
     pub update: Option<UpdateCheckResult>,
 }
 

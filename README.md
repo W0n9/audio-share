@@ -13,8 +13,9 @@ so the phone becomes a speaker for the computer.
 
 Version 0.4.0 replaces the Server with a Rust implementation: a shared
 `audio-share-core` crate, a Tauri v2 Server GUI for Windows and Linux, and the
-headless `as-cmd` CLI. The Wire Protocol is frozen at upstream v0.3.4; the
-released **Android Client remains v0.3.4** and works without an update.
+headless `as-cmd` command line. The Wire Protocol is frozen at upstream
+v0.3.4; the released **Android Client remains v0.3.4** and works without an
+update.
 
 <p>
 <img src="docs/server-rewrite/img/ticket08-main.png" width="45%" alt="Server GUI">
@@ -44,7 +45,8 @@ desktop session must provide it.
 
 1. Start `AudioShareServer` (`AudioShareServer.exe` on Windows).
 2. Check the Host and Port (default port `65530`). Host defaults to the first
-   private IPv4 address. Make sure the phone can reach it.
+   address matching v0.3.4's private-network mask. Make sure the phone can
+   reach it.
 3. Pick an audio Endpoint and an Encoding, then click **Start Server**.
 4. In the Android Client, enter the same host and port and press play.
 
@@ -58,14 +60,14 @@ not deliver left-click events on Linux.
 ## `as-cmd`
 
 `as-cmd` is the headless Server, sharing the same capture and protocol core as
-the GUI. Run it from the unpacked CLI archive:
+the GUI. Run it from the unpacked `as-cmd` archive:
 
 ```bash
 as-cmd -b
 ```
 
-A bare `-b` binds the default private address on port `65530` and selects the
-default endpoint. Useful flags:
+A bare `-b` binds the default address (v0.3.4's private-network mask) on port
+`65530` and selects the default endpoint. Useful flags:
 
 | Flag | Meaning |
 |---|---|
@@ -106,10 +108,10 @@ The Server GUI reads and writes `config.ini` in this order:
    and AppImages.
 
 `server.log` lives in the same directory as the resolved `config.ini`. The GUI
-and `as-cmd` truncate it on each server launch; help, version, and endpoint
-listing never touch it. A v0.3.4 executable-directory `config.ini` found during
-the fallback is migrated without discarding its settings. Configuration writes
-are atomic.
+truncates it at application startup; `as-cmd` truncates it on each server
+launch. Help, version, and endpoint listing never touch it. A v0.3.4
+executable-directory `config.ini` found during the fallback is migrated without
+discarding its settings. Configuration writes are atomic.
 
 The v0.3.4 sections and keys are still read; `configVersion` is migrated to
 the rewrite's value and a backup is kept when migration changes a file.
@@ -140,7 +142,7 @@ are in [`docs/protocol.md`](docs/protocol.md).
 
 Prerequisites:
 
-- Rust stable 1.90+ (the GUI crate's MSRV; the core itself is lower).
+- Rust stable 1.90+ (workspace MSRV).
 - Node.js 22+ and npm.
 - Linux build dependencies on Ubuntu 24.04:
 
@@ -154,7 +156,7 @@ Prerequisites:
 - Windows: the default Rust Windows toolchain with the Visual Studio 2022
   C++ build tools and Windows SDK, plus the WebView2 Runtime to run the GUI.
 
-Build the CLI and GUI:
+Build `as-cmd` and the GUI:
 
 ```bash
 cargo build --release -p as-cmd
@@ -168,8 +170,8 @@ npx tauri build --bundles deb,appimage  # Linux deb + AppImage
 Release packaging scripts (run from the repository root):
 
 ```bash
-bash scripts/package-windows-artifacts.sh   # AudioShareServer.exe + CLI zip
-bash scripts/package-linux-artifacts.sh     # deb + AppImage + CLI tar.gz
+bash scripts/package-windows-artifacts.sh   # AudioShareServer.exe + as-cmd zip
+bash scripts/package-linux-artifacts.sh     # deb + AppImage + as-cmd tar.gz
 ```
 
 Quality gates and scripted protocol verification:
@@ -195,6 +197,10 @@ More detail: [build and packaging](docs/server-rewrite/README.md),
 - The GUI exposes Endpoint and Encoding only; channels and sample rate remain
   `as-cmd`-only, matching the v0.3.4 GUI.
 - No log viewer; use `server.log`.
+- Capture does not restart automatically after the target Endpoint disappears,
+  a sink/Endpoint change, or sleep/resume. The Server stays Running with the old
+  format and sends no PCM until the operator presses Stop then Start (or
+  restarts `as-cmd`). A capture supervisor is follow-up work.
 - Linux tray left-click is not delivered by Tauri; use the right-click menu.
 - The Android Client is unchanged at v0.3.4. No Android source, version, or
   APK changes ship in 0.4.0.

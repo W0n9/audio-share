@@ -30,7 +30,7 @@ It is feasible but not a one-line change, and it is not included in ticket 15:
   the frame channel closes.
 - The published `Arc<AudioFormat>` is immutable and clients cache it from
   `GET_FORMAT`. If the recreated session negotiates a different format, the
-  supervisor must close all sessions and surface an error to the GUI/CLI;
+  supervisor must close all sessions and surface an error to the GUI/`as-cmd`;
   there is no status/error surface for that today. Only a same-format restart
   can preserve the session contract.
 - Shutdown must remain bounded and idempotent while a restart is in flight
@@ -91,7 +91,7 @@ This host has no controllable suspend path (`systemctl suspend` is unavailable
 in the session and suspending the shared machine would disrupt other work).
 Sleep/resume therefore remains a human check:
 
-1. Start the Server on a real Linux desktop with a real output device and a
+1. Start the Server on a real Linux desktop with a real output Endpoint and a
    phone connected/playing.
 2. `systemctl suspend` (or close the laptop lid), wait ~30 s, resume.
 3. Observe: does PipeWire reconnect the capture stream automatically? Does the
