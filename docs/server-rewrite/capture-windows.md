@@ -76,6 +76,10 @@ buffer_duration_hns: 10_000_000 }`, i.e. a 1-second buffer).
 - The advertised `nBlockAlign` must equal `container_bytes * channels`
   (`3 * channels` for packed s24); an inconsistent driver/OS format is rejected
   instead of mis-advertised to the Android Client.
+- Silent packets are forwarded as silence. `wasapi` zero-fills them, which is
+  correct for float and signed integer PCM; for unsigned 8-bit PCM the backend
+  writes `0x80` (the unsigned zero point) instead of `0x00` (full negative
+  scale).
 - The endpoint must be a render endpoint. A capture endpoint passed with
   `Direction::Capture` would otherwise become a silent microphone stream, so
   the backend checks `Device::get_direction() == Render` and refuses.
