@@ -109,6 +109,20 @@ async fn synthetic_capture_rejects_unaligned_or_empty_frames() {
     );
 }
 
+/// Drain frames until the sender is dropped, failing if the channel stays open.
+///
+/// Frames already queued when the session stops are legitimate; the contract is
+/// that the stream ends, not that the channel is empty at that instant. The
+/// bound is deliberately larger than the channel capacity so a slow Windows
+/// scheduler cannot turn a correct stop into a flaky timeout.
+async fn expect_frame_stream_to_end(frames: &mut mpsc::Receiver<Vec<u8>>, context: &str) {
+    let ended = timeout(Duration::from_secs(2), async {
+        while frames.recv().await.is_some() {}
+    })
+    .await;
+    assert!(ended.is_ok(), "{context}");
+}
+
 #[tokio::test]
 async fn stopping_or_dropping_a_session_ends_the_frame_stream() {
     let capture = SyntheticCapture::new(f32_stereo_48k(), 16, Duration::from_millis(1)).unwrap();
@@ -120,13 +134,7 @@ async fn stopping_or_dropping_a_session_ends_the_frame_stream() {
         .expect("frame timed out")
         .expect("channel closed early");
     session.stop().unwrap();
-    assert!(
-        timeout(Duration::from_secs(2), frames.recv())
-            .await
-            .expect("receiver did not close after stop")
-            .is_none(),
-        "stop must drop the frame sender"
-    );
+    expect_frame_stream_to_end(&mut frames, "stop must drop the frame sender").await;
 
     let (sink, mut frames) = mpsc::channel(4);
     let session = capture.start(&CaptureConfig::default(), sink).unwrap();
@@ -135,13 +143,11 @@ async fn stopping_or_dropping_a_session_ends_the_frame_stream() {
         .expect("frame timed out")
         .expect("channel closed early");
     drop(session);
-    assert!(
-        timeout(Duration::from_secs(2), frames.recv())
-            .await
-            .expect("receiver did not close after drop")
-            .is_none(),
-        "dropping the session must also stop the capture"
-    );
+    expect_frame_stream_to_end(
+        &mut frames,
+        "dropping the session must also stop the capture",
+    )
+    .await;
 }
 
 #[tokio::test]

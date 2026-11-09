@@ -43,9 +43,18 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install PipeWire headers (Ubuntu)
+      # The workspace includes the Tauri GUI, so clippy and tests need the
+      # WebKitGTK/GTK headers in addition to the PipeWire headers used by the
+      # core capture backend.
+      - name: Install Linux build dependencies (Tauri + PipeWire)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libpipewire-0.3-dev libclang-dev pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libayatana-appindicator3-dev librsvg2-dev libxdo-dev \
+            libpipewire-0.3-dev libspa-0.2-dev libclang-dev
 
       - uses: Swatinem/rust-cache@v2
 
