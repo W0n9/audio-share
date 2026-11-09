@@ -111,9 +111,9 @@ Interpretation:
 ## Executed 8-hour run (2026-11-09 → 2026-11-10)
 
 Environment: the same host and setup as the shortened run (Ubuntu 24.04.5
-x86_64, release binaries built from `integration/server-rewrite` at `c6e0277`
-plus test/CI-only fixes, Rust 1.98.1, libpipewire 1.0.5, WirePlumber 0.4.17,
-headless null sink with a 440 Hz tone).
+x86_64, release binaries built from `integration/server-rewrite` at `c6e0277`;
+the later commits on this branch touch only tests, CI, and docs), Rust 1.98.1,
+libpipewire 1.0.5, WirePlumber 0.4.17, headless null sink with a 440 Hz tone.
 
 Exact command:
 
