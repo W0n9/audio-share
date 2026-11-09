@@ -1,0 +1,25 @@
+[package]
+name = "protocol-harness"
+description = "Scripted Wire Protocol client, fixture recorder/replayer, and fake v0.3.4 server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "protocol-harness"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+audio-share-core.workspace = true
+clap.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
