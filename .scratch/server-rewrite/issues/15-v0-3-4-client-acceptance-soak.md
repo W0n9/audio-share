@@ -8,7 +8,7 @@
 
 - [ ] 真实 v0.3.4 APK 在全部组合下无感播放，无解析错位。仅在 Android 真机/模拟器上执行；本环境无手机。见 `docs/server-rewrite/android-v034-acceptance.md`（NOT EXECUTED）。
 - [x] 多客户端、重连与 heartbeat 超时行为与 v0.3.4 一致。脚本化 Wire Protocol 矩阵已执行（3 客户端、4 次重连/5 个 START_PLAY id、heartbeat 主动 8 s 存活、静默客户端 ~6001 ms 关闭、SIGINT 后 154 ms 关闭会话）；真实 APK 仍待人工。
-- [ ] 8 小时 soak 无 crash、无明显 glitch 倒退。已执行 12 分钟 release soak（PASS）；8 小时运行 **NOT EXECUTED**，见 `docs/server-rewrite/soak.md`。
+- [x] 8 小时 soak 无 crash、无明显 glitch 倒退。已执行 8 小时 release soak（PASS：0 crash、0 heartbeat miss、无 >100 ms gap、max gap 66 ms），见 `docs/server-rewrite/soak.md`。
 - [ ] 设备热插拔与睡眠恢复后能恢复采集。headless 热插拔 + 操作员 Stop/Start 已验证；当前 core 没有自动重启 supervisor，睡眠/恢复未执行。见 `docs/server-rewrite/hotplug-sleep.md`。
 - [ ] GUI 手工验收清单全部通过。Xvfb/DBus/截图可执行部分已标记；真实桌面托盘、Windows 运行时和手机项未执行，见 `docs/server-rewrite/gui-acceptance-checklist.md`。
 - [x] 记录 A/B 结果与已知差异。见 `docs/server-rewrite/ab-linux.md`（旧 s8 退出 1；其余 encoding 的格式/分片一致，PCM 不声明逐字节相同；fix pass 增加了 30 s 的 CPU、PCM 吞吐/漂移和 datagram 到达间隔代理测量）。
@@ -77,8 +77,7 @@ Commands/results:
   monitor race at the duration boundary; `soak.sh` now checks the duration
   before client liveness and the rerun records false (both probes were
   `ok: true`). Log rotation was exercised separately with
-  `--duration 10s --clients 1 --rotate-mb 0` (18 rotated files, PASS). The
-  default 8-hour run is NOT EXECUTED (`docs/server-rewrite/soak.md`).
+  `--duration 10s --clients 1 --rotate-mb 0` (18 rotated files, PASS).
 - `scripts/hotplug-recovery.sh --skip-build --out /tmp/t15-hotplug-release`:
   PASS — sink serial 37 destroyed while capturing (registry id 36), recreated
   as serial 63; the server stayed alive with zero PCM; no automatic recovery;
@@ -93,14 +92,38 @@ Residual release gates (Status: ready-for-human):
    heartbeat, 60-minute playback, evidence package
    (`docs/server-rewrite/android-v034-acceptance.md`). NOT EXECUTED — no
    phone/emulator.
-2. 8-hour soak (`scripts/soak.sh --duration 8h`); only 12 minutes executed.
-3. Sleep/resume and real-hardware hotplug (USB/HDMI/default-sink change).
+2. Sleep/resume and real-hardware hotplug (USB/HDMI/default-sink change).
    Automatic capture recovery is not implemented; operator Stop/Start only.
-4. Real desktop GUI: GNOME AppIndicator/KDE/XFCE tray right-click, Windows
+3. Real desktop GUI: GNOME AppIndicator/KDE/XFCE tray right-click, Windows
    tray left-click/menu/toast, Wayland; Windows WASAPI A/B, firewall/UAC,
    WebView2; re-run the Linux deb/AppImage packaging checks if artifacts
    change.
-5. The 3-hour update-check interval was not observed in real time. The
+4. The 3-hour update-check interval was not observed in real time. The
    fix-pass restored v0.3.4 timing (first automatic check after one full
    3-hour interval, no startup check) and covers the scheduling decision with
    a unit test; the interval itself remains a real-time manual check.
+
+2026-11-10 — 8-hour release soak PASS.
+
+Command: `scripts/soak.sh --duration 8h --clients 2 --reconnect-every 1800
+--sample-seconds 5 --out /home/w0n9/workspaces/audio-share-artifacts/soak-8h`
+on the Linux host with release binaries built from
+`integration/server-rewrite` (Rust 1.98.1, PipeWire 1.0.5, WirePlumber 0.4.17,
+headless null sink with a looped 440 Hz tone).
+
+- Duration 28,803 s (8 h 0 m 3 s); 2/2 clients ok; server exit 0, no crash.
+- RSS min / mean / max 11,500 / 15,601.5 / 15,620 KiB over 5,578 samples; CPU
+  mean 3.651 %, max 28.5 % (startup sample).
+- 22,083,813,376 PCM bytes, 16,174,668 datagrams, 32 sessions, 30 intentional
+  reconnects.
+- 19,140 heartbeats, 0 misses; datagram gaps >50 / >100 / >250 ms =
+  1,336 / 0 / 0; max gap 66 ms (12-minute run: 65 ms).
+- Both clients: `alignment_ok: true`, `max_datagram_ok: true`, 440 Hz tone
+  detected (amplitude ≈ 0.249), empty `errors`; throughput ratio min 0.9984.
+- Evidence: `/home/w0n9/workspaces/audio-share-artifacts/soak-8h/`
+  (`soak-summary.json`, `monitor.csv`, `client-{0,1}.json`, `server.log`,
+  `server-stream.log`, `tone-48000.wav`).
+
+See `docs/server-rewrite/soak.md`. This closes the soak gate. The real v0.3.4
+APK, sleep/resume, real-hardware hotplug, and real desktop GUI gates remain;
+`Status` stays `ready-for-human`.
