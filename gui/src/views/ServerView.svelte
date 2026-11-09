@@ -1,0 +1,100 @@
+<script lang="ts">
+  import { server } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
+
+  const state = $derived(server.status.state);
+  const running = $derived(state === "running");
+  const transitioning = $derived(state === "starting" || state === "stopping");
+  const address = $derived(
+    running && server.status.address
+      ? server.status.address
+      : `${server.settings.host}:${server.settings.port}`,
+  );
+  const error = $derived(server.error ?? server.status.lastError);
+  const statusText = $derived(
+    state === "running"
+      ? t("status.running")
+      : state === "starting"
+        ? t("status.starting")
+        : state === "stopping"
+          ? t("status.stopping")
+          : t("status.stopped"),
+  );
+  const actionText = $derived(
+    state === "running"
+      ? t("action.stop")
+      : state === "starting"
+        ? t("action.starting")
+        : state === "stopping"
+          ? t("action.stopping")
+          : t("action.start"),
+  );
+
+  const encodings = ["default", "f32", "s8", "s16", "s24", "s32"];
+
+  function encodingLabel(value: string): string {
+    return value === "default" ? t("encoding.default") : value;
+  }
+
+  async function toggleServer(): Promise<void> {
+    if (state === "running") {
+      await server.stop();
+    } else if (state === "stopped") {
+      await server.start();
+    }
+  }
+</script>
+
+<section class="status-hero" aria-live="polite">
+  <div class="status-line">
+    <span class="dot" class:on={running} class:pending={transitioning}></span>{statusText}
+  </div>
+  <div class="address">{address}</div>
+</section>
+
+{#if error}
+  <p class="error" role="alert">{error}</p>
+{/if}
+
+<div class="body">
+  <button
+    class="btn-primary"
+    class:stop={running}
+    disabled={server.busy || transitioning}
+    onclick={toggleServer}
+  >
+    {actionText}
+  </button>
+
+  <div class="field">
+    <label for="endpoint">{t("field.endpoint")}</label>
+    <select id="endpoint" bind:value={server.settings.endpoint}>
+      <option value="default">{t("endpoint.default")}</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="encoding">{t("field.encoding")}</label>
+    <select id="encoding" bind:value={server.settings.encoding}>
+      {#each encodings as encoding (encoding)}
+        <option value={encoding}>{encodingLabel(encoding)}</option>
+      {/each}
+    </select>
+  </div>
+
+  <div class="field-row">
+    <div class="field">
+      <label for="host">{t("field.host")}</label>
+      <input id="host" type="text" bind:value={server.settings.host} />
+    </div>
+    <div class="field">
+      <label for="port">{t("field.port")}</label>
+      <input id="port" type="number" min="1" max="65535" bind:value={server.settings.port} />
+    </div>
+  </div>
+</div>
+
+<footer class="footer">
+  <button class="link" onclick={() => (server.view = "settings")}>{t("action.settings")}</button>
+  <button class="link muted" onclick={() => server.quit()}>{t("action.quit")}</button>
+</footer>
