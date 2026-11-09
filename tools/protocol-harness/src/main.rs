@@ -1,14 +1,8 @@
 //! Scripted Wire Protocol client, fixture recorder/replayer, and fake v0.3.4
 //! server for hardware-free tests.
 
-mod fake_server;
-mod fixture;
-mod process;
-mod record;
-mod replay;
-mod synth;
-
 use clap::{Parser, Subcommand};
+use protocol_harness::{fake_server, record, replay, synth};
 
 #[derive(Debug, Parser)]
 #[command(
