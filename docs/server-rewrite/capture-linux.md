@@ -1,8 +1,9 @@
 # Linux capture (PipeWire)
 
 Status: implemented by ticket 06. Verified headlessly against PipeWire 1.0.5 +
-WirePlumber on Ubuntu 24.04; real hardware/session-manager variants and the
-8-hour soak remain for later acceptance tickets.
+WirePlumber on Ubuntu 24.04; ticket 15 added the full Wire Protocol matrix and a
+12-minute release soak (`acceptance-matrix.md`, `soak.md`). Real hardware,
+session-manager variants, and the 8-hour soak remain for later acceptance.
 
 `audio-share-core::capture::linux::PipeWireCapture` implements the core
 `CaptureBackend` trait with the safe `pipewire` crate (0.10.1, feature
