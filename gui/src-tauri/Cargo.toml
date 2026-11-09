@@ -30,9 +30,18 @@ serde_json.workspace = true
 tokio.workspace = true
 tauri = { version = "2.12.5", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2.5.5"
-tauri-plugin-autostart = "2.7.0"
 tauri-plugin-opener = "2.7.2"
 tauri-plugin-notification = "2.8.0"
+sys-locale = "0.3"
+
+# rustls (ring) needs an MSVC C toolchain for the Windows *compile check*, which
+# this environment lacks; Windows uses the OS TLS stack (schannel) instead.
+[target.'cfg(not(windows))'.dependencies]
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+
+[target.'cfg(windows)'.dependencies]
+ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
+winreg = "0.56"
 
 [dev-dependencies]
 tempfile = "3"
