@@ -12,3 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 audio-share-core.workspace = true
+clap.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+protocol-harness = { path = "../../tools/protocol-harness" }
+tokio.workspace = true
