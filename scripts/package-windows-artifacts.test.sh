@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Self-test for package-windows-artifacts.sh.
+#
+# Builds a fake Cargo target tree, runs the packager, and asserts the exact
+# artifact names, archive layout, and checksum files. Runs on Linux locally and
+# on the windows-latest runner through Git Bash/7-Zip.
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PACKAGER="$SCRIPT_DIR/package-windows-artifacts.sh"
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+fail() {
+    echo "FAIL: $*" >&2
+    exit 1
+}
+
+assert_file() {
+    [[ -f "$1" ]] || fail "missing file: $1"
+}
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        openssl dgst -sha256 "$1" | awk '{print $NF}'
+    fi
+}
+
+list_archive() {
+    if command -v unzip >/dev/null 2>&1; then
+        unzip -Z1 "$1" | tr '\\' '/'
+    elif command -v 7z >/dev/null 2>&1; then
+        # 7z -ba columns end with the path; artifact paths contain no spaces.
+        7z l -ba "$1" | awk '{print $NF}' | tr '\\' '/'
+    else
+        fail "neither unzip nor 7z is available to inspect the archive"
+    fi
+}
+
+# --- fake build outputs -----------------------------------------------------
+mkdir -p "$TMP/target/release"
+printf 'fake-gui-binary\n' >"$TMP/target/release/AudioShareServer.exe"
+printf 'fake-cli-binary\n' >"$TMP/target/release/as-cmd.exe"
+printf 'fake-license\n' >"$TMP/LICENSE"
+printf 'fake-readme\n' >"$TMP/README.md"
+
+# --- package ----------------------------------------------------------------
+bash "$PACKAGER" \
+    --root "$TMP" \
+    --target-dir "$TMP/target/release" \
+    --out-dir "$TMP/dist-windows" >/dev/null
+
+GUI="$TMP/dist-windows/AudioShareServer.exe"
+GUI_SUM="$TMP/dist-windows/AudioShareServer.exe.sha256"
+ZIP="$TMP/dist-windows/audio-share-server-cmd-windows.zip"
+ZIP_SUM="$TMP/dist-windows/audio-share-server-cmd-windows.zip.sha256"
+
+assert_file "$GUI"
+assert_file "$GUI_SUM"
+assert_file "$ZIP"
+assert_file "$ZIP_SUM"
+
+[[ "$(cat "$GUI")" == "fake-gui-binary" ]] || fail "GUI binary content was not preserved"
+GUI_SUM_CONTENT=$(cat "$GUI_SUM")
+ZIP_SUM_CONTENT=$(cat "$ZIP_SUM")
+[[ "$GUI_SUM_CONTENT" =~ ^[0-9a-f]{64}\ \ AudioShareServer\.exe$ ]] ||
+    fail "unexpected GUI checksum: $GUI_SUM_CONTENT"
+[[ "$ZIP_SUM_CONTENT" =~ ^[0-9a-f]{64}\ \ audio-share-server-cmd-windows\.zip$ ]] ||
+    fail "unexpected archive checksum: $ZIP_SUM_CONTENT"
+[[ "${GUI_SUM_CONTENT%% *}" == "$(sha256_of "$TMP/target/release/AudioShareServer.exe")" ]] ||
+    fail "GUI checksum does not match the input binary"
+[[ "${ZIP_SUM_CONTENT%% *}" == "$(sha256_of "$ZIP")" ]] ||
+    fail "archive checksum does not match the archive"
+
+ENTRIES=$(list_archive "$ZIP")
+for entry in \
+    audio-share-server-cmd/as-cmd.exe \
+    audio-share-server-cmd/LICENSE \
+    audio-share-server-cmd/README.md; do
+    grep -qx "$entry" <<<"$ENTRIES" || fail "archive entry missing: $entry"
+done
+
+# The staged directory must not leak into the output directory.
+[[ ! -e "$TMP/dist-windows/audio-share-server-cmd" ]] ||
+    fail "staging directory was left in the output directory"
+
+# Re-running must be idempotent (no duplicate zip entries / stale staging).
+bash "$PACKAGER" \
+    --root "$TMP" \
+    --target-dir "$TMP/target/release" \
+    --out-dir "$TMP/dist-windows" >/dev/null
+[[ $(list_archive "$ZIP" | grep -cx 'audio-share-server-cmd/as-cmd.exe') -eq 1 ]] ||
+    fail "re-running produced duplicate archive entries"
+
+# A missing GUI binary must fail with a non-zero status and a clear message.
+mkdir -p "$TMP/empty-target"
+if bash "$PACKAGER" --root "$TMP" --target-dir "$TMP/empty-target" \
+    --out-dir "$TMP/no-output" >"$TMP/error.log" 2>&1; then
+    fail "packager accepted a target directory without AudioShareServer.exe"
+fi
+grep -q 'AudioShareServer.exe' "$TMP/error.log" ||
+    fail "missing-binary error did not name AudioShareServer.exe"
+
+echo "package-windows-artifacts self-test: PASS"
