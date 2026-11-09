@@ -40,6 +40,10 @@ class ServerStore {
   updateBusy = $state(false);
   /** Manual-check status text (checking / up to date / error). */
   updateMessage = $state<string | null>(null);
+  /** Windows maintenance actions: firewall repair / Sound control panel. */
+  maintenanceBusy = $state(false);
+  maintenanceMessage = $state<string | null>(null);
+  maintenanceFailed = $state(false);
   /** Persisted language changes need a restart, per spec. */
   languageRestartHint = $state(false);
   view = $state<View>("main");
@@ -225,6 +229,43 @@ class ServerStore {
 
   dismissUpdate(): void {
     this.updateDismissed = true;
+  }
+
+  /**
+   * Windows firewall repair. Runs an elevated netsh script in Rust; this
+   * method only tracks the localized success/error text.
+   */
+  async repairFirewall(): Promise<void> {
+    if (this.maintenanceBusy) return;
+    this.maintenanceBusy = true;
+    this.maintenanceFailed = false;
+    this.maintenanceMessage = null;
+    try {
+      await api.repairFirewall();
+      this.maintenanceMessage = t("maintenance.firewallSuccess");
+    } catch (error) {
+      this.maintenanceMessage = String(error);
+      this.maintenanceFailed = true;
+    } finally {
+      this.maintenanceBusy = false;
+    }
+  }
+
+  /** Windows Sound control panel; Rust spawns it without waiting. */
+  async openSoundPanel(): Promise<void> {
+    if (this.maintenanceBusy) return;
+    this.maintenanceBusy = true;
+    this.maintenanceFailed = false;
+    this.maintenanceMessage = null;
+    try {
+      await api.openSoundPanel();
+      this.maintenanceMessage = t("maintenance.soundPanelOpened");
+    } catch (error) {
+      this.maintenanceMessage = String(error);
+      this.maintenanceFailed = true;
+    } finally {
+      this.maintenanceBusy = false;
+    }
   }
 
   async hide(): Promise<void> {

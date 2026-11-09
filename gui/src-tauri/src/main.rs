@@ -449,6 +449,49 @@ async fn check_update(app: AppHandle) -> Result<UpdateCheckResult, String> {
     run_update_check(&app).await
 }
 
+/// Rebuild the inbound TCP and UDP firewall rules for this executable.
+///
+/// Windows only: the active profile mask is read through COM and the elevated
+/// script runs on the blocking pool, so neither UAC nor netsh blocks the UI.
+/// Other platforms hide the settings row and receive an unsupported error.
+#[tauri::command]
+async fn repair_firewall() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let outcome = tauri::async_runtime::spawn_blocking(
+            audio_share_server_gui::windows_maintenance::repair_firewall_blocking,
+        )
+        .await
+        .map_err(|error| {
+            audio_share_server_gui::maintenance::MaintenanceError::ElevationFailed(
+                error.to_string(),
+            )
+            .localized(strings::locale())
+        })?;
+        outcome.map_err(|error| error.localized(strings::locale()))
+    }
+    #[cfg(not(windows))]
+    {
+        Err(strings::t("error.maintenance.unsupported"))
+    }
+}
+
+/// Open `control.exe /name Microsoft.Sound` without waiting for it.
+///
+/// Windows only; the v0.3.4 GUI waited for the control panel to close.
+#[tauri::command]
+async fn open_sound_panel() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        audio_share_server_gui::windows_maintenance::open_sound_panel()
+            .map_err(|error| error.localized(strings::locale()))
+    }
+    #[cfg(not(windows))]
+    {
+        Err(strings::t("error.maintenance.unsupported"))
+    }
+}
+
 /// Restore the Server fields to their defaults and write them.
 #[tauri::command]
 async fn reset_settings(state: State<'_, AppState>) -> Result<Settings, String> {
@@ -564,7 +607,9 @@ fn main() {
             stop_server,
             hide_window,
             exit_app,
-            check_update
+            check_update,
+            repair_firewall,
+            open_sound_panel
         ])
         .setup(move |app| {
             install_controller_listener(app);
