@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "protocol_version": "v0.3.4",
+  "provenance": "synthesized-v0.3.4-semantics",
+  "platform": "windows",
+  "source": "synthesized from frozen v0.3.4 semantics",
+  "audio_format": {
+    "encoding": 1,
+    "encoding_name": "ENCODING_PCM_FLOAT",
+    "channels": 2,
+    "sample_rate": 48000,
+    "block_align": 8,
+    "protobuf_file": "audio_format.pb",
+    "protobuf_hex": "080110021880f702",
+    "protobuf_sha256": "c8f52eeb5eacd66e5910d89b4ba47ca0b20e319586f41548c1f7455d4994c157"
+  },
+  "mtu": {
+    "mtu": 1492,
+    "ip_header_bytes": 20,
+    "udp_header_bytes": 8,
+    "max_payload_bytes": 1464,
+    "aligned_payload_bytes": 1464
+  },
+  "control": {
+    "get_format_request": {
+      "file": "control/get_format.request.bin",
+      "length": 4,
+      "hex": "01000000",
+      "sha256": "67abdd721024f0ff4e0b3f4c2fc13bc5bad42d0b7851d456d88d203d15aaa450"
+    },
+    "get_format_response": {
+      "file": "control/get_format.response.bin",
+      "length": 16,
+      "hex": "0100000008000000080110021880f702",
+      "sha256": "a1fb45a746be44ca0a961059c355467c1d9a395e0c6f63eca041c0ec50f29112"
+    },
+    "start_play_request": {
+      "file": "control/start_play.request.bin",
+      "length": 4,
+      "hex": "02000000",
+      "sha256": "26b25d457597a7b0463f9620f666dd10aa2c4373a505967c7c8d70922a2d6ece"
+    },
+    "start_play_response": {
+      "file": "control/start_play.response.bin",
+      "length": 8,
+      "hex": "0200000001000000",
+      "sha256": "7b2ed67587fcbc411fcb4b71b1cef1ef6cd9edf948148414cf5f0ab21362b9aa",
+      "id": 1
+    },
+    "heartbeat_server": {
+      "file": "control/heartbeat.server.bin",
+      "length": 4,
+      "hex": "03000000",
+      "sha256": "9d9f290527a6be626a8f5985b26e19b237b44872b03631811df4416fc1713178",
+      "count": 1
+    },
+    "heartbeat_client": {
+      "file": "control/heartbeat.client.bin",
+      "length": 4,
+      "hex": "03000000",
+      "sha256": "9d9f290527a6be626a8f5985b26e19b237b44872b03631811df4416fc1713178",
+      "count": 1
+    },
+    "udp_bind": {
+      "file": "control/udp_bind.bin",
+      "length": 4,
+      "hex": "01000000",
+      "sha256": "67abdd721024f0ff4e0b3f4c2fc13bc5bad42d0b7851d456d88d203d15aaa450",
+      "id": 1
+    }
+  },
+  "pcm": {
+    "file": "pcm/stream.pcm",
+    "total_bytes": 30720,
+    "sha256": "9488b1136c32e583b515b72778b7bff74e13f55d35ee2c19e094d8357a4ecb15",
+    "segment_count": 21,
+    "segment_lengths": [
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1440
+    ],
+    "segments": [
+      {
+        "file": "pcm/segments/0000.bin",
+        "offset": 0,
+        "length": 1464,
+        "sha256": "19c1ec5adf9664a70ae3725000376ac43c789e588a26240eb93e9b1941b1b815"
+      },
+      {
+        "file": "pcm/segments/0001.bin",
+        "offset": 1464,
+        "length": 1464,
+        "sha256": "95fc9d523eaa0f7db62314fe928588bc516c2c9dd31e39e6c79dbf494ed78ab4"
+      },
+      {
+        "file": "pcm/segments/0002.bin",
+        "offset": 2928,
+        "length": 1464,
+        "sha256": "687c3c19df2585e53bbd89f22e9ec67997d067221cc1e91037d3812728e0776b"
+      },
+      {
+        "file": "pcm/segments/0003.bin",
+        "offset": 4392,
+        "length": 1464,
+        "sha256": "9ccafbad66f97badcb4b3d28c30a4e591b14d2ceced816a5d8581240e25c16d8"
+      },
+      {
+        "file": "pcm/segments/0004.bin",
+        "offset": 5856,
+        "length": 1464,
+        "sha256": "06d120ab5f00710efd531ed6da3e6eb10c9ede1f82ab22e51c499fb4e296ee06"
+      },
+      {
+        "file": "pcm/segments/0005.bin",
+        "offset": 7320,
+        "length": 1464,
+        "sha256": "9784f45f223a4ea3104465c8fef76878b031c065cd570af5d391aef8f3230474"
+      },
+      {
+        "file": "pcm/segments/0006.bin",
+        "offset": 8784,
+        "length": 1464,
+        "sha256": "37f71cd5acd9b121bdfe3e128d9e6f27b7a3081d76e79339edda7d7e888662a6"
+      },
+      {
+        "file": "pcm/segments/0007.bin",
+        "offset": 10248,
+        "length": 1464,
+        "sha256": "76f2251d4fd6ad95ecfecd54d7dec716c3e9ad1ae18a3c1b68cbdf41f10b1a80"
+      },
+      {
+        "file": "pcm/segments/0008.bin",
+        "offset": 11712,
+        "length": 1464,
+        "sha256": "32dc324745120aa29f1bf21a13fcc1f6358e36f40e27ec6661a2fda0f27b13a6"
+      },
+      {
+        "file": "pcm/segments/0009.bin",
+        "offset": 13176,
+        "length": 1464,
+        "sha256": "c9fcc5e91024c348ba0b7c4c324282ec19028a4d4c0d84505eb4962ed5789962"
+      },
+      {
+        "file": "pcm/segments/0010.bin",
+        "offset": 14640,
+        "length": 1464,
+        "sha256": "848eecd9b9448d14c7f457786a8048e2a5f2b93e41accdc2b62fabba5a9046e3"
+      },
+      {
+        "file": "pcm/segments/0011.bin",
+        "offset": 16104,
+        "length": 1464,
+        "sha256": "e20cb9b8d949289a0eb7469d3d0e1df95352ac8efc1fbd4e28c7c9ad991b09db"
+      },
+      {
+        "file": "pcm/segments/0012.bin",
+        "offset": 17568,
+        "length": 1464,
+        "sha256": "6e469e93d43345cace912e4353944d02f5ad55ed459bd4277c7327c219b88bfe"
+      },
+      {
+        "file": "pcm/segments/0013.bin",
+        "offset": 19032,
+        "length": 1464,
+        "sha256": "c154b0ad4a6969a45c1447d1d253b9288f5ded73a84276fdf8e91c393f7300f4"
+      },
+      {
+        "file": "pcm/segments/0014.bin",
+        "offset": 20496,
+        "length": 1464,
+        "sha256": "656a6c08c092a72354edb1984b93d5b4f63d8e135853f01bad3b98727bf946de"
+      },
+      {
+        "file": "pcm/segments/0015.bin",
+        "offset": 21960,
+        "length": 1464,
+        "sha256": "97b49b709dec870973d1e4303861ce274f41e25db050269d766e71301536863d"
+      },
+      {
+        "file": "pcm/segments/0016.bin",
+        "offset": 23424,
+        "length": 1464,
+        "sha256": "fa4cb5d6234f4aa624869b7efb957e23f49dbbed55c7ba534190c884222363c2"
+      },
+      {
+        "file": "pcm/segments/0017.bin",
+        "offset": 24888,
+        "length": 1464,
+        "sha256": "c09d0c1cc3e197cd14b5a7a6005982dd1c2035ba6764c8c2c66b5dbf4721b89b"
+      },
+      {
+        "file": "pcm/segments/0018.bin",
+        "offset": 26352,
+        "length": 1464,
+        "sha256": "91665d2233233ed96dc9b6e64ed8f1d459a91e947155a68e9ae71f67b9f7c952"
+      },
+      {
+        "file": "pcm/segments/0019.bin",
+        "offset": 27816,
+        "length": 1464,
+        "sha256": "0adf18d6635885940f39b3eada6b990f2d98d61f840e35ce6bb68d09d8745e7b"
+      },
+      {
+        "file": "pcm/segments/0020.bin",
+        "offset": 29280,
+        "length": 1440,
+        "sha256": "497ed2675556a4bac4f9b5e170389ead642b35af72644317d99f468ed5e24a42"
+      }
+    ]
+  },
+  "capture": {
+    "heartbeats_received": 0,
+    "datagrams_received": 21
+  },
+  "notes": [
+    "Synthesized from the frozen v0.3.4 Wire Protocol; not recorded on a Windows machine.",
+    "PCM is a deterministic integer pattern used only to exercise framing and MTU segmentation."
+  ]
+}

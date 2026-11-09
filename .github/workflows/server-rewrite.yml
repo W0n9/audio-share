@@ -1,0 +1,57 @@
+name: Server rewrite
+
+on:
+  push:
+    branches:
+      - integration/server-rewrite
+      - "ticket/**"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "tools/**"
+      - "fixtures/**"
+      - "scripts/**"
+      - "docs/server-rewrite/**"
+      - ".github/workflows/server-rewrite.yml"
+  workflow_dispatch:
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install PipeWire headers (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libpipewire-0.3-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test workspace
+        run: cargo test --workspace
+
+      - name: Hardware-free harness smoke test (serve-fake + replay)
+        run: cargo test -p protocol-harness --test harness_smoke -- --nocapture
+
+      - name: Replay committed fixtures offline
+        run: cargo run -p protocol-harness -- replay --fixture fixtures/protocol/v0.3.4/linux/f32-48k-stereo
