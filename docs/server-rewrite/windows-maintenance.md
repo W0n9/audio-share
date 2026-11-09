@@ -3,7 +3,7 @@
 Status: **implemented and compile/logic validated on the Linux development
 host.** A real UAC prompt, real `netsh` rule changes, and Android Client
 connectivity through the repaired rules were **NOT EXECUTED** here: this host
-has no Windows runtime and no MSVC linker. See "Residual manual steps".
+has no Windows runtime and no Windows linker. See "Residual manual steps".
 
 ## What landed
 
@@ -24,7 +24,7 @@ them (ticket 12 owns the Linux documentation links).
 ## Firewall rules
 
 Repair rebuilds two application-scoped inbound allow rules for the running
-executable, matching the v0.3.4 MFC GUI:
+executable, matching the v0.3.4 Server GUI:
 
 | Property | TCP rule | UDP rule |
 |---|---|---|
@@ -38,13 +38,13 @@ executable, matching the v0.3.4 MFC GUI:
 | Profiles | active profiles minus Public, unless Public is the only active one | same |
 
 There is no port constraint: the server's configured port (default 65530) is
-not embedded in the rule, exactly like the MFC implementation.
+not embedded in the rule, exactly like the v0.3.4 implementation.
 
 ### Profile selection
 
 `INetFwPolicy2::CurrentProfileTypes` returns a bitmask
 (`DOMAIN=1`, `PRIVATE=2`, `PUBLIC=4`). It is read through COM, never by parsing
-localized `netsh` text. `maintenance::netsh_profiles` then applies the MFC rule:
+localized `netsh` text. `maintenance::netsh_profiles` then applies the v0.3.4 rule:
 Public is removed unless it is the only active profile. An empty or
 unknown-only mask falls back to all profiles so the rule is never inactive.
 
@@ -99,7 +99,7 @@ localized error in the settings view (`role="alert"` for errors).
 ## Sound Panel
 
 `open_sound_panel` spawns `control.exe /name Microsoft.Sound` and does **not**
-wait. The v0.3.4 MFC GUI called `WaitForSingleObject(..., INFINITE)` on the UI
+wait. The v0.3.4 Server GUI called `WaitForSingleObject(..., INFINITE)` on the UI
 thread and blocked until the sound app closed; the new command returns
 immediately. Failures map to `error.soundPanel` with the OS message. On
 success the UI shows `maintenance.soundPanelOpened`.
