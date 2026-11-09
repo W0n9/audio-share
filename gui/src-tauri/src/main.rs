@@ -12,20 +12,28 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use audio_share_core::capture::{platform_backend, synthetic_backend, CaptureBackend, Endpoint};
-use audio_share_core::config::{self, LoadOptions, WhenClose};
+use audio_share_core::config::{self, LoadOptions};
 use audio_share_core::paths;
+use audio_share_server_gui::autostart;
 use audio_share_server_gui::controller::ServerController;
+use audio_share_server_gui::i18n::{self, Locale};
 use audio_share_server_gui::model::{
-    bootstrap, notice_messages, tray_enabled, Bootstrap, ServerState, ServerStatus, Settings,
+    bootstrap, notice_messages, tray_enabled, ApplicationSettings, Bootstrap, Notice, ServerState,
+    ServerStatus, Settings,
 };
 use audio_share_server_gui::options::GuiOptions;
-use audio_share_server_gui::strings::t;
+use audio_share_server_gui::strings;
+use audio_share_server_gui::update::{self, UpdateCheckResult};
 use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, State, WindowEvent,
 };
+use tauri_plugin_notification::NotificationExt;
+
+/// Automatic update-check interval (3 hours, per v0.3.4).
+const UPDATE_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
 
 /// State managed by Tauri and reached from commands and tray callbacks.
 struct AppState {
@@ -34,8 +42,12 @@ struct AppState {
     /// Last successful endpoint enumeration; `None` when enumeration failed, so
     /// settings saves are not rejected against a list we never obtained.
     endpoints: Arc<Mutex<Option<Vec<Endpoint>>>>,
-    /// Migration/recovery warnings collected before the webview started.
-    startup_notices: Vec<String>,
+    /// Migration/recovery/startup warnings rendered as localized notices.
+    notices: Mutex<Vec<Notice>>,
+    /// Newest update found by a background or manual check.
+    update: Mutex<Option<UpdateCheckResult>>,
+    /// Language selected at startup (also installed in `strings`).
+    locale: Locale,
 }
 
 /// Tray menu items kept in managed state so status changes can toggle them.
@@ -102,7 +114,7 @@ fn load_startup(
     options: GuiOptions,
 ) -> (
     Settings,
-    Vec<String>,
+    Vec<Notice>,
     Option<Vec<Endpoint>>,
     std::path::PathBuf,
 ) {
@@ -113,12 +125,12 @@ fn load_startup(
         Ok(backend) => match backend.endpoints() {
             Ok(endpoints) => Some(endpoints),
             Err(error) => {
-                notices.push(format!("Could not list audio endpoints: {error}"));
+                notices.push(Notice::new("endpointListFailed").with("message", error.to_string()));
                 None
             }
         },
         Err(error) => {
-            notices.push(format!("Could not initialize audio capture: {error}"));
+            notices.push(Notice::new("captureInitFailed").with("message", error.to_string()));
             None
         }
     };
@@ -135,7 +147,7 @@ fn load_startup(
             (outcome.config, notices, endpoints, config_path)
         }
         Err(error) => {
-            notices.push(format!("Could not load settings: {error}"));
+            notices.push(Notice::new("loadFailed").with("message", error.to_string()));
             (Settings::default(), notices, endpoints, config_path)
         }
     }
@@ -159,6 +171,88 @@ async fn stop_with_app(app: &AppHandle) -> Result<ServerStatus, String> {
     controller.stop().await
 }
 
+/// The release endpoint; `AUDIO_SHARE_UPDATE_URL` is a test seam for replayed
+/// GitHub responses and is not used by normal installs.
+fn update_endpoint() -> String {
+    std::env::var("AUDIO_SHARE_UPDATE_URL").unwrap_or_else(|_| update::API_URL.to_owned())
+}
+
+/// Perform one update check and publish a newer release to the UI/tray.
+///
+/// The blocking HTTP request runs on the blocking pool. A newer release is
+/// stored for the bootstrap payload, emitted as `update:available`, and shown
+/// as a native notification with the raw tag. Failures are returned so the
+/// manual path can show them; the automatic path logs and ignores them.
+async fn run_update_check(app: &AppHandle) -> Result<UpdateCheckResult, String> {
+    let url = update_endpoint();
+    let result = tauri::async_runtime::spawn_blocking(move || update::fetch_latest(&url))
+        .await
+        .map_err(|error| format!("update check task failed: {error}"))??;
+
+    let state = app.state::<AppState>();
+    *lock(&state.update) = match &result {
+        UpdateCheckResult::Newer { .. } => Some(result.clone()),
+        UpdateCheckResult::UpToDate => None,
+    };
+
+    if let UpdateCheckResult::Newer { version, .. } = &result {
+        let _ = app.emit("update:available", result.clone());
+        let title = strings::t("update.notificationTitle");
+        let body = strings::t_args("update.notificationBody", &[("version", version)]);
+        if let Err(error) = app.notification().builder().title(title).body(body).show() {
+            // A missing notification daemon (headless CI) must not break the
+            // check; the in-app banner is the primary UX.
+            eprintln!("AudioShareServer: notification failed: {error}");
+        }
+    }
+    Ok(result)
+}
+
+/// Check at startup and every 3 hours while `AutoUpdate` is enabled.
+///
+/// v0.3.4's first automatic check was one full interval after launch; doing it
+/// at startup is an intentional improvement. The loop re-reads the setting so
+/// toggling it takes effect without a restart.
+fn spawn_update_loop(app: &tauri::App) {
+    let handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let enabled = handle.state::<AppState>().controller.settings().auto_update;
+            if enabled {
+                if let Err(error) = run_update_check(&handle).await {
+                    eprintln!("AudioShareServer: automatic update check failed: {error}");
+                }
+                tokio::time::sleep(UPDATE_INTERVAL).await;
+            } else {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+        }
+    });
+}
+
+/// Make the OS login entry match `AutoRun`; report failures in the UI.
+fn reconcile_autostart(app: &tauri::App) {
+    let enabled = app.state::<AppState>().controller.settings().autostart;
+    if let Err(error) = autostart::configure(enabled) {
+        let state = app.state::<AppState>();
+        lock(&state.notices).push(Notice::new("autostartFailed").with("message", error));
+    }
+}
+
+/// Apply `WhenAppStart` after setup, asynchronously and without blocking.
+fn apply_startup_behavior(app: &tauri::App) {
+    let settings = app.state::<AppState>().controller.settings();
+    if !settings.when_start.starts_server(settings.running) {
+        return;
+    }
+    let handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = start_with_app(&handle).await {
+            eprintln!("AudioShareServer: startup server start failed: {error}");
+        }
+    });
+}
+
 fn update_tray(app: &AppHandle, status: &ServerStatus) {
     if let Some(items) = app.try_state::<TrayItems>() {
         let enabled = tray_enabled(status.state);
@@ -168,11 +262,11 @@ fn update_tray(app: &AppHandle, status: &ServerStatus) {
 }
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    let show_i = MenuItem::with_id(app, "show", t("tray.show"), true, None::<&str>)?;
-    let start_i = MenuItem::with_id(app, "start", t("tray.start"), true, None::<&str>)?;
-    let stop_i = MenuItem::with_id(app, "stop", t("tray.stop"), false, None::<&str>)?;
+    let show_i = MenuItem::with_id(app, "show", strings::t("tray.show"), true, None::<&str>)?;
+    let start_i = MenuItem::with_id(app, "start", strings::t("tray.start"), true, None::<&str>)?;
+    let stop_i = MenuItem::with_id(app, "stop", strings::t("tray.stop"), false, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let exit_i = MenuItem::with_id(app, "exit", t("tray.exit"), true, None::<&str>)?;
+    let exit_i = MenuItem::with_id(app, "exit", strings::t("tray.exit"), true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show_i, &start_i, &stop_i, &separator, &exit_i])?;
 
     let icon = app
@@ -182,7 +276,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 
     TrayIconBuilder::with_id("main-tray")
         .icon(icon)
-        .tooltip(t("app.title"))
+        .tooltip(strings::t("app.title"))
         .menu(&menu)
         // Windows left-click toggles the window, so the menu must not also
         // open on left click. Linux delivers no click events; right-click
@@ -206,9 +300,15 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                     }
                 });
             }
-            // app.exit bypasses CloseRequested; window.close() would be turned
-            // into hide-to-tray by the close handler.
-            "exit" => app.exit(0),
+            // Tray Exit always quits, regardless of WhenClose. Stop the core
+            // gracefully first (bounded) so clients see a clean close.
+            "exit" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    stop_core_if_running(&app, Duration::from_secs(3)).await;
+                    app.exit(0);
+                });
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -240,8 +340,17 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Stop a running core with a bounded wait; used by Exit paths.
+async fn stop_core_if_running(app: &AppHandle, timeout: Duration) {
+    let controller = Arc::clone(&app.state::<AppState>().controller);
+    if controller.status().state == ServerState::Running {
+        let _ = tokio::time::timeout(timeout, controller.stop()).await;
+    }
+}
+
 /// Apply `[App Settings] WhenClose`: 0 stops the core and exits, non-zero hides
-/// the window and keeps the server running.
+/// the window and keeps the server running. This applies only to the window
+/// close request; the tray Exit command always quits.
 fn install_close_handler(app: &tauri::App) {
     if let Some(window) = app.get_webview_window("main") {
         let app_handle = app.handle().clone();
@@ -253,22 +362,16 @@ fn install_close_handler(app: &tauri::App) {
                     .controller
                     .settings()
                     .when_close;
-                match when_close {
-                    WhenClose::Minimize => hide_main_window(&app_handle),
-                    WhenClose::Exit => {
-                        let handle = app_handle.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let controller = Arc::clone(&handle.state::<AppState>().controller);
-                            if controller.status().state == ServerState::Running {
-                                // Bounded so a wedged capture backend cannot trap
-                                // the user in a closing app.
-                                let _ =
-                                    tokio::time::timeout(Duration::from_secs(3), controller.stop())
-                                        .await;
-                            }
-                            handle.exit(0);
-                        });
-                    }
+                if when_close.exits_on_close() {
+                    let handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        // Bounded so a wedged capture backend cannot trap the
+                        // user in a closing app.
+                        stop_core_if_running(&handle, Duration::from_secs(3)).await;
+                        handle.exit(0);
+                    });
+                } else {
+                    hide_main_window(&app_handle);
                 }
             }
         });
@@ -288,10 +391,14 @@ fn install_controller_listener(app: &tauri::App) {
 #[tauri::command]
 async fn get_bootstrap(state: State<'_, AppState>) -> Result<Bootstrap, String> {
     let controller = Arc::clone(&state.controller);
+    let notices = lock(&state.notices).clone();
+    let update = lock(&state.update).clone();
     Ok(bootstrap(
         &controller.settings(),
         &controller.status(),
-        &state.startup_notices,
+        &notices,
+        update,
+        state.locale,
     ))
 }
 
@@ -313,6 +420,33 @@ async fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result
     state
         .controller
         .save_settings_with_endpoints(settings, endpoints.as_deref())
+}
+
+/// Persist application settings even while the server runs. Autostart is
+/// applied to the OS first so a failure leaves the config untouched.
+#[tauri::command]
+async fn save_application_settings(
+    app: AppHandle,
+    settings: ApplicationSettings,
+) -> Result<Settings, String> {
+    settings.validate()?;
+    let controller = {
+        let state = app.state::<AppState>();
+        Arc::clone(&state.controller)
+    };
+    let previous_autostart = controller.settings().autostart;
+    if settings.autostart != previous_autostart {
+        if let Err(error) = autostart::configure(settings.autostart) {
+            return Err(strings::t_args("error.autostart", &[("message", &error)]));
+        }
+    }
+    controller.save_application_settings(settings)
+}
+
+/// Manual update check. The caller shows "No Update" or a readable error.
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<UpdateCheckResult, String> {
+    run_update_check(&app).await
 }
 
 /// Restore the Server fields to their defaults and write them.
@@ -383,11 +517,16 @@ fn main() {
             .unwrap_or_else(|_| {
                 (
                     Settings::default(),
-                    vec!["Could not load settings: startup task failed".to_owned()],
+                    vec![Notice::new("startupFailed")],
                     None,
                     paths::paths().config,
                 )
             });
+
+    // The language is read once before the tray exists; changing it in the UI
+    // persists the setting and takes effect on the next launch.
+    let locale = i18n::resolve_configured(&settings.language);
+    strings::set_locale(locale);
 
     tauri::Builder::default()
         // Single-instance MUST be the first plugin registered.
@@ -403,29 +542,29 @@ fn main() {
             show_main_window(app);
             let _ = app.emit("app:second-instance", ());
         }))
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--hide"]),
-        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             controller: Arc::new(ServerController::with_config(settings, config_path)),
             options,
             endpoints: Arc::new(Mutex::new(endpoints)),
-            startup_notices,
+            notices: Mutex::new(startup_notices),
+            update: Mutex::new(None),
+            locale,
         })
         .invoke_handler(tauri::generate_handler![
             get_bootstrap,
             get_status,
             get_settings,
             save_settings,
+            save_application_settings,
             reset_settings,
             list_endpoints,
             start_server,
             stop_server,
             hide_window,
-            exit_app
+            exit_app,
+            check_update
         ])
         .setup(move |app| {
             install_controller_listener(app);
@@ -439,6 +578,12 @@ fn main() {
             } else {
                 show_main_window(app.handle());
             }
+
+            // AutoRun is the source of truth: create or remove the OS entry at
+            // every launch, reporting failures in the UI notice area.
+            reconcile_autostart(app);
+            apply_startup_behavior(app);
+            spawn_update_loop(app);
 
             // Headless CI smoke test: prove the window/webview exists, then
             // exit 0. Output format is asserted by docs/server-rewrite tests.
