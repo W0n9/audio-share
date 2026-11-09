@@ -6,7 +6,7 @@
 //! tested here on Linux; the COM/ShellExecute runtime lives in
 //! `windows_maintenance.rs` behind `#[cfg(windows)]`.
 //!
-//! Firewall shape (v0.3.4 MFC parity):
+//! Firewall shape (v0.3.4 legacy Windows GUI parity):
 //! - one application-scoped inbound allow rule per protocol, named
 //!   `Audio Share Server(TCP-In)` and `Audio Share Server(UDP-In)`;
 //! - profiles are the currently active profiles, with Public removed unless
@@ -16,9 +16,9 @@
 use crate::i18n::Locale;
 use crate::strings;
 
-/// Inbound TCP rule name, identical to the MFC GUI.
+/// Inbound TCP rule name, identical to the legacy Windows GUI.
 pub const TCP_RULE_NAME: &str = "Audio Share Server(TCP-In)";
-/// Inbound UDP rule name, identical to the MFC GUI.
+/// Inbound UDP rule name, identical to the legacy Windows GUI.
 pub const UDP_RULE_NAME: &str = "Audio Share Server(UDP-In)";
 
 /// `NET_FW_PROFILE2_DOMAIN`.
@@ -100,9 +100,9 @@ impl MaintenanceError {
 
 /// Convert `INetFwPolicy2::CurrentProfileTypes` into netsh's `profile=` value.
 ///
-/// The MFC GUI xor-ed Public out of the mask unless Public was the only active
-/// profile; an empty or unknown-only mask falls back to all profiles so the
-/// rule is never silently inactive.
+/// The legacy Windows GUI xor-ed Public out of the mask unless Public was the
+/// only active profile; an empty or unknown-only mask falls back to all
+/// profiles so the rule is never silently inactive.
 pub fn netsh_profiles(active_mask: i32) -> String {
     let mut mask = active_mask & ALL_PROFILES;
     // MFC parity: Public applies only when it is the only active profile.
@@ -286,7 +286,7 @@ mod tests {
         assert!(script.contains("dir=in action=allow protocol=UDP"));
         assert!(
             script.contains(&format!("description='{TCP_RULE_NAME}'")),
-            "the rule description matches the MFC GUI:\n{script}"
+            "the rule description matches the legacy Windows GUI:\n{script}"
         );
         assert!(script.contains("enable=yes profile=domain,private"));
         assert!(script.trim_end().ends_with("exit 0"));

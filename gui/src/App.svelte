@@ -8,9 +8,9 @@
     onServerStateChanged,
     onUpdateAvailable,
     type Notice,
-    type ServerState,
   } from "./lib/ipc";
   import { t } from "./lib/i18n.svelte";
+  import { statusLabel } from "./lib/status";
   import ServerView from "./views/ServerView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
 
@@ -52,19 +52,6 @@
       unlistenUpdate?.();
     };
   });
-
-  function statusLabel(state: ServerState): string {
-    switch (state) {
-      case "running":
-        return t("status.running");
-      case "starting":
-        return t("status.starting");
-      case "stopping":
-        return t("status.stopping");
-      default:
-        return t("status.stopped");
-    }
-  }
 
   function toggleView(): void {
     server.view = server.view === "main" ? "settings" : "main";

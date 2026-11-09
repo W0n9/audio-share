@@ -21,6 +21,21 @@ pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The user agent GitHub requires for unauthenticated requests.
 pub const USER_AGENT: &str = concat!("AudioShareServer/", env!("CARGO_PKG_VERSION"));
 
+/// How often an automatic update check runs (v0.3.4 parity).
+///
+/// The first automatic check happens one full interval after launch; a startup
+/// check is intentionally not performed. The manual "Check Now" path is
+/// independent of this timer.
+pub const AUTOMATIC_CHECK_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
+
+/// Whether an automatic timer tick should perform a check.
+///
+/// The `AutoUpdate` setting is re-read on every tick, so toggling it takes
+/// effect without restarting the GUI.
+pub const fn should_run_automatic_check(auto_update: bool) -> bool {
+    auto_update
+}
+
 /// The fields this app consumes from a GitHub release.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReleaseInfo {
@@ -217,6 +232,17 @@ mod tests {
         "html_url": "https://github.com/mkckr0/audio-share/releases/tag/v0.3.4",
         "tag_name": "v0.3.4"
     }"#;
+
+    #[test]
+    fn automatic_checks_wait_one_full_interval_and_follow_the_setting() {
+        assert_eq!(
+            AUTOMATIC_CHECK_INTERVAL,
+            Duration::from_secs(3 * 60 * 60),
+            "v0.3.4 performs the first automatic check one interval after launch"
+        );
+        assert!(should_run_automatic_check(true));
+        assert!(!should_run_automatic_check(false));
+    }
 
     #[test]
     fn compares_only_remote_greater_than_local() {

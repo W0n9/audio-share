@@ -18,8 +18,9 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
 use audio_share_core::capture::{
-    platform_backend, synthetic_backend, CaptureBackend, CaptureConfig, EncodingPreference,
+    platform_backend, synthetic_backend, CaptureBackend, CaptureConfig,
 };
+use audio_share_core::config::{EncodingSetting, DEFAULT_PORT};
 use audio_share_core::paths;
 use audio_share_core::protocol::{HEARTBEAT_INTERVAL, SESSION_TIMEOUT};
 use audio_share_core::server::{default_host, Server, ServerConfig};
@@ -30,9 +31,6 @@ use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, MakeWriter};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
-
-/// v0.3.4 hard-codes port 65530 when the bind value has no port.
-const DEFAULT_PORT: u16 = 65_530;
 
 /// Homepage printed by `-v/--version`.
 const HOMEPAGE: &str = "https://github.com/mkckr0/audio-share";
@@ -268,9 +266,11 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
         platform_backend().map_err(|error| error.to_string())?
     };
 
+    let encoding = EncodingSetting::from_name(&cli.encoding)
+        .ok_or_else(|| format!("unsupported encoding {:?}", cli.encoding))?;
     let request = CaptureConfig {
         endpoint_id: cli.endpoint.clone(),
-        encoding: encoding_preference(&cli.encoding),
+        encoding: encoding.preference(),
         channels: cli.channels,
         sample_rate: cli.sample_rate,
     };
@@ -318,17 +318,6 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
         .map_err(|error| format!("cannot stop the server: {error}"))?;
     tracing::info!("server stopped");
     Ok(())
-}
-
-fn encoding_preference(value: &str) -> EncodingPreference {
-    match value {
-        "f32" => EncodingPreference::F32,
-        "s8" => EncodingPreference::S8,
-        "s16" => EncodingPreference::S16,
-        "s24" => EncodingPreference::S24,
-        "s32" => EncodingPreference::S32,
-        _ => EncodingPreference::Default,
-    }
 }
 
 /// Parse v0.3.4 `[host][:port]` bind syntax.
@@ -406,7 +395,8 @@ fn open_log_file(path: &Path) -> std::io::Result<std::fs::File> {
             std::fs::create_dir_all(parent)?;
         }
     }
-    // Truncate on every launch, matching the MFC GUI's basic_logger_mt usage.
+    // Truncate on every launch, matching the legacy Windows GUI's
+    // basic_logger_mt usage.
     std::fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -515,6 +505,7 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use audio_share_core::capture::EncodingPreference;
 
     #[test]
     fn parse_bind_uses_default_port_when_missing() {
@@ -556,12 +547,21 @@ mod tests {
 
     #[test]
     fn encoding_names_map_to_capture_preferences() {
-        assert_eq!(encoding_preference("default"), EncodingPreference::Default);
-        assert_eq!(encoding_preference("f32"), EncodingPreference::F32);
-        assert_eq!(encoding_preference("s8"), EncodingPreference::S8);
-        assert_eq!(encoding_preference("s16"), EncodingPreference::S16);
-        assert_eq!(encoding_preference("s24"), EncodingPreference::S24);
-        assert_eq!(encoding_preference("s32"), EncodingPreference::S32);
+        for (name, preference) in [
+            ("default", EncodingPreference::Default),
+            ("f32", EncodingPreference::F32),
+            ("s8", EncodingPreference::S8),
+            ("s16", EncodingPreference::S16),
+            ("s24", EncodingPreference::S24),
+            ("s32", EncodingPreference::S32),
+        ] {
+            assert_eq!(
+                EncodingSetting::from_name(name).map(EncodingSetting::preference),
+                Some(preference),
+                "{name}"
+            );
+        }
+        assert_eq!(EncodingSetting::from_name("unknown"), None);
     }
 
     #[test]

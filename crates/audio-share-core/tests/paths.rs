@@ -1,7 +1,8 @@
 //! Config/log path resolution at the public `audio_share_core::paths` seam.
 //!
-//! Resolution order (architecture.md): `AUDIO_SHARE_CONFIG` override, then a
-//! writable executable directory, then `$XDG_CONFIG_HOME/audio-share-server/`.
+//! Resolution order (see `docs/server-rewrite/README.md`): `AUDIO_SHARE_CONFIG`
+//! override, then a writable executable directory, then
+//! `$XDG_CONFIG_HOME/audio-share-server/`.
 //! `server.log` always lives in the directory holding the resolved config file.
 
 use audio_share_core::paths::{paths, resolve_paths};

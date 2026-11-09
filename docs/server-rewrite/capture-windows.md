@@ -12,7 +12,7 @@ host has no Windows audio runtime and no Windows linker.
 | `WasapiCapture: CaptureBackend` (`#[cfg(windows)]`) | `crates/audio-share-core/src/capture/windows/backend.rs` |
 | Pure format/negotiation rules (all hosts) | `crates/audio-share-core/src/capture/windows/format.rs` |
 | Platform selection | `crates/audio-share-core/src/capture/mod.rs` (`platform_backend`) |
-| CLI default + escape hatch | `crates/as-cmd/src/main.rs` (`--fake-capture`) |
+| `as-cmd` default + escape hatch | `crates/as-cmd/src/main.rs` (`--fake-capture`) |
 | Target-gated dependencies | `crates/audio-share-core/Cargo.toml` (`wasapi 0.27.0`, `windows 0.62.2`) |
 | A/B script | `scripts/ab-compare-windows.ps1` |
 
@@ -98,7 +98,7 @@ buffer_duration_hns: 10_000_000 }`, i.e. a 1-second buffer).
 
 `as-cmd` uses `platform_backend()` by default and keeps `--fake-capture` to
 force the synthetic backend. Capture selection flags (`-e`, `--encoding`,
-`--channels`, `--sample-rate`) remain ticket 07's CLI-parity work; the
+`--channels`, `--sample-rate`) remain ticket 07's `as-cmd`-parity work; the
 `CaptureConfig` path behind them is implemented and unit-tested here.
 
 ## Validation performed on this host (Linux)
@@ -122,7 +122,8 @@ cadence, silent/hotplug behaviour, and actual PCM sample representation.
 
 ## Manual Windows verification (NOT EXECUTED)
 
-1. Build on Windows with Rust 1.85 or newer (`wasapi 0.27` requirement):
+1. Build on Windows with Rust 1.90 or newer (the workspace MSRV; `wasapi 0.27`
+   needs at least 1.85):
    `cargo build --workspace --release`.
 2. Play a continuous known tone (for example 1 kHz, 48 kHz, stereo) into the
    endpoint under test and keep it playing for all steps.
