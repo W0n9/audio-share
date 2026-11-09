@@ -16,6 +16,7 @@ use audio_share_core::config::{self, LoadOptions};
 use audio_share_core::paths;
 use audio_share_server_gui::autostart;
 use audio_share_server_gui::controller::ServerController;
+use audio_share_server_gui::help::HelpTopic;
 use audio_share_server_gui::i18n::{self, Locale};
 use audio_share_server_gui::model::{
     bootstrap, notice_messages, tray_enabled, ApplicationSettings, Bootstrap, Notice, ServerState,
@@ -31,6 +32,7 @@ use tauri::{
     AppHandle, Emitter, Manager, State, WindowEvent,
 };
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_opener::OpenerExt;
 
 /// Automatic update-check interval (3 hours, per v0.3.4).
 const UPDATE_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
@@ -528,6 +530,17 @@ async fn stop_server(app: AppHandle) -> Result<ServerStatus, String> {
     stop_with_app(&app).await
 }
 
+/// Open the documentation that replaces the Windows-only maintenance actions
+/// on Linux. The frontend sends a topic id, never a URL, so the webview cannot
+/// use this command to open arbitrary pages.
+#[tauri::command]
+async fn open_help(app: AppHandle, topic: String) -> Result<(), String> {
+    let topic = HelpTopic::parse(&topic).ok_or_else(|| format!("unknown help topic {topic:?}"))?;
+    app.opener()
+        .open_url(topic.url(), None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 async fn hide_window(app: AppHandle) -> Result<(), String> {
     hide_main_window(&app);
@@ -614,6 +627,7 @@ fn main() {
             list_endpoints,
             start_server,
             stop_server,
+            open_help,
             hide_window,
             exit_app,
             check_update,

@@ -24,6 +24,12 @@ export type WhenClose = "exit" | "minimize";
 export type Locale = "en-US" | "zh-CN";
 
 /**
+ * Linux help topics replacing the Windows-only maintenance actions. Rust maps
+ * each id to a fixed documentation URL; the webview never supplies a URL.
+ */
+export type HelpTopic = "pipewire" | "desktopSound";
+
+/**
  * Persisted settings. The shape mirrors `audio_share_core::config::Config`
  * (serde camelCase); `running` is controller-owned.
  */
@@ -103,6 +109,7 @@ export const api = {
   hideWindow: () => invoke<void>("hide_window"),
   exit: () => invoke<void>("exit_app"),
   checkUpdate: () => invoke<UpdateCheckResult>("check_update"),
+  openHelp: (topic: HelpTopic) => invoke<void>("open_help", { topic }),
   /** Windows only: rebuild inbound TCP/UDP firewall rules (UAC prompt). */
   repairFirewall: () => invoke<void>("repair_firewall"),
   /** Windows only: open the Sound control panel without waiting. */
