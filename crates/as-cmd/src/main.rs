@@ -1,11 +1,11 @@
 //! `as-cmd` command-line entry point.
 //!
-//! Ticket 04 implements the minimal server path: `-b/--bind [host][:port]`
-//! starts the Server with the platform capture backend and runs until Ctrl-C.
-//! On Windows that is WASAPI shared-mode loopback; elsewhere it is the
-//! deterministic synthetic backend until the Linux backend lands. Full CLI
-//! parity (listing endpoints/encodings, all capture flags, version layout) is
-//! ticket 07.
+//! `-b/--bind [host][:port]` starts the Server with the platform capture
+//! backend and runs until Ctrl-C. On Windows that is WASAPI shared-mode
+//! loopback and on Linux PipeWire monitor capture; other platforms use the
+//! deterministic synthetic backend. `--fake-capture` forces synthetic capture.
+//! Full CLI parity (listing endpoints/encodings, all capture flags, version
+//! layout) is ticket 07.
 
 use std::process::ExitCode;
 use std::sync::Arc;

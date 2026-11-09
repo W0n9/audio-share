@@ -92,7 +92,11 @@ name = "audio-share-core"
 version = "0.1.0"
 dependencies = [
  "if-addrs",
+ "pipewire",
  "prost",
+ "ringbuf",
+ "serde_json",
+ "tempfile",
  "tokio",
  "wasapi",
  "windows",
