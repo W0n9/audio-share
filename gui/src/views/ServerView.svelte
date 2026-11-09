@@ -1,10 +1,12 @@
 <script lang="ts">
   import { server } from "../lib/store.svelte";
   import { t } from "../lib/i18n.svelte";
+  import type { Encoding } from "../lib/ipc";
 
   const state = $derived(server.status.state);
   const running = $derived(state === "running");
   const transitioning = $derived(state === "starting" || state === "stopping");
+  const locked = $derived(server.settingsLocked);
   const address = $derived(
     running && server.status.address
       ? server.status.address
@@ -30,9 +32,9 @@
           : t("action.start"),
   );
 
-  const encodings = ["default", "f32", "s8", "s16", "s24", "s32"];
+  const encodings: Encoding[] = ["default", "f32", "s8", "s16", "s24", "s32"];
 
-  function encodingLabel(value: string): string {
+  function encodingLabel(value: Encoding): string {
     return value === "default" ? t("encoding.default") : value;
   }
 
@@ -42,6 +44,10 @@
     } else if (state === "stopped") {
       await server.start();
     }
+  }
+
+  function persist(): void {
+    void server.persist();
   }
 </script>
 
@@ -55,12 +61,15 @@
 {#if error}
   <p class="error" role="alert">{error}</p>
 {/if}
+{#if server.saveError}
+  <p class="error" role="alert">{server.saveError}</p>
+{/if}
 
 <div class="body">
   <button
     class="btn-primary"
     class:stop={running}
-    disabled={server.busy || transitioning}
+    disabled={server.busy || server.saving || transitioning}
     onclick={toggleServer}
   >
     {actionText}
@@ -68,14 +77,27 @@
 
   <div class="field">
     <label for="endpoint">{t("field.endpoint")}</label>
-    <select id="endpoint" bind:value={server.settings.endpoint}>
+    <select
+      id="endpoint"
+      bind:value={server.settings.endpoint}
+      disabled={locked}
+      onchange={persist}
+    >
       <option value="default">{t("endpoint.default")}</option>
+      {#each server.endpointOptions as endpoint (endpoint.id)}
+        <option value={endpoint.id}>{endpoint.name}</option>
+      {/each}
     </select>
   </div>
 
   <div class="field">
     <label for="encoding">{t("field.encoding")}</label>
-    <select id="encoding" bind:value={server.settings.encoding}>
+    <select
+      id="encoding"
+      bind:value={server.settings.encoding}
+      disabled={locked}
+      onchange={persist}
+    >
       {#each encodings as encoding (encoding)}
         <option value={encoding}>{encodingLabel(encoding)}</option>
       {/each}
@@ -85,11 +107,25 @@
   <div class="field-row">
     <div class="field">
       <label for="host">{t("field.host")}</label>
-      <input id="host" type="text" bind:value={server.settings.host} />
+      <input
+        id="host"
+        type="text"
+        bind:value={server.settings.host}
+        disabled={locked}
+        onchange={persist}
+      />
     </div>
     <div class="field">
       <label for="port">{t("field.port")}</label>
-      <input id="port" type="number" min="1" max="65535" bind:value={server.settings.port} />
+      <input
+        id="port"
+        type="number"
+        min="1"
+        max="65535"
+        bind:value={server.settings.port}
+        disabled={locked}
+        onchange={persist}
+      />
     </div>
   </div>
 </div>
