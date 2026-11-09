@@ -4,9 +4,64 @@
 
 **Blocked by:** 10 (Lifecycle + i18n + About + update check)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 - [ ] Firewall Repair 提权后重建入站规则，Android Client 可连接。
 - [ ] Sound Panel 打开系统声音设置。
 - [ ] 用户取消提权或修复失败时，GUI 给出明确错误。
-- [ ] 非 Windows 平台不显示这两个入口。
+- [x] 非 Windows 平台不显示这两个入口。
+
+## Comments
+
+2026-11-09 — branch `ticket/11-windows-maintenance` (worktree
+`/home/w0n9/workspaces/audio-share-wt/11`).
+
+Implemented:
+- `gui/src-tauri/src/maintenance.rs`: pure, unit-tested profile-mask ->
+  `profile=` conversion (Public kept only when it is the only active profile),
+  PowerShell repair-script generation with single-quote escaping, argument
+  quoting, UAC-cancel HRESULT (1223) classification, netsh exit-code mapping,
+  and en-US/zh-CN localization of every error.
+- `gui/src-tauri/src/windows_maintenance.rs` (`#[cfg(windows)]`): active
+  profiles via `INetFwPolicy2::CurrentProfileTypes` (COM, not localized netsh
+  output); temp `.ps1`; `ShellExecuteExW` `runas`, wait + exit code on
+  `spawn_blocking`; temp script deleted on every path;
+  `control.exe /name Microsoft.Sound` spawned without waiting.
+- Commands `repair_firewall` and `open_sound_panel` registered in `main.rs`
+  (non-Windows returns the localized unsupported error); Windows-only settings
+  rows with success/error text; en-US/zh-CN keys.
+- `windows 0.62.2` features added under `[target.'cfg(windows)'.dependencies]`
+  (minor not bumped). Rules: `Audio Share Server(TCP-In)` /
+  `Audio Share Server(UDP-In)`, inbound, allow, enabled, application-scoped,
+  deleted before add.
+- Docs: `docs/server-rewrite/windows-maintenance.md` (rules, profiles,
+  elevation/UAC, manual steps, residual list).
+
+Commands/results (Ubuntu 24.04; this host has no Windows runtime or MSVC
+linker):
+- `cargo test -p audio-share-server-gui` 72 passed (9 new maintenance tests:
+  profile combinations/fallbacks, script order/contents, quoting for spaces
+  and quotes, unsafe input rejection, UAC-cancel and exit-code mapping,
+  bilingual messages); `cargo test --workspace` pass.
+- `cargo fmt --all -- --check` pass; `cargo clippy --workspace --all-targets --
+  -D warnings` pass.
+- `cargo check`/`cargo clippy --target x86_64-pc-windows-msvc -p
+  audio-share-server-gui -- -D warnings` pass (only the known tauri-build GNU
+  compiler warnings on this host).
+- `npm run check` 0 errors/0 warnings; `npm run build` pass.
+- Linux gating verified at the model/build level: bootstrap `platform` is
+  `linux` and both rows are inside `{#if server.platform === "windows"}`; the
+  Linux build contains no visible entry. No Linux screenshot was taken.
+
+NOT EXECUTED (left unchecked; Windows host required):
+- Real UAC prompt/approval and cancellation (ERROR_CANCELLED 1223) in the GUI.
+- Real netsh delete/add, resulting rule properties, and profile switching
+  (Public-only vs Domain/Private).
+- Released v0.3.4 Android Client connecting and playing through the repaired
+  rules.
+- Windows Sound dialog launch and confirmation that the GUI stays responsive.
+- Windows visual/localization check of the new rows and error messages.
+
+Why `ready-for-human`: the code is implemented and compile/test validated, but
+the ticket's acceptance ("Android Client 可连接", UAC cancellation UX, Sound
+Panel on Windows) requires the manual Windows steps above.
