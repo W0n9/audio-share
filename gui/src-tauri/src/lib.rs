@@ -6,6 +6,7 @@
 
 pub mod autostart;
 pub mod controller;
+pub mod help;
 pub mod i18n;
 pub mod model;
 pub mod options;
