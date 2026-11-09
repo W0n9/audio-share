@@ -4,8 +4,6 @@
 //! writable executable directory, then `$XDG_CONFIG_HOME/audio-share-server/`.
 //! `server.log` always lives in the directory holding the resolved config file.
 
-use std::fs;
-
 use audio_share_core::paths::{paths, resolve_paths};
 
 fn tempdir() -> tempfile::TempDir {
@@ -66,6 +64,7 @@ fn xdg_defaults_to_the_audio_share_server_directory() {
 #[cfg(unix)]
 #[test]
 fn read_only_executable_directory_falls_back_to_xdg() {
+    use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
     let exe_dir = tempdir();
