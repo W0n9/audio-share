@@ -222,7 +222,9 @@ Screenshots (all taken in this environment):
 - Right-click the tray icon on a real GNOME (with AppIndicator extension),
   KDE, or XFCE desktop and use Show/Start/Stop/Exit. Xvfb can only prove the
   exported menu and its handlers, not the panel interaction.
-- Real audio hardware, suspend/resume, hotplug, and the 8-hour soak remain in
-  ticket 15 (`ab-linux.md`, `capture-linux.md`).
+- Ticket 15 executed the scripted Wire Protocol matrix and a 12-minute release
+  soak; real audio hardware, suspend/resume, hardware hotplug, real tray panel
+  interaction, and the 8-hour soak remain (`acceptance-matrix.md`, `soak.md`,
+  `hotplug-sleep.md`, `gui-acceptance-checklist.md`).
 - Wayland sessions were not exercised; the headless runs used
   `GDK_BACKEND=x11` under Xvfb.
