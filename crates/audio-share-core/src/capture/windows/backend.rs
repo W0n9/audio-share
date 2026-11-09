@@ -22,7 +22,7 @@ use windows::Win32::Media::Audio::{
 };
 
 use super::format::{
-    advertised_format, requested_format, select_negotiated, FormatSpec, SampleSubtype,
+    advertised_format, requested_format, select_negotiated, silence_fill, FormatSpec, SampleSubtype,
 };
 use crate::capture::{
     CaptureBackend, CaptureConfig, CaptureSession, Endpoint, FrameSink, StopSignal,
@@ -396,11 +396,12 @@ fn capture_loop(session: &mut LoopbackSession, sink: &FrameSink, stop: &StopSign
                 // A packet never exceeds GetBufferSize(), but stay defensive.
                 session.buffer.resize(want, 0);
             }
-            // `read_from_device` performs GetBuffer/ReleaseBuffer and zero-fills
-            // silent packets. `data_discontinuity` means frames were lost before
-            // this packet; the packet itself is still valid and the frozen Wire
-            // Protocol has no counter for it, so forward it unchanged.
-            let (got, _info) = session
+            // `read_from_device` performs GetBuffer/ReleaseBuffer, zero-fills
+            // silent packets, and reports the packet flags. `data_discontinuity`
+            // means frames were lost before this packet; the packet itself is
+            // still valid and the frozen Wire Protocol has no counter for it, so
+            // forward it unchanged.
+            let (got, info) = session
                 .capture
                 .read_from_device(&mut session.buffer[..want])
                 .map_err(|error| capture_error("IAudioCaptureClient::GetBuffer failed", error))?;
@@ -409,6 +410,12 @@ fn capture_loop(session: &mut LoopbackSession, sink: &FrameSink, stop: &StopSign
                 .ok_or_else(|| Error::Capture("captured frame count overflowed".to_owned()))?;
             if bytes == 0 {
                 continue;
+            }
+            if info.flags.silent {
+                if let Some(encoding) = session.format.encoding_kind() {
+                    // 8-bit PCM is unsigned; fix up the crate's zero fill.
+                    session.buffer[..bytes].fill(silence_fill(encoding));
+                }
             }
             // The Server's broadcast task always drains this bounded channel.
             // A send error means the receiver is gone, i.e. the Server is
