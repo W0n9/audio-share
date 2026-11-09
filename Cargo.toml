@@ -4,6 +4,7 @@ members = [
     "crates/audio-share-core",
     "crates/as-cmd",
     "tools/protocol-harness",
+    "tools/wasapi-spike",
 ]
 
 [workspace.package]

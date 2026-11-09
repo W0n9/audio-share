@@ -85,3 +85,19 @@ Residual caveats:
   encoding tests.
 - Recorded PCM is a live snapshot; re-recording changes PCM bytes but not the
   manifest structure or framing.
+
+### Merge verification
+
+Merged to `integration/server-rewrite` in merge commit `4c291d2` (no
+conflicts). Merge-gate checks rerun on the integration branch:
+
+```
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace                         # 31 passed
+cargo run -p protocol-harness -- replay --fixture fixtures/protocol/v0.3.4/linux/f32-48k-stereo
+cargo check --workspace --all-targets --target x86_64-pc-windows-msvc
+```
+
+All exited 0. The fixture replay reported `replay: ok (offline)`, PCM float,
+2 channels, 48 kHz, 32 datagrams / 44,480 bytes, MTU payload 1464.
