@@ -90,3 +90,54 @@ behavior difference, not a protocol change.
   F32/stereo/48 kHz as the pinned old run.
 - Latency/jitter/drift over long runs and CPU under load were not re-measured
   here; the ticket-03 spike covers short-run CPU and callback spacing.
+
+## Ticket 15 extension: A/B across encodings (2026-11-09)
+
+After ticket 07 added the CLI format flags, the same headless null sink/tone
+setup was re-run for every encoding the old binary supports. This supersedes
+the "flags not exposed" caveat above; the F32 measurements are unchanged.
+
+Exact command:
+
+```bash
+scripts/acceptance-matrix.sh --skip-build --out /tmp/t15-matrix-release \
+  --ab-old /home/w0n9/workspaces/audio-share-notes/server-rewrite/bin/as-cmd-0.3.4-linux
+```
+
+The script starts each server with
+`--bind=127.0.0.1:$port -e $PW_TEST_ENDPOINT_SERIAL --encoding=<enc>
+--channels=2 --sample-rate=48000` (the old binary needs the `--bind=` form; its
+cxxopts `-b value` quirk ignores a space-separated value) and records 2 s of
+440 Hz tone with `protocol-harness probe`. The old binary ignores SIGINT, so
+the harness tears it down with SIGTERM after the probe; the new server exits 0
+on SIGINT. That difference is outside the Wire Protocol.
+
+| Encoding | Server | GET_FORMAT response hex | block_align | datagrams | PCM bytes | max datagram | full/partial | tone detected / amplitude |
+|---|---|---|---|---|---|---|---|---|
+| f32 | old | `0100000008000000080110021880f702` | 8 | 564 | 770048 | 1464 | 517/47 | 440.0 Hz / 0.2500 |
+| f32 | new | `0100000008000000080110021880f702` | 8 | 564 | 770048 | 1464 | 517/47 | 440.0 Hz / 0.2499 |
+| s8 | old | — (server exits 1) | — | 0 | 0 | — | — | not-supported |
+| s8 | new | `0100000008000000080210021880f702` | 2 | 141 | 192512 | 1464 | 94/47 | 440.0 Hz / 0.2501 |
+| s16 | old | `0100000008000000080310021880f702` | 4 | 282 | 385024 | 1464 | 235/47 | 440.0 Hz / 0.2500 |
+| s16 | new | `0100000008000000080310021880f702` | 4 | 282 | 385024 | 1464 | 235/47 | 440.0 Hz / 0.2500 |
+| s24 | old | `0100000008000000080410021880f702` | 6 | 423 | 577536 | 1464 | 376/47 | 440.0 Hz / 0.2499 |
+| s24 | new | `0100000008000000080410021880f702` | 6 | 414 | 565248 | 1464 | 368/46 | 440.0 Hz / 0.2500 |
+| s32 | old | `0100000008000000080510021880f702` | 8 | 564 | 770048 | 1464 | 517/47 | 440.0 Hz / 0.2500 |
+| s32 | new | `0100000008000000080510021880f702` | 8 | 563 | 770048 | 1464 | 517/46 | 440.0 Hz / 0.2446 |
+
+Observations:
+
+- Format bytes are identical for every encoding both servers support, and the
+  1464-byte MTU segmentation and block alignment match.
+- Datagram counts and PCM lengths are equal for f32/s16 and nearly equal for
+  s24/s32; the difference comes from capture scheduling, not protocol framing.
+  This is **not** a byte-identical PCM comparison and none is claimed.
+- The dominant tone is 440 Hz on both servers; amplitudes match within the
+  measurement noise of a short capture.
+- s8 is the one intentional behavioral difference: the old Linux binary
+  negotiates `SPA_AUDIO_FORMAT_U8` and exits 1 in its unsupported branch; the
+  new server maps U8 to `ENCODING_PCM_8BIT` and streams it.
+- The new server's full matrix (20 encoding/channel/rate combinations) is in
+  `docs/server-rewrite/acceptance-matrix.md`; the old binary was only run in
+  this 48 kHz stereo A/B subset because that is the format family ticket 06
+  established for the old baseline.
