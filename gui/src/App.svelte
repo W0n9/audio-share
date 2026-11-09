@@ -1,14 +1,22 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { UnlistenFn } from "@tauri-apps/api/event";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { server } from "./lib/store.svelte";
-  import { onServerStateChanged, onSecondInstance, type ServerState } from "./lib/ipc";
+  import {
+    onSecondInstance,
+    onServerStateChanged,
+    onUpdateAvailable,
+    type Notice,
+    type ServerState,
+  } from "./lib/ipc";
   import { t } from "./lib/i18n.svelte";
   import ServerView from "./views/ServerView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
 
   let unlistenState: UnlistenFn | undefined;
   let unlistenSecond: UnlistenFn | undefined;
+  let unlistenUpdate: UnlistenFn | undefined;
   let disposed = false;
 
   onMount(() => {
@@ -30,10 +38,18 @@
       else unlistenSecond = unlisten;
     });
 
+    void onUpdateAvailable((update) => {
+      server.applyUpdateResult(update);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenUpdate = unlisten;
+    });
+
     return () => {
       disposed = true;
       unlistenState?.();
       unlistenSecond?.();
+      unlistenUpdate?.();
     };
   });
 
@@ -52,6 +68,19 @@
 
   function toggleView(): void {
     server.view = server.view === "main" ? "settings" : "main";
+  }
+
+  function noticeText(notice: Notice): string {
+    return t(`notice.${notice.code}`, notice.params);
+  }
+
+  async function openReleasePage(): Promise<void> {
+    if (server.update?.status !== "newer") return;
+    try {
+      await openUrl(server.update.url);
+    } catch (error) {
+      server.error = String(error);
+    }
   }
 </script>
 
@@ -77,9 +106,22 @@
     <div class="banner" role="status">
       <div class="banner-title">{t("config.warningTitle")}</div>
       {#each server.notices as notice, index (index)}
-        <p class="banner-message">{notice}</p>
+        <p class="banner-message">{noticeText(notice)}</p>
       {/each}
       <button class="link" onclick={() => server.dismissNotices()}>
+        {t("action.dismiss")}
+      </button>
+    </div>
+  {/if}
+
+  {#if server.update?.status === "newer" && !server.updateDismissed}
+    <div class="banner update-banner" role="status">
+      <div class="banner-title">{t("update.bannerTitle")}</div>
+      <p class="banner-message">
+        {t("update.bannerMessage", { version: server.update.version })}
+      </p>
+      <button class="link" onclick={openReleasePage}>{t("update.openRelease")}</button>
+      <button class="link muted" onclick={() => server.dismissUpdate()}>
         {t("action.dismiss")}
       </button>
     </div>
