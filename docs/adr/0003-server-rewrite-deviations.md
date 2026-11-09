@@ -11,8 +11,8 @@ v0.3.4 behaviors are unsafe, platform-dependent, or incompatible with packaged
 Linux installs. This ADR records every intentional observable deviation so
 future maintenance does not treat them as regressions.
 
-The deviations below affect Server CLI/GUI behavior or file locations. None
-changes the Wire Protocol; the compatibility contract remains
+The deviations below affect Server `as-cmd`/GUI behavior or file locations.
+None changes the Wire Protocol; the compatibility contract remains
 [`docs/protocol.md`](../protocol.md) and the v0.3.4 Android Client.
 
 ## Decisions
@@ -43,7 +43,7 @@ binary will not find one. The override variable is new.
 ### 2. `as-cmd` writes `server.log`
 
 v0.3.4 `as-cmd` logged to stdout only; only the GUI wrote `server.log`.
-Ticket 07 and the spec require the CLI to keep a log file for troubleshooting.
+Ticket 07 and the spec require `as-cmd` to keep a log file for troubleshooting.
 
 0.4.0 `as-cmd` writes the same lines to stdout and to `server.log` in the
 resolved config directory. The file is truncated on each server launch, is
@@ -52,8 +52,8 @@ default level is `info` (`-V` raises it to `trace`). Fatal errors are written
 to the file as well.
 
 Consequences: running `as-cmd -b` from a writable directory now creates or
-truncates `server.log`; the old CLI created no file. A failure to open the log
-file is a warning, not a startup failure.
+truncates `server.log`; the old `as-cmd` created no file. A failure to open the
+log file is a warning, not a startup failure.
 
 ### 3. New-install close-to-tray default
 
@@ -92,21 +92,22 @@ Consequences: an old script that accidentally relied on the ignored value now
 binds the address it named. No supported v0.3.4 usage depended on the quirk;
 the documented `=` form and bare form behave identically.
 
-### 6. Default host follows RFC 1918
+### 6. Default host keeps v0.3.4's loose private-network mask
 
-v0.3.4 selected a "private" address by comparing an address with a mask that
-was reused as the network value. It matched `10.x.x.x`, only `172.16.x.x` of
-the `172.16.0.0/12` range, and also `192.169.x.x` through `192.175.x.x`.
+v0.3.4 selected a default address by comparing it with masks
+`0x0a000000`, `0xac100000`, and `0xc0a80000` using
+`(address & mask) == mask`. That comparison is looser than RFC 1918: besides
+`10/8`, `172.16/12`, and `192.168/16`, it can match addresses such as
+`11.x`, `173.16`–`173.31`, and `192.169`–`192.175`.
 
-0.4.0 uses `Ipv4Addr::is_private()`: `10.0.0.0/8`, `172.16.0.0/12`, and
-`192.168.0.0/16`, in interface enumeration order, otherwise the first
-non-loopback IPv4 address. This fixes both the missed `172.17`–`172.31`
-addresses and the false positives above `192.168`.
+0.4.0 keeps the exact comparison (loopback is still filtered before selection,
+as before), so the default Host shown by the GUI or used by a bare
+`as-cmd -b` is byte-for-byte the v0.3.4 choice on every network. Address
+enumeration order is the only remaining source of variation.
 
-Consequences: on networks with a `172.17`–`172.31` address or a
-`192.169`–`192.175` address, the default Host shown by the GUI or used by a
-bare `as-cmd -b` can differ from v0.3.4. The selected address is displayed and
-can be overridden.
+Consequences: there is no change from v0.3.4 here. The previous rewrite
+candidate used `Ipv4Addr::is_private()`; that was reverted because ticket 07
+and user story 45 require the default address selection to stay consistent.
 
 ### 7. Capture format is known before the server binds
 
@@ -126,6 +127,20 @@ Consequences: the frozen client sees a valid `AudioFormat` on its first
 example an unknown endpoint) now fails to start; `as-cmd` exits 1 and the GUI
 shows the error. This is a deliberate safety improvement, not a protocol
 change.
+
+### 8. Known limitation: no automatic capture recovery
+
+If the selected Endpoint disappears (device unplug, sink change) or the machine
+sleeps and resumes, the capture session ends. The Server process stays alive
+in the Running state with its previously negotiated, immutable `AudioFormat`;
+`GET_FORMAT` and UDP binding keep working but no PCM is sent. There is no
+supervisor that restarts capture.
+
+The supported recovery is an operator Stop then Start in the Server GUI (or a
+restart of `as-cmd`). Automatic same-format recovery and session-closing on a
+changed format are follow-up work; this ADR does not claim them. Sleep/resume
+behavior on real hardware remains part of the release-gate acceptance work
+(ticket 15).
 
 ## Not deviations from v0.3.4
 

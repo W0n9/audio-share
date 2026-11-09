@@ -48,7 +48,7 @@
   "settings.onCloseExit": "Exit",
   "settings.onCloseTray": "Minimize to tray",
   "settings.autoUpdate": "Auto update check",
-  "settings.autoUpdateHint": "At startup and every 3 hours",
+  "settings.autoUpdateHint": "Every 3 hours (first check after 3 hours)",
   "settings.language": "Language",
   "settings.languageHint": "Interface language",
   "settings.languageDefault": "Default (system)",

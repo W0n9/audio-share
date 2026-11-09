@@ -18,6 +18,7 @@ use audio_share_server_gui::autostart;
 use audio_share_server_gui::controller::ServerController;
 use audio_share_server_gui::help::HelpTopic;
 use audio_share_server_gui::i18n::{self, Locale};
+use audio_share_server_gui::logging;
 use audio_share_server_gui::model::{
     bootstrap, notice_messages, tray_enabled, ApplicationSettings, Bootstrap, Notice, ServerState,
     ServerStatus, Settings,
@@ -33,9 +34,6 @@ use tauri::{
 };
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
-
-/// Automatic update-check interval (3 hours, per v0.3.4).
-const UPDATE_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
 
 /// State managed by Tauri and reached from commands and tray callbacks.
 struct AppState {
@@ -114,13 +112,8 @@ fn capture_backend(options: &GuiOptions) -> Result<Arc<dyn CaptureBackend>, Stri
 /// waiting on audio discovery.
 fn load_startup(
     options: GuiOptions,
-) -> (
-    Settings,
-    Vec<Notice>,
-    Option<Vec<Endpoint>>,
-    std::path::PathBuf,
-) {
-    let paths = paths::paths();
+    paths: paths::Paths,
+) -> (Settings, Vec<Notice>, Option<Vec<Endpoint>>) {
     let config_path = paths.config.clone();
     let mut notices = Vec::new();
     let endpoints = match capture_backend(&options) {
@@ -146,11 +139,15 @@ fn load_startup(
     ) {
         Ok(outcome) => {
             notices.extend(notice_messages(&outcome.notices));
-            (outcome.config, notices, endpoints, config_path)
+            (outcome.config, notices, endpoints)
         }
         Err(error) => {
+            logging::error(format!(
+                "cannot load configuration {}: {error}",
+                config_path.display()
+            ));
             notices.push(Notice::new("loadFailed").with("message", error.to_string()));
-            (Settings::default(), notices, endpoints, config_path)
+            (Settings::default(), notices, endpoints)
         }
     }
 }
@@ -187,9 +184,26 @@ fn update_endpoint() -> String {
 /// manual path can show them; the automatic path logs and ignores them.
 async fn run_update_check(app: &AppHandle) -> Result<UpdateCheckResult, String> {
     let url = update_endpoint();
-    let result = tauri::async_runtime::spawn_blocking(move || update::fetch_latest(&url))
-        .await
-        .map_err(|error| format!("update check task failed: {error}"))??;
+    let result =
+        match tauri::async_runtime::spawn_blocking(move || update::fetch_latest(&url)).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => {
+                logging::error(format!("update check failed: {error}"));
+                return Err(error);
+            }
+            Err(error) => {
+                let message = format!("update check task failed: {error}");
+                logging::error(&message);
+                return Err(message);
+            }
+        };
+
+    match &result {
+        UpdateCheckResult::UpToDate => logging::info("update check: up to date"),
+        UpdateCheckResult::Newer { version, .. } => {
+            logging::info(format!("update check: release {version} is available"));
+        }
+    }
 
     let state = app.state::<AppState>();
     *lock(&state.update) = match &result {
@@ -204,29 +218,27 @@ async fn run_update_check(app: &AppHandle) -> Result<UpdateCheckResult, String> 
         if let Err(error) = app.notification().builder().title(title).body(body).show() {
             // A missing notification daemon (headless CI) must not break the
             // check; the in-app banner is the primary UX.
-            eprintln!("AudioShareServer: notification failed: {error}");
+            logging::error(format!("update notification failed: {error}"));
         }
     }
     Ok(result)
 }
 
-/// Check at startup and every 3 hours while `AutoUpdate` is enabled.
+/// Run an automatic update check every 3 hours while `AutoUpdate` is enabled.
 ///
-/// v0.3.4's first automatic check was one full interval after launch; doing it
-/// at startup is an intentional improvement. The loop re-reads the setting so
-/// toggling it takes effect without a restart.
+/// v0.3.4 parity: the first automatic check happens one full interval after
+/// launch; there is no automatic startup check. Manual checks are separate.
+/// The setting is re-read on every tick, so toggling it takes effect without a
+/// restart.
 fn spawn_update_loop(app: &tauri::App) {
     let handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
         loop {
+            tokio::time::sleep(update::AUTOMATIC_CHECK_INTERVAL).await;
             let enabled = handle.state::<AppState>().controller.settings().auto_update;
-            if enabled {
-                if let Err(error) = run_update_check(&handle).await {
-                    eprintln!("AudioShareServer: automatic update check failed: {error}");
-                }
-                tokio::time::sleep(UPDATE_INTERVAL).await;
-            } else {
-                tokio::time::sleep(Duration::from_secs(30)).await;
+            if update::should_run_automatic_check(enabled) {
+                // run_update_check logs its own failure; the loop must survive.
+                let _ = run_update_check(&handle).await;
             }
         }
     });
@@ -236,6 +248,7 @@ fn spawn_update_loop(app: &tauri::App) {
 fn reconcile_autostart(app: &tauri::App) {
     let enabled = app.state::<AppState>().controller.settings().autostart;
     if let Err(error) = autostart::configure(enabled) {
+        logging::error(format!("autostart reconciliation failed: {error}"));
         let state = app.state::<AppState>();
         lock(&state.notices).push(Notice::new("autostartFailed").with("message", error));
     }
@@ -250,7 +263,7 @@ fn apply_startup_behavior(app: &tauri::App) {
     let handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
         if let Err(error) = start_with_app(&handle).await {
-            eprintln!("AudioShareServer: startup server start failed: {error}");
+            logging::error(format!("startup server start failed: {error}"));
         }
     });
 }
@@ -290,7 +303,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(error) = start_with_app(&app).await {
-                        eprintln!("AudioShareServer: tray start failed: {error}");
+                        logging::error(format!("tray start failed: {error}"));
                     }
                 });
             }
@@ -298,7 +311,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(error) = stop_with_app(&app).await {
-                        eprintln!("AudioShareServer: tray stop failed: {error}");
+                        logging::error(format!("tray stop failed: {error}"));
                     }
                 });
             }
@@ -402,11 +415,6 @@ async fn get_bootstrap(state: State<'_, AppState>) -> Result<Bootstrap, String> 
         update,
         state.locale,
     ))
-}
-
-#[tauri::command]
-async fn get_status(state: State<'_, AppState>) -> Result<ServerStatus, String> {
-    Ok(state.controller.status())
 }
 
 #[tauri::command]
@@ -549,26 +557,35 @@ async fn hide_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn exit_app(app: AppHandle) -> Result<(), String> {
-    let controller = {
-        let state = app.state::<AppState>();
-        Arc::clone(&state.controller)
-    };
     // Best effort: close client sessions before the process exits. Bounded so
     // a wedged capture backend cannot trap the user in a closing app.
-    if controller.status().state == ServerState::Running {
-        let _ = tokio::time::timeout(Duration::from_secs(3), controller.stop()).await;
-    }
+    stop_core_if_running(&app, Duration::from_secs(3)).await;
     app.exit(0);
     Ok(())
 }
 
 fn main() {
+    // Install the log file before any startup work so early failures are
+    // recorded. v0.3.4's GUI created `server.log` next to `config.ini` and
+    // truncated it at launch; the rewrite keeps that behavior.
+    let resolved_paths = paths::paths();
+    logging::init(&resolved_paths.log);
+    logging::info(format!(
+        "Audio Share Server {} starting",
+        env!("CARGO_PKG_VERSION")
+    ));
+    logging::info(format!(
+        "configuration file: {}",
+        resolved_paths.config.display()
+    ));
+
     // Windows: resolve WebView2 before any startup work. Tauri would otherwise
     // fail late (and, in a release build, panic after its own error dialog).
     // The prompt lets the user open the download page; a missing runtime is an
     // expected condition, not a crash, so exit cleanly.
     #[cfg(windows)]
     if !audio_share_server_gui::webview2_check::preflight() {
+        logging::error("Microsoft Edge WebView2 Runtime is not available; exiting");
         std::process::exit(0);
     }
 
@@ -576,17 +593,25 @@ fn main() {
 
     // Settings load and endpoint enumeration run before the Tauri UI exists;
     // the dedicated thread keeps audio discovery off the main/UI thread.
-    let (settings, startup_notices, endpoints, config_path) =
-        std::thread::spawn(move || load_startup(options))
+    let config_path = resolved_paths.config.clone();
+    let (settings, startup_notices, endpoints) =
+        std::thread::spawn(move || load_startup(options, resolved_paths))
             .join()
             .unwrap_or_else(|_| {
+                logging::error("startup task panicked; using default settings");
                 (
                     Settings::default(),
                     vec![Notice::new("startupFailed")],
                     None,
-                    paths::paths().config,
                 )
             });
+
+    for notice in &startup_notices {
+        logging::info(format!(
+            "configuration notice: {} {:?}",
+            notice.code, notice.params
+        ));
+    }
 
     // The language is read once before the tray exists; changing it in the UI
     // persists the setting and takes effect on the next launch.
@@ -619,7 +644,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_bootstrap,
-            get_status,
             get_settings,
             save_settings,
             save_application_settings,

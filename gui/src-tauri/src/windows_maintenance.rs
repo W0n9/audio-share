@@ -213,7 +213,8 @@ pub fn repair_firewall_blocking() -> Result<(), MaintenanceError> {
 
 /// Open `control.exe /name Microsoft.Sound`.
 ///
-/// The child is not waited for: the v0.3.4 MFC GUI blocked its UI until the
+/// The child is not waited for: the v0.3.4 legacy Windows GUI blocked its UI
+/// until the
 /// control panel closed, which this intentionally fixes.
 pub fn open_sound_panel() -> Result<(), MaintenanceError> {
     std::process::Command::new("control.exe")
