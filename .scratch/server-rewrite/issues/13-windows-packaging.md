@@ -67,3 +67,28 @@ Residual Windows verification (not executed here):
 4. SHA-256 of the real CI artifacts and executing the packaged `as-cmd.exe`
    (`--version`, `-l`, `--list-encoding`).
 
+2026-11-09 — CI verification (branch `integration/server-rewrite` @ `6f1f429`).
+
+GitHub Actions run
+[42638565632](https://github.com/W0n9/audio-share/actions/runs/42638565632)
+is green for all four jobs, including `Rust (windows-latest)` (fmt, clippy,
+`cargo test --workspace`) and `Windows portable packaging`.
+
+Downloaded and verified on the Linux host:
+
+- `AudioShareServer-windows`: `AudioShareServer.exe` 11,918,848 B; `file`
+  reports `PE32+ executable (GUI) x86-64, for MS Windows`; `sha256sum -c`
+  passes (`27a57a65…75e2b`).
+- `audio-share-server-cmd-windows`: zip 686,080 B; `sha256sum -c` passes
+  (`eb745b78…ea60`); contains
+  `audio-share-server-cmd/{as-cmd.exe,LICENSE,README.md}`.
+
+Residual item 4 is partly closed: the artifact SHA-256 is verified. Executing
+`as-cmd.exe` (`--version`, `-l`, `--list-encoding`) still requires Windows.
+
+The first push exposed pre-existing CI defects, fixed in `95521b7`, `e3c584e`,
+and `6f1f429`: the Ubuntu `rust` job lacked Tauri/WebKitGTK build dependencies;
+the synthetic-capture stop test assumed an empty frame channel right after
+`stop()`; the listener-release test assumed an immediate connect refusal on an
+ephemeral port. Runtime boxes remain open; `Status` stays `ready-for-human`.
+
