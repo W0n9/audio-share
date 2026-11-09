@@ -2,7 +2,7 @@
 
 Status: **packaging code, CI, and documentation implemented on the Linux
 development host.** The Windows exe was **not built or executed** here: there
-is no MSVC linker or Windows runtime. `cargo check`/`clippy` for
+is no Windows linker or Windows runtime. `cargo check`/`clippy` for
 `x86_64-pc-windows-msvc` pass, the WebView2 decision logic is unit-tested on
 Linux, and the artifact packaging script is self-tested on Linux. Real Windows
 acceptance is tracked in the checklist below.
@@ -38,12 +38,13 @@ only affects MSI/NSIS bundles. It does nothing for the portable exe.
 ## Prerequisites
 
 - Windows 10 or 11, x64.
-- Rust stable with the MSVC toolchain
+- Rust stable with the default Rust Windows target
   (`rustup default stable-x86_64-pc-windows-msvc`).
 - Visual Studio 2022 Build Tools with the **Desktop development with C++**
-  workload (MSVC linker and Windows SDK). The GNU target is not supported:
-  `webview2-com-sys` statically links `WebView2LoaderStatic.lib` only for MSVC;
-  GNU builds would require `WebView2Loader.dll` next to the exe.
+  workload (the linker and Windows SDK used by the default Rust Windows
+  target). The GNU target is not supported: `webview2-com-sys` statically
+  links `WebView2LoaderStatic.lib` only for the default target; GNU builds
+  would require `WebView2Loader.dll` next to the exe.
 - Node.js 22 and npm.
 - Microsoft Edge WebView2 Runtime (Evergreen). Windows 11 includes it; most
   Windows 10 machines have it, but it is not guaranteed.
@@ -137,7 +138,7 @@ with the runtime present and absent (see checklist).
 `integration/server-rewrite` and `ticket/**`, on pull requests touching
 `gui/**`, `crates/**`, `scripts/**`, the workflow, and on manual dispatch:
 
-1. Rust stable MSVC, Node 22, npm cache, Rust target cache.
+1. Rust stable (Windows target), Node 22, npm cache, Rust target cache.
 2. `npm ci`, `npm run build`, `npx tauri build --no-bundle`.
 3. `cargo build --release -p as-cmd`.
 4. Asserts `<workspace>/target/release/AudioShareServer.exe` and
@@ -149,7 +150,8 @@ with the runtime present and absent (see checklist).
    - `audio-share-server-cmd-windows`: the zip + `.sha256`
 
 The parallel `Rust (windows-latest)` job keeps running fmt, clippy, and the
-workspace tests (including the WebView2 decision tests) on a native MSVC host.
+workspace tests (including the WebView2 decision tests) on a native Windows
+host.
 
 ## Manual acceptance checklist (Windows 10 and Windows 11)
 
@@ -215,7 +217,7 @@ results.
 - Not built or executed on Windows from this Linux host; `cargo
   check/clippy --target x86_64-pc-windows-msvc` only type-checks the code (the
   two `GNU compiler is not supported for this target` warnings come from
-  `tauri-build` resource embedding and disappear in a native MSVC build).
+  `tauri-build` resource embedding and disappear in a native Windows build).
 - No code signing: SmartScreen may warn on first run; this matches v0.3.4 and
   the 0.4.0 scope.
 - No installer and no Tauri updater: users replace the portable exe manually.
