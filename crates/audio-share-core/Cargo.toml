@@ -7,4 +7,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+if-addrs = "0.13"
 prost.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
