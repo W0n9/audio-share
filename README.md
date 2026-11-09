@@ -1,259 +1,229 @@
 # Audio Share
+
 <p align="center">
-    <img src="metadata/en-US/images/icon.png" width="20%" alt="metadata/en-US/images/icon.png">
+    <img src="metadata/en-US/images/icon.png" width="20%" alt="Audio Share icon">
 </p>
 
 [![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/mkckr0/audio-share?logo=github)](https://github.com/mkckr0/audio-share/releases/latest)
 [![F-Droid](https://img.shields.io/f-droid/v/io.github.mkckr0.audio_share_app?logo=F-Droid)](https://f-droid.org/packages/io.github.mkckr0.audio_share_app)
-[![GitHub license](https://img.shields.io/github/license/mkckr0/audio-share)](https://img.shields.io/github/license/mkckr0/audio-share)
-[![GitHub Release Date](https://img.shields.io/github/release-date/mkckr0/audio-share)](https://img.shields.io/github/release-date/mkckr0/audio-share)
-[![GitHub last commit](https://img.shields.io/github/last-commit/mkckr0/audio-share)](https://img.shields.io/github/last-commit/mkckr0/audio-share)
-[![GitHub contributors](https://img.shields.io/github/contributors/mkckr0/audio-share)](https://img.shields.io/github/contributors/mkckr0/audio-share)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/y/mkckr0/audio-share)](https://img.shields.io/github/commit-activity/y/mkckr0/audio-share)
-[![GitHub Repo stars](https://img.shields.io/github/stars/mkckr0/audio-share?style=flat)](https://img.shields.io/github/stars/mkckr0/audio-share)
-[![GitHub forks](https://img.shields.io/github/forks/mkckr0/audio-share?style=flat)](https://img.shields.io/github/forks/mkckr0/audio-share)
-[![GitHub watchers](https://img.shields.io/github/watchers/mkckr0/audio-share?style=flat)](https://img.shields.io/github/watchers/mkckr0/audio-share)
-[![GitHub language count](https://img.shields.io/github/languages/count/mkckr0/audio-share)](https://img.shields.io/github/languages/count/mkckr0/audio-share)
-[![GitHub top language](https://img.shields.io/github/languages/top/mkckr0/audio-share)](https://img.shields.io/github/languages/top/mkckr0/audio-share)
-[![GitHub repo size](https://img.shields.io/github/repo-size/mkckr0/audio-share)](https://img.shields.io/github/repo-size/mkckr0/audio-share)
-[![GitHub all releases](https://img.shields.io/github/downloads/mkckr0/audio-share/total?logo=github)](https://img.shields.io/github/downloads/mkckr0/audio-share/total)
-[![Download Audio Share](https://img.shields.io/sourceforge/dt/audio-share.svg?logo=sourceforge)](https://sourceforge.net/projects/audio-share/files)
-[![GitHub issues](https://img.shields.io/github/issues/mkckr0/audio-share)](https://img.shields.io/github/issues/mkckr0/audio-share)
-[![GitHub closed issues](https://img.shields.io/github/issues-closed/mkckr0/audio-share)](https://img.shields.io/github/issues-closed/mkckr0/audio-share)
-[![GitHub pull requests](https://img.shields.io/github/issues-pr/mkckr0/audio-share)](https://img.shields.io/github/issues-pr/mkckr0/audio-share)
-[![GitHub closed pull requests](https://img.shields.io/github/issues-pr-closed/mkckr0/audio-share)](https://img.shields.io/github/issues-pr-closed/mkckr0/audio-share)
-[![Release](https://github.com/mkckr0/audio-share/actions/workflows/release.yml/badge.svg)](https://github.com/mkckr0/audio-share/actions/workflows/release.yml)
-[![GitHub number of milestones](https://img.shields.io/github/milestones/open/mkckr0/audio-share)](https://github.com/mkckr0/audio-share/milestones?state=open)
-[![GitHub milestone details](https://img.shields.io/github/milestones/progress-percent/mkckr0/audio-share/3)](https://github.com/mkckr0/audio-share/milestone/3)
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fmkckr0%2Faudio-share.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fmkckr0%2Faudio-share?ref=badge_shield)
+[![GitHub license](https://img.shields.io/github/license/mkckr0/audio-share)](https://github.com/mkckr0/audio-share/blob/main/LICENSE)
 
-<a href="https://github.com/mkckr0/audio-share/releases/latest"><img src="https://raw.githubusercontent.com/Ehviewer-Overhauled/Art/master/get-it-on-github.svg" height="75"></a>
-<a href="https://f-droid.org/packages/io.github.mkckr0.audio_share_app"><img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" height="75"></a>
+Audio Share shares a computer's audio with an Android phone over the network,
+so the phone becomes a speaker for the computer.
 
-<a href="https://sourceforge.net/projects/audio-share/files"><img alt="Download Audio Share" src="https://a.fsdn.com/con/app/sf-download-button?button_size=2x" width=276 height=48></a>
+Version 0.4.0 replaces the Server with a Rust implementation: a shared
+`audio-share-core` crate, a Tauri v2 Server GUI for Windows and Linux, and the
+headless `as-cmd` CLI. The Wire Protocol is frozen at upstream v0.3.4; the
+released **Android Client remains v0.3.4** and works without an update.
 
-Audio Share can share Windows/Linux computer's audio to Android phone over network, so your phone becomes the speaker of computer. (You needn't buy a new speaker😄.)
+<p>
+<img src="docs/server-rewrite/img/ticket08-main.png" width="45%" alt="Server GUI">
+<img src="metadata/en-US/images/phoneScreenshots/1.png" width="30%" alt="Android Client">
+</p>
 
+## Download
 
-## Screenshots
+Release artifacts (each with a `sha256sum`-format `.sha256` sidecar):
 
-<img src="docs/img/win_01.png" width="45%" alt="docs/img/win_01.png">&nbsp;
-<img src="docs/img/win_02.png" width="45%" alt="docs/img/win_02.png">
+| Platform | Artifact | Notes |
+|---|---|---|
+| Windows | `AudioShareServer.exe` | Portable Server GUI. Windows 10+ x86_64; requires the Microsoft Edge WebView2 Runtime (Windows 11 includes it). |
+| Windows | `audio-share-server-cmd-windows.zip` | Headless `as-cmd.exe` inside a top-level `audio-share-server-cmd/` directory. |
+| Linux | `AudioShareServer_<version>_amd64.deb` | Server GUI for Ubuntu 24.04+; installs `/usr/bin/AudioShareServer`. |
+| Linux | `AudioShareServer_<version>_amd64.AppImage` | Self-contained Server GUI image; requires FUSE 2 to run directly. |
+| Linux | `audio-share-server-cmd-linux.tar.gz` | Headless `as-cmd` inside a top-level `audio-share-server-cmd/` directory. |
+| Android | v0.3.4 APK (unchanged) | No new APK is built or attached for 0.4.0. Use the v0.3.4 release or F-Droid. |
 
-<img src="metadata/en-US/images/phoneScreenshots/1.png" width="30%" alt="metadata/en-US/images/phoneScreenshots/1.png">&nbsp;
-<img src="metadata/en-US/images/phoneScreenshots/2.png" width="30%" alt="metadata/en-US/images/phoneScreenshots/2.png">&nbsp;
-<img src="metadata/en-US/images/phoneScreenshots/3.png" width="30%" alt="metadata/en-US/images/phoneScreenshots/3.png"><br/>
-<img src="metadata/en-US/images/phoneScreenshots/4.png" width="30%" alt="metadata/en-US/images/phoneScreenshots/4.png">&nbsp;
-<img src="metadata/en-US/images/phoneScreenshots/5.png" width="30%" alt="metadata/en-US/images/phoneScreenshots/5.png">
+Linux packages depend on WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`), GTK 3, the
+StatusNotifier appindicator (`libayatana-appindicator3-1`), and PipeWire
+(`libpipewire-0.3-0`). The deb declares these dependencies. A running PipeWire
+session with a session manager (WirePlumber) is required for audio capture; the
+desktop session must provide it.
 
+## Server GUI
 
-## Requirements
-- A PC with Windows or Linux as the server.
-    - Windows 10+ x86_64 with latest [Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) ([vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)).
-    - Linux with PipeWire.
-- The audio player on PC can work normally. That's to say that you should have a sound card and the audio endpoint is in available state. Otherwise, you need some [extra setups](#extra-setups-for-no-audio-endpoint).
-- The phone with Android 6.0(API 23)+.
-- The network (e.g. Wi-Fi or USB tethering) that the phone can connect with the PC.
+1. Start `AudioShareServer` (`AudioShareServer.exe` on Windows).
+2. Check the Host and Port (default port `65530`). Host defaults to the first
+   private IPv4 address. Make sure the phone can reach it.
+3. Pick an audio Endpoint and an Encoding, then click **Start Server**.
+4. In the Android Client, enter the same host and port and press play.
 
-## Usage for Windows GUI
-- Download APK file and AudioShareServer.exe from [latest release](https://github.com/mkckr0/audio-share/releases/latest).
-- Open the AudioShareServer.exe on your computer. The default arguments may work well. But you may still have to check the "Host" part. It's normally the LAN address, such as `192.168.xxx.xxx`. Make sure your phone can connect your computer over this IP address. Then Click "Start Server" button.
-- Install APK to your phone and open it. Modify the "Host" part to make sure it's same as the value of previous step, such as `192.168.xxx.xxx`. Click "▶" button and enjoy the audio🎶.
+The window is tray-first: Show, Start/Stop, and Exit are available from the
+tray menu. Settings include autostart, launch behavior, close behavior,
+language (en-US / zh-CN), update checks, and (on Windows) Firewall Repair and
+the system Sound Panel. Linux replaces the Windows-only maintenance actions
+with documentation links; the tray menu is right-click only because Tauri does
+not deliver left-click events on Linux.
 
+## `as-cmd`
 
-## Usage for Windows/Linux CMD
-- Download the `audio-share-server-cmd-windows.zip` for Windows, the `audio-share-server-cmd-linux.tar.gz` for Linux.
-- Uncompress the archive file.
-- Just run `as-cmd -b` to start the server. It will use the first LAN address as the host with the port `65530` and select a default audio endpoint. Most of the time, it works fine. If not, then use `as-cmd -h` to see the help, and set the proper arguments.
-- The Windows will ask you to add firewall rules automatically while Linux won't. So if your Linux distribution enables firewall, you need to configure firewall manually.
-- Install APK to your phone and open it. Modify the "Host" part to make sure it's same as the value of previous step, such as `192.168.xxx.xxx`. Click "▶" button and enjoy the audio🎶.
+`as-cmd` is the headless Server, sharing the same capture and protocol core as
+the GUI. Run it from the unpacked CLI archive:
 
-
-## Configure Firewall Rules on Linux
-### Add rules
-```sh
-address=192.168.3.2 # change it.
-port=65530 # change it.
-sudo firewall-cmd --add-rich-rule="rule family=ipv4 destination address=$address port port=$port protocol=tcp accept"
-sudo firewall-cmd --add-rich-rule="rule family=ipv4 destination address=$address port port=$port protocol=udp accept"
-sudo firewall-cmd --runtime-to-permanent
-```
-### Check rules
-```sh
-sudo firewall-cmd --list-rich-rules
-```
-Output:
-```sh
-rule family="ipv4" destination address="192.168.3.2" port port="65530" protocol="tcp" accept
-rule family="ipv4" destination address="192.168.3.2" port port="65530" protocol="udp" accept
-```
-### Remove rules
-```sh
-address=192.168.3.2 # change it.
-port=65530 # change it.
-sudo firewall-cmd --remove-rich-rule="rule family=ipv4 destination address=$address port port=$port protocol=tcp accept"
-sudo firewall-cmd --remove-rich-rule="rule family=ipv4 destination address=$address port port=$port protocol=udp accept"
-sudo firewall-cmd --runtime-to-permanent
+```bash
+as-cmd -b
 ```
 
+A bare `-b` binds the default private address on port `65530` and selects the
+default endpoint. Useful flags:
 
-## About Audio Format
-There are two kinds of audio format:
+| Flag | Meaning |
+|---|---|
+| `-h`, `--help` | Print help, exit 0. |
+| `-v`, `--version` | Print the version, exit 0. |
+| `-l`, `--list-endpoint` | List capture endpoints and mark the default. |
+| `-b`, `--bind [host][:port]` | Start the server. Both `--bind=host:port` and `-b host:port` are accepted; default port `65530`. |
+| `-e`, `--endpoint <id>` | Endpoint id; `default` (the default) selects the backend default. |
+| `--encoding <name>` | `default`, `f32`, `s8`, `s16`, `s24`, `s32`; `default` selects the endpoint format. |
+| `--channels <n>` | Capture channels; `0` (the default) uses the endpoint value. |
+| `--sample-rate <hz>` | Capture sample rate; `0` (the default) uses the endpoint value. |
+| `--list-encoding` | List the supported encodings, exit 0. |
+| `-V`, `--verbose` | Enable trace-level logging. |
 
-- Capture audio format
-- Transfer audio format
+Examples:
 
-The transfer audio format is uncompressed PCM data and keep same with capture audio format.
-
-You can open `server.log` to see the transfer audio format.
-```
-[2024-10-26 14:52:48.967] [info] AudioFormat:
-encoding: ENCODING_PCM_16BIT
-channels: 2
-sample_rate: 44100
-```
-As shown above, the encoding is `16 bit integer PCM`, the channel count is `2`, and sample rate is `44.1kHz`.
-
-On Android, AudioTrack API only support the PCM audio formats listed below:
-```
-ENCODING_PCM_FLOAT
-ENCODING_PCM_8BIT
-ENCODING_PCM_16BIT
-ENCODING_PCM_24BIT_PACKED
-ENCODING_PCM_32BIT
-```
-https://developer.android.com/reference/android/media/AudioFormat#encoding
-
-Audio Share support these 5 kinds of PCM format, but whether specific format is available depends on the audio endpoint.
-
-On Windows, the default capture audio format depends on the audio endpoint's default format. You may change it by setting Sound Panel(`mmsys.cpl`). In Sound Panel's `Playback` tab, right click one available endpoint, and open Properties Panel, and select `Advanced` tab, and change `Default Format` and click `Apply`. This can be also done in `Realtek Audio Console`, if you use a Realtek audio card. The capture audio format must has the same channels and sample rate with the audio endpoint. So if you want to change them, you can only open Sound Panel and set default format. To be compatible with Linux, the `as-cmd` can still set the `--channels` or `--sample-rate` on Windows. However, it will fallback to the proper audio format, because it doesn't support the expected in most cases.
-
-https://learn.microsoft.com/en-us/windows/win32/coreaudio/device-formats
-
-On Linux, the default capture audio format could have been given by PipeWire completely. However, the default audio encoding may be planar, such as `SPA_AUDIO_FORMAT_F32P`. Android's AudioTrack can't play it. So the default audio encoding is forced to `SPA_AUDIO_FORMAT_F32_LE`(32 bit float PCM with little endian). The default channels and sample rate are untouched and given by PipeWire.
-
-Note that decrease the encoding bitwise or sample rate can decrease network bandwidth, but can also increase the blank noise, also known as audio loss.
-
-
-## About Volume
-The final volume that you hear is affected by the following volume:
-
-- PC system volume.
-- Audio player volume on PC.
-- Android system media volume.
-- "Audio Volume" on Android app.
-- "Loudness Enhancer" on Android app.
-
-**They are all independent.** If you max the volume of your PC and audio player, and still feel it's not enough, but don't want to change the Android system volume, you can increase "Loudness Enhancer" on app's Settings. It won't affect the system volume. The "Audio Volume" on app can decrease the volume you hear without changing system volume.
-
-**Too much loudness will hurt your ear!!!** "Loudness Enhancer" has a limit of `3000mB`. It's enough for most cases. If you still need more loudness, just directly change Android system volume.
-
-
-## Extra Setups for "No Audio Endpoint"
-### For Windows
-#### Method 1: Make audio endpoint available when speaker doesn't plug in
-Realtek sound card can make audio endpoint available when speaker doesn't plug in. Just open Realtek Audio Console, select "Device advanced settings" tab, and switch on "Disable front panel front popup dialog" option. Then the audio endpoint will show up. Other sound card may have similar options. If you can't find, then turn to Method 2.
-
-#### Method 2: Install a third-party virtual audio device driver
-At present, I haven't find a way to create virtual audio endpoint. The only way to achieve it is to write a virtual audio device driver. But it need a EV Code Signing Certificate to sign it. Otherwise, user can't install it. I don't want to pay for it. And there are many existed third-party virtual audio device drivers. You can find one or post one that you know at [Virtual Audio Device Driver on Windows](https://github.com/mkckr0/audio-share/discussions/59). Generally, a driver has an INF file. Right click it and click "Install" to install it.
-
-### For Linux
-Thanks to PipeWire, it's very easy for Linux to create a virtual audio endpoint, even without a root privilege. Just copy the below config to `~/.config/pipewire/pipewire.conf.d/audio-share-sink.conf`
-```
-context.objects = [
-    {   factory = adapter
-        args = {
-           factory.name     = support.null-audio-sink
-           node.name        = "Audio Share Sink"
-           media.class      = Audio/Sink
-           object.linger    = true
-           audio.position   = [ FL FR ]
-           priority.session = 1009
-           priority.driver  = 1009
-           monitor.channel-volumes = true
-           monitor.passthrough = true
-        }
-    }
-]
-```
-Then run `systemctl --user restart pipewire` to restart the PipeWire service.  
-Finally, you can see the added endpoint "Audio Share Sink".
-```sh
-[abc@localhost ~]$ as-cmd -l
-[2024-03-17 22:46:14.563] [info] pipewire header_version: 0.3.48, library_version: 0.3.67
-endpoint_list:
-        * id: 30   name: Audio Share Sink
-total: 1
+```bash
+as-cmd -b
+as-cmd --bind=192.168.1.20
+as-cmd --bind=192.168.1.20 --encoding=f32 --channels=2 --sample-rate=48000
+as-cmd -b 192.168.1.20:65080 -e 38 --encoding=s16
 ```
 
+Ctrl-C stops capture and closes the TCP/UDP server gracefully. Errors print to
+stderr with a non-zero exit code. See
+[`docs/server-rewrite/as-cmd.md`](docs/server-rewrite/as-cmd.md) for the full
+flag/dispatch/exit-code contract and intentional differences from v0.3.4.
 
-## Known Issues
+## Configuration and logs
 
-### The quick settings tile can't start playback directly
+The Server GUI reads and writes `config.ini` in this order:
 
-[Restrictions on starting a foreground service from the background](https://developer.android.com/develop/background-work/services/foreground-services#bg-access-restrictions)  
-Turns off or ignore battery optimizations can let it work.
+1. `AUDIO_SHARE_CONFIG` (path of the config file), when set.
+2. `config.ini` next to the executable, when that directory is writable
+   (portable Windows exe and development builds preserve v0.3.4 behavior).
+3. `$XDG_CONFIG_HOME/audio-share-server/config.ini` (default
+   `~/.config/audio-share-server/config.ini`) for read-only package installs
+   and AppImages.
 
+`server.log` lives in the same directory as the resolved `config.ini`. The GUI
+and `as-cmd` truncate it on each server launch; help, version, and endpoint
+listing never touch it. A v0.3.4 executable-directory `config.ini` found during
+the fallback is migrated without discarding its settings. Configuration writes
+are atomic.
 
-## Compile from source
+The v0.3.4 sections and keys are still read; `configVersion` is migrated to
+the rewrite's value and a backup is kept when migration changes a file.
 
-- Android App
-    - Install JDK 17 manually or by Andorid Studio.
-    - Android Studio will import all dependencies automatically.
+## Protocol compatibility
 
-- Server MFC
-    - vcpkg is required for install dependencies.
-    - Run `vcpkg install asio protobuf spdlog[wchar] wil nlohmann-json` to install deps. The vcpkg triplet is `x64-windows-static-md`.
-    - Visual Studio 2022 with "Desktop development with C++" workload and "C++ MFC for latest v143 build tools (x86 & x64)" option is required for compiling.
+The v0.3.4 Wire Protocol is frozen for 0.4.0:
 
-- Server CMD
-    - CMake and a compiler support C++20 is required. Linux also need `libpipewire-dev` or `pipewire-devel`.
-    - Install vcpkg, and set `VPCKG_ROOT` env. This env is required by `CMakePresets.json`.
-    - Run `vcpkg install asio protobuf cxxopts` to install deps. The vcpkg triplet is `x64-windows-static-md` for Windows, `x64-linux` for Linux. In addition, Windows need run `vcpkg install spdlog[wchar] wil`, and Linux need run `vcpkg install spdlog`.
-    - Run `cmake --preset linux-Release` to configure.
-    - Run `cmake --build --preset linux-Release` to build. The `as-cmd` is located at `out/install/linux-Release/bin/as-cmd`.
-    - For Windows, replace `linux` to `windows` in previous two steps.
+- TCP control commands are fixed 4-byte little-endian integers:
+  `GET_FORMAT = 1`, `START_PLAY = 2`, `HEARTBEAT = 3`.
+- `GET_FORMAT` replies with `cmd`, `u32 size`, and the protobuf `AudioFormat`;
+  `START_PLAY` replies with `cmd` and a positive `i32` id.
+- The server sends a heartbeat every 3 seconds and closes a playing session
+  after 5 seconds without a client heartbeat (checked on the 3-second tick,
+  so clients observe the close at about 6 seconds).
+- UDP carries raw PCM in the negotiated format. Datagrams are at most
+  `1492 - 20 - 8 = 1464` bytes, aligned down to the format's `block_align`.
+- The client binds UDP by sending its play id as a 4-byte little-endian
+  integer to the server's TCP/UDP port.
 
-## Star History
+The rewrite starts capture before accepting clients, so `GET_FORMAT` always
+returns the real capture format instead of the old empty-format race. Server
+stop closes TCP/UDP sessions without a protocol "bye"; clients reconnect as
+before. Full byte-level details, protobuf field numbers, and close semantics
+are in [`docs/protocol.md`](docs/protocol.md).
 
-[![Star History Chart](https://api.star-history.com/svg?repos=mkckr0/audio-share&type=Date)](https://star-history.com/#mkckr0/audio-share&Date)
+## Build from source
+
+Prerequisites:
+
+- Rust stable 1.90+ (the GUI crate's MSRV; the core itself is lower).
+- Node.js 22+ and npm.
+- Linux build dependencies on Ubuntu 24.04:
+
+  ```bash
+  sudo apt-get install -y build-essential curl wget file pkg-config libssl-dev \
+    libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+    libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf \
+    libpipewire-0.3-dev libspa-0.2-dev libclang-dev libfuse2t64
+  ```
+
+- Windows: the default Rust Windows toolchain with the Visual Studio 2022
+  C++ build tools and Windows SDK, plus the WebView2 Runtime to run the GUI.
+
+Build the CLI and GUI:
+
+```bash
+cargo build --release -p as-cmd
+cd gui
+npm ci
+npm run build
+npx tauri build --no-bundle          # Windows portable exe / Linux GUI binary
+npx tauri build --bundles deb,appimage  # Linux deb + AppImage
+```
+
+Release packaging scripts (run from the repository root):
+
+```bash
+bash scripts/package-windows-artifacts.sh   # AudioShareServer.exe + CLI zip
+bash scripts/package-linux-artifacts.sh     # deb + AppImage + CLI tar.gz
+```
+
+Quality gates and scripted protocol verification:
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+(cd gui && npm ci && npm run check && npm run build)
+cargo run -p protocol-harness -- replay \
+  --fixture fixtures/protocol/v0.3.4/linux/f32-48k-stereo
+```
+
+More detail: [build and packaging](docs/server-rewrite/README.md),
+[Wire Protocol](docs/protocol.md), and the
+[deviation record](docs/adr/0003-server-rewrite-deviations.md).
+
+## Known limitations
+
+- No code signing, MSI/NSIS installer, or Tauri self-updater in this release.
+- Windows requires WebView2. Linux requires WebKitGTK 4.1, GTK 3, the
+  appindicator library, and a running PipeWire session.
+- The GUI exposes Endpoint and Encoding only; channels and sample rate remain
+  `as-cmd`-only, matching the v0.3.4 GUI.
+- No log viewer; use `server.log`.
+- Linux tray left-click is not delivered by Tauri; use the right-click menu.
+- The Android Client is unchanged at v0.3.4. No Android source, version, or
+  APK changes ship in 0.4.0.
+- Real-device Android acceptance and long-run soak are release-gate checks
+  tracked in [`docs/server-rewrite/`](docs/server-rewrite/README.md); scripted
+  Wire Protocol replay is the automated compatibility check.
+- The UDP header/reorder experiments on the `main` branch are not part of this
+  release (see [ADR-0001](docs/adr/0001-server-rewrite-baseline.md)).
 
 ## License
-This project is licensed under the [Apache-2.0 license](https://opensource.org/license/apache-2-0) .
-```
-   Copyright 2022-2024 mkckr0 <https://github.com/mkckr0>
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+This project is licensed under the [Apache-2.0 license](LICENSE).
 
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+```text
+Copyright 2022-2024 mkckr0 <https://github.com/mkckr0>
 ```
 
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fmkckr0%2Faudio-share.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fmkckr0%2Faudio-share?ref=badge_large)
+### Used third-party libraries
 
-
-## Used Third-party Libraries
-
-- [Asio](https://github.com/chriskohlhoff/asio) licensed under the [BSL-1.0 license](http://www.boost.org/LICENSE_1_0.txt)
-- [nlohmann/json](https://github.com/nlohmann/json) licensed under the [MIT license](https://github.com/nlohmann/json/blob/develop/LICENSE.MIT)
-- [WIL](https://github.com/microsoft/wil) licensed under the [MIT license](https://github.com/microsoft/wil/blob/master/LICENSE)
-- [Protocol Buffers](https://github.com/protocolbuffers/protobuf) licensed under the [LICENSE](https://github.com/protocolbuffers/protobuf/blob/main/LICENSE)
-- [spdlog](https://github.com/gabime/spdlog) licensed under the [MIT license](https://github.com/gabime/spdlog/blob/v1.x/LICENSE)
-- [{fmt}](https://github.com/fmtlib/fmt) licensed under the [LICENSE](https://github.com/fmtlib/fmt/blob/master/LICENSE)
-- [cxxopts](https://github.com/jarro2783/cxxopts) licensed under the [MIT license](https://github.com/jarro2783/cxxopts/blob/master/LICENSE)
-- [PipeWire](https://gitlab.freedesktop.org/pipewire/pipewire) licensed under the [LICENSE](https://gitlab.freedesktop.org/pipewire/pipewire/-/blob/master/LICENSE)
-- [Ktor](https://github.com/ktorio/ktor) licensed under the [Apache-2.0 license](http://www.apache.org/licenses/LICENSE-2.0)
-- [MaterialKolor](https://github.com/jordond/MaterialKolor) licensed under the [MIT license](https://github.com/jordond/MaterialKolor/blob/main/LICENSE)
-
-
-## Sponsors
-
-- [Mosklia](https://github.com/Mosklia)
-- [YuHuanTin](https://github.com/yuhuantin)
+- [Tokio](https://github.com/tokio-rs/tokio) — MIT
+- [prost](https://github.com/tokio-rs/prost) — Apache-2.0
+- [clap](https://github.com/clap-rs/clap) — MIT/Apache-2.0
+- [tracing](https://github.com/tokio-rs/tracing) — MIT
+- [Tauri](https://github.com/tauri-apps/tauri) — MIT/Apache-2.0
+- [Svelte](https://github.com/sveltejs/svelte) — MIT
+- [Vite](https://github.com/vitejs/vite) — MIT
+- [PipeWire](https://gitlab.freedesktop.org/pipewire/pipewire) — MIT
+- [wasapi](https://github.com/HEnquist/wasapi-rs) — MIT
+- [windows-rs](https://github.com/microsoft/windows-rs) — MIT/Apache-2.0
+- [Protocol Buffers](https://github.com/protocolbuffers/protobuf) — BSD-3-Clause
+- [Ktor](https://github.com/ktorio/ktor) — Apache-2.0 (Android Client)
+- [MaterialKolor](https://github.com/jordond/MaterialKolor) — MIT (Android Client)

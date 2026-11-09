@@ -87,7 +87,7 @@ interpolated at startup.
 
 When the server starts (`-b`), `as-cmd` writes the same lines to stdout and to
 **`server.log`** in the resolved config directory. The file is truncated on
-every server launch (matching the old MFC GUI's `basic_logger_mt` behavior)
+every server launch (matching the v0.3.4 GUI's log truncation behavior)
 and is not touched by `--help`, `--version`, `--list-encoding`, or `-l`, so
 listing endpoints cannot truncate a running server's log. The default level is
 `info`; `-V/--verbose` raises it to `trace`.
