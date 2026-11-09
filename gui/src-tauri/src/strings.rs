@@ -120,6 +120,23 @@ mod tests {
     }
 
     #[test]
+    fn linux_help_rows_are_localized_in_both_languages() {
+        for key in [
+            "linux.sectionTitle",
+            "linux.windowsOnlyTitle",
+            "linux.windowsOnlyHint",
+            "linux.audioSettings",
+            "linux.audioSettingsHint",
+            "linux.pipewireDocs",
+            "linux.pipewireDocsHint",
+        ] {
+            for locale in [Locale::EnUs, Locale::ZhCn] {
+                assert_ne!(t_for(locale, key), key, "missing {key} for {locale:?}");
+            }
+        }
+    }
+
+    #[test]
     fn missing_keys_fall_back_to_the_key() {
         assert_eq!(t_for(Locale::EnUs, "no.such.key"), "no.such.key");
         assert_eq!(t_for(Locale::ZhCn, "no.such.key"), "no.such.key");
