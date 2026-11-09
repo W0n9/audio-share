@@ -12,6 +12,7 @@ pub mod model;
 pub mod options;
 pub mod strings;
 pub mod update;
+pub mod webview2_check;
 
 #[cfg(windows)]
 pub mod windows_maintenance;
