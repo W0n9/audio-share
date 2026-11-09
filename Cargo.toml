@@ -5,6 +5,7 @@ members = [
     "crates/as-cmd",
     "tools/pipewire-spike",
     "tools/protocol-harness",
+    "tools/wasapi-spike",
 ]
 
 [workspace.package]
