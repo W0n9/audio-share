@@ -3,7 +3,7 @@
 Status: **implemented and compile/logic validated on the Linux development
 host.** Windows runtime behaviour, the endpoint/encoding matrix, start/stop
 churn, and the A/B against the old `as-cmd` were **NOT EXECUTED** here: this
-host has no Windows audio runtime and no MSVC linker.
+host has no Windows audio runtime and no Windows linker.
 
 ## What landed
 
