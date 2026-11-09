@@ -10,6 +10,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/**"
+      - "gui/**"
       - "tools/**"
       - "fixtures/**"
       - "scripts/**"
@@ -55,3 +56,84 @@ jobs:
 
       - name: Replay committed fixtures offline
         run: cargo run -p protocol-harness -- replay --fixture fixtures/protocol/v0.3.4/linux/f32-48k-stereo
+
+  linux-packaging:
+    name: Linux deb/AppImage packaging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      # WebKitGTK 4.1 and PipeWire are runtime dependencies of the bundles;
+      # the -dev packages are needed to compile the Tauri shell and core.
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl wget file pkg-config libssl-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf \
+            libpipewire-0.3-dev libspa-0.2-dev libclang-dev libfuse2t64
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Install frontend dependencies
+        working-directory: gui
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: gui
+        run: npm run build
+
+      # tauri.linux.conf.json sets bundle.targets = ["deb", "appimage"]; the
+      # explicit --bundles keeps the invocation self-documenting.
+      - name: Build Linux bundles (deb + AppImage)
+        working-directory: gui
+        run: npx tauri build --bundles deb,appimage
+
+      - name: Build Linux as-cmd
+        run: cargo build --release -p as-cmd
+
+      - name: Self-test artifact packaging
+        run: bash scripts/package-linux-artifacts.test.sh
+
+      - name: Package Linux artifacts
+        run: |
+          bash scripts/package-linux-artifacts.sh \
+            --root "$GITHUB_WORKSPACE" \
+            --bundle-dir "$GITHUB_WORKSPACE/target/release/bundle" \
+            --target-dir "$GITHUB_WORKSPACE/target/release" \
+            --out-dir "$GITHUB_WORKSPACE/dist-linux" \
+            --arch amd64
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-share-server-deb
+          path: dist-linux/*.deb*
+          if-no-files-found: error
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-share-server-appimage
+          path: dist-linux/*.AppImage*
+          if-no-files-found: error
+
+      - name: Upload Linux as-cmd archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-share-server-cmd-linux
+          path: dist-linux/audio-share-server-cmd-linux.tar.gz*
+          if-no-files-found: error

@@ -4,9 +4,10 @@
 node_modules/
 **/node_modules/
 dist/
-!gui/dist/
-gui/dist/*
-!gui/dist/index.html
 gui/src-tauri/gen/
 __pycache__/
 *.pyc
+
+# Release staging directories (packaging scripts)
+/dist-linux/
+/dist-windows/
