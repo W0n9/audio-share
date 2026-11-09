@@ -2,28 +2,46 @@
 # Run a command inside a disposable headless PipeWire session with a null sink.
 #
 # Usage:
-#   scripts/pw-test-session.sh [--tone-wav FILE] -- command [args...]
+#   scripts/pw-test-session.sh [options] -- command [args...]
 #
-# The session creates an Audio/Sink named TestSink (override with PW_TEST_SINK)
-# and exports:
-#   PW_TEST_ENDPOINT_SERIAL  object.serial of the sink (as-cmd -e value)
+# Options:
+#   --tone-wav FILE     Loop-play FILE into the sink (use scripts/gen-tone-wav.py)
+#   --priority N        priority.session of the null sink (default 1000)
+#   --sink-name NAME    node.name of the null sink (default $PW_TEST_SINK or TestSink)
+#   -h, --help          Show this help
+#
+# The session starts a private pipewire + wireplumber instance (private
+# XDG_RUNTIME_DIR, dbus-run-session), creates an Audio/Sink, and exports:
+#   PW_TEST_ENDPOINT_SERIAL  object.serial of the sink (as-cmd -e / --endpoint value)
 #   PW_TEST_SINK_NAME        sink node name
 #
-# When --tone-wav is supplied, the WAV is played into the sink in a loop before
-# the command starts, so capture contains non-silent PCM. Everything is cleaned
-# up on exit, including on error. No sudo or user-wide services are touched.
+# Requires: pipewire, wireplumber, pw-cli, pw-dump, dbus-run-session. When
+# --tone-wav is used, pw-play must be installed.
+#
+# Everything is cleaned up on exit, including on error. No sudo or user-wide
+# services are touched.
 
 set -euo pipefail
 
 usage() {
-    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 tone_wav=""
+priority=1000
+sink_name="${PW_TEST_SINK:-TestSink}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --tone-wav)
             tone_wav=${2:?--tone-wav needs a file}
+            shift 2
+            ;;
+        --priority)
+            priority=${2:?--priority needs a number}
+            shift 2
+            ;;
+        --sink-name)
+            sink_name=${2:?--sink-name needs a name}
             shift 2
             ;;
         -h|--help)
@@ -80,6 +98,7 @@ cat > "$tmp/session.sh" <<'SESSION'
 set -euo pipefail
 
 export XDG_RUNTIME_DIR="$PW_TEST_RUNTIME_DIR"
+export PIPEWIRE_RUNTIME_DIR="$PW_TEST_RUNTIME_DIR"
 
 pipewire >"$PW_TEST_TMP/pipewire.log" 2>&1 &
 pw_pid=$!
@@ -100,13 +119,26 @@ cleanup_session() {
 }
 trap cleanup_session EXIT INT TERM
 
-sleep 2
+for _ in $(seq 1 100); do
+    [ -S "$XDG_RUNTIME_DIR/pipewire-0" ] && break
+    sleep 0.05
+done
+if [ ! -S "$XDG_RUNTIME_DIR/pipewire-0" ]; then
+    echo "pw-test-session: pipewire did not create its socket" >&2
+    tail -20 "$PW_TEST_TMP/pipewire.log" >&2 || true
+    exit 1
+fi
+
 wireplumber >"$PW_TEST_TMP/wireplumber.log" 2>&1 &
 wp_pid=$!
-sleep 2
+for _ in $(seq 1 100); do
+    pw-cli info 0 >/dev/null 2>&1 && break
+    sleep 0.05
+done
 
+# audio.position must be bracketed SPA-JSON: FL,FR would be parsed as a key.
 pw-cli create-node adapter \
-    "{ factory.name=support.null-audio-sink node.name=${PW_TEST_SINK} node.description=${PW_TEST_SINK} media.class=Audio/Sink object.linger=1 audio.position=FL,FR }" \
+    "{ factory.name=support.null-audio-sink node.name=${PW_TEST_SINK} node.description=${PW_TEST_SINK} media.class=Audio/Sink object.linger=1 audio.position=[FL,FR] priority.session=${PW_TEST_PRIORITY} }" \
     >"$PW_TEST_TMP/pw-cli.log" 2>&1
 
 sink_serial=""
@@ -119,6 +151,7 @@ for _ in $(seq 1 100); do
 done
 if [ -z "$sink_serial" ]; then
     echo "pw-test-session: null sink ${PW_TEST_SINK} did not appear" >&2
+    pw-cli ls Node >&2 || true
     exit 1
 fi
 export PW_TEST_ENDPOINT_SERIAL="$sink_serial"
@@ -131,8 +164,8 @@ if [ -n "$PW_TEST_TONE_WAV" ]; then
         done
     ) &
     tone_pid=$!
-    # Let the tone reach the sink before the recorder starts.
-    sleep 1
+    # Let the playback stream link before the command starts.
+    sleep 0.5
 fi
 
 "$@"
@@ -141,7 +174,8 @@ chmod +x "$tmp/session.sh"
 
 export PW_TEST_RUNTIME_DIR="$runtime"
 export PW_TEST_TMP="$tmp"
-export PW_TEST_SINK="${PW_TEST_SINK:-TestSink}"
+export PW_TEST_SINK="$sink_name"
+export PW_TEST_PRIORITY="$priority"
 export PW_TEST_TONE_WAV="$tone_wav"
 
 dbus-run-session -- bash "$tmp/session.sh" "$@"
