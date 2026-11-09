@@ -35,7 +35,7 @@ cargo test -p wasapi-spike          # 26 pure-logic tests
 ./target/debug/wasapi-spike list    # stdout/stderr: "Windows only"; exit 1
 ```
 
-Supported cross-target validation (no MSVC linker required):
+Supported cross-target validation (no Windows linker required):
 
 ```bash
 cargo check  --target x86_64-pc-windows-msvc -p wasapi-spike
@@ -109,7 +109,7 @@ failures and process handle counts before/after.
 ## Measured results
 
 **NOT EXECUTED.** No row below was run: this host has no Windows runtime and no
-MSVC linker. No numbers are claimed or inferred.
+Windows linker. No numbers are claimed or inferred.
 
 | Check | Command | Result |
 |---|---|---|
