@@ -10,6 +10,7 @@
 //! [`AudioFormat`]; the Server must treat that format as immutable for the
 //! lifetime of the session.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -18,6 +19,13 @@ use tokio::sync::mpsc;
 
 use crate::error::{Error, Result};
 use crate::protocol::{AudioFormat, Encoding};
+
+/// Windows WASAPI capture backend and its platform-neutral format logic.
+///
+/// The `backend` module and `WasapiCapture` exist only when building for
+/// Windows; the pure format rules are compiled everywhere so they can be
+/// unit-tested on the Linux development host.
+pub mod windows;
 
 /// The encoding requested from a capture backend.
 ///
@@ -149,44 +157,51 @@ impl std::fmt::Debug for CaptureSession {
 }
 
 /// Cancellation signal shared with the capture thread.
+///
+/// The flag itself is an atomic so the capture loop can poll it cheaply between
+/// device periods; the condition variable only wakes an idle thread promptly on
+/// stop. A backend that polls on its own may use [`StopSignal::is_stopped`]
+/// directly without waiting.
 #[derive(Debug, Default)]
 struct StopSignal {
-    stopped: Mutex<bool>,
+    stopped: AtomicBool,
+    wait_lock: Mutex<()>,
     wake: Condvar,
 }
 
 impl StopSignal {
     fn stop(&self) {
-        let mut stopped = self
-            .stopped
+        self.stopped.store(true, Ordering::SeqCst);
+        // Locking before notifying prevents a waiter that checked the flag just
+        // before the store from missing the wake-up.
+        let _guard = self
+            .wait_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *stopped = true;
-        drop(stopped);
         self.wake.notify_all();
     }
 
     fn is_stopped(&self) -> bool {
-        *self
-            .stopped
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.stopped.load(Ordering::SeqCst)
     }
 
     /// Wait for up to `duration`; returns `false` when capture was stopped.
     fn wait(&self, duration: Duration) -> bool {
-        let stopped = self
-            .stopped
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if *stopped {
+        if self.is_stopped() {
             return false;
         }
-        let (stopped, _) = self
-            .wake
-            .wait_timeout(stopped, duration)
+        let guard = self
+            .wait_lock
+            .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        !*stopped
+        if self.is_stopped() {
+            return false;
+        }
+        let (_guard, _) = self
+            .wake
+            .wait_timeout(guard, duration)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        !self.is_stopped()
     }
 }
 
@@ -292,6 +307,40 @@ impl CaptureBackend for SyntheticCapture {
             thread: Some(thread),
         })
     }
+}
+
+/// v0.3.4's Linux default: F32, stereo, 48 kHz, 1024-frame callbacks every
+/// 10 ms. Used by the synthetic fallback backend.
+const SYNTHETIC_FORMAT: AudioFormat = AudioFormat::new(Encoding::PcmFloat, 2, 48_000);
+const SYNTHETIC_FRAME_BYTES: usize = 8192;
+const SYNTHETIC_FRAME_INTERVAL: Duration = Duration::from_millis(10);
+
+/// The deterministic synthetic backend used by tests and `--fake-capture`.
+pub fn synthetic_backend() -> Result<SyntheticCapture> {
+    SyntheticCapture::new(
+        SYNTHETIC_FORMAT,
+        SYNTHETIC_FRAME_BYTES,
+        SYNTHETIC_FRAME_INTERVAL,
+    )
+}
+
+/// The default capture backend for the current platform.
+///
+/// Windows uses WASAPI shared-mode loopback. Every other platform currently
+/// falls back to [`SyntheticCapture`]; the Linux PipeWire backend (ticket 06)
+/// will replace only the non-Windows branch.
+pub fn platform_backend() -> Result<Arc<dyn CaptureBackend>> {
+    platform_backend_impl()
+}
+
+#[cfg(windows)]
+fn platform_backend_impl() -> Result<Arc<dyn CaptureBackend>> {
+    Ok(Arc::new(windows::WasapiCapture::new()))
+}
+
+#[cfg(not(windows))]
+fn platform_backend_impl() -> Result<Arc<dyn CaptureBackend>> {
+    Ok(Arc::new(synthetic_backend()?))
 }
 
 fn next_frame(format: &AudioFormat, source: &FrameSource, frame_index: u64) -> Option<Vec<u8>> {
@@ -416,5 +465,18 @@ mod tests {
             assert_eq!(first.len(), block_align * 8);
             assert_ne!(first, next, "consecutive frames must differ");
         }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn platform_backend_is_synthetic_on_non_windows() {
+        let backend = platform_backend().unwrap();
+        let endpoints = backend.endpoints().unwrap();
+        assert_eq!(endpoints.len(), 1);
+        assert_eq!(endpoints[0].id, "synthetic");
+        assert_eq!(
+            backend.default_endpoint().unwrap().unwrap().id,
+            endpoints[0].id
+        );
     }
 }

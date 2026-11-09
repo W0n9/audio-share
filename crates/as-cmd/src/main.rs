@@ -1,31 +1,24 @@
 //! `as-cmd` command-line entry point.
 //!
 //! Ticket 04 implements the minimal server path: `-b/--bind [host][:port]`
-//! starts the Server with synthetic capture and runs until Ctrl-C. Full CLI
+//! starts the Server with the platform capture backend and runs until Ctrl-C.
+//! On Windows that is WASAPI shared-mode loopback; elsewhere it is the
+//! deterministic synthetic backend until the Linux backend lands. Full CLI
 //! parity (listing endpoints/encodings, all capture flags, version layout) is
 //! ticket 07.
 
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
 
-use audio_share_core::capture::{CaptureConfig, SyntheticCapture};
-use audio_share_core::protocol::{AudioFormat, Encoding, HEARTBEAT_INTERVAL, SESSION_TIMEOUT};
+use audio_share_core::capture::{
+    platform_backend, synthetic_backend, CaptureBackend, CaptureConfig,
+};
+use audio_share_core::protocol::{HEARTBEAT_INTERVAL, SESSION_TIMEOUT};
 use audio_share_core::server::{default_host, Server, ServerConfig};
 use clap::{CommandFactory, Parser};
 
 /// v0.3.4 hard-codes port 65530 when the bind value has no port.
 const DEFAULT_PORT: u16 = 65_530;
-
-/// Synthetic capture format for this ticket: matches the Linux v0.3.4 default
-/// (F32, stereo, 48 kHz) so the recorded fixture's GET_FORMAT bytes match.
-const SYNTHETIC_FORMAT: AudioFormat = AudioFormat::new(Encoding::PcmFloat, 2, 48_000);
-
-/// Bytes per synthetic capture callback (1024 stereo f32 frames).
-const SYNTHETIC_FRAME_BYTES: usize = 8192;
-
-/// Synthetic callback interval.
-const SYNTHETIC_FRAME_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Parser)]
 #[command(name = "as-cmd", version, about = "Audio Share Server command line")]
@@ -40,6 +33,10 @@ struct Cli {
         default_missing_value = ""
     )]
     bind: Option<String>,
+
+    /// Use deterministic synthetic capture instead of the platform backend.
+    #[arg(long = "fake-capture")]
+    fake_capture: bool,
 }
 
 #[tokio::main]
@@ -62,12 +59,11 @@ async fn run(cli: Cli) -> Result<(), String> {
     };
     let (host, port) = parse_bind(&bind)?;
 
-    let capture = SyntheticCapture::new(
-        SYNTHETIC_FORMAT,
-        SYNTHETIC_FRAME_BYTES,
-        SYNTHETIC_FRAME_INTERVAL,
-    )
-    .map_err(|error| error.to_string())?;
+    let capture: Arc<dyn CaptureBackend> = if cli.fake_capture {
+        Arc::new(synthetic_backend().map_err(|error| error.to_string())?)
+    } else {
+        platform_backend().map_err(|error| error.to_string())?
+    };
     let handle = Server::start(
         ServerConfig {
             host,
@@ -75,13 +71,19 @@ async fn run(cli: Cli) -> Result<(), String> {
             heartbeat_interval: HEARTBEAT_INTERVAL,
             heartbeat_timeout: SESSION_TIMEOUT,
         },
-        Arc::new(capture),
+        capture,
         CaptureConfig::default(),
     )
     .await
     .map_err(|error| error.to_string())?;
 
     println!("as-cmd: listening on {}", handle.local_addr());
+    println!(
+        "as-cmd: capture format: {:?} {} Hz, {} channels",
+        handle.format().encoding_kind(),
+        handle.format().sample_rate,
+        handle.format().channels
+    );
     tokio::signal::ctrl_c()
         .await
         .map_err(|error| format!("install Ctrl-C handler: {error}"))?;
