@@ -151,8 +151,9 @@ recorded on Windows and must never be described as such.
    `replay --connect`; no audio devices are required.
 5. Offline replay of the committed Linux fixture.
 
-The Ubuntu job installs `libpipewire-0.3-dev` in preparation for the capture
-ticket; the Windows job never touches an audio device.
+The Ubuntu job installs `libpipewire-0.3-dev`, `libclang-dev` (the safe
+`pipewire` crate builds its `pipewire-sys` bindings with bindgen), and
+`pkg-config`; the Windows job never touches an audio device.
 
 ## Comparing a new Server with the old `as-cmd`
 
