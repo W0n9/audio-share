@@ -1,9 +1,10 @@
 //! Audio capture backends.
 //!
-//! Platform backends (WASAPI on Windows, PipeWire on Linux) arrive in later
-//! tickets behind `#[cfg]`. This module always provides [`SyntheticCapture`], a
-//! deterministic backend used by tests, `as-cmd` before real capture lands, and
-//! the debug/fake-capture path.
+//! Platform backends live behind `#[cfg]`: `linux::PipeWireCapture` on Linux
+//! and `windows::WasapiCapture` on Windows. This module always provides
+//! [`SyntheticCapture`], a deterministic backend used by tests and the
+//! `--fake-capture` debug path. [`platform_backend`] selects the real backend
+//! for the current platform.
 //!
 //! Capture runs on its own thread and hands PCM to the network side through a
 //! [`FrameSink`]. A capture session publishes the actual negotiated
@@ -19,6 +20,10 @@ use tokio::sync::mpsc;
 
 use crate::error::{Error, Result};
 use crate::protocol::{AudioFormat, Encoding};
+
+/// Linux PipeWire capture backend.
+#[cfg(target_os = "linux")]
+pub mod linux;
 
 /// Windows WASAPI capture backend and its platform-neutral format logic.
 ///
@@ -326,9 +331,8 @@ pub fn synthetic_backend() -> Result<SyntheticCapture> {
 
 /// The default capture backend for the current platform.
 ///
-/// Windows uses WASAPI shared-mode loopback. Every other platform currently
-/// falls back to [`SyntheticCapture`]; the Linux PipeWire backend (ticket 06)
-/// will replace only the non-Windows branch.
+/// Windows uses WASAPI shared-mode loopback, Linux uses PipeWire monitor
+/// capture, and every other platform falls back to [`SyntheticCapture`].
 pub fn platform_backend() -> Result<Arc<dyn CaptureBackend>> {
     platform_backend_impl()
 }
@@ -338,7 +342,12 @@ fn platform_backend_impl() -> Result<Arc<dyn CaptureBackend>> {
     Ok(Arc::new(windows::WasapiCapture::new()))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn platform_backend_impl() -> Result<Arc<dyn CaptureBackend>> {
+    Ok(Arc::new(linux::PipeWireCapture::new()))
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn platform_backend_impl() -> Result<Arc<dyn CaptureBackend>> {
     Ok(Arc::new(synthetic_backend()?))
 }
@@ -467,9 +476,9 @@ mod tests {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     #[test]
-    fn platform_backend_is_synthetic_on_non_windows() {
+    fn platform_backend_is_synthetic_on_other_platforms() {
         let backend = platform_backend().unwrap();
         let endpoints = backend.endpoints().unwrap();
         assert_eq!(endpoints.len(), 1);
