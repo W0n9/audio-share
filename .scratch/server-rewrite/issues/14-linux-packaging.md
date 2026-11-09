@@ -15,7 +15,10 @@
 
 ## Comments
 
-2026-11-09, branch `ticket/14-linux-packaging`.
+2026-11-09, branch `ticket/14-linux-packaging`. Merge commit `30c8458`
+(`integration/server-rewrite`; CI workflow resolved as a union with ticket 13's
+Windows job). The bundles were rebuilt after that merge and the installed-package
+checks below were repeated on the rebuilt artifacts.
 
 Build (Ubuntu 24.04.5 host, not a fresh VM; release profile):
 - `cd gui && npm ci && npm run check && npm run build` pass (svelte-check 0
@@ -26,9 +29,9 @@ Build (Ubuntu 24.04.5 host, not a fresh VM; release profile):
   short/long description, Apache-2.0 license.
 - Artifacts:
   `target/release/bundle/deb/AudioShareServer_0.4.0_amd64.deb`
-  (6,869,236 B / 6.55 MiB) and
+  (6,869,272 B / 6.55 MiB) and
   `target/release/bundle/appimage/AudioShareServer_0.4.0_amd64.AppImage`
-  (85,248,504 B / 81.30 MiB).
+  (85,252,600 B / 81.30 MiB).
 - `cargo build` at the repo root and `cargo build -p audio-share-server-gui`
   pass with no `gui/dist/` (dev-URL binary). `gui/dist/index.html` was removed
   from git; the directory is generated and ignored, so builds leave a clean
