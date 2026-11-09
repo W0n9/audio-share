@@ -1,0 +1,140 @@
+# Soak test — new Server (ticket 15)
+
+Status: the default **8-hour soak is NOT EXECUTED**. A shortened **12-minute
+release soak** was executed on this host and passed; its results are below.
+Do not read this page as an 8-hour stability claim.
+
+## What `scripts/soak.sh` runs
+
+- Release `as-cmd` with the real Linux PipeWire capture backend, inside a
+  disposable headless PipeWire + WirePlumber session with a null `Audio/Sink`
+  and a looped 440 Hz tone (the same setup as the acceptance matrix).
+- N scripted clients (`protocol-harness probe`) that perform the v0.3.4 client
+  flow, reply to heartbeats, and optionally reconnect inside the same process
+  (default: every 30 minutes).
+- Every sample interval it records server RSS (KB), server CPU (% averaged by
+  `ps` over the process lifetime), summed client RSS, and whether the server
+  and each client are alive.
+- At the end it aggregates per-client PCM bytes, datagrams, sessions,
+  reconnects, heartbeats/misses, datagram-arrival gaps (50/100/250 ms buckets
+  as a glitch proxy), the max gap, tone presence, and throughput against
+  `sample_rate * block_align * elapsed`.
+- Logs are rotated: server stdout/stderr is piped through a rotating writer;
+  `monitor.csv` is reopened on every append so rotation is safe; `server.log`
+  is renamed when it exceeds the threshold (as-cmd keeps its descriptor, so
+  later lines continue in the rotated file until the process restarts — this
+  is documented rather than hidden).
+- The script exits nonzero on a server crash, a non-zero server exit, any
+  client probe failure, or any heartbeat miss.
+
+Usage:
+
+```bash
+# default: 8 hours, 2 clients, reconnect every 30 minutes, sample every 5 s
+scripts/soak.sh --out /tmp/soak-8h
+
+# shortened run
+scripts/soak.sh --duration 12m --clients 2 --reconnect-every 240 \
+  --sample-seconds 5 --out /tmp/soak-short
+```
+
+Requires `cargo`, PipeWire/WirePlumber, `pw-cli`/`pw-play`/`pw-dump`,
+`dbus-run-session`, `python3`, and `jq`; no sudo and no user services.
+
+## Executed shortened run (2026-11-09)
+
+Environment: Ubuntu 24.04.5 x86_64, release binaries built from this branch,
+Rust 1.98.1, libpipewire 1.0.5, WirePlumber 0.4.17, headless null sink with a
+440 Hz tone.
+
+Exact command:
+
+```bash
+cargo build --release -p as-cmd -p protocol-harness
+scripts/soak.sh --skip-build --duration 12m --clients 2 \
+  --reconnect-every 240 --sample-seconds 5 --out /tmp/t15-soak-release2
+```
+
+Results (`/tmp/t15-soak-release2/soak-summary.json` and `monitor.csv`; the
+same fixed-monitor script also produced `/tmp/t15-soak-release` beforehand,
+explained in the harness note below):
+
+| Metric | Result |
+|---|---|
+| Requested / actual duration | 720 s / 722 s |
+| Clients | 2/2 probes ok |
+| Server exit | 0 (graceful SIGINT at the end), no crash |
+| Server RSS min / mean / max | 11524 / 15558.8 / 15612 KiB |
+| Server CPU mean / max | 3.304 % / 28.5 % |
+| Samples | 141 |
+| PCM bytes (both clients) | 548,339,712 |
+| Datagrams (both clients) | 401,616 |
+| Sessions / reconnects | 6 / 4 |
+| Heartbeats / misses | 470 / 0 |
+| Datagram gaps >50 / >100 / >250 ms | 53 / 0 / 0 |
+| Max datagram gap | 65 ms |
+| Throughput ratio (min client) | 0.9914 |
+| Tone present for all clients | yes |
+| Verdict | PASS |
+
+Interpretation:
+
+- The minimum RSS is the startup allocation (11,524 KiB); after startup the
+  server stayed at 15,558.8 KiB mean and 15,612 KiB max, a ~53 KiB band with
+  no growth trend. CPU stayed in the low single digits (mean 3.304 %, with a
+  28.5 % startup sample) on an idle 36-core host. These are observations for
+  this host, not an 8-hour claim.
+- Client reconnects were intentional and counted; the 3 s reconnect delay
+  lowers the aggregate throughput ratio slightly (0.9914), which is expected
+  client behavior, not packet loss.
+- A "glitch" here is a gap between UDP datagrams above the named threshold.
+  The run recorded 53 gaps in the 50-100 ms bucket, none above 100 ms, and a
+  65 ms maximum. These must be compared against a baseline before calling
+  them a regression; they are reported, not hidden.
+- Harness note: an earlier run with the same workload
+  (`/tmp/t15-soak-release`) reported `client_process_failure: true` together
+  with `pass: true`, `clients_ok: 2` and `client_errors: []`. That flag was a
+  monitor race: the final sample ran after both clients had finished at the
+  duration and before the elapsed check, so "alive < clients" was misread as
+  an early failure. The pass verdict never depended on the flag. `soak.sh` now
+  checks the duration before client liveness; the rerun above records
+  `client_process_failure: false`. Do not treat the earlier run as a client
+  crash: both probes exited 0 with `ok: true`.
+- Log rotation was exercised separately with
+  `scripts/soak.sh --skip-build --duration 10s --clients 1 --reconnect-every 0
+  --sample-seconds 1 --rotate-mb 0 --out /tmp/t15-soak-rotate`
+  (18 rotated files, summary PASS); the 12-minute run's logs are only a few
+  KiB and stayed below the default 16 MiB threshold, so rotation did not
+  trigger there.
+
+## The 8-hour run: NOT EXECUTED
+
+The default 8-hour run was not executed in this environment. To close the
+release gate, run on a machine that can stay up for 8+ hours:
+
+```bash
+scripts/soak.sh --duration 8h --clients 2 --reconnect-every 1800 \
+  --sample-seconds 5 --out /tmp/soak-8h
+```
+
+Acceptance evidence required:
+
+- `soak-summary.json` with `pass: true`, `server_crashed: false`,
+  `server_exit: 0`, all clients ok, `heartbeat_misses: 0`, tone present.
+- `monitor.csv`: RSS should plateau (no monotonic growth), CPU should stay
+  comparable to the short run, and `server_alive` should remain 1 throughout.
+- Inspect `glitch_gaps_over_250ms` and `max_datagram_gap_ms`; a material
+  increase over the shortened run is a glitch regression even if the process
+  survives.
+- Keep the rotated `server-stream.log*` and client JSON reports as evidence.
+
+## Limits
+
+- Null sink and synthetic tone only; no real hardware, no phone, no
+  suspend/resume. Real-device playback is covered by
+  `android-v034-acceptance.md` (not executed).
+- The probe captures at most 8 MiB of PCM for tone analysis; counters cover
+  the whole run, but tone presence is checked over the first ~21 s of the
+  first session (enough to prove the capture path after startup).
+- `ps` reports CPU averaged over process lifetime; short spikes between
+  samples can be missed.
