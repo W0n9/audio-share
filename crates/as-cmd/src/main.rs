@@ -1,15 +1,18 @@
 //! `as-cmd` command-line entry point.
 //!
-//! Ticket 04 implements the minimal server path: `-b/--bind [host][:port]`
-//! starts the Server with synthetic capture and runs until Ctrl-C. Full CLI
-//! parity (listing endpoints/encodings, all capture flags, version layout) is
+//! `-b/--bind [host][:port]` starts the Server and runs until Ctrl-C. By
+//! default capture uses the real platform backend (PipeWire on Linux);
+//! `--fake-capture` selects the deterministic synthetic backend. Full CLI
+//! parity (listing endpoints/encodings, capture flags, version layout) is
 //! ticket 07.
 
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use audio_share_core::capture::{CaptureConfig, SyntheticCapture};
+use audio_share_core::capture::{
+    platform_backend, CaptureBackend, CaptureConfig, SyntheticCapture,
+};
 use audio_share_core::protocol::{AudioFormat, Encoding, HEARTBEAT_INTERVAL, SESSION_TIMEOUT};
 use audio_share_core::server::{default_host, Server, ServerConfig};
 use clap::{CommandFactory, Parser};
@@ -40,6 +43,9 @@ struct Cli {
         default_missing_value = ""
     )]
     bind: Option<String>,
+    /// Use the deterministic synthetic capture backend instead of real audio.
+    #[arg(long = "fake-capture")]
+    fake_capture: bool,
 }
 
 #[tokio::main]
@@ -62,12 +68,18 @@ async fn run(cli: Cli) -> Result<(), String> {
     };
     let (host, port) = parse_bind(&bind)?;
 
-    let capture = SyntheticCapture::new(
-        SYNTHETIC_FORMAT,
-        SYNTHETIC_FRAME_BYTES,
-        SYNTHETIC_FRAME_INTERVAL,
-    )
-    .map_err(|error| error.to_string())?;
+    let capture: Arc<dyn CaptureBackend> = if cli.fake_capture {
+        Arc::new(
+            SyntheticCapture::new(
+                SYNTHETIC_FORMAT,
+                SYNTHETIC_FRAME_BYTES,
+                SYNTHETIC_FRAME_INTERVAL,
+            )
+            .map_err(|error| error.to_string())?,
+        )
+    } else {
+        platform_backend().map_err(|error| error.to_string())?
+    };
     let handle = Server::start(
         ServerConfig {
             host,
@@ -75,7 +87,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             heartbeat_interval: HEARTBEAT_INTERVAL,
             heartbeat_timeout: SESSION_TIMEOUT,
         },
-        Arc::new(capture),
+        capture,
         CaptureConfig::default(),
     )
     .await
