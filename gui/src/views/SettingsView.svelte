@@ -1,22 +1,17 @@
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { server } from "../lib/store.svelte";
-  import { t } from "../lib/i18n.svelte";
-  import type { Encoding } from "../lib/ipc";
+  import { locales, t } from "../lib/i18n.svelte";
+  import { encodings, encodingLabel } from "../lib/encodings";
   import LinuxSettings from "./LinuxSettings.svelte";
 
   // Server settings persist immediately on change. Application settings
   // (autostart, launch/close, update, language) persist immediately too but
   // stay editable while the server runs; language applies on next launch.
-  const encodings: Encoding[] = ["default", "f32", "s8", "s16", "s24", "s32"];
   const HOMEPAGE = "https://github.com/mkckr0/audio-share";
   const locked = $derived(server.settingsLocked);
   const appLocked = $derived(server.applicationLocked);
   let aboutOpen = $state(false);
-
-  function encodingLabel(value: Encoding): string {
-    return value === "default" ? t("encoding.default") : value;
-  }
 
   function persist(): void {
     void server.persist();
@@ -185,8 +180,9 @@
       onchange={languageChanged}
     >
       <option value="default">{t("settings.languageDefault")}</option>
-      <option value="en-US">English</option>
-      <option value="zh-CN">简体中文</option>
+      {#each locales as locale (locale.id)}
+        <option value={locale.id}>{locale.label}</option>
+      {/each}
     </select>
   </div>
 

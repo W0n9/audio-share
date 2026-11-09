@@ -21,8 +21,9 @@ capture backends and Wire Protocol implementation with the Server GUI.
 | `-v` | `--version` | none | — | Prints version to stdout, exit 0. clap's built-in version flag is disabled so `-v` matches v0.3.4. |
 | | `--fake-capture` | none | — | Testing aid (not in v0.3.4): uses deterministic synthetic capture instead of the platform backend. |
 
-Default port: **65530**. Default bind host: the first private IPv4 address in
-enumeration order (`10/8`, `172.16/12`, `192.168/16`), otherwise the first
+Default port: **65530**. Default bind host: the first address matching
+v0.3.4's private-network masks (`10.x`, `172.16`–`172.31`, `192.168.0.0/16`,
+plus the loose matches of the exact mask comparison), otherwise the first
 non-loopback IPv4 address. When the machine has no such address, a bare `-b`
 fails with a readable error.
 
@@ -103,7 +104,7 @@ Startup emits `starting server`, `tcp listen success on <addr>`,
 emits `stopping server` and `server stopped`. Fatal errors are also written to
 the file (the stdout sink filters them so they are not duplicated).
 
-Unlike v0.3.4, `as-cmd` now writes `server.log`; the old CLI only logged to
+Unlike v0.3.4, `as-cmd` now writes `server.log`; the old `as-cmd` only logged to
 stdout. This is the intentional improvement required by the rewrite spec.
 
 ### Config/log path resolution
@@ -143,10 +144,11 @@ These deviations are deliberate and safe for existing scripts:
   rewrite returns an actionable error and exits 1 at startup.
 - **Negative channels/sample rate**: v0.3.4 crashed (SIGSEGV). The rewrite
   rejects them during parsing.
-- **Default host selection**: v0.3.4's mask test matched only `172.16.x.x` of
-  the RFC 1918 /12 range and also matched `192.169–192.175.x.x`. The rewrite
-  uses `Ipv4Addr::is_private()`: `172.16–172.31` are private, `192.169+` are
-  not. This can change the default address on such networks.
+- **Default host selection is unchanged**: the rewrite applies v0.3.4's
+  `(address & mask) == mask` comparison with masks `0x0a000000`, `0xac100000`,
+  and `0xc0a80000`. That selection is intentionally loose (for example it can
+  also match `11.x`, `173.16`–`173.31`, and `192.169`–`192.175`), exactly like
+  the old build, so the default address does not change.
 - **Ctrl-C**: v0.3.4 had no signal handler (default termination). The rewrite
   stops capture and the network side and exits 0.
 - **`server.log`**: added (see above).

@@ -43,7 +43,7 @@ sequenceDiagram
   exactly 4 bytes. Only two server replies carry additional data:
   `GET_FORMAT` (`u32 size` + protobuf) and `START_PLAY` (`i32 id`).
 - Accepted TCP sockets use `TCP_NODELAY`.
-- The server's TCP listener uses `SO_REUSEADDR` and the default backlog.
+- The server's TCP listener uses `SO_REUSEADDR` and a listen backlog of 1024.
 - PCM samples are little-endian in the encoding given by `AudioFormat`
   (`ENCODING_PCM_FLOAT` is IEEE-754 binary32 little-endian).
 
@@ -116,8 +116,11 @@ that made the Android Client build an invalid audio track.
 
 ## 4. `START_PLAY` ids
 
-- The server assigns `id = ++g_id`, a process-wide monotonically increasing
-  `i32` starting at 1. Ids are not reset between clients or sessions.
+- The server assigns `id = ++g_id`, a **process-wide** monotonically increasing
+  `i32` starting at 1. Ids are not reset between clients, sessions, or Server
+  instances: stopping and starting the Server in the same GUI process continues
+  the sequence, exactly like v0.3.4's function-static counter. Only a new
+  process starts again at 1.
 - The reply is exactly `cmd (u32) + id (i32)`, with no size field.
 - The Android Client requires `id > 0`.
 - `id` identifies both the playing peer and the UDP destination binding. A
@@ -176,8 +179,10 @@ that made the Android Client build an invalid audio track.
 - Every playing peer receives the same datagram sequence for a capture
   callback; multi-client tails are byte-identical.
 - If `block_align` is 0 or greater than 1464, the 0.4.0 core emits no segments
-  and reports an error where possible instead of dividing by zero, hanging, or
-  sending oversized datagrams (v0.3.4 had crash/hang edge cases here).
+  and reports the condition once instead of dividing by zero, hanging, or
+  sending oversized datagrams (v0.3.4 had crash/hang edge cases here). The
+  Server keeps running and answering control traffic; it simply sends no PCM
+  for that format.
 
 ## 7. Session and server close semantics
 

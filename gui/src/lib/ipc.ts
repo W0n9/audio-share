@@ -87,7 +87,7 @@ export interface Bootstrap {
   settings: Settings;
   /** Structured migration/recovery warnings; empty when the config was clean. */
   configNotices: Notice[];
-  /** An update already found by the startup check, if any. */
+  /** An update already found by a background check, if any. */
   update: UpdateCheckResult | null;
 }
 
@@ -97,7 +97,6 @@ export interface Bootstrap {
  */
 export const api = {
   getBootstrap: () => invoke<Bootstrap>("get_bootstrap"),
-  getStatus: () => invoke<ServerStatus>("get_status"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
   saveApplicationSettings: (settings: ApplicationSettings) =>
