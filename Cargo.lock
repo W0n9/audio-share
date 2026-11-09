@@ -330,6 +330,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "ureq",
+ "windows",
  "winreg",
 ]
 

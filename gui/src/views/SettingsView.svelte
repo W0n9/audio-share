@@ -214,8 +214,37 @@
         <div class="label">{t("settings.repairFirewall")}</div>
         <div class="sub">{t("settings.repairFirewallHint")}</div>
       </div>
-      <button class="ghost" disabled>{t("action.repair")}</button>
+      <button
+        class="ghost"
+        disabled={server.maintenanceBusy}
+        onclick={() => server.repairFirewall()}
+      >
+        {t("action.repair")}
+      </button>
     </div>
+
+    <div class="row">
+      <div class="row-text">
+        <div class="label">{t("settings.soundPanel")}</div>
+        <div class="sub">{t("settings.soundPanelHint")}</div>
+      </div>
+      <button
+        class="ghost"
+        disabled={server.maintenanceBusy}
+        onclick={() => server.openSoundPanel()}
+      >
+        {t("action.openSoundPanel")}
+      </button>
+    </div>
+
+    {#if server.maintenanceMessage}
+      <p
+        class={server.maintenanceFailed ? "error" : "update-status"}
+        role={server.maintenanceFailed ? "alert" : "status"}
+      >
+        {server.maintenanceMessage}
+      </p>
+    {/if}
   {/if}
 
   {#if server.platform === "linux"}

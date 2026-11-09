@@ -39,3 +39,12 @@
   </div>
   <button class="ghost" onclick={() => open("pipewire")}>{t("action.open")}</button>
 </div>
+
+<style>
+  /* Chinese labels are short but the hint column can squeeze the button;
+     keep the two-character action on one line. */
+  .ghost {
+    flex: none;
+    white-space: nowrap;
+  }
+</style>
