@@ -3,6 +3,7 @@
   import { server } from "../lib/store.svelte";
   import { t } from "../lib/i18n.svelte";
   import type { Encoding } from "../lib/ipc";
+  import LinuxSettings from "./LinuxSettings.svelte";
 
   // Server settings persist immediately on change. Application settings
   // (autostart, launch/close, update, language) persist immediately too but
@@ -244,6 +245,10 @@
         {server.maintenanceMessage}
       </p>
     {/if}
+  {/if}
+
+  {#if server.platform === "linux"}
+    <LinuxSettings />
   {/if}
 
   <div class="row">
