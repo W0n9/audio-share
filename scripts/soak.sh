@@ -88,7 +88,7 @@ inner_main() {
             printf '%s\n' "$line" >>"$file"
             size=$((size + ${#line} + 1))
             if [ "$size" -ge "$limit" ]; then
-                rotated="$file.$(date -u +%Y%m%dT%H%M%SZ).rotated"
+                rotated="$file.$(date -u +%Y%m%dT%H%M%S).$$.$RANDOM.rotated"
                 mv "$file" "$rotated" 2>/dev/null || true
                 size=0
             fi
@@ -101,7 +101,7 @@ inner_main() {
         local size
         size=$(stat -c%s "$file" 2>/dev/null || echo 0)
         if [ "$size" -ge "$limit" ]; then
-            mv "$file" "$file.$(date -u +%Y%m%dT%H%M%SZ).rotated" 2>/dev/null || true
+            mv "$file" "$file.$(date -u +%Y%m%dT%H%M%S).$$.$RANDOM.rotated" 2>/dev/null || true
         fi
     }
 
@@ -261,17 +261,19 @@ had_client_failure = os.environ["SOAK_HAD_CLIENT_FAILURE"] == "1"
 
 rss = []
 cpu = []
-with open(os.path.join(out, "monitor.csv")) as handle:
-    header = handle.readline()
-    for line in handle:
-        parts = line.strip().split(",")
-        if len(parts) < 7:
-            continue
-        try:
-            rss.append(int(parts[2]))
-            cpu.append(float(parts[3]))
-        except ValueError:
-            continue
+# monitor.csv may have been rotated one or more times; read every segment.
+for path in sorted(glob.glob(os.path.join(out, "monitor.csv*"))):
+    with open(path) as handle:
+        for line in handle:
+            parts = line.strip().split(",")
+            if len(parts) < 7:
+                continue
+            try:
+                rss.append(int(parts[2]))
+                cpu.append(float(parts[3]))
+            except ValueError:
+                # Header or malformed line.
+                continue
 
 reports = []
 client_errors = []
