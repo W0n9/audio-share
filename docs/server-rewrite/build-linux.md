@@ -20,9 +20,9 @@ Built with `npx tauri build --bundles deb,appimage` from `gui/` and
 
 | Artifact | Exact name | Size | Contents |
 |---|---|---:|---|
-| Debian package | `AudioShareServer_0.4.0_amd64.deb` | 6,869,236 B (6.55 MiB) | `/usr/bin/AudioShareServer`, desktop entry, hicolor icons |
-| AppImage | `AudioShareServer_0.4.0_amd64.AppImage` | 85,248,504 B (81.30 MiB) | Self-contained GUI image (bundles WebKitGTK/GTK libraries) |
-| CLI archive | `audio-share-server-cmd-linux.tar.gz` | 976,406 B (0.93 MiB) | Top-level `audio-share-server-cmd/` with `as-cmd`, `LICENSE`, `README.md` |
+| Debian package | `AudioShareServer_0.4.0_amd64.deb` | 6,869,272 B (6.55 MiB) | `/usr/bin/AudioShareServer`, desktop entry, hicolor icons |
+| AppImage | `AudioShareServer_0.4.0_amd64.AppImage` | 85,252,600 B (81.30 MiB) | Self-contained GUI image (bundles WebKitGTK/GTK libraries) |
+| CLI archive | `audio-share-server-cmd-linux.tar.gz` | 977,038 B (0.93 MiB) | Top-level `audio-share-server-cmd/` with `as-cmd`, `LICENSE`, `README.md` |
 
 Each file has a `sha256sum`-format `.sha256` sidecar produced by
 `scripts/package-linux-artifacts.sh`. The names are the Tauri bundle names:
@@ -30,11 +30,13 @@ Each file has a `sha256sum`-format `.sha256` sidecar produced by
 name and layout; names do not include the version, which is embedded in the
 binaries.
 
-Local build checksums (for provenance, not a release commitment):
+Local build checksums (for provenance, not a release commitment; final
+artifacts were rebuilt after the integration merge and re-verified):
 
 ```text
-2670a56321bc453b1c189a96b39b35a7237f8e8b3d39a923f72dccbf8a37f4f2  AudioShareServer_0.4.0_amd64.deb
-0012a79aff951cb76d8fbfb2fa93e3f671e3110a075b340b6929bf7ebdf83976  AudioShareServer_0.4.0_amd64.AppImage
+9c8be4cb048d4de6b17b0a1c5e31ad86b62a2d7d88546def22f223da3fa60c4c  AudioShareServer_0.4.0_amd64.deb
+c8717a00bdd63eb5fa4bce7245d8f6d99d5d3dfaa157063d63412f2a7c124f4a  AudioShareServer_0.4.0_amd64.AppImage
+6481df396ac007c7d146c01a7ceb0c98668dabc77762207787a7f08234c132ed  audio-share-server-cmd-linux.tar.gz
 ```
 
 ## Runtime and build dependencies
