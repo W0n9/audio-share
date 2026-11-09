@@ -563,6 +563,15 @@ async fn exit_app(app: AppHandle) -> Result<(), String> {
 }
 
 fn main() {
+    // Windows: resolve WebView2 before any startup work. Tauri would otherwise
+    // fail late (and, in a release build, panic after its own error dialog).
+    // The prompt lets the user open the download page; a missing runtime is an
+    // expected condition, not a crash, so exit cleanly.
+    #[cfg(windows)]
+    if !audio_share_server_gui::webview2_check::preflight() {
+        std::process::exit(0);
+    }
+
     let options = GuiOptions::parse(std::env::args().skip(1));
 
     // Settings load and endpoint enumeration run before the Tauri UI exists;
