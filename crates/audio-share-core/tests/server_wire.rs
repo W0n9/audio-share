@@ -665,11 +665,15 @@ async fn stop_closes_playing_and_idle_sessions_and_releases_the_listener() {
         .expect("stop failed");
 
     // Check the listener immediately after stop, before any longer waits give
-    // another test a chance to bind this address.
+    // another test a chance to bind this address. A connect may be refused
+    // (Linux) or time out (Windows can drop the SYN while the just-closed
+    // sessions still occupy the port); either proves the server is no longer
+    // accepting. Only an established connection is a failure.
     let reconnect = timeout(Duration::from_secs(2), TcpStream::connect(addr)).await;
+    let accepted = matches!(reconnect, Ok(Ok(_)));
     assert!(
-        matches!(reconnect, Ok(Err(_))),
-        "a stopped server must not accept new connections"
+        !accepted,
+        "a stopped server must not accept new connections (addr={addr}, result={reconnect:?})"
     );
 
     // Both TCP sessions observe EOF/close, whether or not they completed
