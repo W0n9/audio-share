@@ -1,0 +1,100 @@
+# Audio Share Server GUI
+
+Tauri v2 shell (Rust) + Svelte 5/Vite frontend. The GUI is a tray-first single
+window that starts and stops an in-process Audio Share Core `Server`.
+
+## Layout
+
+```
+gui/
+  package.json, vite.config.ts, svelte.config.js, tsconfig.json
+  index.html
+  dist/index.html          # committed placeholder; `npm run build` overwrites it
+  src/                     # Svelte 5 + TypeScript frontend
+    locales/en-US.json     # single source of truth for UI strings (also embedded in Rust)
+  src-tauri/               # workspace member `audio-share-server-gui`
+    src/lib.rs             # testable controller/model/options/strings
+    src/main.rs            # Tauri window, tray, commands, events
+    tauri.conf.json
+    capabilities/default.json
+    icons/                 # generated from server-mfc/.../AudioShareServer.ico with `tauri icon`
+```
+
+## Build and run
+
+Prerequisites: Node 22+, Rust 1.90+, and the Tauri Linux build/runtime
+dependencies listed in `docs/server-rewrite/` exploration notes (`tauri.md`).
+
+```bash
+cd gui
+npm ci
+npm run check            # svelte-check
+npm run build            # writes gui/dist (ignored except the committed placeholder)
+npx tauri build --debug --no-bundle
+```
+
+With the Cargo workspace, the binary lands at `<repo>/target/debug/AudioShareServer`
+(`target/release/AudioShareServer` for a release build). Use
+`npx tauri build --no-bundle` for the shippable Windows portable exe; ticket 14
+adds Linux deb/AppImage bundles.
+
+`tauri build` runs `npm run build` first and enables `tauri/custom-protocol`,
+which embeds `frontendDist` (`../dist`) into the binary.
+
+### Dev-URL binary vs embedded assets
+
+A bare `cargo build -p audio-share-server-gui` does **not** embed the frontend:
+Tauri treats it as a dev build and the window loads `devUrl`
+(`http://localhost:1420`), so it needs `npm run dev` running. For a bare-Cargo
+production build, build the frontend first and opt in explicitly:
+
+```bash
+cd gui && npm run build
+cargo build -p audio-share-server-gui --features audio-share-server-gui/custom-protocol
+```
+
+`gui/dist/index.html` is committed so `cargo build`/`cargo check` work before
+`npm install`; the rest of `gui/dist/` is generated and ignored.
+
+## Debug flags
+
+- `--fake-capture` — deterministic synthetic capture instead of PipeWire/WASAPI.
+- `--hide` (also `-hide`, `/hide`) — start with the window hidden (autostart path).
+- `--smoke-test` — log window title/size after 4 s and exit 0. Example:
+
+```bash
+xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- bash -c '
+  export WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1
+  export LIBGL_ALWAYS_SOFTWARE=1 GDK_BACKEND=x11
+  ./target/debug/AudioShareServer --smoke-test
+'
+```
+
+## Behaviour in this ticket (08)
+
+- Window 420x640, title "Audio Share Server". Close request hides to the tray;
+  `--hide` starts hidden.
+- Tray: Show / Start / Stop / separator / Exit; Start and Stop are enabled per
+  server state. Windows left-click toggles the window. Linux only delivers the
+  right-click menu (Tauri limitation).
+- Start/Stop run asynchronously through `ServerController`; the status event
+  `server:state-changed` carries `{ state, address, lastError }`.
+- Settings are in memory (defaults: selected default host, port 65530,
+  endpoint `default`, encoding `default`).
+
+## Extension points for later tickets
+
+- 09: replace `Settings::default()` with `config.ini` loading/saving; branch the
+  close handler on the `onClose` setting; wire saved settings into start.
+- 10: autostart/lifecycle/update/i18n persistence (resources and `locales` are
+  already separated; `en-US.json` is shared with tray labels).
+- 11: Windows firewall repair and sound panel commands/routes.
+- 13/14: WebView2 preflight/build scripts and Linux bundle configuration.
+
+## Tests
+
+```bash
+cargo test -p audio-share-server-gui          # controller transitions + mapping
+cargo clippy -p audio-share-server-gui --all-targets -- -D warnings
+cargo check --target x86_64-pc-windows-msvc -p audio-share-server-gui
+```
