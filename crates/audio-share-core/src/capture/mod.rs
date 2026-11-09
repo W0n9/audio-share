@@ -1,9 +1,10 @@
 //! Audio capture backends.
 //!
-//! Platform backends (WASAPI on Windows, PipeWire on Linux) arrive in later
-//! tickets behind `#[cfg]`. This module always provides [`SyntheticCapture`], a
-//! deterministic backend used by tests, `as-cmd` before real capture lands, and
-//! the debug/fake-capture path.
+//! Platform backends live behind `#[cfg]`: `linux::PipeWireCapture` on Linux
+//! and (later) the WASAPI backend on Windows. This module always provides
+//! [`SyntheticCapture`], a deterministic backend used by tests and the
+//! `--fake-capture` debug path. [`platform_backend`] selects the real backend
+//! for the current platform.
 //!
 //! Capture runs on its own thread and hands PCM to the network side through a
 //! [`FrameSink`]. A capture session publishes the actual negotiated
@@ -18,6 +19,9 @@ use tokio::sync::mpsc;
 
 use crate::error::{Error, Result};
 use crate::protocol::{AudioFormat, Encoding};
+
+#[cfg(target_os = "linux")]
+pub mod linux;
 
 /// The encoding requested from a capture backend.
 ///
@@ -367,6 +371,27 @@ fn validate_frame_length(format: &AudioFormat, frame_bytes: usize) -> Result<()>
         )));
     }
     Ok(())
+}
+
+/// Select the real capture backend for the current platform.
+///
+/// Linux uses `linux::PipeWireCapture`. Other platforms fall back to
+/// [`SyntheticCapture`] until the WASAPI backend lands; `as-cmd` uses this
+/// function unless `--fake-capture` is requested.
+pub fn platform_backend() -> Result<Arc<dyn CaptureBackend>> {
+    #[cfg(target_os = "linux")]
+    {
+        Ok(Arc::new(linux::PipeWireCapture::new()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let format = AudioFormat::new(Encoding::PcmFloat, 2, 48_000);
+        Ok(Arc::new(SyntheticCapture::new(
+            format,
+            8192,
+            Duration::from_millis(10),
+        )?))
+    }
 }
 
 #[cfg(test)]
