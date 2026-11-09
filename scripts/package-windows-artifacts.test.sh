@@ -13,6 +13,21 @@ PACKAGER="$SCRIPT_DIR/package-windows-artifacts.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
+# --- path resolution --------------------------------------------------------
+# $GITHUB_WORKSPACE reaches Git Bash as a native Windows path; it must not be
+# joined onto ROOT (that produced /d/a/.../D:\a\... on CI).
+(
+    ROOT=/posix/root
+    [[ "$(resolve_path 'D:\a\audio-share')" == 'D:\a\audio-share' ]] ||
+        fail "drive-letter path must stay absolute"
+    [[ "$(resolve_path 'D:/a/audio-share')" == 'D:/a/audio-share' ]] ||
+        fail "forward-slash drive path must stay absolute"
+    [[ "$(resolve_path '//server/share')" == '//server/share' ]] ||
+        fail "UNC path must stay absolute"
+    [[ "$(resolve_path 'relative/dir')" == '/posix/root/relative/dir' ]] ||
+        fail "relative path must resolve against ROOT"
+)
+
 list_archive() {
     if command -v unzip >/dev/null 2>&1; then
         unzip -Z1 "$1" | tr '\\' '/'
