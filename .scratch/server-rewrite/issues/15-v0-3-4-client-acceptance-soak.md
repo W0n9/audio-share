@@ -33,7 +33,10 @@ big-bang cutover). That merge deleted the legacy `server-core`/`server-mfc`
 C++ trees and updated docs/packaging/CI; it did not change `crates/`,
 `tools/`, or `scripts/`, so the matrix/soak binaries and results are
 unaffected. `cargo fmt --check`, clippy, and the full workspace tests were
-re-run after this merge and pass.
+re-run after this merge and pass. A later merge `1afcd36` (integration tip
+`3e8074e`, the merger's ticket-15 branch merge) brought only the
+`docs/server-rewrite/README.md` index update; fmt/clippy/workspace tests were
+re-run again and pass.
 
 Environment: Ubuntu 24.04.5 x86_64, Rust 1.98.1, libpipewire 1.0.5,
 WirePlumber 0.4.17, headless `scripts/pw-test-session.sh` null `Audio/Sink`
