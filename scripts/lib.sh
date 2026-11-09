@@ -11,9 +11,13 @@ fail() {
 }
 
 # Resolve $1 against $ROOT unless it is already absolute.
+#
+# Git Bash on Windows hands out paths such as `D:\a\repo` (the form
+# `$GITHUB_WORKSPACE` takes), so native drive-letter and UNC paths must pass
+# through untouched instead of being joined onto $ROOT.
 resolve_path() {
     case "$1" in
-    /*) printf '%s\n' "$1" ;;
+    /* | //* | [A-Za-z]:*) printf '%s\n' "$1" ;;
     *) printf '%s\n' "$ROOT/$1" ;;
     esac
 }
