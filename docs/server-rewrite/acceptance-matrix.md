@@ -30,7 +30,7 @@ tone threshold 0.01 Goertzel amplitude with a 1000 Hz control.
 
 ## Protocol checks applied to every combination
 
-For each row the probe performed the full client flow: TCP connect,
+For each row the probe performed the full Android Client flow: TCP connect,
 `GET_FORMAT` (command 1 + u32 length + protobuf), `START_PLAY` (command 2 +
 positive id), UDP bind with the id as `i32 LE`, heartbeat replies, and raw PCM
 receive. It reported the **actual negotiated** format; the requested format is
@@ -90,10 +90,10 @@ the shorter final segment of a capture buffer; both are block-aligned.
 
 | Scenario | Status | Detail |
 |---|---|---|
-| multi-client | pass | 3 simultaneous probes on one server, total 2556 datagrams, all clients saw PCM and the tone |
+| multi-client | pass | 3 simultaneous probes on one server, total 2556 datagrams, all probes saw PCM and the tone |
 | reconnect | pass | 5 sessions in one probe, `START_PLAY` ids `[1,2,3,4,5]` (strictly increasing), 4 reconnects, 1176 datagrams |
-| heartbeat-active | pass | 2 heartbeats 3000 ms apart over an 8 s session, 0 misses, server did not close an active client |
-| heartbeat-timeout | pass | silent client closed after 6001 ms (5 s timeout checked on the 3 s tick => ~6 s) |
+| heartbeat-active | pass | 2 heartbeats 3000 ms apart over an 8 s session, 0 misses, server did not close an active session |
+| heartbeat-timeout | pass | silent session closed after 6001 ms (5 s timeout checked on the 3 s tick => ~6 s) |
 | server-stop | pass | SIGINT: server exit 0, active TCP session closed after 154 ms |
 | start-stop-cycles | pass | 3 Start -> stream -> Stop cycles, every probe and server process exited 0 |
 
@@ -128,5 +128,5 @@ The same run executed the A/B subset (48 kHz stereo, 2 s probe) against the old
   tone file for 44.1 kHz capture and because the probe may start mid-buffer;
   frequency and presence are stable. Do not compare amplitude across rows as
   a level benchmark.
-- The real v0.3.4 Android client is not involved in any row. See
+- The real v0.3.4 Android Client is not involved in any row. See
   `android-v034-acceptance.md`; its checkbox remains unchecked.

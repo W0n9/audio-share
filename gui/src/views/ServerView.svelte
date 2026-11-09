@@ -1,7 +1,8 @@
 <script lang="ts">
   import { server } from "../lib/store.svelte";
   import { t } from "../lib/i18n.svelte";
-  import type { Encoding } from "../lib/ipc";
+  import { encodings, encodingLabel } from "../lib/encodings";
+  import { statusLabel } from "../lib/status";
 
   const state = $derived(server.status.state);
   const running = $derived(state === "running");
@@ -13,15 +14,7 @@
       : `${server.settings.host}:${server.settings.port}`,
   );
   const error = $derived(server.error ?? server.status.lastError);
-  const statusText = $derived(
-    state === "running"
-      ? t("status.running")
-      : state === "starting"
-        ? t("status.starting")
-        : state === "stopping"
-          ? t("status.stopping")
-          : t("status.stopped"),
-  );
+  const statusText = $derived(statusLabel(state));
   const actionText = $derived(
     state === "running"
       ? t("action.stop")
@@ -31,12 +24,6 @@
           ? t("action.stopping")
           : t("action.start"),
   );
-
-  const encodings: Encoding[] = ["default", "f32", "s8", "s16", "s24", "s32"];
-
-  function encodingLabel(value: Encoding): string {
-    return value === "default" ? t("encoding.default") : value;
-  }
 
   async function toggleServer(): Promise<void> {
     if (state === "running") {

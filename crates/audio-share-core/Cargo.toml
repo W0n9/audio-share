@@ -19,8 +19,8 @@ ringbuf = "0.6"
 [target.'cfg(windows)'.dependencies]
 # Pinned deliberately: wasapi re-exports windows types, so windows must stay on
 # the same 0.62.2 minor while wasapi is in use. Never bump this alone.
-# wasapi 0.27 requires Rust 1.85, so Windows builds need 1.85+ even though the
-# workspace MSRV is 1.75.
+# wasapi 0.27 requires Rust 1.85, but the workspace MSRV is 1.90 because the
+# Tauri GUI crate requires it.
 wasapi = "0.27.0"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",

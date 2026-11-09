@@ -3,6 +3,7 @@ name: Server rewrite
 on:
   push:
     branches:
+      - main
       - integration/server-rewrite
       - "ticket/**"
   pull_request:

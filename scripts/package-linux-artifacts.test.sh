@@ -7,28 +7,11 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
 PACKAGER="$SCRIPT_DIR/package-linux-artifacts.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
-
-assert_file() {
-    [[ -f "$1" ]] || fail "missing file: $1"
-}
-
-sha256_of() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{print $1}'
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | awk '{print $1}'
-    else
-        openssl dgst -sha256 "$1" | awk '{print $NF}'
-    fi
-}
 
 list_archive() {
     tar -tzf "$1" | sed 's:/$::'
@@ -82,11 +65,11 @@ CLI_SUM_CONTENT=$(cat "$CLI_SUM")
     fail "unexpected AppImage checksum: $APPIMAGE_SUM_CONTENT"
 [[ "$CLI_SUM_CONTENT" =~ ^[0-9a-f]{64}\ \ audio-share-server-cmd-linux\.tar\.gz$ ]] ||
     fail "unexpected CLI checksum: $CLI_SUM_CONTENT"
-[[ "${DEB_SUM_CONTENT%% *}" == "$(sha256_of "$TMP/bundle/deb/AudioShareServer_9.9.9_amd64.deb")" ]] ||
+[[ "${DEB_SUM_CONTENT%% *}" == "$(sha256_hex "$TMP/bundle/deb/AudioShareServer_9.9.9_amd64.deb")" ]] ||
     fail "deb checksum does not match the input bundle"
-[[ "${APPIMAGE_SUM_CONTENT%% *}" == "$(sha256_of "$TMP/bundle/appimage/AudioShareServer_9.9.9_amd64.AppImage")" ]] ||
+[[ "${APPIMAGE_SUM_CONTENT%% *}" == "$(sha256_hex "$TMP/bundle/appimage/AudioShareServer_9.9.9_amd64.AppImage")" ]] ||
     fail "AppImage checksum does not match the input bundle"
-[[ "${CLI_SUM_CONTENT%% *}" == "$(sha256_of "$CLI")" ]] ||
+[[ "${CLI_SUM_CONTENT%% *}" == "$(sha256_hex "$CLI")" ]] ||
     fail "CLI checksum does not match the archive"
 
 # The CLI archive keeps the v0.3.4 layout: one top-level directory with the
