@@ -17,7 +17,7 @@ gui/
     src/main.rs            # Tauri window, tray, commands, events
     tauri.conf.json
     capabilities/default.json
-    icons/                 # generated from server-mfc/.../AudioShareServer.ico with `tauri icon`
+    icons/                 # generated with `tauri icon` from the app icon source
 ```
 
 ## Build and run

@@ -14,8 +14,14 @@ on:
       - "tools/**"
       - "fixtures/**"
       - "scripts/**"
+      - "VERSION"
+      - "metadata/**"
       - "docs/server-rewrite/**"
       - ".github/workflows/server-rewrite.yml"
+      - ".github/workflows/release.yml"
+  # Reusable entry point for release.yml: it builds, tests, lints, and
+  # packages the final Windows and Linux Server artifacts.
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -42,6 +48,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Check version metadata is in sync with VERSION
+        if: runner.os == 'Linux'
+        run: |
+          bash scripts/apply_version.sh
+          git diff --exit-code -- \
+            Cargo.toml Cargo.lock \
+            gui/package.json gui/package-lock.json \
+            gui/src-tauri/Cargo.toml gui/src-tauri/tauri.conf.json
+
       - name: Check formatting
         run: cargo fmt --check
 
@@ -64,7 +79,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable (MSVC)
+      - name: Install Rust stable (Windows)
         uses: dtolnay/rust-toolchain@stable
 
       - uses: actions/setup-node@v4
