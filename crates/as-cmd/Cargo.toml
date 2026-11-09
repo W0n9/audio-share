@@ -1,0 +1,14 @@
+[package]
+name = "as-cmd"
+description = "Command-line entry point for the Audio Share Server Core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "as-cmd"
+path = "src/main.rs"
+
+[dependencies]
+audio-share-core.workspace = true
