@@ -223,6 +223,19 @@ pub fn advertised_format(format: &FormatSpec) -> Result<AudioFormat, FormatError
     ))
 }
 
+/// The byte value that represents silence for a delivered encoding.
+///
+/// WASAPI silent packets are zero-filled by `wasapi::read_from_device`, but
+/// 8-bit WAVE_FORMAT_PCM (and Android's `PCM_8BIT`) is unsigned, so 0x80 is
+/// silence and zero is full negative scale. Every wider encoding is signed or
+/// float, where zero is silence.
+pub const fn silence_fill(encoding: Encoding) -> u8 {
+    match encoding {
+        Encoding::Pcm8Bit => 0x80,
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,5 +502,20 @@ mod tests {
             advertised_format(&huge_rate),
             Err(FormatError::InvalidSampleRate)
         );
+    }
+
+    #[test]
+    fn silent_packet_fill_uses_the_encoding_zero_point() {
+        // WAVE_FORMAT_PCM 8-bit and Android's PCM_8BIT are unsigned: the middle
+        // of the range (0x80) is silence. Zero would be full negative scale.
+        assert_eq!(silence_fill(Encoding::Pcm8Bit), 0x80);
+        for encoding in [
+            Encoding::PcmFloat,
+            Encoding::Pcm16Bit,
+            Encoding::Pcm24Bit,
+            Encoding::Pcm32Bit,
+        ] {
+            assert_eq!(silence_fill(encoding), 0, "{encoding:?}");
+        }
     }
 }
