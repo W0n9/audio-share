@@ -122,8 +122,8 @@ The same run executed the A/B subset (48 kHz stereo, 2 s probe) against the old
 - Headless null sink only. Real hardware, real session managers, hotplug, and
   suspend/resume are not covered here (`hotplug-sleep.md`).
 - The 4 s window proves startup negotiation and steady streaming, not
-  long-duration drift; the shortened soak (`soak.md`) covers 12 minutes, and
-  the 8-hour soak is **NOT EXECUTED**.
+  long-duration drift; the release soak (`soak.md`) covers 12 minutes and a
+  full 8-hour run (PASS).
 - Tone amplitude varies between runs because PipeWire resamples the 48 kHz
   tone file for 44.1 kHz capture and because the probe may start mid-buffer;
   frequency and presence are stable. Do not compare amplitude across rows as
