@@ -18,6 +18,7 @@ tools/protocol-harness
   replay       validate fixtures offline, or drive a live server
   serve-fake   v0.3.4-compatible fake server with synthetic PCM
   synthesize   write the Windows v0.3.4-semantics fixture sets
+  probe        drive a live server and report format/framing/heartbeats/tone
   fixture      manifest schema, deterministic writer/reader, path checks
   process      free-port choice, {host}/{port}/{bind} expansion, child cleanup
 ```
@@ -112,6 +113,35 @@ cleaned up on exit and on error; no sudo is used.
 `record` itself enforces a total timeout, responds to server heartbeats, kills
 the launched server on every exit path, and validates each captured datagram
 against the advertised `AudioFormat` before writing the fixture set.
+
+### Probe a live server (acceptance/soak evidence)
+
+```bash
+cargo run -p protocol-harness -- probe \
+  --connect 127.0.0.1:65530 --duration-secs 4 --tone-hz 440 \
+  --json-out /tmp/probe.json
+```
+
+`probe` performs the v0.3.4 client flow (`GET_FORMAT`, `START_PLAY`, UDP id
+bind), replies to heartbeats, and prints one JSON report. It records the
+format the server actually negotiated (never the requested one), datagram
+counts and min/max/mean sizes, `block_align` and 1464-byte MTU compliance,
+heartbeat cadence and misses, PCM byte counts, datagram-arrival gap buckets as
+a glitch proxy, and a Goertzel scan for the 440 Hz tone (300-600 Hz, with a
+1000 Hz control). Useful flags:
+
+- `--datagrams N` stops a single session after N datagrams (`0` = duration).
+- `--reconnect-every-secs N` disconnects/reconnects inside one probe run and
+  reports fresh `START_PLAY` ids.
+- `--no-heartbeat-reply --expect-server-close` observes the ~6 s timeout and
+  the TCP close delay.
+- `--ready-file PATH` creates a handshake file after START_PLAY/UDP bind.
+- `--tone-hz 0` disables tone analysis (silence/hotplug checks).
+
+`scripts/acceptance-matrix.sh` uses this command for the encoding/channel/rate
+matrix, multi-client, reconnect, heartbeat, server-stop, and A/B runs;
+`scripts/soak.sh` uses it for long-running clients. Both scripts write raw
+reports plus TSV/JSON summaries under their output directory.
 
 ### Fake v0.3.4 Server
 
