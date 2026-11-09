@@ -20,6 +20,9 @@ export type WhenAppStart = "nothing" | "start" | "keepLast";
 /** `[App Settings] WhenClose`. */
 export type WhenClose = "exit" | "minimize";
 
+/** An interface language; Rust resolves `default` before the UI mounts. */
+export type Locale = "en-US" | "zh-CN";
+
 /**
  * Persisted settings. The shape mirrors `audio_share_core::config::Config`
  * (serde camelCase); `running` is controller-owned.
@@ -37,20 +40,49 @@ export interface Settings {
   running: boolean;
 }
 
+/** Application-level settings that may change while the server runs. */
+export interface ApplicationSettings {
+  autostart: boolean;
+  whenStart: WhenAppStart;
+  whenClose: WhenClose;
+  autoUpdate: boolean;
+  language: string;
+}
+
+/** Structured migration/recovery/startup message; see `notice.<code>` keys. */
+export interface Notice {
+  code: string;
+  params: Record<string, string>;
+}
+
+/** A GitHub release newer than the running version. */
+export interface NewerUpdate {
+  status: "newer";
+  version: string;
+  url: string;
+}
+
+/** Result of an update check. */
+export type UpdateCheckResult = { status: "upToDate" } | NewerUpdate;
+
 /** One capture endpoint from the live backend. */
 export interface Endpoint {
   id: string;
   name: string;
 }
 
-/** One-time data fetched when the window mounts. */
+/** One-time data fetched before the shell mounts. */
 export interface Bootstrap {
   version: string;
   platform: string;
+  /** Locale selected at startup (`en-US` or `zh-CN`). */
+  locale: Locale;
   status: ServerStatus;
   settings: Settings;
-  /** Migration/recovery warnings; empty when the config was clean. */
-  configNotices: string[];
+  /** Structured migration/recovery warnings; empty when the config was clean. */
+  configNotices: Notice[];
+  /** An update already found by the startup check, if any. */
+  update: UpdateCheckResult | null;
 }
 
 /**
@@ -62,12 +94,15 @@ export const api = {
   getStatus: () => invoke<ServerStatus>("get_status"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
+  saveApplicationSettings: (settings: ApplicationSettings) =>
+    invoke<Settings>("save_application_settings", { settings }),
   resetSettings: () => invoke<Settings>("reset_settings"),
   listEndpoints: () => invoke<Endpoint[]>("list_endpoints"),
   start: () => invoke<ServerStatus>("start_server"),
   stop: () => invoke<ServerStatus>("stop_server"),
   hideWindow: () => invoke<void>("hide_window"),
   exit: () => invoke<void>("exit_app"),
+  checkUpdate: () => invoke<UpdateCheckResult>("check_update"),
 };
 
 /** Subscribe to controller transitions. Returns an unlisten function. */
@@ -80,4 +115,9 @@ export function onServerStateChanged(
 /** A second launch asks the first instance to surface its window. */
 export function onSecondInstance(handler: () => void): Promise<UnlistenFn> {
   return listen("app:second-instance", () => handler());
+}
+
+/** A background check found a newer release. */
+export function onUpdateAvailable(handler: (update: UpdateCheckResult) => void): Promise<UnlistenFn> {
+  return listen<UpdateCheckResult>("update:available", (event) => handler(event.payload));
 }
