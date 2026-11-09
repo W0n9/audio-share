@@ -354,3 +354,80 @@ button:disabled {
     flex-direction: column;
   }
 }
+
+.update-banner .link + .link {
+  margin-left: 10px;
+}
+
+.update-status {
+  margin: 4px 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.hint {
+  color: var(--accent);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 20, 24, 0.38);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  z-index: 20;
+}
+
+.modal {
+  width: min(340px, 100%);
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+}
+
+.modal h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.about-product {
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.about-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.about-fields dt {
+  color: var(--muted);
+}
+
+.about-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.about-fields .link {
+  padding: 0;
+  text-align: left;
+  font-weight: 600;
+}
+
+.about-copyright {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 14px;
+}
+
+.about-actions {
+  display: flex;
+  justify-content: flex-end;
+}

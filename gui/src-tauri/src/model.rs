@@ -7,8 +7,15 @@
 //! spelling (`camelCase`, lowercase enums) is the frontend contract pinned by
 //! the tests below.
 
-use audio_share_core::config::ConfigNotice;
+use std::collections::BTreeMap;
+
+use audio_share_core::config::{
+    ConfigNotice, WhenAppStart, WhenClose, CONFIG_VERSION, DEFAULT_LANGUAGE,
+};
 use serde::{Deserialize, Serialize};
+
+use crate::i18n::Locale;
+use crate::update::UpdateCheckResult;
 
 pub use audio_share_core::config::{Config as Settings, EncodingSetting};
 
@@ -125,22 +132,135 @@ pub struct Bootstrap {
     pub version: String,
     /// `windows`, `linux`, or `unknown`.
     pub platform: String,
+    /// Locale selected at startup (`en-US` or `zh-CN`).
+    pub locale: String,
     /// Current controller status.
     pub status: ServerStatus,
     /// Persisted settings.
     pub settings: Settings,
-    /// Human-readable migration/recovery warnings; empty when clean.
-    pub config_notices: Vec<String>,
+    /// Structured migration/recovery warnings; empty when clean.
+    pub config_notices: Vec<Notice>,
+    /// An update already found by the startup check, if any.
+    pub update: Option<UpdateCheckResult>,
+}
+
+/// A localized message the frontend renders with `notice.<code>`.
+///
+/// Rust never sends English prose for these; the resource files own the text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Notice {
+    /// Message code such as `migrated` or `autostartFailed`.
+    pub code: String,
+    /// Placeholder values for the localized template.
+    pub params: BTreeMap<String, String>,
+}
+
+impl Notice {
+    /// Start a notice with no parameters.
+    pub fn new(code: &str) -> Self {
+        Self {
+            code: code.to_owned(),
+            params: BTreeMap::new(),
+        }
+    }
+
+    /// Add one placeholder value.
+    pub fn with(mut self, key: &str, value: impl Into<String>) -> Self {
+        self.params.insert(key.to_owned(), value.into());
+        self
+    }
+}
+
+impl From<&ConfigNotice> for Notice {
+    fn from(notice: &ConfigNotice) -> Self {
+        match notice {
+            ConfigNotice::Migrated { from } => Notice::new("migrated")
+                .with("from", from.to_string())
+                .with("to", CONFIG_VERSION.to_string()),
+            ConfigNotice::FutureVersion { version } => {
+                Notice::new("futureVersion").with("version", version.to_string())
+            }
+            ConfigNotice::Recovered => Notice::new("recovered"),
+            ConfigNotice::LegacyMigrated { from } => {
+                Notice::new("legacyMigrated").with("path", from.to_string_lossy())
+            }
+            ConfigNotice::InvalidValue { key, value } => Notice::new("invalidValue")
+                .with("key", key)
+                .with("value", value),
+            ConfigNotice::UnknownEndpoint { endpoint } => {
+                Notice::new("unknownEndpoint").with("endpoint", endpoint)
+            }
+        }
+    }
+}
+
+/// Application-level settings that may change while the server is running.
+///
+/// Server fields (host/port/endpoint/encoding) stay locked while running, per
+/// v0.3.4; autostart, launch/close behavior, update checks, and language are
+/// independent of the running server.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationSettings {
+    /// Start at login.
+    pub autostart: bool,
+    /// Server behavior at application launch.
+    pub when_start: WhenAppStart,
+    /// Window-close behavior.
+    pub when_close: WhenClose,
+    /// Periodic update checks.
+    pub auto_update: bool,
+    /// `default`, `en-US`, or `zh-CN`.
+    pub language: String,
+}
+
+impl From<&Settings> for ApplicationSettings {
+    fn from(settings: &Settings) -> Self {
+        Self {
+            autostart: settings.autostart,
+            when_start: settings.when_start,
+            when_close: settings.when_close,
+            auto_update: settings.auto_update,
+            language: settings.language.clone(),
+        }
+    }
+}
+
+impl ApplicationSettings {
+    /// Check the values the UI can write.
+    pub fn validate(&self) -> Result<(), String> {
+        let language = self.language.trim();
+        if language.is_empty()
+            || language.eq_ignore_ascii_case(DEFAULT_LANGUAGE)
+            || Locale::parse(language).is_some()
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "unsupported language {:?}: expected default, en-US, or zh-CN",
+                self.language
+            ))
+        }
+    }
 }
 
 /// Build the bootstrap payload for the frontend.
-pub fn bootstrap(settings: &Settings, status: &ServerStatus, notices: &[String]) -> Bootstrap {
+pub fn bootstrap(
+    settings: &Settings,
+    status: &ServerStatus,
+    notices: &[Notice],
+    update: Option<UpdateCheckResult>,
+    locale: Locale,
+) -> Bootstrap {
     Bootstrap {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         platform: platform_name().to_owned(),
+        locale: locale.tag().to_owned(),
         status: status.clone(),
         settings: settings.clone(),
         config_notices: notices.to_vec(),
+        update,
     }
 }
 
@@ -155,9 +275,9 @@ pub const fn platform_name() -> &'static str {
     }
 }
 
-/// Reduce a settings/config notice list to readable UI strings.
-pub fn notice_messages(notices: &[ConfigNotice]) -> Vec<String> {
-    notices.iter().map(ToString::to_string).collect()
+/// Reduce a settings/config notice list to structured, localizable notices.
+pub fn notice_messages(notices: &[ConfigNotice]) -> Vec<Notice> {
+    notices.iter().map(Notice::from).collect()
 }
 
 #[cfg(test)]
@@ -313,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_carries_version_platform_state_settings_and_notices() {
+    fn bootstrap_carries_version_platform_locale_state_settings_and_notices() {
         let settings = Settings::default();
         let status = ServerStatus::starting();
         let notices = notice_messages(&[
@@ -322,24 +442,118 @@ mod tests {
                 endpoint: "gone".to_owned(),
             },
         ]);
-        let data = bootstrap(&settings, &status, &notices);
+        let update = Some(crate::update::UpdateCheckResult::Newer {
+            version: "v0.4.1".to_owned(),
+            url: "https://example.test/v0.4.1".to_owned(),
+        });
+        let data = bootstrap(&settings, &status, &notices, update.clone(), Locale::ZhCn);
         assert_eq!(data.version, "0.4.0");
         assert_eq!(data.platform, platform_name());
+        assert_eq!(data.locale, "zh-CN");
         assert_eq!(data.status, status);
         assert_eq!(data.settings, settings);
+        assert_eq!(data.update, update);
         assert_eq!(data.config_notices.len(), 2);
-        assert!(data.config_notices[0].contains("migrated"));
-        assert!(data.config_notices[1].contains("gone"));
+        assert_eq!(data.config_notices[0].code, "migrated");
+        assert_eq!(data.config_notices[0].params["from"], "1");
+        assert_eq!(data.config_notices[0].params["to"], "2");
+        assert_eq!(data.config_notices[1].code, "unknownEndpoint");
+        assert_eq!(data.config_notices[1].params["endpoint"], "gone");
 
         let json = serde_json::to_value(&data).unwrap();
-        assert!(json["configNotices"].is_array());
-        assert_eq!(json["configNotices"][0], data.config_notices[0]);
+        assert_eq!(json["locale"], "zh-CN");
+        assert_eq!(json["configNotices"][0]["code"], "migrated");
+        assert_eq!(json["configNotices"][0]["params"]["from"], "1");
+        assert_eq!(json["update"]["status"], "newer");
     }
 
     #[test]
     fn an_empty_notice_list_means_no_banner() {
-        let data = bootstrap(&Settings::default(), &ServerStatus::stopped(), &[]);
+        let data = bootstrap(
+            &Settings::default(),
+            &ServerStatus::stopped(),
+            &[],
+            None,
+            Locale::EnUs,
+        );
         assert!(data.config_notices.is_empty());
+        assert!(data.update.is_none());
         assert!(notice_messages(&[]).is_empty());
+    }
+
+    #[test]
+    fn every_config_notice_maps_to_a_structured_code() {
+        let notices = notice_messages(&[
+            ConfigNotice::Migrated { from: 0 },
+            ConfigNotice::FutureVersion { version: 3 },
+            ConfigNotice::Recovered,
+            ConfigNotice::LegacyMigrated {
+                from: "/old/config.ini".into(),
+            },
+            ConfigNotice::InvalidValue {
+                key: "port".to_owned(),
+                value: "x".to_owned(),
+            },
+            ConfigNotice::UnknownEndpoint {
+                endpoint: "gone".to_owned(),
+            },
+        ]);
+        let codes: Vec<&str> = notices.iter().map(|notice| notice.code.as_str()).collect();
+        assert_eq!(
+            codes,
+            vec![
+                "migrated",
+                "futureVersion",
+                "recovered",
+                "legacyMigrated",
+                "invalidValue",
+                "unknownEndpoint"
+            ]
+        );
+        assert_eq!(notices[3].params["path"], "/old/config.ini");
+        assert_eq!(notices[4].params["key"], "port");
+        assert_eq!(notices[4].params["value"], "x");
+    }
+
+    #[test]
+    fn application_settings_validate_supported_languages() {
+        let base = ApplicationSettings::from(&Settings::default());
+        assert!(base.validate().is_ok());
+        for language in ["default", "en-US", "zh-CN", "EN-us"] {
+            assert!(
+                ApplicationSettings {
+                    language: language.to_owned(),
+                    ..base.clone()
+                }
+                .validate()
+                .is_ok(),
+                "{language} must be accepted"
+            );
+        }
+        let error = ApplicationSettings {
+            language: "fr-FR".to_owned(),
+            ..base.clone()
+        }
+        .validate()
+        .expect_err("unknown language must be rejected");
+        assert!(error.contains("language"), "error was {error}");
+    }
+
+    #[test]
+    fn application_settings_json_uses_the_frontend_contract() {
+        let settings = Settings {
+            autostart: true,
+            when_start: WhenAppStart::KeepLast,
+            when_close: WhenClose::Exit,
+            auto_update: true,
+            language: "zh-CN".to_owned(),
+            ..Settings::default()
+        };
+        let json = serde_json::to_value(ApplicationSettings::from(&settings)).unwrap();
+        assert_eq!(json["autostart"], true);
+        assert_eq!(json["whenStart"], "keepLast");
+        assert_eq!(json["whenClose"], "exit");
+        assert_eq!(json["autoUpdate"], true);
+        assert_eq!(json["language"], "zh-CN");
     }
 }

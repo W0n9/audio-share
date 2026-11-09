@@ -615,3 +615,20 @@ fn load_options_default_matches_a_plain_load() {
     assert_eq!(loaded.config.endpoint, "whatever");
     assert_eq!(CONFIG_VERSION, 2);
 }
+
+#[test]
+fn launch_behavior_enums_map_to_the_documented_decisions() {
+    // 0 = do nothing, 1 = start server, 2 = keep the previous running state.
+    assert!(!WhenAppStart::from_legacy(0).starts_server(true));
+    assert!(WhenAppStart::from_legacy(1).starts_server(false));
+    assert!(WhenAppStart::from_legacy(1).starts_server(true));
+    assert!(WhenAppStart::from_legacy(2).starts_server(true));
+    assert!(!WhenAppStart::from_legacy(2).starts_server(false));
+    // Unknown values behave like 0 (MFC parity).
+    assert!(!WhenAppStart::from_legacy(9).starts_server(true));
+
+    // 0 = exit, any non-zero value = hide to tray.
+    assert!(WhenClose::from_legacy(0).exits_on_close());
+    assert!(!WhenClose::from_legacy(1).exits_on_close());
+    assert!(!WhenClose::from_legacy(2).exits_on_close());
+}

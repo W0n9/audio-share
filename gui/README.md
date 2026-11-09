@@ -70,31 +70,58 @@ xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- bash -c '
 '
 ```
 
-## Behaviour in this ticket (08)
+## Behaviour (tickets 08-10)
 
-- Window 420x640, title "Audio Share Server". Close request hides to the tray;
-  `--hide` starts hidden.
+- Window 420x640, title "Audio Share Server". `--hide` (also `-hide`, `/hide`)
+  starts hidden with the tray present. Close follows `WhenClose`: 0 stops the
+  core and exits, 1 hides to the tray. Tray Exit and the Settings Quit button
+  always stop the core and quit.
+- Launch follows `WhenAppStart`: 0 nothing, 1 start the server, 2 start when
+  `[App] Running` was true. It runs asynchronously after setup.
+- Autostart is written directly (not via `auto-launch`) so paths are quoted:
+  Windows HKCU `Software\Microsoft\Windows\CurrentVersion\Run` value
+  `AudioShareServer` = `"<exe>" /hide`; Linux
+  `$XDG_CONFIG_HOME/autostart/AudioShareServer.desktop` (default
+  `~/.config`) with `Exec="<exe>" --hide` and `TryExec=<exe>`, using
+  `$APPIMAGE` when set. `[App Settings] AutoRun` is reconciled at every start.
+- `en-US` and `zh-CN` resources live in `src/locales/`; both are embedded in
+  Rust for tray/notification text. `[App] language=default` follows the system
+  locale (`zh*` -> `zh-CN`, else `en-US`). The language is applied before the
+  shell mounts; changing it persists and shows a restart hint.
+- The About modal shows product, version, homepage (opens the browser),
+  Apache-2.0, and copyright.
+- Update checks GET GitHub `releases/latest` with a User-Agent and 10 s
+  timeout, compare the tag with the v0.3.4 algorithm, show an in-app banner plus
+  a native notification, and open `html_url` from the banner. Automatic checks
+  run at startup and every 3 hours while `AutoUpdate`; manual checks report
+  Up To Date or a readable error. `AUDIO_SHARE_UPDATE_URL` overrides the
+  endpoint for replay-based testing only.
 - Tray: Show / Start / Stop / separator / Exit; Start and Stop are enabled per
   server state. Windows left-click toggles the window. Linux only delivers the
   right-click menu (Tauri limitation).
 - Start/Stop run asynchronously through `ServerController`; the status event
   `server:state-changed` carries `{ state, address, lastError }`.
-- Settings are in memory (defaults: selected default host, port 65530,
-  endpoint `default`, encoding `default`).
+- Settings load from and save to `config.ini` (resolution order in
+  `docs/server-rewrite/`); application settings stay editable while the server
+  runs. Defaults: selected default host, port 65530, endpoint `default`,
+  encoding `default`, `WhenClose=1`.
 
 ## Extension points for later tickets
 
-- 09: replace `Settings::default()` with `config.ini` loading/saving; branch the
-  close handler on the `onClose` setting; wire saved settings into start.
-- 10: autostart/lifecycle/update/i18n persistence (resources and `locales` are
-  already separated; `en-US.json` is shared with tray labels).
 - 11: Windows firewall repair and sound panel commands/routes.
+- 12: Linux documentation links for firewall/sound equivalents.
 - 13/14: WebView2 preflight/build scripts and Linux bundle configuration.
 
 ## Tests
 
 ```bash
-cargo test -p audio-share-server-gui          # controller transitions + mapping
+cargo test -p audio-share-server-gui          # controller, autostart, i18n, update
 cargo clippy -p audio-share-server-gui --all-targets -- -D warnings
 cargo check --target x86_64-pc-windows-msvc -p audio-share-server-gui
+(cd gui && npm run check && npm run build)
 ```
+
+Under Xvfb, run inside `dbus-run-session` (the single-instance, tray, and
+accessibility services need a session bus) and set
+`WEBKIT_DISABLE_COMPOSITING_MODE=1`, `WEBKIT_DISABLE_DMABUF_RENDERER=1`,
+`LIBGL_ALWAYS_SOFTWARE=1`, `GDK_BACKEND=x11`.
