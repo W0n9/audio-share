@@ -15,7 +15,10 @@
 
 ## Comments
 
-2026-11-09 — branch `ticket/08-tauri-shell`.
+2026-11-09 — branch `ticket/08-tauri-shell`. Implementation commit `5b49bfd`;
+merged `integration/server-rewrite` (ticket 07 tip) in `9d9dc5d`, then re-ran
+fmt/clippy/tests, the Windows cross-check, the Xvfb smoke test, the GUI
+Start/Stop click path and the live protocol-harness replay (all pass).
 
 Implemented `gui/` (Svelte 5.57.3 + Vite 8.3.6 + TypeScript 6.0.3, pinned) and
 `gui/src-tauri` (tauri 2.12.5, tauri-build 2.7.4, single-instance 2.5.5 as the
