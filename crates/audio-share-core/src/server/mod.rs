@@ -34,6 +34,12 @@ const STOP_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// How many capture buffers may queue between capture and UDP broadcast.
 const FRAME_CHANNEL_CAPACITY: usize = 64;
 
+/// Process-wide `START_PLAY` id allocator, matching v0.3.4's function-static
+/// counter. Ids are never reset by stopping a Server or by starting another
+/// Server in the same process (the GUI Stop/Start path), so the released
+/// Android Client always receives a fresh positive id.
+static NEXT_PLAY_ID: AtomicI32 = AtomicI32::new(1);
+
 /// Server listen configuration.
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
@@ -53,21 +59,21 @@ impl Default for ServerConfig {
             host: default_host()
                 .map(|address| address.to_string())
                 .unwrap_or_default(),
-            port: 65_530,
+            port: crate::config::DEFAULT_PORT,
             heartbeat_interval: crate::protocol::HEARTBEAT_INTERVAL,
             heartbeat_timeout: crate::protocol::SESSION_TIMEOUT,
         }
     }
 }
 
-/// The default bind host: the first private IPv4 address, else the first
-/// non-loopback IPv4 address; `None` when the machine has no usable IPv4
-/// address.
+/// The default bind host: the first address matching v0.3.4's private-network
+/// masks, else the first non-loopback IPv4 address; `None` when the machine
+/// has no usable IPv4 address.
 ///
-/// This mirrors v0.3.4's intent (first 10/8, 172.16/12 or 192.168/16 address,
-/// otherwise the first enumerated address). The old mask comparison also
-/// matched ranges outside RFC 1918 (for example `192.169.x.x`); the rewrite
-/// follows the documented private ranges, per the parity recommendation.
+/// v0.3.4 compared `(address & mask) == mask` with the masks below rather than
+/// using RFC 1918 ranges. That also matches some addresses outside the private
+/// ranges (for example `192.169`-`192.175` and `11.x`); 0.4.0 keeps the exact
+/// comparison so the default Host does not change on those networks.
 pub fn default_host() -> Option<std::net::Ipv4Addr> {
     let interfaces = if_addrs::get_if_addrs().ok()?;
     select_default_address(
@@ -80,14 +86,26 @@ pub fn default_host() -> Option<std::net::Ipv4Addr> {
     )
 }
 
-/// Pick the first private IPv4 address, falling back to the first address.
+/// The three masks v0.3.4 used to select its default address.
+const LEGACY_PRIVATE_MASKS: [u32; 3] = [0x0a00_0000, 0xac10_0000, 0xc0a8_0000];
+
+/// Whether `address` matches one of v0.3.4's private-network masks.
+fn is_legacy_private(address: std::net::Ipv4Addr) -> bool {
+    let address = u32::from(address);
+    LEGACY_PRIVATE_MASKS
+        .iter()
+        .any(|mask| address & mask == *mask)
+}
+
+/// Pick the first address matching v0.3.4's private masks, falling back to the
+/// first enumerated address.
 pub fn select_default_address(
     addresses: impl IntoIterator<Item = std::net::Ipv4Addr>,
 ) -> Option<std::net::Ipv4Addr> {
     let addresses: Vec<std::net::Ipv4Addr> = addresses.into_iter().collect();
     addresses
         .iter()
-        .find(|address| address.is_private())
+        .find(|address| is_legacy_private(**address))
         .copied()
         .or_else(|| addresses.first().copied())
 }
@@ -134,43 +152,31 @@ impl Server {
                 .map_err(|error| Error::io("bind UDP socket", error))?,
         );
 
-        let sessions: Arc<Mutex<HashMap<i32, Arc<Peer>>>> = Arc::new(Mutex::new(HashMap::new()));
-        let next_id = Arc::new(AtomicI32::new(1));
         let (shutdown, _) = watch::channel(false);
-        let tasks: Arc<Mutex<JoinSet<()>>> = Arc::new(Mutex::new(JoinSet::new()));
+        let context = Arc::new(ServerContext {
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            format: Arc::clone(&format),
+            tasks: Arc::new(Mutex::new(JoinSet::new())),
+            shutdown,
+            heartbeat_interval: config.heartbeat_interval,
+            heartbeat_timeout: config.heartbeat_timeout,
+        });
+        let handle_tasks = Arc::clone(&context.tasks);
+        let handle_shutdown = context.shutdown.clone();
 
         {
-            let mut set = lock(&tasks);
-            set.spawn(accept_loop(
-                listener,
-                Arc::clone(&sessions),
-                Arc::clone(&next_id),
-                Arc::clone(&format),
-                shutdown.subscribe(),
-                Arc::clone(&tasks),
-                config.heartbeat_interval,
-                config.heartbeat_timeout,
-            ));
-            set.spawn(udp_bind_loop(
-                Arc::clone(&udp),
-                Arc::clone(&sessions),
-                shutdown.subscribe(),
-            ));
-            set.spawn(broadcast_loop(
-                udp,
-                Arc::clone(&sessions),
-                Arc::clone(&format),
-                frame_source,
-                shutdown.subscribe(),
-            ));
+            let mut set = lock(&context.tasks);
+            set.spawn(accept_loop(listener, Arc::clone(&context)));
+            set.spawn(udp_bind_loop(Arc::clone(&udp), Arc::clone(&context)));
+            set.spawn(broadcast_loop(udp, Arc::clone(&context), frame_source));
         }
 
         Ok(ServerHandle {
             local_addr,
             format,
-            shutdown,
+            shutdown: handle_shutdown,
             capture: Some(session),
-            tasks,
+            tasks: handle_tasks,
         })
     }
 }
@@ -178,8 +184,9 @@ impl Server {
 /// A running server.
 ///
 /// `local_addr`, `format`, and `stop` are the only operations the GUI and CLI
-/// need. Dropping the handle also cancels the server. Play ids start at 1 for
-/// each server instance and increase monotonically while it runs.
+/// need. Dropping the handle also cancels the server. Play ids are
+/// process-wide and increase monotonically for the life of the process; they
+/// are never reset per Server instance or per session.
 pub struct ServerHandle {
     local_addr: SocketAddr,
     format: Arc<AudioFormat>,
@@ -285,6 +292,26 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Connection/session state shared by the accept, control, heartbeat, and UDP
+/// tasks.
+///
+/// The shutdown sender is kept here so every task can subscribe to its own
+/// receiver; a receiver cannot be shared mutably across tasks.
+struct ServerContext {
+    sessions: Arc<Mutex<HashMap<i32, Arc<Peer>>>>,
+    format: Arc<AudioFormat>,
+    tasks: Arc<Mutex<JoinSet<()>>>,
+    shutdown: watch::Sender<bool>,
+    heartbeat_interval: Duration,
+    heartbeat_timeout: Duration,
+}
+
+impl ServerContext {
+    fn shutdown(&self) -> watch::Receiver<bool> {
+        self.shutdown.subscribe()
+    }
+}
+
 async fn resolve_bind_address(host: &str, port: u16) -> Result<SocketAddr> {
     if host.is_empty() {
         return Err(Error::InvalidConfig(
@@ -317,17 +344,8 @@ async fn bind_tcp(addr: SocketAddr) -> Result<TcpListener> {
         .map_err(|error| Error::io("listen on TCP socket", error))
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn accept_loop(
-    listener: TcpListener,
-    sessions: Arc<Mutex<HashMap<i32, Arc<Peer>>>>,
-    next_id: Arc<AtomicI32>,
-    format: Arc<AudioFormat>,
-    mut shutdown: watch::Receiver<bool>,
-    tasks: Arc<Mutex<JoinSet<()>>>,
-    heartbeat_interval: Duration,
-    heartbeat_timeout: Duration,
-) {
+async fn accept_loop(listener: TcpListener, context: Arc<ServerContext>) {
+    let mut shutdown = context.shutdown();
     loop {
         tokio::select! {
             _ = shutdown.changed() => break,
@@ -336,16 +354,9 @@ async fn accept_loop(
                     Ok((stream, _peer)) => {
                         // v0.3.4 sets TCP_NODELAY on accepted control sockets.
                         let _ = stream.set_nodelay(true);
-                        let connection = handle_connection(
-                            stream,
-                            Arc::clone(&sessions),
-                            Arc::clone(&next_id),
-                            Arc::clone(&format),
-                            shutdown.clone(),
-                            heartbeat_interval,
-                            heartbeat_timeout,
-                        );
-                        lock(&tasks).spawn(connection);
+                        let connection =
+                            handle_connection(stream, Arc::clone(&context));
+                        lock(&context.tasks).spawn(connection);
                     }
                     Err(_error) => {
                         if *shutdown.borrow() {
@@ -361,15 +372,8 @@ async fn accept_loop(
     }
 }
 
-async fn handle_connection(
-    stream: TcpStream,
-    sessions: Arc<Mutex<HashMap<i32, Arc<Peer>>>>,
-    next_id: Arc<AtomicI32>,
-    format: Arc<AudioFormat>,
-    mut shutdown: watch::Receiver<bool>,
-    heartbeat_interval: Duration,
-    heartbeat_timeout: Duration,
-) {
+async fn handle_connection(stream: TcpStream, context: Arc<ServerContext>) {
+    let mut shutdown = context.shutdown();
     let (mut reader, write_half) = stream.into_split();
     let writer = Arc::new(tokio::sync::Mutex::new(write_half));
     let mut play_id: Option<i32> = None;
@@ -398,7 +402,7 @@ async fn handle_connection(
 
         match decode_command(&command) {
             Ok(Command::GetFormat) => {
-                if write_frame(&writer, &encode_get_format_response(&format))
+                if write_frame(&writer, &encode_get_format_response(&context.format))
                     .await
                     .is_err()
                 {
@@ -410,9 +414,9 @@ async fn handle_connection(
                     // v0.3.4 closes on a duplicate START_PLAY without replying.
                     break;
                 }
-                let id = next_id.fetch_add(1, Ordering::SeqCst);
+                let id = NEXT_PLAY_ID.fetch_add(1, Ordering::SeqCst);
                 let new_peer = Arc::new(Peer::new());
-                lock(&sessions).insert(id, Arc::clone(&new_peer));
+                lock(&context.sessions).insert(id, Arc::clone(&new_peer));
                 cancel = Some(new_peer.subscribe());
                 play_id = Some(id);
                 if write_frame(&writer, &encode_start_play_response(id))
@@ -428,10 +432,7 @@ async fn handle_connection(
                     id,
                     new_peer,
                     Arc::clone(&writer),
-                    heartbeat_interval,
-                    heartbeat_timeout,
-                    shutdown.clone(),
-                    Arc::clone(&sessions),
+                    Arc::clone(&context),
                 )));
             }
             Ok(Command::Heartbeat) => {
@@ -445,7 +446,7 @@ async fn handle_connection(
     }
 
     if let Some(id) = play_id {
-        lock(&sessions).remove(&id);
+        lock(&context.sessions).remove(&id);
     }
     if let Some(heartbeat) = heartbeat.take() {
         heartbeat.abort();
@@ -454,17 +455,14 @@ async fn handle_connection(
     let _ = writer.lock().await.shutdown().await;
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn heartbeat_loop(
     id: i32,
     peer: Arc<Peer>,
     writer: Arc<tokio::sync::Mutex<OwnedWriteHalf>>,
-    heartbeat_interval: Duration,
-    heartbeat_timeout: Duration,
-    mut shutdown: watch::Receiver<bool>,
-    sessions: Arc<Mutex<HashMap<i32, Arc<Peer>>>>,
+    context: Arc<ServerContext>,
 ) {
-    let mut ticker = tokio::time::interval(heartbeat_interval);
+    let mut shutdown = context.shutdown();
+    let mut ticker = tokio::time::interval(context.heartbeat_interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ticker.tick().await; // consume the immediate first tick
 
@@ -473,19 +471,19 @@ async fn heartbeat_loop(
             _ = shutdown.changed() => break,
             _ = ticker.tick() => {}
         }
-        if !lock(&sessions).contains_key(&id) {
+        if !lock(&context.sessions).contains_key(&id) {
             // The connection already ended; nothing left to do.
             break;
         }
         // The timeout is only checked on a tick, so a silent client is closed
         // on the first tick strictly after the timeout (~6s with 3s/5s).
-        if peer.idle() > heartbeat_timeout {
-            lock(&sessions).remove(&id);
+        if peer.idle() > context.heartbeat_timeout {
+            lock(&context.sessions).remove(&id);
             peer.cancel();
             break;
         }
         if write_frame(&writer, &encode_heartbeat()).await.is_err() {
-            lock(&sessions).remove(&id);
+            lock(&context.sessions).remove(&id);
             peer.cancel();
             break;
         }
@@ -499,11 +497,8 @@ async fn write_frame(
     writer.lock().await.write_all(frame).await
 }
 
-async fn udp_bind_loop(
-    udp: Arc<UdpSocket>,
-    sessions: Arc<Mutex<HashMap<i32, Arc<Peer>>>>,
-    mut shutdown: watch::Receiver<bool>,
-) {
+async fn udp_bind_loop(udp: Arc<UdpSocket>, context: Arc<ServerContext>) {
+    let mut shutdown = context.shutdown();
     let mut buffer = [0u8; 4];
     loop {
         let received = tokio::select! {
@@ -522,7 +517,7 @@ async fn udp_bind_loop(
                 let copied = length.min(4);
                 id_bytes[..copied].copy_from_slice(&buffer[..copied]);
                 let id = i32::from_le_bytes(id_bytes);
-                if let Some(peer) = lock(&sessions).get(&id) {
+                if let Some(peer) = lock(&context.sessions).get(&id) {
                     peer.bind_udp(source);
                 }
             }
@@ -533,12 +528,12 @@ async fn udp_bind_loop(
 
 async fn broadcast_loop(
     udp: Arc<UdpSocket>,
-    sessions: Arc<Mutex<HashMap<i32, Arc<Peer>>>>,
-    format: Arc<AudioFormat>,
+    context: Arc<ServerContext>,
     mut frames: mpsc::Receiver<Vec<u8>>,
-    mut shutdown: watch::Receiver<bool>,
 ) {
-    let block_align = format.block_align();
+    let block_align = context.format.block_align();
+    let mut shutdown = context.shutdown();
+    let mut reported_oversized_format = false;
     loop {
         let frame = tokio::select! {
             _ = shutdown.changed() => break,
@@ -547,10 +542,20 @@ async fn broadcast_loop(
                 None => break,
             },
         };
-        if block_align == 0 {
+        if block_align == 0 || block_align > MAX_PAYLOAD_BYTES {
+            // No MTU-sized datagram can carry one sample frame. v0.3.4 could
+            // hang or crash here; 0.4.0 sends no PCM (never an oversized
+            // datagram) and reports the condition once per session.
+            if block_align > MAX_PAYLOAD_BYTES && !reported_oversized_format {
+                reported_oversized_format = true;
+                eprintln!(
+                    "audio-share: block_align {block_align} exceeds the {MAX_PAYLOAD_BYTES}-byte \
+                     UDP payload limit; no PCM will be sent for this capture format"
+                );
+            }
             continue;
         }
-        let peers: Vec<SocketAddr> = lock(&sessions)
+        let peers: Vec<SocketAddr> = lock(&context.sessions)
             .values()
             .filter_map(|peer| peer.udp_peer())
             .collect();
@@ -558,14 +563,6 @@ async fn broadcast_loop(
             continue;
         }
 
-        if block_align > MAX_PAYLOAD_BYTES {
-            // No valid MTU segment fits one sample frame. Never split a sample
-            // and never hang: send each capture buffer whole.
-            for peer in &peers {
-                let _ = udp.send_to(&frame, peer).await;
-            }
-            continue;
-        }
         for segment in segment_audio(&frame, block_align) {
             for peer in &peers {
                 // UDP send failures are expected (unreachable peer) and must
@@ -584,7 +581,7 @@ mod tests {
     #[test]
     fn server_config_defaults_match_v034_timing_and_port() {
         let config = ServerConfig::default();
-        assert_eq!(config.port, 65_530);
+        assert_eq!(config.port, crate::config::DEFAULT_PORT);
         assert_eq!(config.heartbeat_interval, Duration::from_secs(3));
         assert_eq!(config.heartbeat_timeout, Duration::from_secs(5));
     }
@@ -606,5 +603,52 @@ mod tests {
         );
         assert_eq!(select_default_address([public]), Some(public));
         assert_eq!(select_default_address([]), None);
+    }
+
+    #[test]
+    fn private_address_detection_replicates_the_v034_mask_exactly() {
+        // v0.3.4 tested `(addr & mask) == mask` with the masks below. The
+        // comparison is intentionally looser than RFC 1918 (for example it
+        // also matches 192.169-192.175 and 11.x), and parity requires keeping
+        // that behavior so the default Host does not change on such networks.
+        for address in [
+            Ipv4Addr::new(10, 0, 0, 1),
+            Ipv4Addr::new(10, 255, 255, 254),
+            Ipv4Addr::new(11, 1, 2, 3),
+            Ipv4Addr::new(172, 16, 0, 1),
+            Ipv4Addr::new(172, 31, 255, 254),
+            Ipv4Addr::new(173, 20, 1, 2),
+            Ipv4Addr::new(192, 168, 1, 2),
+            Ipv4Addr::new(192, 169, 1, 2),
+            Ipv4Addr::new(192, 175, 255, 254),
+        ] {
+            assert!(
+                is_legacy_private(address),
+                "{address} matches the v0.3.4 mask"
+            );
+        }
+        for address in [
+            Ipv4Addr::new(8, 8, 8, 8),
+            Ipv4Addr::new(9, 255, 255, 255),
+            Ipv4Addr::new(172, 15, 255, 255),
+            Ipv4Addr::new(172, 32, 0, 1),
+            Ipv4Addr::new(173, 1, 2, 3),
+            Ipv4Addr::new(192, 167, 255, 255),
+            Ipv4Addr::new(192, 176, 0, 1),
+        ] {
+            assert!(
+                !is_legacy_private(address),
+                "{address} does not match the v0.3.4 mask"
+            );
+        }
+        // The mask comparison alone also matches 127.x; `default_host` filters
+        // loopback before it reaches the selector, exactly like v0.3.4.
+        assert!(is_legacy_private(Ipv4Addr::new(127, 0, 0, 1)));
+
+        // The loose mask participates in default selection like any match.
+        assert_eq!(
+            select_default_address([Ipv4Addr::new(8, 8, 8, 8), Ipv4Addr::new(192, 169, 1, 2)]),
+            Some(Ipv4Addr::new(192, 169, 1, 2))
+        );
     }
 }

@@ -7,28 +7,11 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
 PACKAGER="$SCRIPT_DIR/package-windows-artifacts.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
-
-assert_file() {
-    [[ -f "$1" ]] || fail "missing file: $1"
-}
-
-sha256_of() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{print $1}'
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | awk '{print $1}'
-    else
-        openssl dgst -sha256 "$1" | awk '{print $NF}'
-    fi
-}
 
 list_archive() {
     if command -v unzip >/dev/null 2>&1; then
@@ -71,9 +54,9 @@ ZIP_SUM_CONTENT=$(cat "$ZIP_SUM")
     fail "unexpected GUI checksum: $GUI_SUM_CONTENT"
 [[ "$ZIP_SUM_CONTENT" =~ ^[0-9a-f]{64}\ \ audio-share-server-cmd-windows\.zip$ ]] ||
     fail "unexpected archive checksum: $ZIP_SUM_CONTENT"
-[[ "${GUI_SUM_CONTENT%% *}" == "$(sha256_of "$TMP/target/release/AudioShareServer.exe")" ]] ||
+[[ "${GUI_SUM_CONTENT%% *}" == "$(sha256_hex "$TMP/target/release/AudioShareServer.exe")" ]] ||
     fail "GUI checksum does not match the input binary"
-[[ "${ZIP_SUM_CONTENT%% *}" == "$(sha256_of "$ZIP")" ]] ||
+[[ "${ZIP_SUM_CONTENT%% *}" == "$(sha256_hex "$ZIP")" ]] ||
     fail "archive checksum does not match the archive"
 
 ENTRIES=$(list_archive "$ZIP")

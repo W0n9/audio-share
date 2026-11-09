@@ -33,6 +33,8 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 ROOT_ARG=
 BUNDLE_ARG=
@@ -60,18 +62,6 @@ Options:
 
 Relative paths are resolved against --root.
 EOF
-}
-
-fail() {
-    echo "error: $*" >&2
-    exit 1
-}
-
-resolve_path() {
-    case "$1" in
-    /*) printf '%s\n' "$1" ;;
-    *) printf '%s\n' "$ROOT/$1" ;;
-    esac
 }
 
 while [[ $# -gt 0 ]]; do
@@ -132,9 +122,6 @@ default_arch() {
 ARCH=${ARCH_ARG:-$(default_arch)}
 
 CONFIG="$ROOT/gui/src-tauri/tauri.conf.json"
-require_file() {
-    [[ -f "$1" ]] || fail "missing build input: $1"
-}
 
 require_file "$CONFIG"
 PRODUCT=$(sed -n 's/.*"productName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" | head -n 1)
@@ -150,23 +137,6 @@ require_file "$BUNDLE_DIR/appimage/$APPIMAGE_NAME"
 require_file "$TARGET_DIR/$CLI_BINARY"
 require_file "$ROOT/LICENSE"
 require_file "$ROOT/README.md"
-
-sha256_hex() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{print $1}'
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | awk '{print $1}'
-    elif command -v openssl >/dev/null 2>&1; then
-        openssl dgst -sha256 "$1" | awk '{print $NF}'
-    else
-        fail "no SHA-256 tool found (sha256sum, shasum, or openssl)"
-    fi
-}
-
-write_sha256() {
-    local file=$1
-    printf '%s  %s\n' "$(sha256_hex "$file")" "$(basename "$file")" >"$file.sha256"
-}
 
 mkdir -p "$OUT_DIR"
 OUT_DIR=$(cd "$OUT_DIR" && pwd)

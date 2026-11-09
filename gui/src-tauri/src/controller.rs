@@ -13,6 +13,7 @@ use audio_share_core::capture::{CaptureBackend, Endpoint};
 use audio_share_core::config::{self, DEFAULT_ENDPOINT};
 use audio_share_core::server::{Server, ServerHandle};
 
+use crate::logging;
 use crate::model::{ApplicationSettings, ServerState, ServerStatus, Settings};
 
 /// Called after every published status change, outside the controller lock.
@@ -188,11 +189,19 @@ impl ServerController {
                 state.status.clone(),
             )
         };
+        logging::info(format!(
+            "server starting: {}:{}",
+            server_config.host, server_config.port
+        ));
         self.publish(&starting);
 
         match Server::start(server_config, backend, capture_config).await {
             Ok(handle) => {
                 let status = ServerStatus::running(handle.local_addr().to_string());
+                logging::info(format!(
+                    "server running on {}",
+                    status.address.as_deref().unwrap_or("unknown")
+                ));
                 let persisted = {
                     let mut state = lock(&self.state);
                     state.handle = Some(handle);
@@ -206,6 +215,7 @@ impl ServerController {
             }
             Err(error) => {
                 let message = error.to_string();
+                logging::error(format!("server start failed: {message}"));
                 let status = ServerStatus::failed(message.clone());
                 lock(&self.state).status = status.clone();
                 self.publish(&status);
@@ -240,10 +250,12 @@ impl ServerController {
             state.status = ServerStatus::stopping(state.status.address.clone());
             (handle, state.status.clone())
         };
+        logging::info("server stopping");
         self.publish(&stopping);
 
         match handle.stop().await {
             Ok(()) => {
+                logging::info("server stopped");
                 let persisted = {
                     let mut state = lock(&self.state);
                     state.status = ServerStatus::stopped();
@@ -257,6 +269,7 @@ impl ServerController {
             }
             Err(error) => {
                 let message = error.to_string();
+                logging::error(format!("server stop failed: {message}"));
                 let status = ServerStatus::failed(message.clone());
                 lock(&self.state).status = status.clone();
                 self.publish(&status);
@@ -277,7 +290,7 @@ impl ServerController {
     /// Start/stop succeeded; a persistence failure must not change that result.
     fn persist_best_effort(&self, settings: &Settings) {
         if let Err(error) = self.persist(settings) {
-            eprintln!("AudioShareServer: {error}");
+            logging::error(&error);
         }
     }
 

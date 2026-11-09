@@ -28,6 +28,8 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 ROOT_ARG=
 TARGET_ARG=
@@ -52,18 +54,6 @@ Options:
 
 Relative paths are resolved against --root.
 EOF
-}
-
-fail() {
-    echo "error: $*" >&2
-    exit 1
-}
-
-resolve_path() {
-    case "$1" in
-    /*) printf '%s\n' "$1" ;;
-    *) printf '%s\n' "$ROOT/$1" ;;
-    esac
 }
 
 while [[ $# -gt 0 ]]; do
@@ -97,27 +87,6 @@ done
 [[ -n "$ROOT_ARG" ]] && ROOT=$(resolve_path "$ROOT_ARG")
 TARGET_DIR=$(resolve_path "${TARGET_ARG:-target/release}")
 OUT_DIR=$(resolve_path "${OUT_ARG:-dist-windows}")
-
-require_file() {
-    [[ -f "$1" ]] || fail "missing build input: $1"
-}
-
-sha256_hex() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{print $1}'
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | awk '{print $1}'
-    elif command -v openssl >/dev/null 2>&1; then
-        openssl dgst -sha256 "$1" | awk '{print $NF}'
-    else
-        fail "no SHA-256 tool found (sha256sum, shasum, or openssl)"
-    fi
-}
-
-write_sha256() {
-    local file=$1
-    printf '%s  %s\n' "$(sha256_hex "$file")" "$(basename "$file")" >"$file.sha256"
-}
 
 create_zip() {
     local directory=$1

@@ -122,7 +122,7 @@ The Settings view shows the Windows-only rows only when
 | Windows action | Linux behavior |
 |---|---|
 | Repair Firewall | No GUI action. Linux has no Windows Firewall; if a host firewall (nftables/ufw/firewalld) is in use, allow inbound TCP and UDP on the Server port (default 65530). The Settings view explains that the action is Windows-only. |
-| Sound Panel (`control.exe /name Microsoft.Sound`) | No GUI action. Use the desktop sound settings to choose the output device (GNOME: Settings → Sound; KDE: System Settings → Audio) and PipeWire/WirePlumber to manage devices. |
+| Sound Panel (`control.exe /name Microsoft.Sound`) | No GUI action. Use the desktop sound settings to choose the output Endpoint (GNOME: Settings → Sound; KDE: System Settings → Audio) and PipeWire/WirePlumber to manage Endpoints. |
 
 The Linux section shows a clear "Windows-only features" explanation and two
 opener-backed documentation links:
@@ -156,7 +156,7 @@ Both use the same code path as Windows:
 - `GET https://api.github.com/repos/mkckr0/audio-share/releases/latest` with
   `User-Agent: AudioShareServer/0.4.0`; compare `tag_name` to `v0.4.0`; show an
   in-app banner plus a native notification and open `html_url` through the
-  opener. Automatic checks run at startup and every 3 hours while
+  opener. Automatic checks run every 3 hours while
   `AutoUpdate` is enabled; manual checks report "up to date" or a readable
   error. `AUDIO_SHARE_UPDATE_URL` is the replay-test seam.
 - About shows the build version (`0.4.0`), homepage

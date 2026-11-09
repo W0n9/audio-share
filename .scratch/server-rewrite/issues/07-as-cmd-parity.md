@@ -92,3 +92,17 @@ Caveats:
 - Real v0.3.4 Android APK acceptance and long-running A/B/soak remain ticket 15.
 - `as-cmd` does not read `config.ini`; the path module only locates `server.log`
   (ticket 09 will use it for persistence).
+
+## Comments
+
+2026-11-09 — fix pass on branch `fix/code-review`: the default bind address was
+restored to v0.3.4's exact mask comparison. `core::server::select_default_address`
+now applies `(address & mask) == mask` with masks `0x0a000000`, `0xac100000`,
+and `0xc0a80000` (loopback still filtered first), replacing the
+`Ipv4Addr::is_private()` RFC 1918 check. That check had narrowed/widened the
+default address on some networks, which contradicted ticket 07's "默认 bind
+地址选择与旧版一致" requirement. The behavior is unit-tested with the loose
+matches (for example `11.x`, `173.16`–`173.31`, `192.169`–`192.175`) and
+recorded in ADR-0003 §6 and `docs/server-rewrite/as-cmd.md`. The `-b value`
+acceptance and parse-time unknown-`--encoding` rejection remain intentional
+deviations (ADR-0003 §4–5).

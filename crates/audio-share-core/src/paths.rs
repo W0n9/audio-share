@@ -1,10 +1,10 @@
 //! Config and log file locations shared by `as-cmd` and the Server GUI.
 //!
-//! Resolution order (architecture.md):
+//! Resolution order (see `docs/server-rewrite/README.md`):
 //!
 //! 1. `AUDIO_SHARE_CONFIG` names the config file directly.
 //! 2. `config.ini` next to the executable, when that directory is writable
-//!    (portable Windows exe, CLI tarball; preserves v0.3.4 behavior).
+//!    (portable Windows exe, `as-cmd` tarball; preserves v0.3.4 behavior).
 //! 3. `$XDG_CONFIG_HOME/audio-share-server/config.ini`, defaulting to
 //!    `~/.config/audio-share-server/config.ini`.
 //!

@@ -55,6 +55,9 @@ pub struct ServeFakeArgs {
     pub chunk_interval_ms: u64,
 }
 
+/// The fake server is a client-side test double for the frozen Wire Protocol;
+/// it maps names straight to protocol encodings instead of using the Server's
+/// `EncodingSetting`/capture-preference layer.
 fn parse_encoding(value: &str) -> Result<Encoding, String> {
     match value.to_ascii_lowercase().as_str() {
         "f32" | "float" => Ok(Encoding::PcmFloat),

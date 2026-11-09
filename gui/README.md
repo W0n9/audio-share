@@ -98,7 +98,8 @@ xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- bash -c '
 - Update checks GET GitHub `releases/latest` with a User-Agent and 10 s
   timeout, compare the tag with the v0.3.4 algorithm, show an in-app banner plus
   a native notification, and open `html_url` from the banner. Automatic checks
-  run at startup and every 3 hours while `AutoUpdate`; manual checks report
+  run every 3 hours while `AutoUpdate` (the first check is one full interval
+  after launch; there is no startup check); manual checks report
   Up To Date or a readable error. `AUDIO_SHARE_UPDATE_URL` overrides the
   endpoint for replay-based testing only.
 - Tray: Show / Start / Stop / separator / Exit; Start and Stop are enabled per

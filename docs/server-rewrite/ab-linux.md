@@ -16,7 +16,7 @@ Both servers were recorded in the same headless session, in sequence, with the
 tone playing, 700 UDP datagrams and one heartbeat each. The old server was
 pinned with `-e $PW_TEST_ENDPOINT_SERIAL --encoding=f32 --channels=2
 --sample-rate=48000`; the new server uses its default endpoint/format because
-ticket 07 has not added those CLI flags yet.
+ticket 07 has not added those `as-cmd` flags yet.
 
 ## Commands
 
@@ -93,7 +93,7 @@ behavior difference, not a protocol change.
 
 ## Ticket 15 extension: A/B across encodings (2026-11-09)
 
-After ticket 07 added the CLI format flags, the same headless null sink/tone
+After ticket 07 added the `as-cmd` format flags, the same headless null sink/tone
 setup was re-run for every encoding the old binary supports. This supersedes
 the "flags not exposed" caveat above; the F32 measurements are unchanged.
 
@@ -141,3 +141,66 @@ Observations:
   `docs/server-rewrite/acceptance-matrix.md`; the old binary was only run in
   this 48 kHz stereo A/B subset because that is the format family ticket 06
   established for the old baseline.
+
+## Fix-pass extension: 30 s CPU, throughput, and arrival-gap proxy (2026-11-09)
+
+The earlier A/B sections compare short captures. This run measures a longer
+steady-state window on the same headless null sink/tone so the rewrite has
+CPU/drift/glitch-proxy evidence next to the format parity. Both servers ran
+sequentially in one `scripts/pw-test-session.sh` session (fresh 35 s 440 Hz
+stereo 48 kHz WAV, `--amplitude 0.25`), pinned to the sink with
+`-e $PW_TEST_ENDPOINT_SERIAL --encoding=f32 --channels=2 --sample-rate=48000`
+and bound to `127.0.0.1:<free port>`.
+
+Measurement procedure (release binaries; temporary orchestration script
+outside the repo):
+
+- Start the server, wait for the TCP listener, read `/proc/<pid>/stat`
+  `utime+stime` (`getconf CLK_TCK`) and `/proc/<pid>/status` `VmHWM`, run
+  `target/release/protocol-harness probe --duration-secs 30 --tone-hz 440`,
+  then read the counters again and stop the server (SIGTERM for the old
+  binary, SIGINT for the new one).
+- CPU % = process CPU seconds / case wall seconds. This is the whole server
+  process, including capture and network threads.
+- Expected PCM = `sample_rate × block_align × probe.duration_elapsed_ms/1000`.
+  Drift is reported as the signed percentage difference from that expected
+  byte count.
+- The old binary exposes no capture-callback counters, so **datagram arrival
+  gaps are the callback/glitch proxy** for both servers. Localhost UDP loss was
+  not observed (identical datagram counts), so a gap means the stream paused,
+  not that a datagram was dropped.
+
+| Metric (30 s, f32/2ch/48 kHz) | Old `as-cmd` 0.3.4 | New 0.4.0 |
+|---|---:|---:|
+| CPU seconds | 0.23 | 0.88 |
+| CPU % of one core | 0.76 | 2.91 |
+| Peak RSS | 12,708 KiB | 15,588 KiB |
+| UDP datagrams | 8,436 | 8,436 |
+| Mean datagram bytes | 1,365.33 | 1,365.33 |
+| Full / partial datagrams | 7,733 / 703 | 7,733 / 703 |
+| PCM bytes received | 11,517,952 | 11,517,952 |
+| Expected PCM bytes | 11,597,952 | 11,595,264 |
+| Drift vs expected | -0.69% | -0.67% |
+| Max datagram gap | 58 ms | 43 ms |
+| Gaps > 50 / 100 / 250 ms | 1 / 0 / 0 | 0 / 0 / 0 |
+| Heartbeat misses | 0 | 0 |
+| Detected tone / amplitude | 440.0 Hz / 0.2482 | 440.0 Hz / 0.2081 |
+| Probe acceptance | pass | pass |
+
+Interpretation and limitations:
+
+- Both servers delivered the **same** PCM byte count and datagram histogram,
+  so there is no throughput or packet-count regression in this window. The
+  identical ~-0.7% "drift" is a fixed startup/handshake offset between the
+  probe's measured window and the first delivered datagram, not progressive
+  clock drift; a 30 s capture cannot prove long-term drift either way.
+- The new server uses about 2.2 percentage points more CPU (0.65 s more CPU
+  over 30 s) and ~2.8 MiB more peak RSS on this null-sink workload. The old
+  C++ loop is leaner; absolute new CPU remains low. This is a measured
+  difference, not a glitch regression.
+- Arrival gaps are a proxy: neither server reports capture-callback timestamps
+  here. The new server's largest gap (43 ms) was slightly smaller than the
+  old server's (58 ms), and neither had a gap above 250 ms.
+- One null sink, one tone, one format, 30 s. Long-run drift, CPU under load,
+  real hardware, and an 8-hour run are **not** covered; the 12-minute release
+  soak is recorded in `soak.md`.

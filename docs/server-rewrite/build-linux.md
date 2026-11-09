@@ -9,7 +9,7 @@ a minimal StatusNotifierWatcher plus `com.canonical.dbusmenu` calls (menu items
 and actions verified); visual icon rendering still needs a real desktop panel.
 See [Known limitations](#known-limitations).
 
-The Linux release ships two GUI bundles plus the CLI archive. Protocol and
+The Linux release ships two GUI bundles plus the `as-cmd` archive. Protocol and
 behavior are identical to the Windows build; only packaging and the
 platform-specific capture backend differ.
 
@@ -22,13 +22,13 @@ Built with `npx tauri build --bundles deb,appimage` from `gui/` and
 |---|---|---:|---|
 | Debian package | `AudioShareServer_0.4.0_amd64.deb` | 6,869,272 B (6.55 MiB) | `/usr/bin/AudioShareServer`, desktop entry, hicolor icons |
 | AppImage | `AudioShareServer_0.4.0_amd64.AppImage` | 85,252,600 B (81.30 MiB) | Self-contained GUI image (bundles WebKitGTK/GTK libraries) |
-| CLI archive | `audio-share-server-cmd-linux.tar.gz` | 977,038 B (0.93 MiB) | Top-level `audio-share-server-cmd/` with `as-cmd`, `LICENSE`, `README.md` |
+| `as-cmd` archive | `audio-share-server-cmd-linux.tar.gz` | 977,038 B (0.93 MiB) | Top-level `audio-share-server-cmd/` with `as-cmd`, `LICENSE`, `README.md` |
 
 Each file has a `sha256sum`-format `.sha256` sidecar produced by
 `scripts/package-linux-artifacts.sh`. The names are the Tauri bundle names:
-`<productName>_<version>_<arch>.<bundle>`. The CLI archive keeps the v0.3.4
-name and layout; names do not include the version, which is embedded in the
-binaries.
+`<productName>_<version>_<arch>.<bundle>`. The `as-cmd` archive keeps the
+v0.3.4 name and layout; names do not include the version, which is embedded in
+the binaries.
 
 Local build checksums (for provenance, not a release commitment; final
 artifacts were rebuilt after the integration merge and re-verified):
@@ -157,7 +157,7 @@ bash scripts/package-linux-artifacts.sh \
 
 The script validates the predictable names derived from
 `gui/src-tauri/tauri.conf.json`, copies the bundles, writes `.sha256` files for
-all three artifacts, and creates the CLI tarball.
+all three artifacts, and creates the `as-cmd` tarball.
 
 ## Install, run, uninstall (deb)
 
@@ -228,7 +228,7 @@ Resolution order (implemented in `crates/audio-share-core/src/paths.rs`):
 
 1. `AUDIO_SHARE_CONFIG` (absolute path to the config file), if set.
 2. `config.ini` next to the executable, if that directory is writable
-   (portable CLI tarball, Windows exe).
+   (portable `as-cmd` tarball, Windows exe).
 3. `$XDG_CONFIG_HOME/audio-share-server/config.ini`, default
    `~/.config/audio-share-server/config.ini`.
 
@@ -236,9 +236,9 @@ The installed deb lives in `/usr/bin` (not writable by the user) and the
 AppImage mount is read-only, so both fall back to
 `~/.config/audio-share-server/config.ini`. Verified after an installed-package
 run: the file was created with `configVersion=2`, `port=65530`, and
-`WhenClose=1`. `server.log` is resolved to the same directory; `as-cmd` writes
-it, while the v0.4.0 GUI writes its diagnostics to stdout and does not create a
-log file.
+`WhenClose=1`. `server.log` is resolved to the same directory; both `as-cmd`
+and the GUI write it. The GUI truncates the file at application startup, and
+`as-cmd` truncates it on each server launch.
 
 ## Headless verification recipe
 
@@ -277,7 +277,8 @@ asserted there.
 `.github/workflows/server-rewrite.yml` has a `linux-packaging` job on
 `ubuntu-24.04` that installs the build dependencies above, runs
 `npm ci`/`npm run build` and `npx tauri build --bundles deb,appimage`, builds
-`as-cmd`, runs the packaging self-test, and uploads the deb, AppImage, and CLI
+`as-cmd`, runs the packaging self-test, and uploads the deb, AppImage, and
+`as-cmd` archive
 archive (each with its `.sha256`) as separate artifacts. The Windows portable
 packaging job is independent and kept alongside it.
 

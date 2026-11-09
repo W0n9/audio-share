@@ -214,11 +214,10 @@ async fn start_play_returns_an_id_and_udp_bind_delivers_aligned_pcm() {
 
     send_command(&mut stream, Command::StartPlay).await;
     let (id, response) = read_start_play_response(&mut stream).await;
-    assert_eq!(id, 1, "ids start at 1 on a fresh server");
-    assert_eq!(
-        response,
-        vec![0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00]
-    );
+    assert!(id > 0, "ids must be positive, got {id}");
+    let mut expected = vec![0x02, 0x00, 0x00, 0x00];
+    expected.extend_from_slice(&id.to_le_bytes());
+    assert_eq!(response, expected);
 
     let udp = bind_udp(server.addr, id).await;
     let datagram = recv_datagram(&udp, Duration::from_secs(3)).await;
@@ -245,11 +244,37 @@ async fn play_ids_increment_across_connections_on_one_server() {
     send_command(&mut second, Command::StartPlay).await;
     let (second_id, _) = read_start_play_response(&mut second).await;
 
-    assert_eq!(first_id, 1);
-    assert_eq!(second_id, 2);
-    assert!(second_id > first_id);
+    assert!(first_id > 0, "ids must be positive, got {first_id}");
+    assert!(
+        second_id > first_id,
+        "ids must increase on one server: {first_id} then {second_id}"
+    );
 
     server.stop().await;
+}
+
+#[tokio::test]
+async fn play_ids_are_process_wide_and_do_not_reset_with_a_new_server() {
+    // v0.3.4 used a function-static counter. A process that stops one Server
+    // and starts another (the GUI path) must keep allocating increasing ids.
+    let first_server = TestServer::start(f32_stereo_48k(), 1024).await;
+    let mut first_stream = connect(first_server.addr).await;
+    send_command(&mut first_stream, Command::StartPlay).await;
+    let (first_id, _) = read_start_play_response(&mut first_stream).await;
+    assert!(first_id > 0, "ids must be positive, got {first_id}");
+    first_server.stop().await;
+
+    let second_server = TestServer::start(f32_stereo_48k(), 1024).await;
+    let mut second_stream = connect(second_server.addr).await;
+    send_command(&mut second_stream, Command::StartPlay).await;
+    let (second_id, _) = read_start_play_response(&mut second_stream).await;
+
+    assert!(
+        second_id > first_id,
+        "a new Server must continue the process-wide id sequence: \
+         {first_id} then {second_id}"
+    );
+    second_server.stop().await;
 }
 
 #[tokio::test]
@@ -323,7 +348,7 @@ async fn a_silent_playing_client_is_closed_by_the_timeout_checked_on_a_tick() {
         "expected at least one server heartbeat before close, got {} bytes",
         received.len()
     );
-    for chunk in received.chunks_exact(4) {
+    for chunk in received.as_chunks::<4>().0 {
         assert_eq!(decode_heartbeat(chunk).unwrap(), 4);
     }
 
@@ -366,7 +391,7 @@ async fn duplicate_start_play_closes_without_a_second_response() {
     let mut stream = connect(server.addr).await;
     send_command(&mut stream, Command::StartPlay).await;
     let (id, _) = read_start_play_response(&mut stream).await;
-    assert_eq!(id, 1);
+    assert!(id > 0, "ids must be positive, got {id}");
 
     send_command(&mut stream, Command::StartPlay).await;
     let received = read_until_closed(&mut stream, Duration::from_secs(2)).await;
@@ -452,6 +477,39 @@ async fn mtu_segments_align_to_block_align_and_split_large_capture_frames() {
 
         server.stop().await;
     }
+}
+
+#[tokio::test]
+async fn oversized_block_align_emits_no_datagrams_and_keeps_the_server_alive() {
+    // 400 channels of 4-byte float PCM: block_align 1600 > the 1464-byte MTU
+    // payload. No valid segment fits one sample frame, so the server must send
+    // nothing rather than an oversized datagram, and must keep serving.
+    let format = AudioFormat::new(Encoding::PcmFloat, 400, 48_000);
+    let block_align = format.block_align();
+    assert!(
+        block_align > MAX_PAYLOAD_BYTES,
+        "test format is not oversized"
+    );
+    let server = TestServer::start(format.clone(), block_align).await;
+
+    let mut stream = connect(server.addr).await;
+    send_command(&mut stream, Command::StartPlay).await;
+    let (id, _) = read_start_play_response(&mut stream).await;
+    let udp = bind_udp(server.addr, id).await;
+    assert!(
+        try_recv_datagram(&udp, Duration::from_millis(400))
+            .await
+            .is_none(),
+        "an oversized block_align must not produce UDP datagrams"
+    );
+
+    // The server is still alive and serving control traffic.
+    let mut control = connect(server.addr).await;
+    send_command(&mut control, Command::GetFormat).await;
+    let (reported, _) = read_get_format_response(&mut control).await;
+    assert_eq!(reported, format);
+
+    server.stop().await;
 }
 
 #[tokio::test]
