@@ -6,6 +6,7 @@
 
 pub mod capture;
 pub mod error;
+pub mod paths;
 pub mod protocol;
 pub mod server;
 
