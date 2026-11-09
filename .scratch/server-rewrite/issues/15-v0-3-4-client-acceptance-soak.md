@@ -28,6 +28,13 @@ Additional executed assets:
 `f3afe06` (acceptance docs), `f32369e` (this soak record + checklist
 update).
 
+Final integration merge: `df6ae72` (integration tip `470a95d`, ticket 16
+big-bang cutover). That merge deleted the legacy `server-core`/`server-mfc`
+C++ trees and updated docs/packaging/CI; it did not change `crates/`,
+`tools/`, or `scripts/`, so the matrix/soak binaries and results are
+unaffected. `cargo fmt --check`, clippy, and the full workspace tests were
+re-run after this merge and pass.
+
 Environment: Ubuntu 24.04.5 x86_64, Rust 1.98.1, libpipewire 1.0.5,
 WirePlumber 0.4.17, headless `scripts/pw-test-session.sh` null `Audio/Sink`
 with a 440 Hz tone, release binaries built from this tree (no Rust runtime
