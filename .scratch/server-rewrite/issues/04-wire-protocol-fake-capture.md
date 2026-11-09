@@ -44,6 +44,9 @@ Commands and results:
   replay integration; core 4 unit + 5 capture + 17 protocol + 15 server;
   harness 11 unit + 2 CLI + 1 smoke; 0 doctests).
 - `cargo check --workspace --all-targets --target x86_64-pc-windows-msvc` — pass.
+- After merging `integration/server-rewrite` (ticket 02 WASAPI spike): fmt, clippy,
+  `cargo test --workspace` (84 passed, 0 failed) and the Windows target check all
+  pass again.
 - Explicit harness replay:
   `cargo run -p protocol-harness -- replay --fixture fixtures/protocol/v0.3.4/linux/f32-48k-stereo --server-cmd target/debug/as-cmd --server-arg=--bind={bind}`
   → `replay: ok (live)`, `format_bytes_match=true`, `start_play_id: 1`,
