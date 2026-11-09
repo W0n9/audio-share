@@ -1,9 +1,10 @@
 # Linux capture (PipeWire)
 
 Status: implemented by ticket 06. Verified headlessly against PipeWire 1.0.5 +
-WirePlumber on Ubuntu 24.04; ticket 15 added the full Wire Protocol matrix and a
-12-minute release soak (`acceptance-matrix.md`, `soak.md`). Real hardware,
-session-manager variants, and the 8-hour soak remain for later acceptance.
+WirePlumber on Ubuntu 24.04; ticket 15 added the full Wire Protocol matrix, a
+12-minute release soak, and an 8-hour release soak (`acceptance-matrix.md`,
+`soak.md`). Real hardware and session-manager variants remain for later
+acceptance.
 
 `audio-share-core::capture::linux::PipeWireCapture` implements the core
 `CaptureBackend` trait with the safe `pipewire` crate (0.10.1, feature
@@ -122,7 +123,8 @@ payload.
 
 - Only the `support.null-audio-sink` virtual sink was exercised here; real ALSA
   and USB sinks, suspend/resume, and hotplug variants are not covered.
-- The headless captures run for seconds, not the acceptance 8-hour soak.
+- The captures recorded on this page run for seconds; long-duration behavior is
+  covered by the release soaks in `soak.md`.
 - A sink whose graph is idle may never call `process`; the watchdog treats a
   stream that never produced a callback as idle rather than lost. Target loss
   is still detected by `global_remove`.

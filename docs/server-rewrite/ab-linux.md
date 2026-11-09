@@ -201,6 +201,6 @@ Interpretation and limitations:
 - Arrival gaps are a proxy: neither server reports capture-callback timestamps
   here. The new server's largest gap (43 ms) was slightly smaller than the
   old server's (58 ms), and neither had a gap above 250 ms.
-- One null sink, one tone, one format, 30 s. Long-run drift, CPU under load,
-  real hardware, and an 8-hour run are **not** covered; the 12-minute release
-  soak is recorded in `soak.md`.
+- One null sink, one tone, one format, 30 s. This A/B does not cover long-run
+  drift, CPU under load, or real hardware; the release soaks (12 minutes and
+  8 hours) are recorded in `soak.md`.

@@ -75,13 +75,13 @@ version comparison.
 - [GUI acceptance checklist](gui-acceptance-checklist.md) — manual desktop
   tray/menu/toast, Windows runtime, and Wayland checks.
 
-**Real release gates are NOT EXECUTED.** The real v0.3.4 APK on a phone, the
-8-hour soak, sleep/resume, real-hardware hotplug, and the real desktop tray
-(on Linux and Windows) have not been run in this environment. Only the
-scripted Linux headless matrix, a short (12-minute) release soak, headless
-hotplug + operator Stop/Start, and partial Xvfb/DBus GUI checks were
-executed; the remaining gates are tracked as `ready-for-human` in the
-ticket 15 issue.
+**Most real release gates remain NOT EXECUTED.** The 8-hour release soak has
+been executed on the Linux host and passed (see [Soak](soak.md)), and the
+Windows packaging artifacts were built and checksum-verified by CI (see
+[Windows build](build-windows.md)). The real v0.3.4 APK on a phone,
+sleep/resume, real-hardware hotplug, and the real desktop tray (Linux and
+Windows) have not been run in this environment. The remaining gates are
+tracked as `ready-for-human` in the ticket 15 issue.
 
 ## Spikes (historical)
 
