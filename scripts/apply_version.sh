@@ -12,8 +12,8 @@
 #   gui/src-tauri/Cargo.toml                GUI crate version
 #   gui/src-tauri/tauri.conf.json           Tauri bundle version
 #
-# The server-core/server-mfc CMake/MFC version files were removed with the
-# legacy implementation in the 0.4.0 cutover.
+# The legacy CMake/C++ version files were removed with the old Server
+# implementation in the 0.4.0 cutover.
 set -euo pipefail
 
 pushd "$(dirname "$0")/.." >/dev/null
