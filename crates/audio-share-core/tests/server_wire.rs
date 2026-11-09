@@ -65,6 +65,26 @@ impl TestServer {
         heartbeat_interval: Duration,
         heartbeat_timeout: Duration,
     ) -> Self {
+        Self::try_start_on_port(
+            format,
+            frame_bytes,
+            port,
+            heartbeat_interval,
+            heartbeat_timeout,
+        )
+        .await
+        .expect("server start")
+    }
+
+    /// Like [`Self::start_on_port`], but lets the caller retry another port when
+    /// the requested one is unavailable.
+    async fn try_start_on_port(
+        format: AudioFormat,
+        frame_bytes: usize,
+        port: u16,
+        heartbeat_interval: Duration,
+        heartbeat_timeout: Duration,
+    ) -> Option<Self> {
         let capture = SyntheticCapture::new(format.clone(), frame_bytes, FRAME_INTERVAL).unwrap();
         let handle = Server::start(
             ServerConfig {
@@ -77,14 +97,14 @@ impl TestServer {
             CaptureConfig::default(),
         )
         .await
-        .expect("server start");
+        .ok()?;
         assert_eq!(handle.format(), format);
         let addr = handle.local_addr();
-        Self {
+        Some(Self {
             handle,
             addr,
             format,
-        }
+        })
     }
 
     async fn stop(self) {
@@ -93,6 +113,31 @@ impl TestServer {
             .expect("server stop timed out")
             .expect("server stop failed");
     }
+}
+
+/// Start a test server on a port outside the OS ephemeral ranges (Linux
+/// 32768-60999, Windows 49152-65535).
+///
+/// The listener-release test must not share the ephemeral pool: with parallel
+/// tests, a server started by another test can be handed the just-freed port
+/// and answer the "must be refused" reconnect, which made this assertion flaky
+/// on Windows CI.
+async fn start_on_non_ephemeral_port(format: AudioFormat, frame_bytes: usize) -> TestServer {
+    const CANDIDATES: [u16; 4] = [31337, 31338, 31339, 31340];
+    for port in CANDIDATES {
+        if let Some(server) = TestServer::try_start_on_port(
+            format.clone(),
+            frame_bytes,
+            port,
+            Duration::from_secs(3),
+            Duration::from_secs(5),
+        )
+        .await
+        {
+            return server;
+        }
+    }
+    panic!("no non-ephemeral test port available: {CANDIDATES:?}");
 }
 
 async fn connect(addr: SocketAddr) -> TcpStream {
@@ -601,7 +646,9 @@ async fn udp_bind_last_wins_and_unknown_ids_are_ignored() {
 
 #[tokio::test]
 async fn stop_closes_playing_and_idle_sessions_and_releases_the_listener() {
-    let server = TestServer::start(f32_stereo_48k(), 1024).await;
+    // A non-ephemeral port keeps a parallel test from being assigned this port
+    // right after the server releases it.
+    let server = start_on_non_ephemeral_port(f32_stereo_48k(), 1024).await;
     let addr = server.addr;
 
     let mut idle = connect(addr).await;
@@ -617,16 +664,18 @@ async fn stop_closes_playing_and_idle_sessions_and_releases_the_listener() {
         .expect("stop itself hung")
         .expect("stop failed");
 
-    // Both TCP sessions observe EOF/close, whether or not they completed
-    // START_PLAY.
-    let _ = read_until_closed(&mut idle, Duration::from_secs(3)).await;
-    let _ = read_until_closed(&mut playing, Duration::from_secs(3)).await;
-
+    // Check the listener immediately after stop, before any longer waits give
+    // another test a chance to bind this address.
     let reconnect = timeout(Duration::from_secs(2), TcpStream::connect(addr)).await;
     assert!(
         matches!(reconnect, Ok(Err(_))),
         "a stopped server must not accept new connections"
     );
+
+    // Both TCP sessions observe EOF/close, whether or not they completed
+    // START_PLAY.
+    let _ = read_until_closed(&mut idle, Duration::from_secs(3)).await;
+    let _ = read_until_closed(&mut playing, Duration::from_secs(3)).await;
 }
 
 #[tokio::test]
