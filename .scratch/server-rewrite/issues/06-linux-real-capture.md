@@ -64,8 +64,16 @@ Commands and results (Ubuntu 24.04.5, libpipewire 1.0.5, WirePlumber 0.4.17):
   synthetic + 17 protocol + 15 server + 1 ignored Linux capture; as-cmd 2 + 1
   harness replay; spike/harness suites unchanged).
 - `cargo check --workspace --all-targets --target x86_64-pc-windows-msvc` —
-  pass (PipeWire code is `cfg(target_os = "linux")`; Windows uses the synthetic
-  branch until ticket 05 lands).
+  pass, both before and after merging the ticket-05 Windows backend (PipeWire
+  code is `cfg(target_os = "linux")`; `platform_backend()` resolves Windows to
+  `windows::WasapiCapture`, Linux to `linux::PipeWireCapture`, and other
+  platforms to the synthetic backend; `--fake-capture` uses
+  `synthetic_backend()`).
+- After merging `integration/server-rewrite` (ticket 05 WASAPI backend): `cargo
+  fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test
+  --workspace`, the ignored headless capture test, and
+  `cargo check/clippy --workspace --all-targets --target
+  x86_64-pc-windows-msvc` all pass on the resolved tree.
 - A/B vs old `as-cmd` 0.3.4 on the same null sink/tone (protocol-harness record,
   700 datagrams each): identical `AudioFormat`/`GET_FORMAT` bytes
   (`080110021880f702`), identical datagram size distribution (642×1464 + 58
