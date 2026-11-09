@@ -1,0 +1,10 @@
+[package]
+name = "audio-share-core"
+description = "Server Core for Audio Share: Wire Protocol, framing, and MTU segmentation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+prost.workspace = true
