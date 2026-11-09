@@ -158,6 +158,16 @@ impl WhenAppStart {
             Self::KeepLast => 2,
         }
     }
+
+    /// Whether launch should start the server, given the persisted
+    /// `[App] Running` flag from the previous session.
+    pub const fn starts_server(self, last_running: bool) -> bool {
+        match self {
+            Self::Nothing => false,
+            Self::Start => true,
+            Self::KeepLast => last_running,
+        }
+    }
 }
 
 /// `[App Settings] WhenClose` values.
@@ -187,6 +197,11 @@ impl WhenClose {
             Self::Exit => 0,
             Self::Minimize => 1,
         }
+    }
+
+    /// Whether a window close request should stop the core and exit.
+    pub const fn exits_on_close(self) -> bool {
+        matches!(self, Self::Exit)
     }
 }
 

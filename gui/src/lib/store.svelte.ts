@@ -1,4 +1,13 @@
-import { api, type Bootstrap, type Endpoint, type ServerStatus, type Settings } from "./ipc";
+import {
+  api,
+  type ApplicationSettings,
+  type Bootstrap,
+  type Endpoint,
+  type Notice,
+  type ServerStatus,
+  type Settings,
+  type UpdateCheckResult,
+} from "./ipc";
 import { t } from "./i18n.svelte";
 
 export type View = "main" | "settings";
@@ -23,8 +32,16 @@ class ServerStore {
   settings = $state<Settings>({ ...DEFAULT_SETTINGS });
   bootstrap = $state<Bootstrap | null>(null);
   endpoints = $state<Endpoint[]>([]);
-  /** Migration/recovery warnings shown once in the banner. */
-  notices = $state<string[]>([]);
+  /** Structured migration/recovery warnings shown in the banner. */
+  notices = $state<Notice[]>([]);
+  /** Newest release found by any check; drives the in-app banner. */
+  update = $state<UpdateCheckResult | null>(null);
+  updateDismissed = $state(false);
+  updateBusy = $state(false);
+  /** Manual-check status text (checking / up to date / error). */
+  updateMessage = $state<string | null>(null);
+  /** Persisted language changes need a restart, per spec. */
+  languageRestartHint = $state(false);
   view = $state<View>("main");
   busy = $state(false);
   saving = $state(false);
@@ -44,6 +61,11 @@ class ServerStore {
     return this.busy || this.saving || this.status.state !== "stopped";
   }
 
+  /** Application settings stay editable while the server runs (MFC parity). */
+  get applicationLocked(): boolean {
+    return this.busy || this.saving;
+  }
+
   /** Default followed by live endpoints, plus any configured ID not listed. */
   get endpointOptions(): Endpoint[] {
     const options = this.endpoints.filter((endpoint) => endpoint.id !== "default");
@@ -56,14 +78,24 @@ class ServerStore {
     return options;
   }
 
-  /** Load version/platform/status/settings once the webview is ready. */
-  async init(): Promise<void> {
-    const data = await api.getBootstrap();
+  /** Apply the pre-mount bootstrap payload (the locale is set in main.ts). */
+  hydrate(data: Bootstrap): void {
     this.bootstrap = data;
     this.status = data.status;
     this.settings = data.settings;
     this.notices = data.configNotices;
+    this.update = data.update;
+    if (data.update?.status === "newer") {
+      this.updateMessage = t("update.available", { version: data.update.version });
+    }
     void this.refreshEndpoints();
+  }
+
+  /** Load once if `main.ts` did not manage to fetch the bootstrap. */
+  async init(): Promise<void> {
+    if (this.bootstrap) return;
+    const data = await api.getBootstrap();
+    this.hydrate(data);
   }
 
   /** Re-enumerate real endpoints; keep the previous list on failure. */
@@ -111,6 +143,42 @@ class ServerStore {
     }
   }
 
+  /**
+   * Persist autostart/launch/close/update/language settings. Allowed while
+   * the server runs; Rust applies the login entry first for autostart.
+   */
+  async persistApplication(): Promise<void> {
+    if (this.applicationLocked) return;
+    const application: ApplicationSettings = {
+      autostart: this.settings.autostart,
+      whenStart: this.settings.whenStart,
+      whenClose: this.settings.whenClose,
+      autoUpdate: this.settings.autoUpdate,
+      language: this.settings.language,
+    };
+    this.saving = true;
+    this.saveError = null;
+    try {
+      this.settings = await api.saveApplicationSettings(application);
+    } catch (error) {
+      this.saveError = String(error);
+      try {
+        this.settings = await api.getSettings();
+      } catch {
+        // Keep the user's input visible; the message already explains failure.
+      }
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  /** Change the language, persist it, and show the restart hint (no live switch). */
+  async setLanguage(language: string): Promise<void> {
+    this.settings.language = language;
+    this.languageRestartHint = true;
+    await this.persistApplication();
+  }
+
   /** Restore Host/Port/Endpoint/Encoding defaults and write them. */
   async reset(): Promise<void> {
     if (this.settingsLocked) return;
@@ -127,6 +195,44 @@ class ServerStore {
 
   dismissNotices(): void {
     this.notices = [];
+  }
+
+  /** A manual update check reports Up To Date, a new version, or an error. */
+  async checkUpdate(): Promise<void> {
+    if (this.updateBusy) return;
+    this.updateBusy = true;
+    this.updateMessage = t("update.checking");
+    try {
+      const result = await api.checkUpdate();
+      this.applyUpdateResult(result);
+    } catch (error) {
+      this.updateMessage = describeUpdateError(error);
+    } finally {
+      this.updateBusy = false;
+    }
+  }
+
+  /** Apply a manual or background result. */
+  applyUpdateResult(result: UpdateCheckResult): void {
+    this.update = result.status === "newer" ? result : null;
+    if (result.status === "newer") {
+      this.updateDismissed = false;
+      this.updateMessage = t("update.available", { version: result.version });
+    } else {
+      this.updateMessage = t("update.upToDate");
+    }
+  }
+
+  dismissUpdate(): void {
+    this.updateDismissed = true;
+  }
+
+  async hide(): Promise<void> {
+    try {
+      await api.hideWindow();
+    } catch (error) {
+      this.error = String(error);
+    }
   }
 
   async start(): Promise<void> {
@@ -158,6 +264,14 @@ class ServerStore {
       this.busy = false;
     }
   }
+}
+
+/** Avoid `Update check failed: update check failed: ...` duplication. */
+function describeUpdateError(error: unknown): string {
+  let message = String(error);
+  const prefix = "update check failed: ";
+  if (message.toLowerCase().startsWith(prefix)) message = message.slice(prefix.length);
+  return t("update.error", { message });
 }
 
 export const server = new ServerStore();

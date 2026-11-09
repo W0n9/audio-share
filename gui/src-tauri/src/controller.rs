@@ -13,7 +13,7 @@ use audio_share_core::capture::{CaptureBackend, Endpoint};
 use audio_share_core::config::{self, DEFAULT_ENDPOINT};
 use audio_share_core::server::{Server, ServerHandle};
 
-use crate::model::{ServerState, ServerStatus, Settings};
+use crate::model::{ApplicationSettings, ServerState, ServerStatus, Settings};
 
 /// Called after every published status change, outside the controller lock.
 pub type StatusListener = Arc<dyn Fn(&ServerStatus) + Send + Sync>;
@@ -108,6 +108,29 @@ impl ServerController {
                 ));
             }
         }
+        self.persist(&settings)?;
+        state.settings = settings.clone();
+        Ok(settings)
+    }
+
+    /// Persist application-level settings without touching Server fields.
+    ///
+    /// v0.3.4 keeps autostart, launch/close behavior, update checks, and
+    /// language editable while the server runs, so this deliberately does not
+    /// require the stopped state. `[App] Running` and the Server fields come
+    /// from the controller, never from the caller.
+    pub fn save_application_settings(
+        &self,
+        application: ApplicationSettings,
+    ) -> Result<Settings, String> {
+        application.validate()?;
+        let mut state = lock(&self.state);
+        let mut settings = state.settings.clone();
+        settings.autostart = application.autostart;
+        settings.when_start = application.when_start;
+        settings.when_close = application.when_close;
+        settings.auto_update = application.auto_update;
+        settings.language = application.language.trim().to_owned();
         self.persist(&settings)?;
         state.settings = settings.clone();
         Ok(settings)
@@ -738,6 +761,70 @@ mod tests {
         let error = controller.stop().await.unwrap_err();
         assert!(error.contains("starting"), "error was {error}");
         assert_eq!(controller.status().state, ServerState::Starting);
+    }
+
+    #[test]
+    fn application_settings_can_change_while_running_and_preserve_server_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.ini");
+        let settings = persisted_settings();
+        let controller = ServerController::with_config(settings.clone(), path.clone());
+        lock(&controller.state).status = ServerStatus::running("127.0.0.1:1".to_owned());
+        lock(&controller.state).settings.running = true;
+
+        let updated = controller
+            .save_application_settings(ApplicationSettings {
+                autostart: true,
+                when_start: audio_share_core::config::WhenAppStart::KeepLast,
+                when_close: audio_share_core::config::WhenClose::Exit,
+                auto_update: true,
+                language: "zh-CN".to_owned(),
+            })
+            .expect("application settings save while running");
+
+        assert_eq!(updated.host, "127.0.0.1");
+        assert_eq!(updated.port, settings.port);
+        assert_eq!(updated.endpoint, "default");
+        assert!(updated.running, "controller-owned Running must survive");
+        assert!(updated.autostart);
+        assert_eq!(
+            updated.when_start,
+            audio_share_core::config::WhenAppStart::KeepLast
+        );
+        assert_eq!(
+            updated.when_close,
+            audio_share_core::config::WhenClose::Exit
+        );
+        assert!(updated.auto_update);
+        assert_eq!(updated.language, "zh-CN");
+        assert_eq!(controller.status().state, ServerState::Running);
+
+        let on_disk = load_config(&path);
+        assert_eq!(on_disk.language, "zh-CN");
+        assert!(on_disk.autostart);
+        assert_eq!(
+            on_disk.when_close,
+            audio_share_core::config::WhenClose::Exit
+        );
+    }
+
+    #[test]
+    fn application_settings_reject_an_unsupported_language_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.ini");
+        let controller = ServerController::with_config(persisted_settings(), path.clone());
+        controller.save_settings(persisted_settings()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let error = controller
+            .save_application_settings(ApplicationSettings {
+                language: "fr-FR".to_owned(),
+                ..ApplicationSettings::from(&test_settings())
+            })
+            .expect_err("unknown language must be refused");
+        assert!(error.contains("language"), "error was {error}");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(controller.settings().language, "default");
     }
 
     #[test]
