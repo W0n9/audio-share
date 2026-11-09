@@ -15,7 +15,7 @@ async fn harness_replay_of_the_linux_v034_fixture_passes_against_as_cmd() {
         fixture,
         connect: None,
         server_cmd: Some(PathBuf::from(env!("CARGO_BIN_EXE_as-cmd"))),
-        server_arg: vec!["--bind={bind}".to_owned()],
+        server_arg: vec!["--bind={bind}".to_owned(), "--fake-capture".to_owned()],
         host: "127.0.0.1".to_owned(),
         port: 0,
         heartbeats: 1,
