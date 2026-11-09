@@ -1,0 +1,15 @@
+{
+  "bundle": {
+    "targets": ["deb", "appimage"],
+    "publisher": "Audio Share maintainers",
+    "homepage": "https://github.com/mkckr0/audio-share",
+    "shortDescription": "Audio Share Server",
+    "longDescription": "Desktop server that shares system audio with the Audio Share Android client.",
+    "license": "Apache-2.0",
+    "linux": {
+      "deb": {
+        "depends": ["libpipewire-0.3-0"]
+      }
+    }
+  }
+}
