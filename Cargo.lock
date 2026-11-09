@@ -306,6 +306,7 @@ dependencies = [
  "pipewire",
  "prost",
  "ringbuf",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
