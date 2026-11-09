@@ -6,6 +6,7 @@
 
 pub mod fake_server;
 pub mod fixture;
+pub mod probe;
 pub mod process;
 pub mod record;
 pub mod replay;

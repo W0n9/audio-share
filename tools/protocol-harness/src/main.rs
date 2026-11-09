@@ -2,7 +2,7 @@
 //! server for hardware-free tests.
 
 use clap::{Parser, Subcommand};
-use protocol_harness::{fake_server, record, replay, synth};
+use protocol_harness::{fake_server, probe, record, replay, synth};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -25,6 +25,8 @@ enum Command {
     Replay(replay::ReplayArgs),
     /// Run a v0.3.4-compatible fake server with synthetic PCM.
     ServeFake(fake_server::ServeFakeArgs),
+    /// Drive a running server and report format, framing, heartbeats, and tone.
+    Probe(probe::ProbeArgs),
 }
 
 #[tokio::main]
@@ -34,5 +36,6 @@ async fn main() -> anyhow::Result<()> {
         Command::Synthesize(args) => synth::run(&args),
         Command::Replay(args) => replay::run(&args).await,
         Command::ServeFake(args) => fake_server::run(&args).await,
+        Command::Probe(args) => probe::run(&args).await,
     }
 }
