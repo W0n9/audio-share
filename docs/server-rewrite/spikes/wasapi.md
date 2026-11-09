@@ -150,6 +150,33 @@ express the required loopback/format combination; a reproducible bug in
 cutover. Also treat packed-s24 negotiation or non-mix sample representations as
 unverified until the tone matrix is run.
 
+## Production implementation (ticket 05)
+
+The spike logic was lifted into Server Core, and the spike crate remains
+unchanged as a standalone measurement tool:
+
+- `crates/audio-share-core/src/capture/windows/backend.rs`:
+  `WasapiCapture: CaptureBackend` (`#[cfg(windows)]`), with per-operation MTA
+  threads, shared-mode loopback using `StreamMode::PollingShared {
+  autoconvert: false, buffer_duration_hns: 10_000_000 }`, render-direction
+  validation, closest-match negotiation, and a `Start()`-before-format-
+  publication handshake.
+- `crates/audio-share-core/src/capture/windows/format.rs`: platform-neutral
+  encoding/block-align/request/closest-match/advertised-format rules, unit-tested
+  on Linux.
+- `capture::platform_backend()` selects WASAPI on Windows and
+  `SyntheticCapture` elsewhere; `as-cmd` uses it by default and keeps
+  `--fake-capture`.
+- `scripts/ab-compare-windows.ps1` drives `protocol-harness record` against the
+  old and new servers and compares format bytes, PCM levels, packet sizes, and
+  optional `wasapi-spike measure` counters.
+
+See `docs/server-rewrite/capture-windows.md` for the behavior contract,
+validation results, and the manual Windows checklist. Everything in the
+"Measured results" and "Residual Windows-only steps" sections above is still
+**NOT EXECUTED**; the production backend is compile-checked and covered by
+Linux pure-logic tests only.
+
 ## Residual Windows-only steps
 
 - Execute the full measurement matrix on Windows 10+ with at least one shared
