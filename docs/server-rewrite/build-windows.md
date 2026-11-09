@@ -1,11 +1,15 @@
 # Windows build and packaging (ticket 13)
 
-Status: **packaging code, CI, and documentation implemented on the Linux
-development host.** The Windows exe was **not built or executed** here: there
-is no Windows linker or Windows runtime. `cargo check`/`clippy` for
-`x86_64-pc-windows-msvc` pass, the WebView2 decision logic is unit-tested on
-Linux, and the artifact packaging script is self-tested on Linux. Real Windows
-acceptance is tracked in the checklist below.
+Status: **packaging code, CI, and documentation implemented; the Windows
+artifacts are built and verified by CI on a native Windows runner.** The
+`windows-packaging` job on `windows-latest` produced a PE32+ x86-64
+`AudioShareServer.exe` and the `as-cmd` zip, and both checksum sidecars verify
+(see [Executed CI build](#executed-ci-build-2026-11-09)). The exe is still
+**not executed** here: this host has no Windows runtime. `cargo
+check`/`clippy --target x86_64-pc-windows-msvc` pass locally, the WebView2
+decision logic is unit-tested on Linux, and the packaging script is
+self-tested on Linux. Real Windows acceptance is tracked in the checklist
+below.
 
 The Windows release is a **portable `AudioShareServer.exe`** with no installer.
 The GUI targets Windows 10+ and requires the Microsoft Edge WebView2 Runtime,
@@ -153,6 +157,30 @@ The parallel `Rust (windows-latest)` job keeps running fmt, clippy, and the
 workspace tests (including the WebView2 decision tests) on a native Windows
 host.
 
+### Executed CI build (2026-11-09)
+
+Run [42638565632](https://github.com/W0n9/audio-share/actions/runs/42638565632)
+on commit `6f1f429` completed green for all four jobs: `Rust (ubuntu-24.04)`,
+`Rust (windows-latest)`, `Linux deb/AppImage packaging`, and `Windows portable
+packaging`. The two Windows artifacts were downloaded on the Linux host and
+verified:
+
+| Artifact | Contents | Verification |
+|---|---|---|
+| `AudioShareServer-windows` | `AudioShareServer.exe` (11,918,848 B) + `.sha256` | PE32+ GUI x86-64; SHA-256 `27a57a65…75e2b` matches |
+| `audio-share-server-cmd-windows` | `audio-share-server-cmd-windows.zip` (686,080 B) + `.sha256` | Contains `audio-share-server-cmd/{as-cmd.exe,LICENSE,README.md}`; SHA-256 `eb745b78…ea60` matches |
+
+This proves the native Windows build, packaging, and artifact upload paths.
+It does **not** execute the GUI, WASAPI capture, or `as-cmd.exe`; those remain
+in the manual checklist below.
+
+The first push of this branch exposed pre-existing CI defects, fixed in
+`95521b7`, `e3c584e`, and `6f1f429`: the Ubuntu `rust` job lacked the
+Tauri/WebKitGTK build dependencies needed to compile the GUI crate; the
+synthetic-capture stop test assumed the frame channel was empty immediately
+after `stop()`; and the listener-release test assumed an immediate connect
+refusal on an ephemeral port.
+
 ## Manual acceptance checklist (Windows 10 and Windows 11)
 
 Run each item on **both** Windows 10 x64 and Windows 11 x64. Record OS build,
@@ -161,7 +189,8 @@ results.
 
 ### Artifact and launch
 
-- [ ] CI `windows-packaging` job is green and its artifacts download.
+- [x] CI `windows-packaging` job is green and its artifacts download
+      (verified from the Linux host, run 42638565632; see above).
 - [ ] `AudioShareServer.exe.sha256` matches the downloaded exe
       (`sha256sum -c` or `Get-FileHash`).
 - [ ] No installer/MSI/NSIS artifact exists; the exe runs directly from a
@@ -214,10 +243,12 @@ results.
 
 ## Known limitations and residual verification
 
-- Not built or executed on Windows from this Linux host; `cargo
-  check/clippy --target x86_64-pc-windows-msvc` only type-checks the code (the
-  two `GNU compiler is not supported for this target` warnings come from
-  `tauri-build` resource embedding and disappear in a native Windows build).
+- Not executed on Windows from this Linux host. The native Windows CI runner
+  builds and packages the artifacts (see above); `cargo
+  check/clippy --target x86_64-pc-windows-msvc` also type-checks the code
+  locally (the two `GNU compiler is not supported for this target` warnings
+  come from `tauri-build` resource embedding and disappear in a native
+  Windows build).
 - No code signing: SmartScreen may warn on first run; this matches v0.3.4 and
   the 0.4.0 scope.
 - No installer and no Tauri updater: users replace the portable exe manually.
