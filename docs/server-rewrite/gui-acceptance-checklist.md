@@ -130,10 +130,14 @@ desktop session.
   help URLs; Windows rows do not render on Linux.)
 
 ## Linux-only
-- [ ] Package installs (deb) and AppImage runs after chmod +x. (Packaging is
-  ticket 14; not re-executed as a GUI check here.)
-- [ ] Missing WebKitGTK/PipeWire produces a readable error or documented
-  dependency message. [env: install a package without dependencies]
+- [x] Package installs (deb) and AppImage runs after chmod +x. (Ticket 14,
+  merged at `b456c10`: `dpkg -i` installs `/usr/bin/AudioShareServer`; the
+  AppImage runs directly with FUSE 2 and with `APPIMAGE_EXTRACT_AND_RUN=1`;
+  Start/Stop/Quit verified on the packaged binary under Xvfb. Not re-run by
+  ticket 15.)
+- [x] Missing WebKitGTK/PipeWire produces a readable error or documented
+  dependency message. (Ticket 14 clean-container dependency resolution plus
+  `build-linux.md`; GUI startup failure path not re-executed here.)
 - [x] XDG autostart file is created at `~/.config/autostart/`. (Ticket 12.)
 - [~] Tray right-click menu works under the target desktop environment.
   Exported SNI/dbusmenu item observed under Xvfb; a real GNOME (AppIndicator
