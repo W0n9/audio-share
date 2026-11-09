@@ -63,11 +63,25 @@ version comparison.
 
 - [Linux A/B: v0.3.4 vs 0.4.0](ab-linux.md) — same-machine format, datagram,
   and tone comparison, including the old `s8` defect.
-- Acceptance and soak evidence (`acceptance.md`, `soak.md`) is produced by the
-  ticket 15 release gate and will be linked here when it lands on the
-  integration branch. It is not part of this index yet.
-- The GUI acceptance checklist is maintained with the rewrite notes; the
-  release gate executes it on real desktops.
+- [Acceptance matrix](acceptance-matrix.md) — `scripts/acceptance-matrix.sh`:
+  encoding × channels × sample-rate matrix, multi-client, reconnect,
+  heartbeat timeout, and SIGINT scenarios.
+- [Soak](soak.md) — `scripts/soak.sh`: duration, release build, log rotation,
+  crash detection, and the recorded short release run.
+- [Hotplug and sleep](hotplug-sleep.md) — `scripts/hotplug-recovery.sh`:
+  headless sink destruction/recreation and operator Stop/Start recovery.
+- [Android v0.3.4 acceptance](android-v034-acceptance.md) — real-APK
+  acceptance procedure and evidence package.
+- [GUI acceptance checklist](gui-acceptance-checklist.md) — manual desktop
+  tray/menu/toast, Windows runtime, and Wayland checks.
+
+**Real release gates are NOT EXECUTED.** The real v0.3.4 APK on a phone, the
+8-hour soak, sleep/resume, real-hardware hotplug, and the real desktop tray
+(on Linux and Windows) have not been run in this environment. Only the
+scripted Linux headless matrix, a short (12-minute) release soak, headless
+hotplug + operator Stop/Start, and partial Xvfb/DBus GUI checks were
+executed; the remaining gates are tracked as `ready-for-human` in the
+ticket 15 issue.
 
 ## Spikes (historical)
 
