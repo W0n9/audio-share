@@ -1,0 +1,28 @@
+[package]
+name = "wasapi-spike"
+description = "Windows WASAPI shared-mode loopback capture spike"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+# The Windows-only dependency graph (wasapi 0.27) requires Rust 1.85.
+rust-version = "1.85"
+
+[[bin]]
+name = "wasapi-spike"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+audio-share-core.workspace = true
+clap.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Pinned deliberately: wasapi re-exports windows types, so windows must stay on
+# the same 0.62.2 minor while wasapi is in use. Never bump this alone.
+wasapi = "0.27.0"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_System_Threading",
+] }
