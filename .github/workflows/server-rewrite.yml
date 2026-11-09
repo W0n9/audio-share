@@ -57,6 +57,80 @@ jobs:
       - name: Replay committed fixtures offline
         run: cargo run -p protocol-harness -- replay --fixture fixtures/protocol/v0.3.4/linux/f32-48k-stereo
 
+  windows-packaging:
+    name: Windows portable packaging
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Install frontend dependencies
+        working-directory: gui
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: gui
+        run: npm run build
+
+      # Portable exe only: bundle.targets is [] and --no-bundle is explicit,
+      # so no MSI/NSIS installer is produced.
+      - name: Build portable GUI exe
+        working-directory: gui
+        run: npx tauri build --no-bundle
+
+      - name: Build Windows as-cmd
+        run: cargo build --release -p as-cmd
+
+      - name: Assert workspace artifact paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$GITHUB_WORKSPACE/target/release/AudioShareServer.exe"
+          test -f "$GITHUB_WORKSPACE/target/release/as-cmd.exe"
+
+      - name: Self-test artifact packaging
+        shell: bash
+        run: bash scripts/package-windows-artifacts.test.sh
+
+      - name: Package Windows artifacts
+        shell: bash
+        run: |
+          bash scripts/package-windows-artifacts.sh \
+            --root "$GITHUB_WORKSPACE" \
+            --target-dir "$GITHUB_WORKSPACE/target/release" \
+            --out-dir "$GITHUB_WORKSPACE/dist-windows"
+
+      - name: Upload portable GUI exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: AudioShareServer-windows
+          path: |
+            dist-windows/AudioShareServer.exe
+            dist-windows/AudioShareServer.exe.sha256
+          if-no-files-found: error
+
+      - name: Upload Windows as-cmd archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-share-server-cmd-windows
+          path: |
+            dist-windows/audio-share-server-cmd-windows.zip
+            dist-windows/audio-share-server-cmd-windows.zip.sha256
+          if-no-files-found: error
+
   linux-packaging:
     name: Linux deb/AppImage packaging
     runs-on: ubuntu-24.04
