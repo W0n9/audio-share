@@ -1,0 +1,7 @@
+Server 0.4.0
+- The Server is rewritten in Rust and ships a tray-first GUI for Windows and Linux.
+- Windows: portable AudioShareServer.exe; requires the Microsoft Edge WebView2 Runtime.
+- Linux: AudioShareServer deb and AppImage packages (Ubuntu 24.04+), plus the headless as-cmd archive.
+- as-cmd keeps the v0.3.4 flags, defaults, and Wire Protocol; it now also writes server.log.
+- Existing v0.3.4 config.ini files are migrated without losing settings.
+- The Android Client is unchanged at v0.3.4; no new APK is included in this release.
