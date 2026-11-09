@@ -110,6 +110,10 @@ export const api = {
   exit: () => invoke<void>("exit_app"),
   checkUpdate: () => invoke<UpdateCheckResult>("check_update"),
   openHelp: (topic: HelpTopic) => invoke<void>("open_help", { topic }),
+  /** Windows only: rebuild inbound TCP/UDP firewall rules (UAC prompt). */
+  repairFirewall: () => invoke<void>("repair_firewall"),
+  /** Windows only: open the Sound control panel without waiting. */
+  openSoundPanel: () => invoke<void>("open_sound_panel"),
 };
 
 /** Subscribe to controller transitions. Returns an unlisten function. */

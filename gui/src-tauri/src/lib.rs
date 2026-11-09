@@ -8,7 +8,11 @@ pub mod autostart;
 pub mod controller;
 pub mod help;
 pub mod i18n;
+pub mod maintenance;
 pub mod model;
 pub mod options;
 pub mod strings;
 pub mod update;
+
+#[cfg(windows)]
+pub mod windows_maintenance;
