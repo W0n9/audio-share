@@ -1,14 +1,19 @@
-//! Pure GUI model: server status, in-memory settings, and their mapping to the
+//! Pure GUI model: server status, persisted settings, and their mapping to the
 //! Audio Share Core API. No Tauri types live here, so everything is unit-tested
 //! without a display.
+//!
+//! Settings are the core [`audio_share_core::config::Config`] type: the config
+//! file, the GUI, and the controller all share one definition, and its serde
+//! spelling (`camelCase`, lowercase enums) is the frontend contract pinned by
+//! the tests below.
 
-use audio_share_core::capture::{CaptureConfig, EncodingPreference};
-use audio_share_core::protocol::{HEARTBEAT_INTERVAL, SESSION_TIMEOUT};
-use audio_share_core::server::ServerConfig;
+use audio_share_core::config::ConfigNotice;
 use serde::{Deserialize, Serialize};
 
+pub use audio_share_core::config::{Config as Settings, EncodingSetting};
+
 /// v0.3.4's default Server port.
-pub const DEFAULT_PORT: u16 = 65_530;
+pub use audio_share_core::config::DEFAULT_PORT;
 
 /// Where the controller currently is in the Start/Stop lifecycle.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,77 +89,6 @@ impl ServerStatus {
     }
 }
 
-/// In-memory GUI settings for ticket 08. Config persistence arrives in ticket
-/// 09; these defaults match the v0.3.4/new-install baseline.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Settings {
-    /// Bind host.
-    pub host: String,
-    /// Bind port.
-    pub port: u16,
-    /// Endpoint ID; `"default"` selects the system default endpoint.
-    pub endpoint: String,
-    /// Encoding preference: `default`, `f32`, `s8`, `s16`, `s24`, or `s32`.
-    pub encoding: String,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            host: default_host(),
-            port: DEFAULT_PORT,
-            endpoint: "default".to_owned(),
-            encoding: "default".to_owned(),
-        }
-    }
-}
-
-impl Settings {
-    /// Map the GUI settings onto a Core capture request.
-    pub fn capture_config(&self) -> CaptureConfig {
-        CaptureConfig {
-            endpoint_id: self.endpoint.clone(),
-            encoding: parse_encoding(&self.encoding),
-            channels: 0,
-            sample_rate: 0,
-        }
-    }
-
-    /// Map the GUI settings onto a Core server configuration.
-    pub fn server_config(&self) -> ServerConfig {
-        ServerConfig {
-            host: self.host.clone(),
-            port: self.port,
-            heartbeat_interval: HEARTBEAT_INTERVAL,
-            heartbeat_timeout: SESSION_TIMEOUT,
-        }
-    }
-}
-
-/// The first usable default bind address, falling back to all interfaces.
-fn default_host() -> String {
-    let host = ServerConfig::default().host;
-    if host.is_empty() {
-        "0.0.0.0".to_owned()
-    } else {
-        host
-    }
-}
-
-/// Parse a GUI encoding name. Unknown or empty values ask the endpoint for its
-/// default format, matching the v0.3.4 `default` encoding value.
-pub fn parse_encoding(value: &str) -> EncodingPreference {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "f32" => EncodingPreference::F32,
-        "s8" => EncodingPreference::S8,
-        "s16" => EncodingPreference::S16,
-        "s24" => EncodingPreference::S24,
-        "s32" => EncodingPreference::S32,
-        _ => EncodingPreference::Default,
-    }
-}
-
 /// Which tray menu commands are available in a lifecycle state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TrayEnabled {
@@ -193,17 +127,20 @@ pub struct Bootstrap {
     pub platform: String,
     /// Current controller status.
     pub status: ServerStatus,
-    /// Current in-memory settings.
+    /// Persisted settings.
     pub settings: Settings,
+    /// Human-readable migration/recovery warnings; empty when clean.
+    pub config_notices: Vec<String>,
 }
 
 /// Build the bootstrap payload for the frontend.
-pub fn bootstrap(settings: &Settings, status: &ServerStatus) -> Bootstrap {
+pub fn bootstrap(settings: &Settings, status: &ServerStatus, notices: &[String]) -> Bootstrap {
     Bootstrap {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         platform: platform_name().to_owned(),
         status: status.clone(),
         settings: settings.clone(),
+        config_notices: notices.to_vec(),
     }
 }
 
@@ -218,30 +155,36 @@ pub const fn platform_name() -> &'static str {
     }
 }
 
+/// Reduce a settings/config notice list to readable UI strings.
+pub fn notice_messages(notices: &[ConfigNotice]) -> Vec<String> {
+    notices.iter().map(ToString::to_string).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use audio_share_core::capture::{CaptureConfig, EncodingPreference};
+    use audio_share_core::protocol::{HEARTBEAT_INTERVAL, SESSION_TIMEOUT};
 
     #[test]
     fn default_settings_match_the_043_baseline() {
         let settings = Settings::default();
         assert_eq!(settings.port, 65_530);
         assert_eq!(settings.endpoint, "default");
-        assert_eq!(settings.encoding, "default");
+        assert_eq!(settings.encoding, EncodingSetting::Default);
+        assert_eq!(
+            settings.when_start,
+            audio_share_core::config::WhenAppStart::Nothing
+        );
+        assert_eq!(
+            settings.when_close,
+            audio_share_core::config::WhenClose::Minimize
+        );
+        assert!(!settings.autostart);
+        assert!(!settings.auto_update);
+        assert_eq!(settings.language, "default");
+        assert!(!settings.running);
         assert!(!settings.host.is_empty(), "a bind host is always offered");
-    }
-
-    #[test]
-    fn encoding_names_map_to_capture_preferences() {
-        assert_eq!(parse_encoding("default"), EncodingPreference::Default);
-        assert_eq!(parse_encoding("f32"), EncodingPreference::F32);
-        assert_eq!(parse_encoding("s8"), EncodingPreference::S8);
-        assert_eq!(parse_encoding("s16"), EncodingPreference::S16);
-        assert_eq!(parse_encoding("s24"), EncodingPreference::S24);
-        assert_eq!(parse_encoding("s32"), EncodingPreference::S32);
-        assert_eq!(parse_encoding("  F32 "), EncodingPreference::F32);
-        assert_eq!(parse_encoding(""), EncodingPreference::Default);
-        assert_eq!(parse_encoding("bogus"), EncodingPreference::Default);
     }
 
     #[test]
@@ -250,13 +193,33 @@ mod tests {
             host: "127.0.0.1".to_owned(),
             port: 12_345,
             endpoint: "sink-7".to_owned(),
-            encoding: "s24".to_owned(),
+            encoding: EncodingSetting::S24,
+            ..Settings::default()
         };
         let capture = settings.capture_config();
-        assert_eq!(capture.endpoint_id, "sink-7");
-        assert_eq!(capture.encoding, EncodingPreference::S24);
-        assert_eq!(capture.channels, 0, "channels are endpoint-selected");
-        assert_eq!(capture.sample_rate, 0, "sample rate is endpoint-selected");
+        assert_eq!(
+            capture,
+            CaptureConfig {
+                endpoint_id: "sink-7".to_owned(),
+                encoding: EncodingPreference::S24,
+                channels: 0,
+                sample_rate: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn every_encoding_maps_to_the_matching_capture_preference() {
+        for (setting, preference) in [
+            (EncodingSetting::Default, EncodingPreference::Default),
+            (EncodingSetting::F32, EncodingPreference::F32),
+            (EncodingSetting::S8, EncodingPreference::S8),
+            (EncodingSetting::S16, EncodingPreference::S16),
+            (EncodingSetting::S24, EncodingPreference::S24),
+            (EncodingSetting::S32, EncodingPreference::S32),
+        ] {
+            assert_eq!(setting.preference(), preference);
+        }
     }
 
     #[test]
@@ -271,6 +234,36 @@ mod tests {
         assert_eq!(server.port, 12_345);
         assert_eq!(server.heartbeat_interval, HEARTBEAT_INTERVAL);
         assert_eq!(server.heartbeat_timeout, SESSION_TIMEOUT);
+    }
+
+    #[test]
+    fn settings_json_uses_the_frontend_field_names() {
+        let settings = Settings {
+            host: "127.0.0.1".to_owned(),
+            port: 65_000,
+            endpoint: "sink-3".to_owned(),
+            encoding: EncodingSetting::S16,
+            autostart: true,
+            when_start: audio_share_core::config::WhenAppStart::KeepLast,
+            when_close: audio_share_core::config::WhenClose::Exit,
+            auto_update: true,
+            language: "zh-CN".to_owned(),
+            running: true,
+        };
+        let json = serde_json::to_value(&settings).unwrap();
+        assert_eq!(json["host"], "127.0.0.1");
+        assert_eq!(json["port"], 65_000);
+        assert_eq!(json["endpoint"], "sink-3");
+        assert_eq!(json["encoding"], "s16");
+        assert_eq!(json["autostart"], true);
+        assert_eq!(json["whenStart"], "keepLast");
+        assert_eq!(json["whenClose"], "exit");
+        assert_eq!(json["autoUpdate"], true);
+        assert_eq!(json["language"], "zh-CN");
+        assert_eq!(json["running"], true);
+
+        let round_trip: Settings = serde_json::from_value(json).unwrap();
+        assert_eq!(round_trip, settings);
     }
 
     #[test]
@@ -320,13 +313,33 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_carries_version_platform_and_state() {
+    fn bootstrap_carries_version_platform_state_settings_and_notices() {
         let settings = Settings::default();
         let status = ServerStatus::starting();
-        let data = bootstrap(&settings, &status);
+        let notices = notice_messages(&[
+            ConfigNotice::Migrated { from: 1 },
+            ConfigNotice::UnknownEndpoint {
+                endpoint: "gone".to_owned(),
+            },
+        ]);
+        let data = bootstrap(&settings, &status, &notices);
         assert_eq!(data.version, "0.4.0");
         assert_eq!(data.platform, platform_name());
         assert_eq!(data.status, status);
         assert_eq!(data.settings, settings);
+        assert_eq!(data.config_notices.len(), 2);
+        assert!(data.config_notices[0].contains("migrated"));
+        assert!(data.config_notices[1].contains("gone"));
+
+        let json = serde_json::to_value(&data).unwrap();
+        assert!(json["configNotices"].is_array());
+        assert_eq!(json["configNotices"][0], data.config_notices[0]);
+    }
+
+    #[test]
+    fn an_empty_notice_list_means_no_banner() {
+        let data = bootstrap(&Settings::default(), &ServerStatus::stopped(), &[]);
+        assert!(data.config_notices.is_empty());
+        assert!(notice_messages(&[]).is_empty());
     }
 }

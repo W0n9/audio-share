@@ -11,12 +11,36 @@ export interface ServerStatus {
   lastError: string | null;
 }
 
-/** In-memory settings shown by the shell (persistence arrives in ticket 09). */
+/** Capture encoding names shared with `audio_share_core::config`. */
+export type Encoding = "default" | "f32" | "s8" | "s16" | "s24" | "s32";
+
+/** `[App Settings] WhenAppStart`. */
+export type WhenAppStart = "nothing" | "start" | "keepLast";
+
+/** `[App Settings] WhenClose`. */
+export type WhenClose = "exit" | "minimize";
+
+/**
+ * Persisted settings. The shape mirrors `audio_share_core::config::Config`
+ * (serde camelCase); `running` is controller-owned.
+ */
 export interface Settings {
   host: string;
   port: number;
   endpoint: string;
-  encoding: string;
+  encoding: Encoding;
+  autostart: boolean;
+  whenStart: WhenAppStart;
+  whenClose: WhenClose;
+  autoUpdate: boolean;
+  language: string;
+  running: boolean;
+}
+
+/** One capture endpoint from the live backend. */
+export interface Endpoint {
+  id: string;
+  name: string;
 }
 
 /** One-time data fetched when the window mounts. */
@@ -25,6 +49,8 @@ export interface Bootstrap {
   platform: string;
   status: ServerStatus;
   settings: Settings;
+  /** Migration/recovery warnings; empty when the config was clean. */
+  configNotices: string[];
 }
 
 /**
@@ -34,6 +60,10 @@ export interface Bootstrap {
 export const api = {
   getBootstrap: () => invoke<Bootstrap>("get_bootstrap"),
   getStatus: () => invoke<ServerStatus>("get_status"),
+  getSettings: () => invoke<Settings>("get_settings"),
+  saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
+  resetSettings: () => invoke<Settings>("reset_settings"),
+  listEndpoints: () => invoke<Endpoint[]>("list_endpoints"),
   start: () => invoke<ServerStatus>("start_server"),
   stop: () => invoke<ServerStatus>("stop_server"),
   hideWindow: () => invoke<void>("hide_window"),

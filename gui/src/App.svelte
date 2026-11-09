@@ -73,6 +73,18 @@
     </button>
   </header>
 
+  {#if server.notices.length > 0}
+    <div class="banner" role="status">
+      <div class="banner-title">{t("config.warningTitle")}</div>
+      {#each server.notices as notice, index (index)}
+        <p class="banner-message">{notice}</p>
+      {/each}
+      <button class="link" onclick={() => server.dismissNotices()}>
+        {t("action.dismiss")}
+      </button>
+    </div>
+  {/if}
+
   {#if server.view === "main"}
     <ServerView />
   {:else}

@@ -5,6 +5,7 @@
 //! Server GUI, and the protocol harness all link it directly.
 
 pub mod capture;
+pub mod config;
 pub mod error;
 pub mod paths;
 pub mod protocol;
