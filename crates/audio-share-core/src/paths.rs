@@ -32,6 +32,10 @@ pub struct Paths {
     pub config: PathBuf,
     /// `server.log` next to the config file.
     pub log: PathBuf,
+    /// An existing v0.3.4 executable-directory config that must be migrated
+    /// into the writable [`Self::config`] location because the executable
+    /// directory is read-only (Linux package/AppImage).
+    pub legacy_config: Option<PathBuf>,
 }
 
 impl Paths {
@@ -39,6 +43,15 @@ impl Paths {
         Self {
             config: dir.join(CONFIG_FILE_NAME),
             log: dir.join(LOG_FILE_NAME),
+            legacy_config: None,
+        }
+    }
+
+    fn in_legacy_migration_dir(dir: &Path, legacy_config: Option<PathBuf>) -> Self {
+        Self {
+            config: dir.join(CONFIG_FILE_NAME),
+            log: dir.join(LOG_FILE_NAME),
+            legacy_config,
         }
     }
 }
@@ -61,6 +74,7 @@ pub fn resolve_paths(
         return Paths {
             config: config.to_path_buf(),
             log: directory.join(LOG_FILE_NAME),
+            legacy_config: None,
         };
     }
 
@@ -71,7 +85,11 @@ pub fn resolve_paths(
     }
 
     if let Some(xdg_config_home) = xdg_config_home {
-        return Paths::in_dir(&xdg_config_home.join(APP_DIR_NAME));
+        let directory = xdg_config_home.join(APP_DIR_NAME);
+        return Paths::in_legacy_migration_dir(
+            &directory,
+            legacy_config(exe_dir, &directory.join(CONFIG_FILE_NAME)),
+        );
     }
 
     // Best effort when neither location is usable: prefer the executable
@@ -80,6 +98,13 @@ pub fn resolve_paths(
         Some(exe_dir) => Paths::in_dir(exe_dir),
         None => Paths::in_dir(Path::new(".")),
     }
+}
+
+/// The executable-directory config when it exists and is not already the
+/// resolved target (the path a read-only install must migrate from).
+fn legacy_config(exe_dir: Option<&Path>, target: &Path) -> Option<PathBuf> {
+    let candidate = exe_dir?.join(CONFIG_FILE_NAME);
+    (candidate != target && candidate.is_file()).then_some(candidate)
 }
 
 /// Resolve the config/log paths from the current process.

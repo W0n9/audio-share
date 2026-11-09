@@ -93,6 +93,55 @@ fn read_only_executable_directory_falls_back_to_xdg() {
         resolved.log,
         xdg.path().join("audio-share-server").join("server.log")
     );
+    assert_eq!(resolved.legacy_config, None, "there is no legacy file");
+}
+
+#[cfg(unix)]
+#[test]
+fn read_only_executable_directory_reports_the_legacy_config_for_migration() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    let exe_dir = tempdir();
+    let xdg = tempdir();
+    let legacy = exe_dir.path().join("config.ini");
+    fs::write(&legacy, b"[App]\nconfigVersion=1\n").expect("write legacy config");
+    fs::set_permissions(exe_dir.path(), fs::Permissions::from_mode(0o555))
+        .expect("make the executable directory read-only");
+
+    let resolved = resolve_paths(None, Some(exe_dir.path()), Some(xdg.path()));
+
+    fs::set_permissions(exe_dir.path(), fs::Permissions::from_mode(0o755))
+        .expect("restore directory permissions");
+
+    if resolved.config == exe_dir.path().join("config.ini") {
+        eprintln!("skipping: directory permissions are not enforced for this user");
+        return;
+    }
+    assert_eq!(
+        resolved.legacy_config,
+        Some(legacy),
+        "the read-only exe-dir config must be reported for migration"
+    );
+    assert_eq!(
+        resolved.config,
+        xdg.path().join("audio-share-server").join("config.ini")
+    );
+}
+
+#[test]
+fn a_writable_executable_directory_has_no_legacy_config() {
+    let exe_dir = tempdir();
+    let xdg = tempdir();
+    std::fs::write(exe_dir.path().join("config.ini"), b"[App]\n").expect("write config");
+
+    let resolved = resolve_paths(None, Some(exe_dir.path()), Some(xdg.path()));
+
+    assert_eq!(resolved.config, exe_dir.path().join("config.ini"));
+    assert_eq!(
+        resolved.legacy_config, None,
+        "the resolved config is the legacy file itself"
+    );
 }
 
 /// The real entry point must honour the process environment variable.

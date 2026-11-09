@@ -3,20 +3,24 @@
 //! Tauri shell for the Audio Share Server GUI.
 //!
 //! The window, tray, and commands are thin adapters over the display-free
-//! `ServerController` in the library half of this crate. Ticket 08 keeps
-//! settings in memory; tickets 09/10 add persistence, lifecycle policy,
-//! autostart UI, and update checks at the marked extension points.
+//! `ServerController` in the library half of this crate. Ticket 09 loads and
+//! migrates `config.ini` before the UI starts, persists settings changes, and
+//! applies the configured close behavior. Ticket 10 adds launch behavior,
+//! autostart, i18n, update checks, and About at the marked extension points.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use audio_share_core::capture::{platform_backend, synthetic_backend, CaptureBackend};
+use audio_share_core::capture::{platform_backend, synthetic_backend, CaptureBackend, Endpoint};
+use audio_share_core::config::{self, LoadOptions, WhenClose};
+use audio_share_core::paths;
 use audio_share_server_gui::controller::ServerController;
 use audio_share_server_gui::model::{
-    bootstrap, tray_enabled, Bootstrap, ServerState, ServerStatus, Settings,
+    bootstrap, notice_messages, tray_enabled, Bootstrap, ServerState, ServerStatus, Settings,
 };
 use audio_share_server_gui::options::GuiOptions;
 use audio_share_server_gui::strings::t;
+use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -27,12 +31,40 @@ use tauri::{
 struct AppState {
     controller: Arc<ServerController>,
     options: GuiOptions,
+    /// Last successful endpoint enumeration; `None` when enumeration failed, so
+    /// settings saves are not rejected against a list we never obtained.
+    endpoints: Arc<Mutex<Option<Vec<Endpoint>>>>,
+    /// Migration/recovery warnings collected before the webview started.
+    startup_notices: Vec<String>,
 }
 
 /// Tray menu items kept in managed state so status changes can toggle them.
 struct TrayItems {
     start: MenuItem<tauri::Wry>,
     stop: MenuItem<tauri::Wry>,
+}
+
+/// Endpoint shape exposed to the frontend (`id`/`name`).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EndpointDto {
+    id: String,
+    name: String,
+}
+
+impl From<Endpoint> for EndpointDto {
+    fn from(endpoint: Endpoint) -> Self {
+        Self {
+            id: endpoint.id,
+            name: endpoint.name,
+        }
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -49,8 +81,8 @@ fn hide_main_window(app: &AppHandle) {
     }
 }
 
-/// Build the capture backend for a start request. `--fake-capture` is the
-/// hardware-free debug path; normal runs use the platform backend.
+/// Build the capture backend for a start/enumeration request. `--fake-capture`
+/// is the hardware-free debug path; normal runs use the platform backend.
 fn capture_backend(options: &GuiOptions) -> Result<Arc<dyn CaptureBackend>, String> {
     if options.fake_capture {
         synthetic_backend()
@@ -58,6 +90,54 @@ fn capture_backend(options: &GuiOptions) -> Result<Arc<dyn CaptureBackend>, Stri
             .map_err(|error| error.to_string())
     } else {
         platform_backend().map_err(|error| error.to_string())
+    }
+}
+
+/// Load the persisted settings and enumerate endpoints before the UI starts.
+///
+/// Endpoint enumeration (PipeWire/WASAPI) can block, so `main` runs this on a
+/// dedicated thread before building the Tauri application; the webview is never
+/// waiting on audio discovery.
+fn load_startup(
+    options: GuiOptions,
+) -> (
+    Settings,
+    Vec<String>,
+    Option<Vec<Endpoint>>,
+    std::path::PathBuf,
+) {
+    let paths = paths::paths();
+    let config_path = paths.config.clone();
+    let mut notices = Vec::new();
+    let endpoints = match capture_backend(&options) {
+        Ok(backend) => match backend.endpoints() {
+            Ok(endpoints) => Some(endpoints),
+            Err(error) => {
+                notices.push(format!("Could not list audio endpoints: {error}"));
+                None
+            }
+        },
+        Err(error) => {
+            notices.push(format!("Could not initialize audio capture: {error}"));
+            None
+        }
+    };
+
+    match config::load(
+        &config_path,
+        LoadOptions {
+            legacy: paths.legacy_config.as_deref(),
+            endpoints: endpoints.as_deref(),
+        },
+    ) {
+        Ok(outcome) => {
+            notices.extend(notice_messages(&outcome.notices));
+            (outcome.config, notices, endpoints, config_path)
+        }
+        Err(error) => {
+            notices.push(format!("Could not load settings: {error}"));
+            (Settings::default(), notices, endpoints, config_path)
+        }
     }
 }
 
@@ -160,16 +240,36 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Apply `[App Settings] WhenClose`: 0 stops the core and exits, non-zero hides
+/// the window and keeps the server running.
 fn install_close_handler(app: &tauri::App) {
     if let Some(window) = app.get_webview_window("main") {
-        let window_for_event = window.clone();
+        let app_handle = app.handle().clone();
         window.on_window_event(move |event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                // Ticket 08 default: close hides to the tray and the server
-                // keeps running. Ticket 09 branches here on the onClose
-                // setting (Exit vs Minimize to tray).
                 api.prevent_close();
-                let _ = window_for_event.hide();
+                let when_close = app_handle
+                    .state::<AppState>()
+                    .controller
+                    .settings()
+                    .when_close;
+                match when_close {
+                    WhenClose::Minimize => hide_main_window(&app_handle),
+                    WhenClose::Exit => {
+                        let handle = app_handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let controller = Arc::clone(&handle.state::<AppState>().controller);
+                            if controller.status().state == ServerState::Running {
+                                // Bounded so a wedged capture backend cannot trap
+                                // the user in a closing app.
+                                let _ =
+                                    tokio::time::timeout(Duration::from_secs(3), controller.stop())
+                                        .await;
+                            }
+                            handle.exit(0);
+                        });
+                    }
+                }
             }
         });
     }
@@ -188,12 +288,54 @@ fn install_controller_listener(app: &tauri::App) {
 #[tauri::command]
 async fn get_bootstrap(state: State<'_, AppState>) -> Result<Bootstrap, String> {
     let controller = Arc::clone(&state.controller);
-    Ok(bootstrap(&controller.settings(), &controller.status()))
+    Ok(bootstrap(
+        &controller.settings(),
+        &controller.status(),
+        &state.startup_notices,
+    ))
 }
 
 #[tauri::command]
 async fn get_status(state: State<'_, AppState>) -> Result<ServerStatus, String> {
     Ok(state.controller.status())
+}
+
+#[tauri::command]
+async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
+    Ok(state.controller.settings())
+}
+
+/// Validate, persist atomically, and activate new settings. Refused unless the
+/// server is stopped; the endpoint list (when known) is checked here.
+#[tauri::command]
+async fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<Settings, String> {
+    let endpoints = lock(&state.endpoints).clone();
+    state
+        .controller
+        .save_settings_with_endpoints(settings, endpoints.as_deref())
+}
+
+/// Restore the Server fields to their defaults and write them.
+#[tauri::command]
+async fn reset_settings(state: State<'_, AppState>) -> Result<Settings, String> {
+    state.controller.reset_settings()
+}
+
+/// Enumerate the real capture endpoints off the UI thread.
+#[tauri::command]
+async fn list_endpoints(state: State<'_, AppState>) -> Result<Vec<EndpointDto>, String> {
+    let options = state.options;
+    let cache = Arc::clone(&state.endpoints);
+    let endpoints = tauri::async_runtime::spawn_blocking(move || {
+        let backend = capture_backend(&options)?;
+        backend
+            .endpoints()
+            .map_err(|error| format!("cannot list audio endpoints: {error}"))
+    })
+    .await
+    .map_err(|error| format!("audio endpoint task failed: {error}"))??;
+    *lock(&cache) = Some(endpoints.clone());
+    Ok(endpoints.into_iter().map(EndpointDto::from).collect())
 }
 
 /// Async command: the core start (capture negotiation, socket bind) runs off
@@ -232,7 +374,20 @@ async fn exit_app(app: AppHandle) -> Result<(), String> {
 
 fn main() {
     let options = GuiOptions::parse(std::env::args().skip(1));
-    let settings = Settings::default();
+
+    // Settings load and endpoint enumeration run before the Tauri UI exists;
+    // the dedicated thread keeps audio discovery off the main/UI thread.
+    let (settings, startup_notices, endpoints, config_path) =
+        std::thread::spawn(move || load_startup(options))
+            .join()
+            .unwrap_or_else(|_| {
+                (
+                    Settings::default(),
+                    vec!["Could not load settings: startup task failed".to_owned()],
+                    None,
+                    paths::paths().config,
+                )
+            });
 
     tauri::Builder::default()
         // Single-instance MUST be the first plugin registered.
@@ -255,12 +410,18 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .manage(AppState {
-            controller: Arc::new(ServerController::new(settings)),
+            controller: Arc::new(ServerController::with_config(settings, config_path)),
             options,
+            endpoints: Arc::new(Mutex::new(endpoints)),
+            startup_notices,
         })
         .invoke_handler(tauri::generate_handler![
             get_bootstrap,
             get_status,
+            get_settings,
+            save_settings,
+            reset_settings,
+            list_endpoints,
             start_server,
             stop_server,
             hide_window,

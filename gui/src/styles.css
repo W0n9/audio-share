@@ -216,6 +216,51 @@ select {
   overflow-wrap: anywhere;
 }
 
+.banner {
+  margin: 0 16px 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 149, 0, 0.4);
+  background: rgba(255, 149, 0, 0.1);
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.banner-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.banner-message {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.banner .link {
+  margin-top: 4px;
+  padding: 0;
+}
+
+.section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 700;
+  padding: 12px 0 6px;
+}
+
+.settings-list .field {
+  margin-bottom: 10px;
+}
+
+.server-fields {
+  margin-bottom: 10px;
+}
+
+.reset-row {
+  border-top: 1px solid var(--line);
+}
+
 .footer {
   margin-top: auto;
   display: flex;
