@@ -83,14 +83,16 @@ firewall UAC approve/cancel, Sound Panel, autostart, i18n, update check); see
 [Windows build](build-windows.md), [capture](capture-windows.md), and the
 [GUI checklist](gui-acceptance-checklist.md). Three Windows runtime defects were
 fixed: the HTTPS update-check TLS backend, the WASAPI `Initialize` error
-mapping, and a UDP broadcast stall on a slow Wi-Fi peer. The follow-up CI run
-42766244106 is green and its artifacts include the first two; a further CI run
-is required for the broadcast fix. The real v0.3.4 APK was executed on one
-Android 12 phone (48 kHz stereo × 5 encodings, 44.1 kHz closest-match,
-reconnect, heartbeat, and a **passing 60-minute playback**). Still not
-executed: mono (N/A on the Realtek endpoint), a two-Android-client run,
-sleep/resume, real-hardware hotplug, Windows 10, a missing-WebView2 clean VM,
-and the real Linux desktop tray. These are tracked as `ready-for-human` in
+mapping, and a UDP broadcast stall on a slow Wi-Fi peer. The final CI run
+[42777988420](https://github.com/W0n9/audio-share/actions/runs/42777988420)
+(`9626b10`) is green on all four jobs; its artifacts include all three fixes
+and were smoke-tested (GUI HTTPS update check, as-cmd version/list/encoding and
+mono error, and ~11 minutes of real-phone playback). The real v0.3.4 APK was
+executed on one Android 12 phone (48 kHz stereo × 5 encodings, 44.1 kHz
+closest-match, reconnect, heartbeat, and a **passing 60-minute playback**).
+Still not executed: mono (N/A on the Realtek endpoint), a two-Android-client
+run, sleep/resume, real-hardware hotplug, Windows 10, a missing-WebView2 clean
+VM, and the real Linux desktop tray. These are tracked as `ready-for-human` in
 tickets 13, 15, and 16.
 
 ## Spikes (historical)

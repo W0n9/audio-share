@@ -11,7 +11,7 @@
 - [x] 版本号为 `0.4.0`，产物名与发布说明一致。
 - [x] CI 在 `windows-latest` 与 `ubuntu-24.04` 产出最终产物。
 - [x] 干净检出后可复现构建与测试。
-- [ ] release candidate 通过 v0.3.4 Android Client 冒烟。
+- [x] release candidate 通过 v0.3.4 Android Client 冒烟。2026-11-10：final CI `as-cmd`（run 42777988420，`9626b10`）在 Android 12 手机上播放 s16 48k 约 11 分钟（6 次 probe、440 Hz、0 heartbeat miss、0 App 崩溃）；完整矩阵与 60 分钟见 ticket 15。
 
 ## Comments
 
@@ -125,14 +125,13 @@ run were fixed:
   heartbeats kept sessions alive. It now uses `try_send_to` and drops on
   `WouldBlock` (commit `c6aeecd`). This third fix also needs a fresh CI run.
 
-Consequences for the 0.4.0 RC: the follow-up CI run
-[42766244106](https://github.com/W0n9/audio-share/actions/runs/42766244106)
-(`ebdd468`) is green on all four jobs, and its Windows artifacts include the
-TLS and `Initialize` fixes and were smoke-tested on Windows 11 (as-cmd
-version/list/encoding, mono readable error, GUI HTTPS update check reaching
-GitHub). The broadcast fix is later than that run; a further CI run is required
-before the final artifact. The older `bad71d3` artifacts remain the pre-fix
-baseline. The real v0.3.4 APK smoke was executed on one Android 12 phone
-(single-phone matrix + 60-minute playback); the two-Android-client and mono
-items remain open, so the final checkbox stays unchecked and `Status` stays
-`ready-for-human`.
+Consequences for the 0.4.0 RC: the final CI run
+[42777988420](https://github.com/W0n9/audio-share/actions/runs/42777988420)
+(`9626b10`) is green on all four jobs, and its Windows artifacts include all
+three fixes. The final `as-cmd.exe` (SHA-256 `8d984573…ea831c`) was played by
+the real v0.3.4 Android Client for ~11 minutes (6 probes, 440 Hz, 0 heartbeat
+misses, 0 app crashes), and the full single-phone matrix plus the 60-minute
+playback passed on the same code (see ticket 15). The two-Android-client and
+mono items remain open in ticket 15; the RC-smoke checkbox above is checked.
+`Status` stays `ready-for-human` pending the actual v0.4.0 release
+publication/sign-off.
