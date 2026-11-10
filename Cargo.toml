@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/audio-share-core",
+    "crates/as-cmd",
+    "gui/src-tauri",
+    "tools/pipewire-spike",
+    "tools/protocol-harness",
+    "tools/wasapi-spike",
+]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.90"
+
+[workspace.dependencies]
+anyhow = "1"
+audio-share-core = { path = "crates/audio-share-core" }
+clap = { version = "4", features = ["derive"] }
+prost = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = [
+    "io-util",
+    "macros",
+    "net",
+    "process",
+    "rt-multi-thread",
+    "signal",
+    "sync",
+    "time",
+] }

@@ -1,0 +1,58 @@
+[package]
+name = "audio-share-server-gui"
+version = "0.4.0"
+description = "Audio Share Server GUI"
+authors = ["Audio Share maintainers"]
+edition = "2021"
+rust-version = "1.90"
+publish = false
+
+[lib]
+name = "audio_share_server_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "AudioShareServer"
+path = "src/main.rs"
+
+[features]
+# Enables embedding frontendDist. `tauri build` enables tauri/custom-protocol
+# itself; this feature is for bare-cargo production builds after `npm run build`.
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+audio-share-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tauri = { version = "2.12.5", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2.5.5"
+tauri-plugin-opener = "2.7.2"
+tauri-plugin-notification = "2.8.0"
+sys-locale = "0.3"
+
+# rustls (ring) needs a C toolchain for the Windows *compile check*, which this
+# environment lacks; Windows uses the OS TLS stack (schannel) instead.
+[target.'cfg(not(windows))'.dependencies]
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+
+[target.'cfg(windows)'.dependencies]
+ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
+winreg = "0.56"
+# Pinned to the workspace's windows 0.62.2 (wasapi re-exports its types).
+# Ticket 11: COM firewall policy read and ShellExecuteExW elevation.
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_WindowsFirewall",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile = "3"
