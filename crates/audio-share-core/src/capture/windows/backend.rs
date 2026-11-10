@@ -341,7 +341,7 @@ fn open_loopback_session(config: &CaptureConfig) -> Result<LoopbackSession> {
             },
             None,
         )
-        .map_err(|error| capture_error("initialize shared-mode loopback (1 s buffer)", error))?;
+        .map_err(|error| map_initialize_error(&negotiated.format, error))?;
 
     let buffer_frames = client
         .get_buffer_size()
@@ -489,7 +489,79 @@ fn map_is_supported_error(requested: &FormatSpec, error: WasapiError) -> Error {
     }
 }
 
+/// Map an `IAudioClient::Initialize` failure to a readable error.
+///
+/// `IsFormatSupported` can return `S_OK` for a format that shared-mode
+/// loopback still rejects at `Initialize` (observed on Realtek for mono at the
+/// mix sample rate). Without this mapping the user only sees the raw HRESULT
+/// `0x88890008`.
+fn map_initialize_error(negotiated: &FormatSpec, error: WasapiError) -> Error {
+    match &error {
+        WasapiError::Windows(windows_error)
+            if windows_error.code() == AUDCLNT_E_UNSUPPORTED_FORMAT =>
+        {
+            Error::Capture(format!(
+                "the endpoint rejected the negotiated loopback format {negotiated:?} \
+                 (AUDCLNT_E_UNSUPPORTED_FORMAT); shared-mode loopback may require the \
+                 endpoint's mix format — try another encoding, channel count, or sample rate"
+            ))
+        }
+        _ => capture_error("initialize shared-mode loopback (1 s buffer)", error),
+    }
+}
+
 fn hns_to_duration(hns: i64) -> Duration {
     // 1 hns = 100 ns.
     Duration::from_nanos((hns.max(1) as u64).saturating_mul(100))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::E_FAIL;
+
+    fn mono_s16() -> FormatSpec {
+        FormatSpec {
+            subtype: SampleSubtype::Int,
+            container_bits: 16,
+            valid_bits: 16,
+            channels: 1,
+            sample_rate: 48_000,
+            block_align: 2,
+            channel_mask: None,
+        }
+    }
+
+    #[test]
+    fn initialize_unsupported_format_is_mapped_to_a_readable_error() {
+        let error = map_initialize_error(
+            &mono_s16(),
+            WasapiError::Windows(windows::core::Error::from_hresult(
+                AUDCLNT_E_UNSUPPORTED_FORMAT,
+            )),
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains("AUDCLNT_E_UNSUPPORTED_FORMAT"),
+            "message was {message}"
+        );
+        assert!(message.contains("mix format"), "message was {message}");
+        assert!(
+            message.contains("try another encoding"),
+            "message was {message}"
+        );
+    }
+
+    #[test]
+    fn other_initialize_errors_keep_the_operation_context() {
+        let error = map_initialize_error(
+            &mono_s16(),
+            WasapiError::Windows(windows::core::Error::from_hresult(E_FAIL)),
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains("initialize shared-mode loopback"),
+            "message was {message}"
+        );
+    }
 }
