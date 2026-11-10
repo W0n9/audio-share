@@ -152,10 +152,64 @@ Windows items now observed:
   manual update check over HTTPS.
 
 Two Windows-only defects were found and fixed (update-check TLS backend, WASAPI
-`Initialize` error mapping); a fresh CI run is needed before the release
-artifact is final.
+`Initialize` error mapping); the follow-up CI run 42766244106 (`ebdd468`) is
+green on all four jobs and its artifacts include those two fixes, smoke-tested
+on Windows 11. A third defect (UDP broadcast stall on a slow Wi-Fi peer) was
+found during the real-phone soak and is fixed in a later commit; a fresh CI run
+is required to include it in the release artifact.
 
 Still NOT EXECUTED: real v0.3.4 APK matrix/multi-client/60-minute playback,
 real phone firewall connectivity, sleep/resume, real-hardware hotplug, Windows
 10, missing-WebView2 clean VM, and the real-time 3-hour update interval. The
 Linux real desktop tray (GNOME/KDE/XFCE) also remains.
+
+### 2026-11-10 — real v0.3.4 APK on Android 12 (partial)
+
+Phone: Xiaomi M2007J22C, Android 12 / API 31, arm64; released v0.3.4 APK
+(`versionCode 3004`, SHA-256 `77cc93d3…a471b4`). The phone connected through
+the Windows host's Mobile Hotspot (`5277`, PC `192.168.137.1`, phone
+`192.168.137.212`). Server: CI `as-cmd.exe` from run 42766244106 (`ebdd468`)
+for 44.1 kHz/60-minute cases and the fixed local GUI for the 48 kHz matrix.
+
+- **48 kHz stereo**: f32/s8/s16/s24/s32 all played on the phone; `dumpsys
+  media.audio_flinger` showed the app's active AudioTrack format 5/2/1/6/3
+  respectively at 48 kHz stereo, and every `protocol-harness probe` passed
+  (440 Hz, aligned, MTU OK). Evidence:
+  `audio-share-artifacts/android/{enc}-48k-probe.json` and
+  `{enc}-48k-audioflinger.txt`.
+- **44.1 kHz requested**: all five encodings negotiated f32 48 kHz (`S_FALSE`
+  closest match) and played; probes passed. The requested rate is not
+  available on this Realtek shared-mode endpoint.
+- **Mono**: 10 combinations N/A — the driver rejects mono at `Initialize`
+  (`AUDCLNT_E_UNSUPPORTED_FORMAT`, readable error); the old v0.3.4 server also
+  cannot capture mono on this endpoint.
+- **Reconnect / heartbeat**: the phone auto-reconnected after every server
+  Stop/Start and created a new AudioTrack. With Wi-Fi disabled for 10 s the
+  app showed “Network is unreachable, 会在2秒内重试”; re-enabling rejoined the
+  hotspot and resumed playback. The server-side ~6 s heartbeat close is
+  covered by the scripted Linux matrix.
+- **Multi-client**: one phone plus a concurrent `protocol-harness probe`
+  (second Wire Protocol client) ran in every matrix row; a two-Android-client
+  run was not available.
+- **60-minute playback**: **PASS** on the fixed build. 12 five-minute probes
+  (plus a final probe at 15:45): every probe 1,994–2,000 datagrams/6 s, 440 Hz,
+  max gap 27 ms, 0 heartbeat misses; phone AudioTrack active at every sample,
+  one auto-reconnect (track 129→131), no app FATAL/exception, 682 MB received.
+  Evidence: `android/soak-60m-fixed/`.
+
+The first 60-minute attempt (pre-fix `as-cmd`) stalled after ~5 minutes: the
+phone showed “已开始” with 0.1 K/s, the next probe received 0 datagrams, but
+`GET_FORMAT`/`START_PLAY`/heartbeats still worked and a separate
+`wasapi-spike capture` could still capture the tone. Root cause: the broadcast
+loop awaited `udp.send_to`; a Wi-Fi peer that stopped draining filled the socket
+send buffer, blocking the broadcast loop and then the capture thread's
+`blocking_send`. Fix: use `try_send_to` and drop on `WouldBlock` with a
+one-time warning, so a slow peer cannot stall capture or other clients.
+Post-fix, a 60 s phone Wi-Fi-off plus a non-reading UDP peer still let a PC
+probe receive 1,198 datagrams/440 Hz per 6 s; the fixed 60-minute soak is
+running as the regression test. Evidence: `android/soak-60m/` (pre-fix stall)
+and `android/soak-60m-fixed/` (post-fix).
+
+The first checkbox stays unchecked because mono is N/A on this host and a
+two-Android-client run is still missing; the 60-minute and reconnect/heartbeat
+items are closed.

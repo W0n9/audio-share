@@ -63,7 +63,8 @@ desktop session.
 - [~] Start/Stop from tray updates the window state and address without opening
   the window. State flip observed; "window not opened" is normal for a menu
   activation but was not re-checked on a panel.
-- [ ] Closing the app removes the tray icon. [env]
+- [x] Closing the app removes the tray icon. Windows 11: the tray icon was
+  present before Exit and absent from the overflow after the process exited.
 
 ## Main view (prototype A)
 - [x] Status pill shows Stopped/Running and updates live. (Xvfb screenshots.)
@@ -184,13 +185,26 @@ desktop session.
   `android-v034-acceptance.md`).
 
 ## Client-facing regression (with v0.3.4 APK)
-All items below are **NOT EXECUTED**; no Android device is attached.
-See `docs/server-rewrite/android-v034-acceptance.md` for the exact matrix and
-evidence requirements.
-- [ ] Client connects, shows the format, and plays audio.
-- [ ] All 5 encodings play; mono and stereo; 44.1 and 48 kHz.
-- [ ] Multiple clients play simultaneously.
-- [ ] Client reconnect works after server stop/start.
-- [ ] Heartbeat timeout closes dead sessions within ~5 s; active sessions stay
-  alive. (Server side is covered by the scripted matrix: close at ~6 s.)
-- [ ] No UDP parsing misalignment after long playback.
+Executed on one Android 12 phone on 2026-11-10 (Xiaomi M2007J22C, API 31,
+arm64; released v0.3.4 APK). See
+`docs/server-rewrite/android-v034-acceptance.md` for the matrix and evidence.
+- [x] Client connects, shows the format, and plays audio. The app showed
+  “已开始”/pause and `dumpsys media.audio_flinger` reported the matching active
+  AudioTrack for every matrix row.
+- [~] All 5 encodings play; mono and stereo; 44.1 and 48 kHz. 48 kHz stereo:
+  f32/s8/s16/s24/s32 all PASS. 44.1 kHz requests: `S_FALSE` closest match to
+  f32 48 kHz and playback PASS. Mono: N/A on the Realtek endpoint (driver
+  rejects it at `Initialize`; the old v0.3.4 server also cannot capture it).
+- [~] Multiple clients play simultaneously. One phone plus a concurrent
+  `protocol-harness probe` ran in every row; a two-Android-client run was not
+  available.
+- [x] Client reconnect works after server stop/start. The phone reconnected
+  automatically after every Stop/Start and after 10 s of Wi-Fi loss.
+- [~] Heartbeat timeout closes dead sessions within ~5 s; active sessions stay
+  alive. Server side is covered by the scripted matrix (close at ~6 s); the
+  phone dropped the dead session while Wi-Fi was off and reconnected after the
+  network returned.
+- [x] No UDP parsing misalignment after long playback. The 60-minute phone run
+  passed on the fixed build: 12/12 probes, 1994–2000 datagrams/6 s, 440 Hz,
+  max gap 27 ms, 0 heartbeat misses, one auto-reconnect, no app crash; the
+  8-hour server soak also passed.
