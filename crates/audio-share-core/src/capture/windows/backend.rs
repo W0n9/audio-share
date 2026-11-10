@@ -20,6 +20,7 @@ use windows::Win32::Media::Audio::{
     AUDCLNT_E_DEVICE_INVALIDATED, AUDCLNT_E_RESOURCES_INVALIDATED, AUDCLNT_E_SERVICE_NOT_RUNNING,
     AUDCLNT_E_UNSUPPORTED_FORMAT,
 };
+use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 
 use super::format::{
     advertised_format, requested_format, select_negotiated, silence_fill, FormatSpec, SampleSubtype,
@@ -72,6 +73,40 @@ impl ComGuard {
 impl Drop for ComGuard {
     fn drop(&mut self) {
         deinitialize();
+    }
+}
+
+/// Raise the process timer resolution for the capture thread's lifetime.
+///
+/// `CaptureSession` polls at the WASAPI minimum device period (typically 3 ms)
+/// and forwards every packet it finds. Windows rounds `Condvar::wait_timeout`
+/// (and `Sleep`) up to the process timer resolution, which defaults to
+/// ~15.6 ms. At that resolution the loop wakes once per 2-3 packets and emits
+/// 10-30 ms of audio in one burst, where v0.3.4's asio steady timer delivered
+/// one packet at a time. Requesting 1 ms resolution restores the intended
+/// poll cadence so capture follows the device period instead of the system
+/// clock tick.
+struct TimerResolutionGuard;
+
+impl TimerResolutionGuard {
+    fn acquire() -> Self {
+        // SAFETY: `timeBeginPeriod`/`timeEndPeriod` are process-wide timer
+        // resolution requests; the matching `timeEndPeriod` runs when the
+        // capture thread exits. Failure (TIMERR_NOCANDO) is not fatal: capture
+        // still works, just at the coarser default cadence.
+        unsafe {
+            timeBeginPeriod(1);
+        }
+        Self
+    }
+}
+
+impl Drop for TimerResolutionGuard {
+    fn drop(&mut self) {
+        // SAFETY: balances the `timeBeginPeriod(1)` above.
+        unsafe {
+            timeEndPeriod(1);
+        }
     }
 }
 
@@ -220,6 +255,7 @@ fn capture_thread(
             return;
         }
     };
+    let _timer_resolution = TimerResolutionGuard::acquire();
 
     let mut session = match open_loopback_session(config) {
         Ok(session) => session,
