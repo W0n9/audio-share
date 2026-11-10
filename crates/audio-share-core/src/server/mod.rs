@@ -534,6 +534,7 @@ async fn broadcast_loop(
     let block_align = context.format.block_align();
     let mut shutdown = context.shutdown();
     let mut reported_oversized_format = false;
+    let mut reported_send_stall = false;
     loop {
         let frame = tokio::select! {
             _ = shutdown.changed() => break,
@@ -565,9 +566,28 @@ async fn broadcast_loop(
 
         for segment in segment_audio(&frame, block_align) {
             for peer in &peers {
-                // UDP send failures are expected (unreachable peer) and must
-                // not stop the stream to other clients.
-                let _ = udp.send_to(segment, peer).await;
+                // Never await a UDP send here. A Wi-Fi peer that stops draining
+                // (screen off, power save, roaming) can fill the socket send
+                // buffer; `send_to(...).await` would then block the broadcast
+                // loop forever, the bounded frame channel would fill, and the
+                // capture thread would block on `blocking_send` — every client
+                // goes silent while TCP heartbeats keep the session alive.
+                // Real-time audio should drop for the slow peer instead.
+                match udp.try_send_to(segment, *peer) {
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if !reported_send_stall {
+                            reported_send_stall = true;
+                            eprintln!(
+                                "audio-share: UDP send buffer full; dropping datagrams instead \
+                                 of stalling capture (peer {peer})"
+                            );
+                        }
+                    }
+                    // UDP send failures are expected (unreachable peer) and
+                    // must not stop the stream to other clients.
+                    Err(_) => {}
+                }
             }
         }
     }
