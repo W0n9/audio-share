@@ -192,11 +192,11 @@ refusal on an ephemeral port.
 
 Host: Windows 11 Enterprise 10.0.26300, x64; WebView2 Runtime 157.0.4341.42;
 Visual Studio 2022 Build Tools 17.x (MSVC 14.44.35207); Rust 1.99.1. The
-acceptance used the CI artifacts from run
+initial acceptance used the CI artifacts from run
 [42710876060](https://github.com/W0n9/audio-share/actions/runs/42710876060)
-(`bad71d3`) and a locally built exe containing the two fixes found during this
-run (HTTPS update-check TLS backend and the WASAPI `Initialize` error
-mapping).
+(`bad71d3`) and a locally built exe containing the first two fixes found during
+this run (HTTPS update-check TLS backend and the WASAPI `Initialize` error
+mapping). Later runs and their artifacts are listed below.
 
 | Artifact | Size | SHA-256 |
 |---|---:|---|
@@ -208,8 +208,8 @@ mapping).
 | CI `audio-share-server-cmd-windows.zip` (run 42777988420) | 688,182 B | `216c95808d79a55c3309cf4b58004db4534165398083a19beb9378fa3a7993ef` |
 | locally built fixed `AudioShareServer.exe` | 11,970,048 B | `f2d14db7cd66e52f821d04307e6bd2085530b70a332f50d1019e714576683925` |
 
-Both CI `.sha256` sidecars matched with `Get-FileHash`; the zip contains
-`audio-share-server-cmd/{as-cmd.exe,LICENSE,README.md}`.
+All downloaded CI `.sha256` sidecars matched with `Get-FileHash`; the zip
+contains `audio-share-server-cmd/{as-cmd.exe,LICENSE,README.md}`.
 
 | Check | Result |
 |---|---|
@@ -230,7 +230,7 @@ Both CI `.sha256` sidecars matched with `Get-FileHash`; the zip contains
 | Manual update check over HTTPS | PASS — “up to date” (fixed; see below); the real HTTPS ignored test passes |
 | Repair Firewall (UAC approve) creates TCP/UDP inbound rules scoped to the exe, Domain+Private, allow | PASS — verified with `netsh advfirewall firewall show rule ... verbose` |
 | Repair Firewall (UAC cancel) shows a readable error and leaves the GUI responsive | PASS — “Firewall repair was cancelled because administrator permission was not granted.” |
-| A client can connect through the repaired rules | PASS on the server side — local client over the WLAN IP `10.8.144.155:65530` received 120 aligned datagrams; the real Android Client is still ticket 15/16 |
+| A client can connect through the repaired rules | PASS on the server side — local client over the WLAN IP `10.8.144.155:65530` received 120 aligned datagrams; the real Android Client was later executed on one phone (ticket 15) |
 | Sound Panel opens `control.exe /name Microsoft.Sound`; GUI stays responsive | PASS — `#32770` dialog titled “声音” observed and closed |
 | en-US and zh-CN render; language persists and applies after restart | PASS — system default zh-CN, switched to en-US, restarted, switched back |
 | About shows 0.4.0, homepage, Apache-2.0; homepage opens the default browser | PASS |
@@ -238,18 +238,17 @@ Both CI `.sha256` sidecars matched with `Get-FileHash`; the zip contains
 | `as-cmd.exe` from the zip: `--version` 0.4.0, `-l`, `--list-encoding` | PASS |
 | Real WASAPI A/B vs v0.3.4 `as-cmd.exe` (default/f32/s8/s16/s24/s32) | PASS — see [capture-windows.md](capture-windows.md) |
 
-Not executed on this host and still open:
+Remaining open items:
 
 - Windows 10 (only Windows 11 Enterprise 10.0.26300 was available).
 - Missing-WebView2 clean-VM test (the runtime is present; the decision logic is
   unit-tested), per-user WebView2 install, and fixed-version
   `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`.
 - Reboot/login autostart (the HKCU entry was verified, not a real sign-in).
-- Real v0.3.4 APK: a single-phone matrix (48 kHz stereo × 5 encodings; 44.1 kHz
-  closest-match), reconnect, heartbeat, and a **PASSING 60-minute playback**
-  were executed on 2026-11-10 through the Windows Mobile Hotspot. Mono is N/A
-  on this Realtek endpoint; a two-Android-client run remains open. See
-  [Android acceptance](android-v034-acceptance.md).
+- Two-Android-client run and the mono combinations (mono is N/A on this Realtek
+  endpoint). The single-phone matrix, reconnect, heartbeat, and a passing
+  60-minute playback were executed on 2026-11-10 through the Windows Mobile
+  Hotspot; see [Android acceptance](android-v034-acceptance.md).
 - Sleep/resume and real-hardware hotplug; exclusive-mode endpoint; endpoint
   switching (only one active render endpoint).
 
