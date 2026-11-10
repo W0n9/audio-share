@@ -81,13 +81,17 @@ and checksum-verified by CI, then **executed on Windows 11 on 2026-11-10**
 (portable GUI, WebView2-present launch, real WASAPI Start/Stop and A/B,
 firewall UAC approve/cancel, Sound Panel, autostart, i18n, update check); see
 [Windows build](build-windows.md), [capture](capture-windows.md), and the
-[GUI checklist](gui-acceptance-checklist.md). Two Windows runtime defects were
-fixed (HTTPS update-check TLS backend and the WASAPI `Initialize` error
-mapping), so a fresh CI run is required before the release artifacts are final.
-Still not executed: the real v0.3.4 APK on a phone, sleep/resume,
-real-hardware hotplug, Windows 10, a missing-WebView2 clean VM, and the real
-Linux desktop tray. These are tracked as `ready-for-human` in tickets 13, 15,
-and 16.
+[GUI checklist](gui-acceptance-checklist.md). Three Windows runtime defects were
+fixed: the HTTPS update-check TLS backend, the WASAPI `Initialize` error
+mapping, and a UDP broadcast stall on a slow Wi-Fi peer. The follow-up CI run
+42766244106 is green and its artifacts include the first two; a further CI run
+is required for the broadcast fix. The real v0.3.4 APK was executed on one
+Android 12 phone (48 kHz stereo × 5 encodings, 44.1 kHz closest-match,
+reconnect, heartbeat, and a **passing 60-minute playback**). Still not
+executed: mono (N/A on the Realtek endpoint), a two-Android-client run,
+sleep/resume, real-hardware hotplug, Windows 10, a missing-WebView2 clean VM,
+and the real Linux desktop tray. These are tracked as `ready-for-human` in
+tickets 13, 15, and 16.
 
 ## Spikes (historical)
 

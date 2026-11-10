@@ -124,11 +124,23 @@ Host: Windows 11 Enterprise 10.0.26300 x64; WebView2 157.0.4341.42; MSVC
 
 Two runtime defects were found and fixed: the update check had no Windows TLS
 backend (ureq `native-tls` needs an explicit connector) and mono capture
-surfaced a raw `0x88890008` instead of a readable error. The CI artifacts above
-predate these fixes; a fresh Windows CI run is required before the release
-artifact is final. A locally built fixed exe (SHA-256
-`f2d14db7cd66e52f821d04307e6bd2085530b70a332f50d1019e714576683925`)
-verified both fixes.
+surfaced a raw `0x88890008` instead of a readable error. The follow-up CI run
+[42766244106](https://github.com/W0n9/audio-share/actions/runs/42766244106)
+(`ebdd468`) is green on all four jobs; its artifacts include the TLS and
+`Initialize` fixes. A third defect (UDP broadcast stall on a slow Wi-Fi peer)
+was found during the later real-phone soak and is fixed in a newer commit; a
+fresh CI run is required to include it in the release artifact:
+
+- `AudioShareServer.exe` 11,973,120 B, SHA-256
+  `93a456642ad52db1c934b0f818b441cfe25a232650d1065ebff7e2e8abab2e0c`.
+- `audio-share-server-cmd-windows.zip` 686,340 B, SHA-256
+  `b200f5fd8d8d4f84387028e586b717db72f6097249fdc8931a1cff1282c01839`.
+- Smoke: `as-cmd --version` 0.4.0, `-l`, `--list-encoding`; mono printed the
+  readable `AUDCLNT_E_UNSUPPORTED_FORMAT` message; the GUI update check
+  completed HTTPS and showed a readable HTTP 403 rate-limit (shared IP),
+  proving the schannel backend.
+
+The older run 42710876060 artifacts remain the pre-fix baseline.
 
 Not executed: missing-WebView2 clean-VM dialog, per-user/fixed-version
 WebView2, Windows 10, a real reboot/login, and a real Android Client.

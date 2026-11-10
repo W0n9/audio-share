@@ -172,8 +172,14 @@ datagram gap above 100 ms.
 ## Limits
 
 - Null sink and synthetic tone only; no real hardware, no phone, no
-  suspend/resume. Real-device playback is covered by
-  `android-v034-acceptance.md` (not executed).
+  suspend/resume on the Linux soak host. Real-device playback was later
+  executed on one Android 12 phone and is recorded in
+  `android-v034-acceptance.md`: the single-phone matrix and a **passing
+  60-minute playback** (12/12 probes, 440 Hz, 0 heartbeat misses, one
+  auto-reconnect, no app crash) were run. That run also exposed (and led to
+  the fix of) the Windows UDP broadcast stall on a slow Wi-Fi peer. A
+  two-Android-client run, suspend/resume, and real-hardware hotplug remain
+  open.
 - The probe captures at most 8 MiB of PCM for tone analysis; counters cover
   the whole run, but tone presence is checked over the first ~21 s of the
   first session (enough to prove the capture path after startup).

@@ -120,8 +120,19 @@ run were fixed:
   (`schannel`).
 - WASAPI `Initialize` for mono at the mix rate returned raw `0x88890008`; the
   backend and spike now map it to a readable error.
+- The UDP broadcast loop awaited `send_to`; a slow Wi-Fi peer could fill the
+  send buffer, block the loop and capture, and silence every client while TCP
+  heartbeats kept sessions alive. It now uses `try_send_to` and drops on
+  `WouldBlock` (commit `c6aeecd`). This third fix also needs a fresh CI run.
 
-Consequences for the 0.4.0 RC: the CI artifacts from `bad71d3` predate these
-fixes, so the release candidate must be rebuilt and re-smoked. The real v0.3.4
-APK smoke remains **NOT EXECUTED** (no Android device); the final checkbox stays
-unchecked and `Status` stays `ready-for-human`.
+Consequences for the 0.4.0 RC: the follow-up CI run
+[42766244106](https://github.com/W0n9/audio-share/actions/runs/42766244106)
+(`ebdd468`) is green on all four jobs, and its Windows artifacts include the
+TLS and `Initialize` fixes and were smoke-tested on Windows 11 (as-cmd
+version/list/encoding, mono readable error, GUI HTTPS update check reaching
+GitHub). The broadcast fix is later than that run; a further CI run is required
+before the final artifact. The older `bad71d3` artifacts remain the pre-fix
+baseline. The real v0.3.4 APK smoke was executed on one Android 12 phone
+(single-phone matrix + 60-minute playback); the two-Android-client and mono
+items remain open, so the final checkbox stays unchecked and `Status` stays
+`ready-for-human`.

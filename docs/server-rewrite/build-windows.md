@@ -8,8 +8,14 @@ the artifacts were executed on Windows 11 on 2026-11-10 (see
 [Executed Windows 11 acceptance](#executed-windows-11-acceptance-2026-11-10)).
 The two runtime defects found during that execution (HTTPS update-check TLS
 backend and the WASAPI `Initialize` error mapping) are fixed and covered by
-tests; a fresh CI run is still required to rebuild the release artifacts.
-Windows 10 and the missing-WebView2 clean-VM path remain manual gates.
+tests. The follow-up CI run
+[42766244106](https://github.com/W0n9/audio-share/actions/runs/42766244106)
+(`ebdd468`) is green on all four jobs, and its artifacts include those fixes and
+were smoke-tested on Windows 11. A third defect — the UDP broadcast loop
+blocking on a slow Wi-Fi peer — was found during the real-phone 60-minute run
+and is fixed in the working tree; a further CI run is required to include it in
+the release artifacts. Windows 10 and the missing-WebView2 clean-VM path remain
+manual gates.
 
 The Windows release is a **portable `AudioShareServer.exe`** with no installer.
 The GUI targets Windows 10+ and requires the Microsoft Edge WebView2 Runtime,
@@ -193,8 +199,10 @@ mapping).
 
 | Artifact | Size | SHA-256 |
 |---|---:|---|
-| CI `AudioShareServer.exe` | 11,918,848 B | `21c5b26478a0a4ad12241e60eec724b4613fbc07ad2f85c0fb479d1d2851faa6` |
-| CI `audio-share-server-cmd-windows.zip` | 686,081 B | `6f8f864779d0290ab720af5c3f1855075765b7652bdd0fe04533ad665af4bd42` |
+| CI `AudioShareServer.exe` (run 42710876060, pre-fix baseline) | 11,918,848 B | `21c5b26478a0a4ad12241e60eec724b4613fbc07ad2f85c0fb479d1d2851faa6` |
+| CI `audio-share-server-cmd-windows.zip` (run 42710876060) | 686,081 B | `6f8f864779d0290ab720af5c3f1855075765b7652bdd0fe04533ad665af4bd42` |
+| CI `AudioShareServer.exe` (run 42766244106, fixes included) | 11,973,120 B | `93a456642ad52db1c934b0f818b441cfe25a232650d1065ebff7e2e8abab2e0c` |
+| CI `audio-share-server-cmd-windows.zip` (run 42766244106) | 686,340 B | `b200f5fd8d8d4f84387028e586b717db72f6097249fdc8931a1cff1282c01839` |
 | locally built fixed `AudioShareServer.exe` | 11,970,048 B | `f2d14db7cd66e52f821d04307e6bd2085530b70a332f50d1019e714576683925` |
 
 Both CI `.sha256` sidecars matched with `Get-FileHash`; the zip contains
@@ -234,8 +242,11 @@ Not executed on this host and still open:
   unit-tested), per-user WebView2 install, and fixed-version
   `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`.
 - Reboot/login autostart (the HKCU entry was verified, not a real sign-in).
-- Real v0.3.4 Android APK (no device) and the real-phone firewall/connectivity
-  check; the server-side LAN path is verified above.
+- Real v0.3.4 APK: a single-phone matrix (48 kHz stereo × 5 encodings; 44.1 kHz
+  closest-match), reconnect, heartbeat, and a **PASSING 60-minute playback**
+  were executed on 2026-11-10 through the Windows Mobile Hotspot. Mono is N/A
+  on this Realtek endpoint; a two-Android-client run remains open. See
+  [Android acceptance](android-v034-acceptance.md).
 - Sleep/resume and real-hardware hotplug; exclusive-mode endpoint; endpoint
   switching (only one active render endpoint).
 
@@ -251,9 +262,25 @@ Not executed on this host and still open:
    `AUDCLNT_E_UNSUPPORTED_FORMAT` (0x88890008). The production backend and the
    spike now map it to a readable “endpoint rejected the negotiated loopback
    format … try another encoding, channel count, or sample rate” error.
+3. **UDP broadcast loop could stall on one slow Wi-Fi peer**: the loop awaited
+   `udp.send_to`. When the phone stopped draining (power save/link stall), the
+   socket send buffer filled; the broadcast loop blocked, the bounded frame
+   channel filled, and the capture thread blocked in `blocking_send`. The
+   control plane (TCP heartbeats) stayed alive, so the phone showed “playing”
+   with no audio. The loop now uses `try_send_to` and drops on `WouldBlock`
+   (one warning per session), so one slow peer cannot stall capture or other
+   clients. Post-fix, a 60 s phone Wi-Fi-off plus a non-reading UDP peer still
+   let a PC probe receive 1,198 datagrams/440 Hz per 6 s; the fixed 60-minute
+   phone soak is the regression test.
 
-Both fixes need a fresh CI run before the next release artifact; the CI
-artifacts above predate them.
+Both fixes are covered by Windows unit tests and ran in the green
+`Rust (windows-latest)` job of run 42766244106. The new artifacts were
+smoke-tested on Windows 11: `as-cmd --version` 0.4.0, `-l`, and
+`--list-encoding`; `--channels 1` now prints the readable
+`AUDCLNT_E_UNSUPPORTED_FORMAT` message; the GUI update check completed an HTTPS
+request and reported a readable HTTP 403 GitHub rate-limit message (the shared
+IP was rate-limited), proving the schannel TLS backend works. The older run
+42710876060 artifacts are retained as the pre-fix baseline.
 
 ## Manual acceptance checklist (Windows 10 and Windows 11)
 
