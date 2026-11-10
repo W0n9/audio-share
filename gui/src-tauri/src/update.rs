@@ -188,9 +188,28 @@ pub fn interpret_response(
     evaluate_release(body, local)
 }
 
+/// Build the HTTP agent used for release checks.
+///
+/// ureq 2's `native-tls` feature only supplies an adapter for an explicitly
+/// configured connector; it is never picked up as the default TLS backend.
+/// Windows therefore has to pass a `native_tls::TlsConnector` (schannel), or
+/// every HTTPS request fails with "no TLS backend is configured". Other
+/// platforms use ureq's default rustls backend.
+fn update_agent() -> Result<ureq::Agent, String> {
+    let builder = ureq::AgentBuilder::new().timeout(REQUEST_TIMEOUT);
+    #[cfg(windows)]
+    let builder = {
+        let connector = ureq::native_tls::TlsConnector::new().map_err(|error| {
+            format!("update check failed: cannot initialise the TLS backend: {error}")
+        })?;
+        builder.tls_connector(std::sync::Arc::new(connector))
+    };
+    Ok(builder.build())
+}
+
 /// Fetch and evaluate the latest release. Blocking; call off the UI thread.
 pub fn fetch_latest(url: &str) -> Result<UpdateCheckResult, String> {
-    let agent = ureq::AgentBuilder::new().timeout(REQUEST_TIMEOUT).build();
+    let agent = update_agent()?;
     let local = format!("v{CURRENT_VERSION}");
     match agent.get(url).set("User-Agent", USER_AGENT).call() {
         Ok(response) => {
@@ -386,5 +405,26 @@ mod tests {
         assert_eq!(json["status"], "newer");
         assert_eq!(json["version"], "v0.4.1");
         assert_eq!(json["url"], "https://example.test/v0.4.1");
+    }
+
+    #[test]
+    fn update_agent_has_a_tls_backend_on_this_platform() {
+        // On Windows this constructs the native-tls (schannel) connector. A
+        // missing connector previously surfaced only as an HTTPS request
+        // failure in the GUI ("no TLS backend is configured").
+        update_agent().expect("update agent");
+    }
+
+    #[test]
+    #[ignore = "requires network access to api.github.com"]
+    fn fetches_the_real_latest_release_over_https() {
+        let result = fetch_latest(API_URL).expect("HTTPS update check");
+        match result {
+            UpdateCheckResult::UpToDate => {}
+            UpdateCheckResult::Newer { version, url } => {
+                assert!(version.starts_with('v'), "version was {version:?}");
+                assert!(url.starts_with("https://"), "url was {url:?}");
+            }
+        }
     }
 }
