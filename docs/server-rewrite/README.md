@@ -75,13 +75,19 @@ version comparison.
 - [GUI acceptance checklist](gui-acceptance-checklist.md) — manual desktop
   tray/menu/toast, Windows runtime, and Wayland checks.
 
-**Most real release gates remain NOT EXECUTED.** The 8-hour release soak has
-been executed on the Linux host and passed (see [Soak](soak.md)), and the
-Windows packaging artifacts were built and checksum-verified by CI (see
-[Windows build](build-windows.md)). The real v0.3.4 APK on a phone,
-sleep/resume, real-hardware hotplug, and the real desktop tray (Linux and
-Windows) have not been run in this environment. The remaining gates are
-tracked as `ready-for-human` in the ticket 15 issue.
+**Some real release gates remain open.** The 8-hour release soak passed on the
+Linux host (see [Soak](soak.md)). The Windows packaging artifacts were built
+and checksum-verified by CI, then **executed on Windows 11 on 2026-11-10**
+(portable GUI, WebView2-present launch, real WASAPI Start/Stop and A/B,
+firewall UAC approve/cancel, Sound Panel, autostart, i18n, update check); see
+[Windows build](build-windows.md), [capture](capture-windows.md), and the
+[GUI checklist](gui-acceptance-checklist.md). Two Windows runtime defects were
+fixed (HTTPS update-check TLS backend and the WASAPI `Initialize` error
+mapping), so a fresh CI run is required before the release artifacts are final.
+Still not executed: the real v0.3.4 APK on a phone, sleep/resume,
+real-hardware hotplug, Windows 10, a missing-WebView2 clean VM, and the real
+Linux desktop tray. These are tracked as `ready-for-human` in tickets 13, 15,
+and 16.
 
 ## Spikes (historical)
 

@@ -1,9 +1,13 @@
 # Windows real capture path (ticket 05)
 
-Status: **implemented and compile/logic validated on the Linux development
-host.** Windows runtime behaviour, the endpoint/encoding matrix, start/stop
-churn, and the A/B against the old `as-cmd` were **NOT EXECUTED** here: this
-host has no Windows audio runtime and no Windows linker.
+Status: **implemented and runtime-validated on Windows 11 on 2026-11-10.**
+Real WASAPI loopback audio reaches the frozen wire protocol, all five
+encodings A/B against the released v0.3.4 `as-cmd.exe`, and 200 start/stop
+cycles plus a 10-minute steady-state run completed without a crash. The only
+open hardware cases are mono capture on this Realtek endpoint (the driver
+rejects it at `Initialize` with a now-readable error), endpoint switching (only
+one render endpoint was active), and Windows 10. The original Linux-host
+compile-only status is retained in the ticket/commit history.
 
 ## What landed
 
@@ -120,7 +124,66 @@ inconsistent `nBlockAlign`, zero channels, and unrepresentable sample rates.
 What they cannot cover: COM, WASAPI negotiation, real device periods, packet
 cadence, silent/hotplug behaviour, and actual PCM sample representation.
 
-## Manual Windows verification (NOT EXECUTED)
+## Windows runtime results (2026-11-10)
+
+Host: Windows 11 Enterprise 10.0.26300 x64; Rust 1.99.1 MSVC; Realtek(R) Audio
+render endpoint `{0.0.0.00000000}.{e235fde3-4eb3-49cd-b203-765b5468d5d3}`;
+WebView2 157.0.4341.42; a 440 Hz `AudioContext` oscillator supplied the tone.
+Evidence: `audio-share-artifacts/ab/*`, `audio-share-artifacts/probe/`,
+`audio-share-artifacts/captures/`, `audio-share-artifacts/spike/ticket02/`.
+
+- Default endpoint: f32 2 ch 48 kHz, block_align 8; `GET_FORMAT` reply hex
+  `0100000008000000080110021880f702`; real 440 Hz PCM at RMS ≈ −20.24 dBFS.
+- Encoding matrix (requested → negotiated): f32/default → f32, s8 → s8,
+  s16 → s16, s24 → s24 (packed, block_align 6), s32 → s32; every capture was
+  block-aligned and every datagram was at most 1464 bytes. s8 callbacks were
+  960-byte packets (below the MTU, so no segmentation).
+- 44.1 kHz request: `S_FALSE` closest match to the f32 48 kHz mix format; the
+  stream runs normally. This is the documented closest-match behavior, not a
+  silent resample.
+- `--channels 1`: `IsFormatSupported` returns `S_OK`, but shared-mode loopback
+  `Initialize` rejects it with `AUDCLNT_E_UNSUPPORTED_FORMAT` (0x88890008).
+  The backend now maps that HRESULT to a readable “endpoint rejected the
+  negotiated loopback format … try another encoding, channel count, or sample
+  rate” error. The released v0.3.4 `as-cmd --channels 1` also fails to capture
+  on this endpoint (it hangs after starting the listener and the client sees a
+  zero-length format), so this is a driver limitation, not a regression.
+- GUI probe via `protocol-harness probe --connect 127.0.0.1:65531
+  --duration-secs 10` (s16): 1,998 datagrams, `alignment_ok=true`,
+  `max_datagram_ok=true`, 3 heartbeats at 3000 ms with 0 misses, 440 Hz tone
+  detected at amplitude 0.1375, no datagram gap over 50 ms (max 16 ms).
+- Repeated start/stop: `wasapi-spike start-stop --iterations 200` 200/200 and
+  the 10-minute `measure --cycles 10` 10/10; the process survived and handle
+  counts were stable (162/162 in the 10-minute run; 107→164 on two identical
+  200-cycle runs, a one-time cache rather than per-cycle growth).
+- No shared-`AudioFormat` race was observed: the format is published only after
+  `Start()` succeeds and is immutable for the session; the capture thread and
+  network task exchange owned buffers through the bounded frame channel.
+
+### A/B against the released v0.3.4 `as-cmd.exe`
+
+Same endpoint, same 440 Hz tone, 64 datagrams and 3 heartbeats per server;
+`scripts/ab-compare-windows.ps1` in `audio-share-artifacts/ab/`.
+
+| Format | `GET_FORMAT` bytes | Negotiated AudioFormat | PCM RMS old / new | Max datagram | Result |
+|---|---|---|---|---|---|
+| default | identical | f32 / 2 ch / 48000 | −20.30 / −20.24 dBFS | 1464 | PASS |
+| f32 | identical | f32 / 2 ch / 48000 | −20.24 / −20.24 dBFS | 1464 | PASS |
+| s8 | identical | s8 / 2 ch / 48000 | −20.23 / −20.23 dBFS | 960 | PASS |
+| s16 | identical | s16 / 2 ch / 48000 | −20.24 / −20.24 dBFS | 1464 | PASS |
+| s24 | identical | s24 / 2 ch / 48000 | −20.23 / −20.23 dBFS | 1464 | PASS |
+| s32 | identical | s32 / 2 ch / 48000 | −20.24 / −20.24 dBFS | 1464 | PASS |
+
+All six A/B cases passed: exact `GET_FORMAT` bytes, identical datagram size
+distributions (min/max/full-size counts), and RMS/peak deltas ≤ 0.06 dB. PCM
+bytes are not byte-compared because the recordings are sequential.
+
+## Manual Windows verification procedure
+
+The procedure below was executed on Windows 11 on 2026-11-10 except step 7
+(unplug/disable the selected endpoint), which remains a release-gate check.
+Results are in “Windows runtime results” above; the list is retained as the
+reproduction procedure.
 
 1. Build on Windows with Rust 1.90 or newer (the workspace MSRV; `wasapi 0.27`
    needs at least 1.85):
@@ -149,9 +212,10 @@ cadence, silent/hotplug behaviour, and actual PCM sample representation.
 8. Verify the requested encoding really delivers that sample representation
    (the WASAPI `Initialize` documentation says loopback data may be in the
    device format). Record `S_OK` vs `S_FALSE` + closest match for f32, s8, s16,
-   s24 (packed), and s32 once ticket 07 exposes encoding selection.
+   s24 (packed), and s32. Ticket 07 exposes encoding selection; the matrix was
+   executed on Windows 11 (see above).
 
-## A/B procedure (NOT EXECUTED)
+## A/B procedure (executed on Windows 11)
 
 `scripts/ab-compare-windows.ps1` records the frozen Wire Protocol from the old
 v0.3.4 `as-cmd.exe` and the new server on the same machine while the same tone
@@ -172,23 +236,26 @@ Example:
     -Harness .\target\release\protocol-harness.exe `
     -SpikeExe .\target\release\wasapi-spike.exe `
     -OldServerArgs @("--encoding", "f32", "--channels", "2", "--sample-rate", "48000") `
-    -NewServerArgs @()
+    -NewServerArgs @("--encoding", "f32", "--channels", "2", "--sample-rate", "48000")
 ```
 
-Pass the same capture selection to `-NewServerArgs` once ticket 07 exposes
-those flags. PCM bytes are not byte-compared because the recordings are
-sequential; the script fails on a format mismatch, an MTU violation, or a level
-difference outside tolerance.
+Pass the same capture selection to `-NewServerArgs` (ticket 07 exposes those
+flags). PCM bytes are not byte-compared because the recordings are sequential;
+the script fails on a format mismatch, an MTU violation, or a level difference
+outside tolerance. The six executed Windows cases (default, f32, s8, s16, s24,
+s32) all passed; see the results table above.
 
 ## Residual risks / follow-ups
 
-- Windows runtime and A/B are unexecuted (see the checklist above).
-- Loopback may deliver the device/mix sample representation even when
-  `IsFormatSupported` accepts a non-mix representation; the tone matrix in
-  step 8 must confirm packed s24 and the integer encodings.
+- Windows 10, endpoint switching, and unplug/disable of the active endpoint
+  remain unexecuted; only one render endpoint was active in this session.
+- The tone matrix confirmed that this endpoint delivers packed s24 and the
+  integer encodings as requested. Other drivers may silently return the mix
+  representation; re-run the matrix per endpoint in that case.
+- Mono at the mix rate is rejected by this Realtek driver at `Initialize`; the
+  backend now reports a readable error. The old v0.3.4 server also cannot
+  capture mono on this endpoint.
 - A mid-stream invalidation stops capture and reports to stderr; there is no
   supervisor/restart loop in Server Core yet (GUI lifecycle work, ticket 10).
-- `as-cmd` does not yet expose endpoint/encoding/channels/sample-rate flags;
-  that is ticket 07 and is required before running the full encoding A/B.
 - Event-driven loopback is intentionally not used: the old server polls, and
   event-driven loopback requires Windows 10 1703+.
