@@ -374,7 +374,7 @@ fn run_session(
             },
             None,
         )
-        .context("initialize shared-mode loopback (1 s buffer)")?;
+        .map_err(map_initialize_error)?;
     let buffer_frames = client
         .get_buffer_size()
         .context("get loopback buffer size")?;
@@ -628,6 +628,24 @@ fn map_is_supported_error(err: WasapiError) -> anyhow::Error {
              --channels, or --sample-rate"
         ),
         _ => anyhow!("IsFormatSupported failed: {err}"),
+    }
+}
+
+/// `IsFormatSupported` can return `S_OK` for a format that shared-mode loopback
+/// still rejects at `Initialize` (observed on Realtek for mono at the mix
+/// sample rate). Map the raw `0x88890008` to an actionable message.
+fn map_initialize_error(err: WasapiError) -> anyhow::Error {
+    match &err {
+        WasapiError::Windows(windows_error)
+            if windows_error.code() == AUDCLNT_E_UNSUPPORTED_FORMAT =>
+        {
+            anyhow!(
+                "the endpoint rejected the negotiated loopback format \
+                 (AUDCLNT_E_UNSUPPORTED_FORMAT); shared-mode loopback may require the \
+                 endpoint's mix format — try another --encoding, --channels, or --sample-rate"
+            )
+        }
+        _ => anyhow!("initialize shared-mode loopback (1 s buffer) failed: {err}"),
     }
 }
 
