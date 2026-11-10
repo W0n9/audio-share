@@ -1,7 +1,10 @@
 # WASAPI loopback spike (ticket 02)
 
-Status: implemented and compile-validated; **runtime measurements were NOT
-executed**. This host is Ubuntu 24.04 (Linux); WASAPI has no runtime here.
+Status: implemented and **runtime-validated on Windows 11 on 2026-11-10**. The
+measurement matrix below was executed on a native Windows host with a Realtek
+render endpoint and a 440 Hz WebView2 `AudioContext` tone source. The
+original Linux-host status (compile-only, NOT EXECUTED) is retained at the end
+of this page for traceability.
 
 ## Purpose
 
@@ -42,7 +45,8 @@ cargo check  --target x86_64-pc-windows-msvc -p wasapi-spike
 cargo clippy --target x86_64-pc-windows-msvc -p wasapi-spike --all-targets -- -D warnings
 ```
 
-Windows runtime matrix (NOT EXECUTED on this Linux host):
+Windows runtime matrix (executed on Windows 11 on 2026-11-10; measured results
+are below; the command list is retained as the reproduction procedure):
 
 ```text
 wasapi-spike list
@@ -106,23 +110,37 @@ failures and process handle counts before/after.
 | `cargo clippy --target x86_64-pc-windows-msvc -p wasapi-spike --all-targets -- -D warnings` | pass |
 | `cargo check --workspace --all-targets --target x86_64-pc-windows-msvc` | pass |
 
-## Measured results
+## Measured results (Windows 11, 2026-11-10)
 
-**NOT EXECUTED.** No row below was run: this host has no Windows runtime and no
-Windows linker. No numbers are claimed or inferred.
+Host: Windows 11 Enterprise 10.0.26300, x64; Rust 1.99.1 (MSVC); wasapi
+0.27.0; Realtek(R) Audio render endpoint
+`{0.0.0.00000000}.{e235fde3-4eb3-49cd-b203-765b5468d5d3}`; WebView2
+157.0.4341.42. The tone source was a 440 Hz `AudioContext` oscillator running
+in the GUI WebView2 page (the Realtek endpoint was muted; loopback still
+captured the pre-mute stream). `wasapi-spike` release build; PCM analysed with
+Goertzel/RMS (`analyze-pcm.mjs`). Raw captures are under
+`audio-share-artifacts/spike/ticket02/`.
 
 | Check | Command | Result |
 |---|---|---|
-| Render endpoint enumeration + default marking | `list` | NOT EXECUTED (Windows host required) |
-| Default endpoint loopback to raw PCM | `capture --seconds 60 --out ...` | NOT EXECUTED |
-| f32 / s8 / s16 / s24 / s32 requests | `capture --encoding ...` | NOT EXECUTED |
-| Closest-match fallback (44.1 kHz on 48 kHz, mono on stereo) | `capture --sample-rate 44100`, `--channels 1` | NOT EXECUTED |
-| Unsupported request error readability | invalid `--endpoint`/format | NOT EXECUTED |
-| 1-second buffer frames/ms | `capture` header `buffer:` line | NOT EXECUTED |
-| Packet/poll interval min/avg/max/p99 | `measure --seconds 600` | NOT EXECUTED |
-| CPU time and one-core percentage | `measure` | NOT EXECUTED |
-| Silence/discontinuity/timestamp-error/index-gap counts | `measure` | NOT EXECUTED |
-| 10 start/stop cycles, failures and handles | `measure`, `start-stop --iterations 200` | NOT EXECUTED |
+| Render endpoint enumeration + default marking | `list` | PASS — one active render endpoint at run time, marked `*`; an earlier run also showed the display-audio endpoint, which later reported `DeviceState=4` (not present) |
+| Default endpoint loopback to raw PCM | `capture --seconds 5 --out default.pcm` | PASS — 240,000 frames / 1,920,000 bytes; f32 2 ch 48 kHz block_align 8; 440 Hz amplitude 0.13758 (−17.23 dB); RMS −20.24 dBFS; both channels equal |
+| f32 / s8 / s16 / s24 / s32 requests | `capture --encoding ... --seconds 5` | PASS — all `S_OK`; 1,920,000 / 480,000 / 961,920 / 1,440,000 / 1,920,000 bytes; every capture block-aligned; tone ≈0.13758; RMS ≈−20.24 dBFS; no timestamp errors; one start discontinuity |
+| Closest-match fallback (44.1 kHz on 48 kHz) | `capture --encoding s16 --sample-rate 44100` | PASS — `S_FALSE (closest match used)`; negotiated f32 2 ch 48 kHz block_align 8; capture ran and was aligned |
+| Mono at the mix rate | `capture --channels 1` | LIMITATION — `IsFormatSupported` returned `S_OK`, but `Initialize` returned `AUDCLNT_E_UNSUPPORTED_FORMAT` (0x88890008). After the error-mapping fix the tool exits 1 with a readable message. The old v0.3.4 `as-cmd --channels 1` also cannot capture on this endpoint (it hangs after “server started”; the client receives a zero-length format). This is a driver/endpoint limitation, not a regression |
+| Unsupported request error readability | invalid `--endpoint` | PASS — exit 1, `open endpoint {bogus}: Windows returned an error: 参数错误。 (0x80070057)` (OS-localized) |
+| 1-second buffer frames/ms | `capture` header `buffer:` line | PASS — 48,000 frames (1000.0 ms at 48 kHz); negotiated loopback packets up to 480 frames (10 ms) |
+| Packet/poll interval min/avg/max/p99 | `measure --seconds 600` | PASS — packet 0.001 / 10.000 / 27.611 / 13.206 ms (n=59,997); poll 3.010 / 3.393 / 20.347 / 3.933 ms (n=176,850) |
+| CPU time and one-core percentage | `measure` | PASS — 4.312 s CPU over 600.034 s wall = 0.72 % of one core |
+| Silence/discontinuity/timestamp-error/index-gap counts | `measure` | PASS — silent=0, data_discontinuity=4, timestamp_error=0, index gaps 1200 frames across 3 packets; 36 polls slower than 2× min period; effective rate 47,998.4 frames/s. The 3 index-gap events are 0.3/min, below the 1 packet/min NO-GO threshold; the discontinuities coincided with hiding/showing the GUI window during the run |
+| 10 start/stop cycles, failures and handles | `measure --cycles 10` | PASS — 10/10 cycles, process survived; handles 162 before / 162 after |
+| 200 start/stop cycles | `start-stop --iterations 200` | PASS — 200/200 succeeded, 0 failed, process survived; handles 107 → 164 on two independent runs (one-time caches, identical both times; the 600 s run showed 162/162, so there is no per-cycle growth) |
+
+Endpoint switching while stopped/running was **not executed** because only one
+render endpoint was active during this session; the display-audio endpoint was
+present in an earlier enumeration and later reported not-present, but the
+default capture endpoint never changed. The `Initialize` error mapping was
+added after the first mono run (see the production implementation note below).
 
 Runtime procedure and acceptance thresholds are in the exploration notes
 (`server-rewrite/wasapi.md` §7.4–7.5, local notes repo): run the encoding
@@ -147,8 +165,8 @@ unsafe/boilerplate code and is not implemented here.
 Switch to the `windows-rs` fallback if a Windows run shows: the crate cannot
 express the required loopback/format combination; a reproducible bug in
 `is_supported` or `read_from_device`; or the crate becomes unmaintained before
-cutover. Also treat packed-s24 negotiation or non-mix sample representations as
-unverified until the tone matrix is run.
+cutover. The executed matrix above showed none of these; packed s24 delivered
+the requested representation and every requested encoding was accepted.
 
 ## Production implementation (ticket 05)
 
@@ -171,23 +189,27 @@ unchanged as a standalone measurement tool:
   old and new servers and compares format bytes, PCM levels, packet sizes, and
   optional `wasapi-spike measure` counters.
 
+The Windows run exposed one unreadable path: `IsFormatSupported` can return
+`S_OK` for a format that shared-mode loopback rejects at `Initialize` (mono at
+the mix rate produced raw `0x88890008`). Both the production backend and the
+spike now map that HRESULT to a readable “endpoint rejected the negotiated
+loopback format … try another encoding, channel count, or sample rate” error
+(unit-tested in `backend.rs`).
+
 See `docs/server-rewrite/capture-windows.md` for the behavior contract,
-validation results, and the manual Windows checklist. Everything in the
-"Measured results" and "Residual Windows-only steps" sections above is still
-**NOT EXECUTED**; the production backend is compile-checked and covered by
-Linux pure-logic tests only.
+validation results, and the manual Windows checklist.
 
 ## Residual Windows-only steps
 
-- Execute the full measurement matrix on Windows 10+ with at least one shared
-  and one exclusive-capable render endpoint.
-- Verify each requested encoding actually delivers the requested sample
-  representation (the `Initialize` docs suggest loopback may use the device
-  format); record `S_OK` vs `S_FALSE` + closest match.
-- Verify packed s24 acceptance and fallback behavior.
-- Run the 10-minute steady-state and A/B against old `as-cmd` on the same host,
-  tone, and buffer; fill the measured-results table with real values.
-- Run `start-stop --iterations 200` and confirm no crash, no
-  `AUDCLNT_E_ALREADY_INITIALIZED`, and stable handle count.
+Executed on 2026-11-10 (Windows 11, Realtek): the full encoding matrix, the
+10-minute steady-state, the 200-cycle start/stop run, and the A/B against the
+old `as-cmd` (see `capture-windows.md`). Remaining work:
+
+- Windows 10 was not available; only Windows 11 Enterprise 10.0.26300 was
+  executed.
+- No exclusive-capable render endpoint was available, so only shared-mode
+  loopback was measured.
+- Endpoint switching was not executed because only one render endpoint was
+  active in this session.
 - Event-driven loopback was deliberately not implemented: the old server polls
   and event support requires Windows 10 1703+. Compare only if polling fails.

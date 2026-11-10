@@ -105,3 +105,23 @@ not present on the integration branch.
   WebView2 preflight, WASAPI capture, UAC firewall repair) were not available
   on this Linux host. CI configuration was validated with `actionlint`; the
   Linux jobs' commands were reproduced locally as listed above.
+
+### 2026-11-10 — Windows 11 runtime + fixes
+
+The Windows runtime portion of this ticket was executed on Windows 11
+Enterprise 10.0.26300 with the CI artifacts from run 42710876060 and a local
+MSVC build. The portable exe, WebView2-present launch, real WASAPI capture,
+the full GUI checklist, firewall UAC, Sound Panel, and the v0.3.4 CLI A/B are
+recorded in `docs/server-rewrite/build-windows.md`. Two defects found in this
+run were fixed:
+
+- Windows update checks failed with “no TLS backend is configured”; the ureq
+  `native-tls` feature now gets an explicit `native_tls::TlsConnector`
+  (`schannel`).
+- WASAPI `Initialize` for mono at the mix rate returned raw `0x88890008`; the
+  backend and spike now map it to a readable error.
+
+Consequences for the 0.4.0 RC: the CI artifacts from `bad71d3` predate these
+fixes, so the release candidate must be rebuilt and re-smoked. The real v0.3.4
+APK smoke remains **NOT EXECUTED** (no Android device); the final checkbox stays
+unchecked and `Status` stays `ready-for-human`.

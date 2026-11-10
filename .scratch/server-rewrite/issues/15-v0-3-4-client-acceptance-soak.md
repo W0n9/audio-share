@@ -127,3 +127,35 @@ headless null sink with a looped 440 Hz tone).
 See `docs/server-rewrite/soak.md`. This closes the soak gate. The real v0.3.4
 APK, sleep/resume, real-hardware hotplug, and real desktop GUI gates remain;
 `Status` stays `ready-for-human`.
+
+### 2026-11-10 — Windows 11 GUI/runtime evidence
+
+Host: Windows 11 Enterprise 10.0.26300 x64; WebView2 157.0.4341.42; MSVC
+14.44; Rust 1.99.1. CI artifacts from run 42710876060 plus a locally built exe
+with two runtime fixes. Full table in `docs/server-rewrite/build-windows.md`;
+checklist updates in `docs/server-rewrite/gui-acceptance-checklist.md`.
+
+Windows items now observed:
+
+- Window/tray: portable exe, 420×640, tray icon, left-click toggle, native
+  menu Show/Start/Stop/Exit (menu actions triggered and observed), close-to-tray
+  and close-to-exit, `--hide`, single instance (including a `--hide` second
+  instance), WhenAppStart 0/1/2.
+- Settings/config: endpoint/encoding/host/port persistence, v0.3.4
+  `config.ini` migration 0→2 with notice, Reset, autostart HKCU entry
+  (`"<exe>" /hide`, spaces quoted), `server.log`.
+- Server: real WASAPI Start/Stop, `protocol-harness probe` 10 s (1,998
+  datagrams, 0 heartbeat misses, 440 Hz tone, alignment/MTU OK), Stop closes
+  the client session, WLAN `10.8.144.155:65530` client path.
+- Windows maintenance: firewall UAC approve/cancel and Sound Panel (ticket 11).
+- i18n en-US/zh-CN, About 0.4.0/homepage/license, homepage opens the browser,
+  manual update check over HTTPS.
+
+Two Windows-only defects were found and fixed (update-check TLS backend, WASAPI
+`Initialize` error mapping); a fresh CI run is needed before the release
+artifact is final.
+
+Still NOT EXECUTED: real v0.3.4 APK matrix/multi-client/60-minute playback,
+real phone firewall connectivity, sleep/resume, real-hardware hotplug, Windows
+10, missing-WebView2 clean VM, and the real-time 3-hour update interval. The
+Linux real desktop tray (GNOME/KDE/XFCE) also remains.

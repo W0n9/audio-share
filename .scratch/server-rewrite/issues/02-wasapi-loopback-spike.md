@@ -4,18 +4,19 @@
 
 **Blocked by:** 01 (New Rust workspace + Wire Protocol harness + v0.3.4 golden fixtures)
 
-**Status:** ready-for-human
+**Status:** resolved
 
-> Implementation is complete in `tools/wasapi-spike`. Boxes 1–4 are checked for
-> implemented capability. Every runtime check still requires a Windows host; no
-> Windows runtime was available on this Linux machine, so no measurements were
-> executed or fabricated.
+> Implemented and **executed on Windows 11 on 2026-11-10** (Realtek render
+> endpoint). Enumeration, all five encodings, closest-match fallback,
+> 10-minute steady state, and 200 start/stop cycles pass. Mono at the mix rate
+> is rejected by this driver at `Initialize` and now returns a readable error;
+> the old v0.3.4 CLI also cannot capture mono on this endpoint.
 
-- [x] 能枚举 render Endpoint，显示 IMMDevice ID 与友好名。`list` 已实现；Windows 运行验证待执行。
-- [x] 能采集默认 Endpoint 的系统音频并落盘为 PCM。`capture` 已实现；Windows 运行验证待执行。
-- [x] 5 种 encoding 至少各验证一次；不支持的请求能回退到 closest match。请求与回退逻辑已实现并有纯逻辑测试；真实 Endpoint 验证待执行。
-- [x] 记录 callback 间隔、CPU 与短时 glitch，并给出 `wasapi` 与 `windows-rs` 的结论。`measure`/`start-stop` 已实现统计；结论基于 API 覆盖（GO with `wasapi` 0.27.0），实测数据待 Windows 执行。
-- [ ] 1 秒缓冲下反复启动/停止不崩溃。**NOT EXECUTED**：需要 Windows 硬件运行 `start-stop`/`measure` 才能确认；工具已实现 1 秒缓冲的反复 start/stop 与句柄计数。
+- [x] 能枚举 render Endpoint，显示 IMMDevice ID 与友好名。Windows 11 `list`：1 个活动 render endpoint（Realtek），默认项带 `*`。
+- [x] 能采集默认 Endpoint 的系统音频并落盘为 PCM。5 s 采集 240,000 帧 / 1,920,000 字节，f32 2ch 48 kHz，440 Hz 幅度 0.13758，RMS −20.24 dBFS。
+- [x] 5 种 encoding 至少各验证一次；不支持的请求能回退到 closest match。f32/s8/s16/s24/s32 全部 `S_OK` 且对齐；s16/44.1 kHz 走 `S_FALSE` 回退到 f32 48 kHz。mono 在 `Initialize` 被驱动拒绝，已改为可读错误。
+- [x] 记录 callback 间隔、CPU 与短时 glitch，并给出 `wasapi` 与 `windows-rs` 的结论。600 s：CPU 0.72%，packet 平均 10.000 ms/p99 13.206 ms，0 timestamp error，3 次 index gap（0.3/min）。
+- [x] 1 秒缓冲下反复启动/停止不崩溃。`start-stop --iterations 200` 200/200，进程存活；`measure --cycles 10` 10/10，句柄 162/162。
 
 ## Comments
 
@@ -61,3 +62,43 @@ Residual: run the Windows matrix (enumeration, five encodings, closest-match
 fallbacks with a known tone, 10-minute steady state, 10/200 start/stop cycles,
 A/B vs old `as-cmd`) and fill in the measured table before ticket 05 relies on
 the recommendation.
+
+### 2026-11-10 — Windows 11 runtime execution (PASS)
+
+Host: Windows 11 Enterprise 10.0.26300 x64; Rust 1.99.1 MSVC; wasapi 0.27.0;
+Realtek(R) Audio render endpoint `{0.0.0.00000000}.{e235fde3-...}`; WebView2
+157.0.4341.42 as the 440 Hz `AudioContext` tone source. Release
+`wasapi-spike.exe`; raw evidence under
+`audio-share-artifacts/spike/ticket02/`.
+
+Executed:
+
+- `list`: one active render endpoint, default marked. A display-audio endpoint
+  appeared in an earlier enumeration and later reported `DeviceState=4`
+  (not present).
+- `capture --seconds 5` for default/f32/s8/s16/s24/s32: all `S_OK` and
+  block-aligned; 240,000–240,480 frames; 480,000–1,920,000 bytes; 440 Hz
+  amplitude ≈0.13758 in every encoding; RMS ≈−20.24 dBFS; 0 timestamp errors
+  and 0 index gaps; one start discontinuity.
+- `capture --encoding s16 --sample-rate 44100`: `S_FALSE (closest match used)`
+  → f32 2ch 48 kHz block_align 8; capture ran normally.
+- `capture --channels 1`: `IsFormatSupported` `S_OK`, then `Initialize`
+  `AUDCLNT_E_UNSUPPORTED_FORMAT` (0x88890008). Added
+  `map_initialize_error` to both the spike and the production backend; the tool
+  now exits 1 with a readable “endpoint rejected the negotiated loopback format
+  …” message. The old v0.3.4 `as-cmd --channels 1` also cannot capture on this
+  endpoint (it hangs after starting the listener; the client sees size 0).
+- `capture --endpoint {bogus}`: exit 1 with the OS-localized invalid-parameter
+  error.
+- `measure --seconds 600 --cycles 10`: 28,799,040 frames / 230,392,320 bytes
+  in 59,998 packets; packet interval avg 10.000 ms (p99 13.206, max 27.611);
+  poll avg 3.393 ms (p99 3.933); CPU 4.312 s = 0.72 % of one core;
+  silent=0, data_discontinuity=4, timestamp_error=0, index gaps 1,200 frames
+  across 3 packets; effective rate 47,998.4 frames/s; 10/10 start-stop;
+  handles 162/162. The 3 index-gap events are 0.3/min, below the documented
+  1 packet/min NO-GO threshold.
+- `start-stop --iterations 200` twice: 200/200 both times, process survived;
+  handles 107→164 both times (one-time caches, not per-cycle growth).
+
+Conclusion unchanged: **GO with wasapi 0.27.0**. The `windows-rs` fallback was
+not needed. See `docs/server-rewrite/spikes/wasapi.md` for the full table.

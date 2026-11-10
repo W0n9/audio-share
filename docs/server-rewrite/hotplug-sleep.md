@@ -1,9 +1,12 @@
 # Hotplug and sleep/resume behavior (Linux/PipeWire, ticket 15)
 
-Status: hotplug behavior measured headlessly; automatic capture recovery is
-**not implemented and not claimed**. Sleep/resume was **not executed** on this
-host. This page records what was run, what the code does, and the exact manual
-procedure for the remaining release-gate checks.
+Status: hotplug behavior measured headlessly on Linux; on Windows 11 a
+non-active display-audio endpoint appeared/disappeared without affecting the
+Realtek capture session. Target loss on the **active** endpoint and
+sleep/resume were **not executed** on either platform. Automatic capture
+recovery is **not implemented and not claimed**. This page records what was
+run, what the code does, and the exact manual procedure for the remaining
+release-gate checks.
 
 ## What the code does on target loss
 
@@ -103,3 +106,20 @@ Sleep/resume therefore remains a human check:
 
 Until this is recorded, the ticket-15 checkbox "device hotplug and sleep
 recovery" stays unchecked, and automatic recovery is explicitly not claimed.
+
+## Windows (WASAPI) status
+
+The Windows backend has the same recovery model: `WasapiCapture` reports
+`AUDCLNT_E_DEVICE_INVALIDATED` / `AUDCLNT_E_RESOURCES_INVALIDATED` /
+`AUDCLNT_E_SERVICE_NOT_RUNNING` as a restartable “endpoint invalidated or
+removed” error, the capture thread ends, and the Server stays Running with its
+previously negotiated format until the operator presses Stop/Start. There is
+no supervisor on Windows either.
+
+Observed on Windows 11 (2026-11-10): the display-audio endpoint
+(`DUAN BKU270`) appeared in an early enumeration and later reported
+`DeviceState=4` (not present) while the GUI was running; the active capture
+endpoint was the Realtek speakers, so this did not invalidate the session. A
+target-loss test on the *active* endpoint (disable/unplug Realtek), sleep/resume,
+and real-hardware USB/HDMI hotplug were **not executed** and remain ticket-15
+release-gate checks. The documented operator recovery is Stop then Start.

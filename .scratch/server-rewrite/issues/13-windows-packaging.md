@@ -6,11 +6,16 @@
 
 **Status:** ready-for-human
 
+> Windows 11 runtime executed on 2026-11-10: the portable exe launches with
+> WebView2 present, the full GUI checklist passes, and the CI artifacts
+> execute. Missing-WebView2 on a clean VM and Windows 10 are still not
+> executed.
+
 - [x] 产物为便携 exe，无安装器。
-- [ ] 有 WebView2 时正常启动。
-- [ ] 无 WebView2 时显示明确提示与下载链接，不崩溃。
+- [x] 有 WebView2 时正常启动。Windows 11 + WebView2 157.0.4341.42：窗口、托盘、Start/Stop 正常。
+- [ ] 无 WebView2 时显示明确提示与下载链接，不崩溃。**NOT EXECUTED**：本机已安装 WebView2，且无干净 Windows 10 VM；决策逻辑有单元测试。
 - [x] 产物名保持 `AudioShareServer.exe`。
-- [ ] 在 Windows 10 与 11 上运行并通过基本 GUI 验收。
+- [ ] 在 Windows 10 与 11 上运行并通过基本 GUI 验收。Windows 11 PASS；Windows 10 未执行。
 
 ## Comments
 
@@ -91,4 +96,40 @@ and `6f1f429`: the Ubuntu `rust` job lacked Tauri/WebKitGTK build dependencies;
 the synthetic-capture stop test assumed an empty frame channel right after
 `stop()`; the listener-release test assumed an immediate connect refusal on an
 ephemeral port. Runtime boxes remain open; `Status` stays `ready-for-human`.
+
+### 2026-11-10 — Windows 11 runtime acceptance
+
+Host: Windows 11 Enterprise 10.0.26300 x64; WebView2 157.0.4341.42; MSVC
+14.44.35207; Rust 1.99.1. Artifacts from CI run
+[42710876060](https://github.com/W0n9/audio-share/actions/runs/42710876060)
+(`bad71d3`) were downloaded and executed:
+
+- `AudioShareServer.exe` 11,918,848 B, SHA-256
+  `21c5b26478a0a4ad12241e60eec724b4613fbc07ad2f85c0fb479d1d2851faa6`
+  (sidecar matches); `audio-share-server-cmd-windows.zip` 686,081 B, SHA-256
+  `6f8f864779d0290ab720af5c3f1855075765b7652bdd0fe04533ad665af4bd42`.
+- The portable exe launched without a console, from a path containing spaces;
+  the window is 420×640 at 150% scaling; the process image is
+  `AudioShareServer.exe`; the tray icon and menu work.
+- Start/Stop used real WASAPI; a 10 s `protocol-harness probe` passed; Stop
+  closed the client session; the WLAN path `10.8.144.155:65530` streamed to a
+  local client.
+- Settings persistence/migration/Reset, WhenClose 0/1, WhenAppStart 0/1/2,
+  autostart HKCU entry, single instance (including `--hide`), update check,
+  firewall UAC approve/cancel, Sound Panel, en-US/zh-CN, About/homepage, and
+  `server.log` were all exercised. See
+  `docs/server-rewrite/build-windows.md` for the full table.
+- `as-cmd.exe --version` 0.4.0, `-l`, and `--list-encoding` execute from the
+  zip.
+
+Two runtime defects were found and fixed: the update check had no Windows TLS
+backend (ureq `native-tls` needs an explicit connector) and mono capture
+surfaced a raw `0x88890008` instead of a readable error. The CI artifacts above
+predate these fixes; a fresh Windows CI run is required before the release
+artifact is final. A locally built fixed exe (SHA-256
+`f2d14db7cd66e52f821d04307e6bd2085530b70a332f50d1019e714576683925`)
+verified both fixes.
+
+Not executed: missing-WebView2 clean-VM dialog, per-user/fixed-version
+WebView2, Windows 10, a real reboot/login, and a real Android Client.
 
