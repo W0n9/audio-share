@@ -1,9 +1,12 @@
 # Windows maintenance: Firewall Repair + Sound Panel (ticket 11)
 
-Status: **implemented and compile/logic validated on the Linux development
-host.** A real UAC prompt, real `netsh` rule changes, and Android Client
-connectivity through the repaired rules were **NOT EXECUTED** here: this host
-has no Windows runtime and no Windows linker. See "Residual manual steps".
+Status: **implemented and runtime-validated on Windows 11 on 2026-11-10.** UAC
+approval created both rules with the expected properties, UAC cancellation
+showed a readable error without a crash, the Sound Panel opened as a classic
+`#32770` dialog without freezing the GUI, and a local client connected over the
+WLAN IP through the repaired rules. The released v0.3.4 Android Client
+connection remains ticket 15/16; the Public-only profile case and a forced
+netsh failure were not executed. See "Residual manual steps".
 
 ## What landed
 
@@ -148,11 +151,22 @@ success the UI shows `maintenance.soundPanelOpened`.
 9. Check `%TEMP%` after each repair: no `audio-share-firewall-*.ps1` remains.
 10. On Linux, open Settings: neither row is shown.
 
-## Residual manual steps (NOT EXECUTED here)
+## Residual manual steps
 
-- Real UAC consent and cancellation (`ERROR_CANCELLED` 1223) on Windows.
-- Real `netsh` create/delete and the resulting rule properties/profiles.
-- Android Client connectivity through the repaired rules (TCP control + UDP
-  PCM), including the Public-only profile case.
-- Sound dialog launch and the non-blocking behaviour on Windows.
-- Windows visual/localization check of both new rows and all error messages.
+Executed on Windows 11 (2026-11-10):
+
+- Real UAC consent and cancellation; the cancellation error was readable and
+  localized.
+- Real `netsh` create and the resulting rule properties/profiles (TCP/UDP,
+  inbound, allow, enabled, Domain+Private, program-scoped).
+- Sound dialog launch and non-blocking behavior.
+- en-US/zh-CN rows and error messages.
+- A local client connected over the WLAN IP through the rules.
+
+Not executed:
+
+- The released v0.3.4 Android Client over TCP control + UDP PCM (tracked in
+  tickets 15/16; the server-side LAN path is verified).
+- The Public-only profile case (this host uses Domain/Private profiles).
+- A forced netsh failure (`netsh exited with code …`); the unit tests cover the
+  mapping, but the real fault injection was not performed.

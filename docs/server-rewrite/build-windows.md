@@ -1,15 +1,15 @@
 # Windows build and packaging (ticket 13)
 
 Status: **packaging code, CI, and documentation implemented; the Windows
-artifacts are built and verified by CI on a native Windows runner.** The
+artifacts are built, packaged, and executed on native Windows.** The
 `windows-packaging` job on `windows-latest` produced a PE32+ x86-64
-`AudioShareServer.exe` and the `as-cmd` zip, and both checksum sidecars verify
-(see [Executed CI build](#executed-ci-build-2026-11-09)). The exe is still
-**not executed** here: this host has no Windows runtime. `cargo
-check`/`clippy --target x86_64-pc-windows-msvc` pass locally, the WebView2
-decision logic is unit-tested on Linux, and the packaging script is
-self-tested on Linux. Real Windows acceptance is tracked in the checklist
-below.
+`AudioShareServer.exe` and the `as-cmd` zip, both checksum sidecars verify, and
+the artifacts were executed on Windows 11 on 2026-11-10 (see
+[Executed Windows 11 acceptance](#executed-windows-11-acceptance-2026-11-10)).
+The two runtime defects found during that execution (HTTPS update-check TLS
+backend and the WASAPI `Initialize` error mapping) are fixed and covered by
+tests; a fresh CI run is still required to rebuild the release artifacts.
+Windows 10 and the missing-WebView2 clean-VM path remain manual gates.
 
 The Windows release is a **portable `AudioShareServer.exe`** with no installer.
 The GUI targets Windows 10+ and requires the Microsoft Edge WebView2 Runtime,
@@ -180,6 +180,80 @@ Tauri/WebKitGTK build dependencies needed to compile the GUI crate; the
 synthetic-capture stop test assumed the frame channel was empty immediately
 after `stop()`; and the listener-release test assumed an immediate connect
 refusal on an ephemeral port.
+
+## Executed Windows 11 acceptance (2026-11-10)
+
+Host: Windows 11 Enterprise 10.0.26300, x64; WebView2 Runtime 157.0.4341.42;
+Visual Studio 2022 Build Tools 17.x (MSVC 14.44.35207); Rust 1.99.1. The
+acceptance used the CI artifacts from run
+[42710876060](https://github.com/W0n9/audio-share/actions/runs/42710876060)
+(`bad71d3`) and a locally built exe containing the two fixes found during this
+run (HTTPS update-check TLS backend and the WASAPI `Initialize` error
+mapping).
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| CI `AudioShareServer.exe` | 11,918,848 B | `21c5b26478a0a4ad12241e60eec724b4613fbc07ad2f85c0fb479d1d2851faa6` |
+| CI `audio-share-server-cmd-windows.zip` | 686,081 B | `6f8f864779d0290ab720af5c3f1855075765b7652bdd0fe04533ad665af4bd42` |
+| locally built fixed `AudioShareServer.exe` | 11,970,048 B | `f2d14db7cd66e52f821d04307e6bd2085530b70a332f50d1019e714576683925` |
+
+Both CI `.sha256` sidecars matched with `Get-FileHash`; the zip contains
+`audio-share-server-cmd/{as-cmd.exe,LICENSE,README.md}`.
+
+| Check | Result |
+|---|---|
+| Portable exe, no installer/MSI; runs directly and from a path containing spaces | PASS |
+| Launch opens the 420×640 window (630×960 physical at 150% scaling), no console flash; process image `AudioShareServer.exe` | PASS |
+| Tray icon present in the overflow; left-click toggles the window; right-click menu shows Show / Start / Stop / Exit | PASS |
+| Tray menu actions Show / Start / Stop / Exit | PASS (triggered through the native menu command IDs; each action observed) |
+| Close with `WhenClose=1` keeps the process running and hides the window; tray Show restores it | PASS |
+| Close with `WhenClose=0` exits the process (~1 s) | PASS |
+| `--hide` starts with no visible window and a tray icon; tray Show restores it | PASS |
+| Single instance: second launch exits 0 and focuses/re-shows the existing window; a second `--hide` launch exits 0 without showing the hidden window | PASS |
+| WhenAppStart: `0` stays stopped; `1` starts the server; `2` follows the previous `Running` value | PASS (all three) |
+| Start/Stop uses real WASAPI; listen address updates; Stop closes the client session | PASS — probe 10 s: 1,998 datagrams, alignment and MTU OK, 0 heartbeat misses, 440 Hz tone; Stop closed the TCP session (`serverClosed: true` after 3.1 s) |
+| Settings list real endpoints; Host/Port/Endpoint/Encoding persist; settings lock while running | PASS |
+| Existing v0.3.4 `config.ini` migrates (language, host, port, endpoint, encoding, app settings) with a visible notice and `configVersion=2` | PASS — migrated 0 → 2, values preserved |
+| Reset restores server defaults and writes `config.ini` | PASS |
+| Autostart on writes HKCU `Run\AudioShareServer` = `"<exe>" /hide`; off removes it; spaces in the path are quoted | PASS |
+| Manual update check over HTTPS | PASS — “up to date” (fixed; see below); the real HTTPS ignored test passes |
+| Repair Firewall (UAC approve) creates TCP/UDP inbound rules scoped to the exe, Domain+Private, allow | PASS — verified with `netsh advfirewall firewall show rule ... verbose` |
+| Repair Firewall (UAC cancel) shows a readable error and leaves the GUI responsive | PASS — “Firewall repair was cancelled because administrator permission was not granted.” |
+| A client can connect through the repaired rules | PASS on the server side — local client over the WLAN IP `10.8.144.155:65530` received 120 aligned datagrams; the real Android Client is still ticket 15/16 |
+| Sound Panel opens `control.exe /name Microsoft.Sound`; GUI stays responsive | PASS — `#32770` dialog titled “声音” observed and closed |
+| en-US and zh-CN render; language persists and applies after restart | PASS — system default zh-CN, switched to en-US, restarted, switched back |
+| About shows 0.4.0, homepage, Apache-2.0; homepage opens the default browser | PASS |
+| `server.log` is created/truncated next to the executable and records startup/start/stop/update errors | PASS |
+| `as-cmd.exe` from the zip: `--version` 0.4.0, `-l`, `--list-encoding` | PASS |
+| Real WASAPI A/B vs v0.3.4 `as-cmd.exe` (default/f32/s8/s16/s24/s32) | PASS — see [capture-windows.md](capture-windows.md) |
+
+Not executed on this host and still open:
+
+- Windows 10 (only Windows 11 Enterprise 10.0.26300 was available).
+- Missing-WebView2 clean-VM test (the runtime is present; the decision logic is
+  unit-tested), per-user WebView2 install, and fixed-version
+  `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`.
+- Reboot/login autostart (the HKCU entry was verified, not a real sign-in).
+- Real v0.3.4 Android APK (no device) and the real-phone firewall/connectivity
+  check; the server-side LAN path is verified above.
+- Sleep/resume and real-hardware hotplug; exclusive-mode endpoint; endpoint
+  switching (only one active render endpoint).
+
+### Defects found and fixed during this run
+
+1. **Update check failed on Windows**: “Unknown Scheme: cannot make HTTPS
+   request because no TLS backend is configured”. ureq 2's `native-tls`
+   feature only provides an adapter and is not a default backend; the Windows
+   agent now passes an explicit `native_tls::TlsConnector` (schannel). Unit
+   test + the real `api.github.com` ignored test pass.
+2. **Mono capture error was a raw HRESULT**: `IsFormatSupported` returns
+   `S_OK` for mono at the mix rate, but `Initialize` rejects it with
+   `AUDCLNT_E_UNSUPPORTED_FORMAT` (0x88890008). The production backend and the
+   spike now map it to a readable “endpoint rejected the negotiated loopback
+   format … try another encoding, channel count, or sample rate” error.
+
+Both fixes need a fresh CI run before the next release artifact; the CI
+artifacts above predate them.
 
 ## Manual acceptance checklist (Windows 10 and Windows 11)
 

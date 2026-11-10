@@ -13,6 +13,15 @@ scenarios. This proves the server side of the frozen protocol; the real
 v0.3.4 APK remains a separate, not-executed gate
 (`android-v034-acceptance.md`).
 
+Windows 11 addition (2026-11-10): a real-hardware subset was executed on a
+Realtek render endpoint with a 440 Hz WebView2 tone — default/f32/s8/s16/s24/s32
+capture, six A/B cases against the released v0.3.4 `as-cmd.exe`, and a 10 s
+`protocol-harness probe` (1,998 datagrams, alignment/MTU OK, 0 heartbeat
+misses, tone present). Mono at the mix rate is rejected by this driver at
+`Initialize` (readable error now), matching the old server's inability to
+capture it. See `capture-windows.md` and `build-windows.md` for the Windows
+evidence.
+
 ## Exact commands
 
 ```bash

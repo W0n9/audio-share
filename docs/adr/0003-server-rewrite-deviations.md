@@ -142,6 +142,17 @@ changed format are follow-up work; this ADR does not claim them. Sleep/resume
 behavior on real hardware remains part of the release-gate acceptance work
 (ticket 15).
 
+### 9. `server.log` timestamps are UTC
+
+v0.3.4 wrote local-time timestamps. 0.4.0 writes UTC
+(`YYYY-MM-DD HH:MM:SS.mmm`), which is stable across DST changes and travel and
+matches the timestamp source used by the Rust `time` crate without pulling in a
+local-offset dependency.
+
+Consequences: log lines differ from v0.3.4 by the local UTC offset (for
+example, a log written at 11:29 local time in UTC+8 shows `03:29`). The
+message text, level, and file location are unchanged.
+
 ## Not deviations from v0.3.4
 
 The following are intentional **fixes** that preserve the protocol and the
@@ -156,6 +167,12 @@ list:
 - Ports outside 0–65535 and negative channels/sample rates are rejected
   instead of wrapping or crashing.
 - `configVersion` migration is non-destructive and reports its result.
+- Windows mono capture on an endpoint whose driver rejects it at `Initialize`
+  fails immediately with a readable error; v0.3.4 hung after starting the
+  listener and returned a zero-length `AudioFormat`.
+- Windows update checks work: the first Windows build of the TLS client had no
+  backend and reported “no TLS backend is configured”; the fixed client uses an
+  explicit schannel connector and the real `api.github.com` check passes.
 
 ## Consequences for release
 

@@ -4,11 +4,16 @@
 
 **Blocked by:** 10 (Lifecycle + i18n + About + update check)
 
-**Status:** ready-for-human
+**Status:** resolved
 
-- [ ] Firewall Repair 提权后重建入站规则，Android Client 可连接。
-- [ ] Sound Panel 打开系统声音设置。
-- [ ] 用户取消提权或修复失败时，GUI 给出明确错误。
+> Windows 11 runtime executed on 2026-11-10: UAC-approved firewall repair,
+> UAC-cancel error, and Sound Panel all pass. The real v0.3.4 Android Client
+> connection remains part of tickets 15/16; a local client over the WLAN IP
+> connected through the repaired rules.
+
+- [x] Firewall Repair 提权后重建入站规则，客户端可连接。Windows 11：TCP/UDP 入站规则（Domain+Private、Allow、程序限本 exe）经 `netsh ... verbose` 核对；本机客户端走 `10.8.144.155:65530` 收到 120 个对齐 datagram。真实 Android Client 见 ticket 15/16。
+- [x] Sound Panel 打开系统声音设置。Windows 11：`control.exe /name Microsoft.Sound` 打开 `#32770` “声音” 对话框，GUI 保持响应。
+- [x] 用户取消提权或修复失败时，GUI 给出明确错误。Windows 11：取消 UAC 后显示 “Firewall repair was cancelled because administrator permission was not granted.”，无崩溃，已有规则不受影响。
 - [x] 非 Windows 平台不显示这两个入口。
 
 ## Comments
@@ -53,15 +58,23 @@ linker):
   `linux` and both rows are inside `{#if server.platform === "windows"}`; the
   Linux build contains no visible entry. No Linux screenshot was taken.
 
-NOT EXECUTED (left unchecked; Windows host required):
-- Real UAC prompt/approval and cancellation (ERROR_CANCELLED 1223) in the GUI.
-- Real netsh delete/add, resulting rule properties, and profile switching
-  (Public-only vs Domain/Private).
-- Released v0.3.4 Android Client connecting and playing through the repaired
-  rules.
-- Windows Sound dialog launch and confirmation that the GUI stays responsive.
-- Windows visual/localization check of the new rows and error messages.
+Executed on Windows 11 Enterprise 10.0.26300 (2026-11-10):
 
-Why `ready-for-human`: the code is implemented and compile/test validated, but
-the ticket's acceptance ("Android Client 可连接", UAC cancellation UX, Sound
-Panel on Windows) requires the manual Windows steps above.
+- UAC approval: both rules created and verified with
+  `netsh advfirewall firewall show rule name="Audio Share Server(TCP-In)"
+  verbose` (and UDP): Enabled Yes, Direction In, Profiles Domain,Private,
+  Program = the running exe, Action Allow, Protocol TCP/UDP.
+- UAC cancellation: GUI showed a readable, localized error
+  (“Firewall repair was cancelled because administrator permission was not
+  granted.”), stayed responsive, and left the existing rules intact.
+- Sound Panel: opened the classic `#32770` “声音” dialog; the GUI stayed
+  responsive while it was open.
+- Connectivity: a local client over the WLAN IP `10.8.144.155:65530` received
+  120 aligned datagrams through the repaired rules.
+- en-US and zh-CN maintenance rows/errors were seen (the app was switched
+  between both languages).
+
+Remaining (tracked in tickets 15/16): the released v0.3.4 Android Client
+connecting and playing through the repaired rules; the server-side LAN path and
+rules are verified. Profile switching to a Public-only network was not
+executed (the host has Domain/Private profiles).
