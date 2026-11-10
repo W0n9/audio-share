@@ -1,163 +1,69 @@
 name: Make Release
 
+# Server-only 0.4.0 release. The Android Client remains v0.3.4 and is not
+# rebuilt or attached to this release.
 on:
   workflow_dispatch:
 
 jobs:
-  build_app:
-    name: Build Android App
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: android-app
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          java-version: "17"
-          distribution: "temurin"
-          cache: gradle
-
-      - name: Create relese.jks
-        run: mkdir ~/.android && echo "$release_jks" | base64 -d > ~/.android/release.jks
-        env:
-          release_jks: ${{ secrets.RELEASE_JKS }}
-      - name: Create keystore.properties
-        run: echo -e "storeFile=$(ls ~/.android/release.jks)\nstorePassword=${store_pass}\nkeyAlias=${key_alias}\nkeyPassword=${key_pass}\n" > keystore.properties
-        env:
-          store_pass: ${{ secrets.STORE_PASS }}
-          key_alias: ${{ secrets.KEY_ALIAS }}
-          key_pass: ${{ secrets.KEY_PASS }}
-
-      - run: chmod +x gradlew
-      - run: ./gradlew :app:assembleRelease
-      - run: ./gradlew :app:signingReport
-
-      - name: Checksum
-        run: cd app/build/outputs/apk/release/ && sha256sum *.apk | tee $(ls *.apk).sha256
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: app
-          path: |
-            android-app/app/build/outputs/apk/release/*.apk
-            android-app/app/build/outputs/apk/release/*.sha256
-
-  build_server_mfc:
-    name: Build server-mfc
-    runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: server-mfc
-    env:
-      VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: microsoft/setup-msbuild@v2
-      
-      - uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 10b7a178346f3f0abef60cecd5130e295afd8da4
-      
-      - run: vcpkg integrate install
-      
-      - run: vcpkg install asio protobuf spdlog[wchar] wil nlohmann-json
-      
-      - run: msbuild /m /p:Configuration=Release,Platform=x64
-      
-      - name: Checksum
-        run: cd x64/Release/ && sha256sum *.exe | tee $(ls *.exe).sha256
-        shell: bash
-      
-      - uses: actions/upload-artifact@v4
-        with:
-          name: server-mfc
-          path: |
-            server-mfc/x64/Release/*.exe
-            server-mfc/x64/Release/*.sha256
-
-  build_server_core:
-    name: Build server-core
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-22.04]
-        include:
-          - os: windows-latest
-            vcpkg_triplet: x64-windows-static-md
-            cmake_preset: windows-Release
-            platform: windows
-          - os: ubuntu-22.04
-            vcpkg_triplet: x64-linux
-            cmake_preset: linux-Release
-            platform: linux
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: server-core
-    env:
-      VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Linux Deps
-        run: sudo apt install libpipewire-0.3-dev
-        if: ${{ matrix.os == 'ubuntu-22.04' }}
-      
-      - uses: lukka/get-cmake@latest
-      
-      - uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 10b7a178346f3f0abef60cecd5130e295afd8da4
-      
-      - run: vcpkg integrate install
-      
-      - run: vcpkg install asio protobuf cxxopts
-      
-      - run: vcpkg install spdlog[wchar] wil
-        if: ${{ matrix.os == 'windows-latest' }}
-      
-      - run: vcpkg install spdlog
-        if: ${{ matrix.os == 'ubuntu-22.04' }}
-      
-      - uses: lukka/run-cmake@v10
-        with:
-          cmakeListsTxtPath: ${{ github.workspace }}/server-core/CMakeLists.txt
-          configurePreset: ${{ matrix.cmake_preset }}
-          buildPreset: ${{ matrix.cmake_preset }}
-      
-      - name: Pack
-        run: bash pack.sh ${{ matrix.platform }}
-      
-      - uses: actions/upload-artifact@v4
-        with:
-          name: server-core-${{ matrix.platform }}
-          path: |
-            server-core/out/install/*.sha256
-            server-core/out/install/*.tar.gz
-            server-core/out/install/*.zip
+  build_server:
+    name: Build and package Server
+    uses: ./.github/workflows/server-rewrite.yml
 
   create_release:
-    name: Create Release
-    needs: [build_app, build_server_mfc, build_server_core]
+    name: Create draft release
+    needs: build_server
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      
-      - run: chmod +x ./scripts/get_version.sh
-      
-      - uses: actions/download-artifact@v4
+
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
         with:
           path: release_bin
-      
-      - name: Generate release notes
-        run: 'echo -e "$(cat ./metadata/en-US/changelogs/$(bash ./scripts/get_version.sh -c).txt)" > notes'
-      
-      - name: Create Github Release
+
+      - name: Verify release artifacts
+        shell: bash
         run: |
+          set -euo pipefail
+          version=$(bash ./scripts/get_version.sh -n)
+
+          test -f release_bin/AudioShareServer-windows/AudioShareServer.exe
+          test -f release_bin/AudioShareServer-windows/AudioShareServer.exe.sha256
+          test -f release_bin/audio-share-server-cmd-windows/audio-share-server-cmd-windows.zip
+          test -f release_bin/audio-share-server-cmd-windows/audio-share-server-cmd-windows.zip.sha256
+          test -f "release_bin/audio-share-server-deb/AudioShareServer_${version}_amd64.deb"
+          test -f "release_bin/audio-share-server-deb/AudioShareServer_${version}_amd64.deb.sha256"
+          test -f "release_bin/audio-share-server-appimage/AudioShareServer_${version}_amd64.AppImage"
+          test -f "release_bin/audio-share-server-appimage/AudioShareServer_${version}_amd64.AppImage.sha256"
+          test -f release_bin/audio-share-server-cmd-linux/audio-share-server-cmd-linux.tar.gz
+          test -f release_bin/audio-share-server-cmd-linux/audio-share-server-cmd-linux.tar.gz.sha256
+
+          # This release is Server-only: the v0.3.4 Android Client is unchanged.
+          if find release_bin -name '*.apk' -print -quit | grep -q .; then
+            echo 'error: an Android APK was attached to the Server-only release' >&2
+            exit 1
+          fi
+
+          for sum in release_bin/*/*.sha256; do
+            (cd "$(dirname "$sum")" && sha256sum -c "$(basename "$sum")")
+          done
+
+      - name: Generate release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(bash ./scripts/get_version.sh -c)
+          notes="metadata/en-US/changelogs/${code}.txt"
+          test -f "$notes"
+          cp "$notes" notes
+
+      - name: Create GitHub draft release
+        shell: bash
+        run: |
+          set -euo pipefail
           version=$(bash ./scripts/get_version.sh -n)
           gh release create "v$version" -d -F notes -t "v$version" release_bin/*/*
         env:

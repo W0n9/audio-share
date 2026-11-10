@@ -1,0 +1,315 @@
+{
+  "schema_version": 1,
+  "protocol_version": "v0.3.4",
+  "provenance": "recorded-v0.3.4-linux",
+  "platform": "linux",
+  "source": "as-cmd 0.3.4 (linux, headless PipeWire null sink)",
+  "audio_format": {
+    "encoding": 1,
+    "encoding_name": "ENCODING_PCM_FLOAT",
+    "channels": 2,
+    "sample_rate": 48000,
+    "block_align": 8,
+    "protobuf_file": "audio_format.pb",
+    "protobuf_hex": "080110021880f702",
+    "protobuf_sha256": "c8f52eeb5eacd66e5910d89b4ba47ca0b20e319586f41548c1f7455d4994c157"
+  },
+  "mtu": {
+    "mtu": 1492,
+    "ip_header_bytes": 20,
+    "udp_header_bytes": 8,
+    "max_payload_bytes": 1464,
+    "aligned_payload_bytes": 1464
+  },
+  "control": {
+    "get_format_request": {
+      "file": "control/get_format.request.bin",
+      "length": 4,
+      "hex": "01000000",
+      "sha256": "67abdd721024f0ff4e0b3f4c2fc13bc5bad42d0b7851d456d88d203d15aaa450"
+    },
+    "get_format_response": {
+      "file": "control/get_format.response.bin",
+      "length": 16,
+      "hex": "0100000008000000080110021880f702",
+      "sha256": "a1fb45a746be44ca0a961059c355467c1d9a395e0c6f63eca041c0ec50f29112"
+    },
+    "start_play_request": {
+      "file": "control/start_play.request.bin",
+      "length": 4,
+      "hex": "02000000",
+      "sha256": "26b25d457597a7b0463f9620f666dd10aa2c4373a505967c7c8d70922a2d6ece"
+    },
+    "start_play_response": {
+      "file": "control/start_play.response.bin",
+      "length": 8,
+      "hex": "0200000001000000",
+      "sha256": "7b2ed67587fcbc411fcb4b71b1cef1ef6cd9edf948148414cf5f0ab21362b9aa",
+      "id": 1
+    },
+    "heartbeat_server": {
+      "file": "control/heartbeat.server.bin",
+      "length": 4,
+      "hex": "03000000",
+      "sha256": "9d9f290527a6be626a8f5985b26e19b237b44872b03631811df4416fc1713178",
+      "count": 3
+    },
+    "heartbeat_client": {
+      "file": "control/heartbeat.client.bin",
+      "length": 4,
+      "hex": "03000000",
+      "sha256": "9d9f290527a6be626a8f5985b26e19b237b44872b03631811df4416fc1713178",
+      "count": 3
+    },
+    "udp_bind": {
+      "file": "control/udp_bind.bin",
+      "length": 4,
+      "hex": "01000000",
+      "sha256": "67abdd721024f0ff4e0b3f4c2fc13bc5bad42d0b7851d456d88d203d15aaa450",
+      "id": 1
+    }
+  },
+  "pcm": {
+    "file": "pcm/stream.pcm",
+    "total_bytes": 44480,
+    "sha256": "9672f2d8d8c32b34c35e1b147f430fb766a0cff7dc6830f5012c66953de67b25",
+    "segment_count": 32,
+    "segment_lengths": [
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      280,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      280,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464
+    ],
+    "segments": [
+      {
+        "file": "pcm/segments/0000.bin",
+        "offset": 0,
+        "length": 1464,
+        "sha256": "ad0bf5709cffb3acb2891388e5d7b989edd80e906189743556353456d58a13c0"
+      },
+      {
+        "file": "pcm/segments/0001.bin",
+        "offset": 1464,
+        "length": 1464,
+        "sha256": "ad0bf5709cffb3acb2891388e5d7b989edd80e906189743556353456d58a13c0"
+      },
+      {
+        "file": "pcm/segments/0002.bin",
+        "offset": 2928,
+        "length": 1464,
+        "sha256": "ad0bf5709cffb3acb2891388e5d7b989edd80e906189743556353456d58a13c0"
+      },
+      {
+        "file": "pcm/segments/0003.bin",
+        "offset": 4392,
+        "length": 1464,
+        "sha256": "ad0bf5709cffb3acb2891388e5d7b989edd80e906189743556353456d58a13c0"
+      },
+      {
+        "file": "pcm/segments/0004.bin",
+        "offset": 5856,
+        "length": 1464,
+        "sha256": "ad0bf5709cffb3acb2891388e5d7b989edd80e906189743556353456d58a13c0"
+      },
+      {
+        "file": "pcm/segments/0005.bin",
+        "offset": 7320,
+        "length": 1464,
+        "sha256": "ad0bf5709cffb3acb2891388e5d7b989edd80e906189743556353456d58a13c0"
+      },
+      {
+        "file": "pcm/segments/0006.bin",
+        "offset": 8784,
+        "length": 1464,
+        "sha256": "ad0bf5709cffb3acb2891388e5d7b989edd80e906189743556353456d58a13c0"
+      },
+      {
+        "file": "pcm/segments/0007.bin",
+        "offset": 10248,
+        "length": 1464,
+        "sha256": "ad0bf5709cffb3acb2891388e5d7b989edd80e906189743556353456d58a13c0"
+      },
+      {
+        "file": "pcm/segments/0008.bin",
+        "offset": 11712,
+        "length": 1464,
+        "sha256": "ad0bf5709cffb3acb2891388e5d7b989edd80e906189743556353456d58a13c0"
+      },
+      {
+        "file": "pcm/segments/0009.bin",
+        "offset": 13176,
+        "length": 1464,
+        "sha256": "ad0bf5709cffb3acb2891388e5d7b989edd80e906189743556353456d58a13c0"
+      },
+      {
+        "file": "pcm/segments/0010.bin",
+        "offset": 14640,
+        "length": 1464,
+        "sha256": "ad0bf5709cffb3acb2891388e5d7b989edd80e906189743556353456d58a13c0"
+      },
+      {
+        "file": "pcm/segments/0011.bin",
+        "offset": 16104,
+        "length": 280,
+        "sha256": "1f6c9de2e555d5d589e1149fed58f9cbcc101739df97d4a4d694a13f1242c5b9"
+      },
+      {
+        "file": "pcm/segments/0012.bin",
+        "offset": 16384,
+        "length": 1464,
+        "sha256": "3ad45ad0b277cbeb60ca1a02355c26a08d7031cbae83d22861e14146c3eb4bd2"
+      },
+      {
+        "file": "pcm/segments/0013.bin",
+        "offset": 17848,
+        "length": 1464,
+        "sha256": "d83e3fd4f0ed3ceedacd6d539eadf1d76dd5d70ce3c312cb713c96437ebf4b8e"
+      },
+      {
+        "file": "pcm/segments/0014.bin",
+        "offset": 19312,
+        "length": 1464,
+        "sha256": "ae0c8e21a7877046df37d4dcca16c912077fa516bd934c23ac64797ea593854b"
+      },
+      {
+        "file": "pcm/segments/0015.bin",
+        "offset": 20776,
+        "length": 1464,
+        "sha256": "43db4f58bcc261dbaf19866bc4819af3d2df5820465bddd330df12afcca9f1a6"
+      },
+      {
+        "file": "pcm/segments/0016.bin",
+        "offset": 22240,
+        "length": 1464,
+        "sha256": "c734e9c70bb5db191299bb3c3059a27495a2ab664ffa40c5bf7f1c44ba4a00ba"
+      },
+      {
+        "file": "pcm/segments/0017.bin",
+        "offset": 23704,
+        "length": 1464,
+        "sha256": "fc68eb49a47278d6f756eed24e1d3aba658eea59ca9c5c98dedb298802af7f35"
+      },
+      {
+        "file": "pcm/segments/0018.bin",
+        "offset": 25168,
+        "length": 1464,
+        "sha256": "3baaeb2d8e0e0b4db55b446fbf66e82957424b95ba07d6711a0a49cd7df8f93e"
+      },
+      {
+        "file": "pcm/segments/0019.bin",
+        "offset": 26632,
+        "length": 1464,
+        "sha256": "ea2951c4f22f64ee78428a45eda5c2710ccd663b5cb95190245010161c8e7d2b"
+      },
+      {
+        "file": "pcm/segments/0020.bin",
+        "offset": 28096,
+        "length": 1464,
+        "sha256": "2e89c69a749a3e03db1cb804c0b1fc92574012fcb7c9ee8af38e33b516502d07"
+      },
+      {
+        "file": "pcm/segments/0021.bin",
+        "offset": 29560,
+        "length": 1464,
+        "sha256": "14c4c5f71390aff41acc1d6985dda5adb846e604ecab0963c79eaa0f0b25817e"
+      },
+      {
+        "file": "pcm/segments/0022.bin",
+        "offset": 31024,
+        "length": 1464,
+        "sha256": "17b5b6a6daa8e8db1fed94f4b9c48156b8bbaa798ee8f6a1bae5af9200fb41dc"
+      },
+      {
+        "file": "pcm/segments/0023.bin",
+        "offset": 32488,
+        "length": 280,
+        "sha256": "e495650048938ace513d34e686437020b95de4cc185c272bcd6df961a8a83403"
+      },
+      {
+        "file": "pcm/segments/0024.bin",
+        "offset": 32768,
+        "length": 1464,
+        "sha256": "e6670ec75cb463090125c79fa45e8569b180e91131db253887f803ad3c3d63ea"
+      },
+      {
+        "file": "pcm/segments/0025.bin",
+        "offset": 34232,
+        "length": 1464,
+        "sha256": "e6d1556059c15bda92d7c37d5dbeac04033445be1c4cb3784221bfb9ceb73a7f"
+      },
+      {
+        "file": "pcm/segments/0026.bin",
+        "offset": 35696,
+        "length": 1464,
+        "sha256": "11079ae88c972a51df1b984c1c80bf30b314d2cfe12ac8709054976c2e531a5f"
+      },
+      {
+        "file": "pcm/segments/0027.bin",
+        "offset": 37160,
+        "length": 1464,
+        "sha256": "1c480664291e3db3bf376b4f2e877c1e7a9a8df8921b6d4a3925e3ec40277f2a"
+      },
+      {
+        "file": "pcm/segments/0028.bin",
+        "offset": 38624,
+        "length": 1464,
+        "sha256": "2e6f1d3f415667d4406a22a4c7012b2fddb4ab3f715b44084b43d953d6916497"
+      },
+      {
+        "file": "pcm/segments/0029.bin",
+        "offset": 40088,
+        "length": 1464,
+        "sha256": "dfc9f6ceeb13847bef2af1ef3abbe17b88f2e5e8d261f7c83b47426521b033e1"
+      },
+      {
+        "file": "pcm/segments/0030.bin",
+        "offset": 41552,
+        "length": 1464,
+        "sha256": "81856d37b3854ffc29e6e51222af627494bd17b52615f157f8476545ede3ca17"
+      },
+      {
+        "file": "pcm/segments/0031.bin",
+        "offset": 43016,
+        "length": 1464,
+        "sha256": "ae5c760f6123b142c6f2a86acd1e324ee7d7cfb890e85d8f1db95557f2f2710c"
+      }
+    ]
+  },
+  "capture": {
+    "heartbeats_received": 3,
+    "datagrams_received": 32
+  },
+  "notes": [
+    "Recorded by protocol-harness from as-cmd 0.3.4 (linux, headless PipeWire null sink) over the v0.3.4 Wire Protocol.",
+    "PCM content is a live capture snapshot; re-recording produces different PCM bytes but the same framing.",
+    "No timestamps or machine paths are stored in this fixture set."
+  ]
+}

@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "protocol_version": "v0.3.4",
+  "provenance": "synthesized-v0.3.4-semantics",
+  "platform": "windows",
+  "source": "synthesized from frozen v0.3.4 semantics",
+  "audio_format": {
+    "encoding": 4,
+    "encoding_name": "ENCODING_PCM_24BIT",
+    "channels": 2,
+    "sample_rate": 48000,
+    "block_align": 6,
+    "protobuf_file": "audio_format.pb",
+    "protobuf_hex": "080410021880f702",
+    "protobuf_sha256": "7c6461e653b9d18f8078a627e7f7d3cd4cb41630da88f258060f3d3c21f235d3"
+  },
+  "mtu": {
+    "mtu": 1492,
+    "ip_header_bytes": 20,
+    "udp_header_bytes": 8,
+    "max_payload_bytes": 1464,
+    "aligned_payload_bytes": 1464
+  },
+  "control": {
+    "get_format_request": {
+      "file": "control/get_format.request.bin",
+      "length": 4,
+      "hex": "01000000",
+      "sha256": "67abdd721024f0ff4e0b3f4c2fc13bc5bad42d0b7851d456d88d203d15aaa450"
+    },
+    "get_format_response": {
+      "file": "control/get_format.response.bin",
+      "length": 16,
+      "hex": "0100000008000000080410021880f702",
+      "sha256": "8d691652b945d1cf1dfaad1e5f6dc6eb626328e34fb75e2d8380d6a1d87e0dad"
+    },
+    "start_play_request": {
+      "file": "control/start_play.request.bin",
+      "length": 4,
+      "hex": "02000000",
+      "sha256": "26b25d457597a7b0463f9620f666dd10aa2c4373a505967c7c8d70922a2d6ece"
+    },
+    "start_play_response": {
+      "file": "control/start_play.response.bin",
+      "length": 8,
+      "hex": "0200000001000000",
+      "sha256": "7b2ed67587fcbc411fcb4b71b1cef1ef6cd9edf948148414cf5f0ab21362b9aa",
+      "id": 1
+    },
+    "heartbeat_server": {
+      "file": "control/heartbeat.server.bin",
+      "length": 4,
+      "hex": "03000000",
+      "sha256": "9d9f290527a6be626a8f5985b26e19b237b44872b03631811df4416fc1713178",
+      "count": 1
+    },
+    "heartbeat_client": {
+      "file": "control/heartbeat.client.bin",
+      "length": 4,
+      "hex": "03000000",
+      "sha256": "9d9f290527a6be626a8f5985b26e19b237b44872b03631811df4416fc1713178",
+      "count": 1
+    },
+    "udp_bind": {
+      "file": "control/udp_bind.bin",
+      "length": 4,
+      "hex": "01000000",
+      "sha256": "67abdd721024f0ff4e0b3f4c2fc13bc5bad42d0b7851d456d88d203d15aaa450",
+      "id": 1
+    }
+  },
+  "pcm": {
+    "file": "pcm/stream.pcm",
+    "total_bytes": 23040,
+    "sha256": "648c56f525e9505b29857ffa2ebb93d58a48a44aed881f2aa0f9b2f3607ee284",
+    "segment_count": 16,
+    "segment_lengths": [
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1464,
+      1080
+    ],
+    "segments": [
+      {
+        "file": "pcm/segments/0000.bin",
+        "offset": 0,
+        "length": 1464,
+        "sha256": "dfcfccb60e86808f2bd7e32ab49b9d650a960f23bb3e4b1c1e60722c583c0e7c"
+      },
+      {
+        "file": "pcm/segments/0001.bin",
+        "offset": 1464,
+        "length": 1464,
+        "sha256": "83e56143686f45d9334b432ac8b173014cd9893101b6eaf8b7e0c38a48a19ae3"
+      },
+      {
+        "file": "pcm/segments/0002.bin",
+        "offset": 2928,
+        "length": 1464,
+        "sha256": "1e4a556581377d501f64e66d249992e7aa0d39cd69f76c7e24d1add2930970e8"
+      },
+      {
+        "file": "pcm/segments/0003.bin",
+        "offset": 4392,
+        "length": 1464,
+        "sha256": "8e303b586567a2d3cfc4329a7dbff5b7a816c227b9eab2af0d40f5dd45c7ae48"
+      },
+      {
+        "file": "pcm/segments/0004.bin",
+        "offset": 5856,
+        "length": 1464,
+        "sha256": "51d8cb6be40face6289f0e25d17398e2ea5eaae4067c6f9929da3710e2b35b65"
+      },
+      {
+        "file": "pcm/segments/0005.bin",
+        "offset": 7320,
+        "length": 1464,
+        "sha256": "01d61bb451734c4e02e58b3919e902d666f466ffd90050bd186b306e5e5c2876"
+      },
+      {
+        "file": "pcm/segments/0006.bin",
+        "offset": 8784,
+        "length": 1464,
+        "sha256": "4a653830c85d407123740f9f7f785a2ae3e4cf3b59e7e6dc6ff8e650ce2c6325"
+      },
+      {
+        "file": "pcm/segments/0007.bin",
+        "offset": 10248,
+        "length": 1464,
+        "sha256": "e0341853faa16adcce2ad3f4e69b9b8a80e1df8072ecfcd34b3ebc98e26ad662"
+      },
+      {
+        "file": "pcm/segments/0008.bin",
+        "offset": 11712,
+        "length": 1464,
+        "sha256": "dfcfccb60e86808f2bd7e32ab49b9d650a960f23bb3e4b1c1e60722c583c0e7c"
+      },
+      {
+        "file": "pcm/segments/0009.bin",
+        "offset": 13176,
+        "length": 1464,
+        "sha256": "83e56143686f45d9334b432ac8b173014cd9893101b6eaf8b7e0c38a48a19ae3"
+      },
+      {
+        "file": "pcm/segments/0010.bin",
+        "offset": 14640,
+        "length": 1464,
+        "sha256": "1e4a556581377d501f64e66d249992e7aa0d39cd69f76c7e24d1add2930970e8"
+      },
+      {
+        "file": "pcm/segments/0011.bin",
+        "offset": 16104,
+        "length": 1464,
+        "sha256": "8e303b586567a2d3cfc4329a7dbff5b7a816c227b9eab2af0d40f5dd45c7ae48"
+      },
+      {
+        "file": "pcm/segments/0012.bin",
+        "offset": 17568,
+        "length": 1464,
+        "sha256": "51d8cb6be40face6289f0e25d17398e2ea5eaae4067c6f9929da3710e2b35b65"
+      },
+      {
+        "file": "pcm/segments/0013.bin",
+        "offset": 19032,
+        "length": 1464,
+        "sha256": "01d61bb451734c4e02e58b3919e902d666f466ffd90050bd186b306e5e5c2876"
+      },
+      {
+        "file": "pcm/segments/0014.bin",
+        "offset": 20496,
+        "length": 1464,
+        "sha256": "4a653830c85d407123740f9f7f785a2ae3e4cf3b59e7e6dc6ff8e650ce2c6325"
+      },
+      {
+        "file": "pcm/segments/0015.bin",
+        "offset": 21960,
+        "length": 1080,
+        "sha256": "199793e9fa39adaf6f03e0c4639e52b0d7cbffd5691552075c3875352d3479b8"
+      }
+    ]
+  },
+  "capture": {
+    "heartbeats_received": 0,
+    "datagrams_received": 16
+  },
+  "notes": [
+    "Synthesized from the frozen v0.3.4 Wire Protocol; not recorded on a Windows machine.",
+    "PCM is a deterministic integer pattern used only to exercise framing and MTU segmentation."
+  ]
+}

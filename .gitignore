@@ -1,1 +1,13 @@
 .vscode
+/target
+**/target
+node_modules/
+**/node_modules/
+dist/
+gui/src-tauri/gen/
+__pycache__/
+*.pyc
+
+# Release staging directories (packaging scripts)
+/dist-linux/
+/dist-windows/
