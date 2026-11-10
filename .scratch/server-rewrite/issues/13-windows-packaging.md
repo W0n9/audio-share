@@ -122,26 +122,31 @@ Host: Windows 11 Enterprise 10.0.26300 x64; WebView2 157.0.4341.42; MSVC
 - `as-cmd.exe --version` 0.4.0, `-l`, and `--list-encoding` execute from the
   zip.
 
-Two runtime defects were found and fixed: the update check had no Windows TLS
-backend (ureq `native-tls` needs an explicit connector) and mono capture
-surfaced a raw `0x88890008` instead of a readable error. The follow-up CI run
-[42766244106](https://github.com/W0n9/audio-share/actions/runs/42766244106)
-(`ebdd468`) is green on all four jobs; its artifacts include the TLS and
-`Initialize` fixes. A third defect (UDP broadcast stall on a slow Wi-Fi peer)
-was found during the later real-phone soak and is fixed in a newer commit; a
-fresh CI run is required to include it in the release artifact:
+Three runtime defects were found and fixed: the update check had no Windows
+TLS backend (ureq `native-tls` needs an explicit connector), mono capture
+surfaced a raw `0x88890008` instead of a readable error, and the UDP broadcast
+loop could stall on a slow Wi-Fi peer. The final CI run
+[42777988420](https://github.com/W0n9/audio-share/actions/runs/42777988420)
+(`9626b10`) is green on all four jobs and its artifacts include all three fixes:
 
-- `AudioShareServer.exe` 11,973,120 B, SHA-256
-  `93a456642ad52db1c934b0f818b441cfe25a232650d1065ebff7e2e8abab2e0c`.
-- `audio-share-server-cmd-windows.zip` 686,340 B, SHA-256
-  `b200f5fd8d8d4f84387028e586b717db72f6097249fdc8931a1cff1282c01839`.
+- `AudioShareServer.exe` 11,966,464 B, SHA-256
+  `a3ee857ac315b7e6ec3b79ad1248317f75b1cbe6b20a6ed220100d0ec77b2cbf`.
+- `audio-share-server-cmd-windows.zip` 688,182 B, SHA-256
+  `216c95808d79a55c3309cf4b58004db4534165398083a19beb9378fa3a7993ef`.
 - Smoke: `as-cmd --version` 0.4.0, `-l`, `--list-encoding`; mono printed the
-  readable `AUDCLNT_E_UNSUPPORTED_FORMAT` message; the GUI update check
-  completed HTTPS and showed a readable HTTP 403 rate-limit (shared IP),
-  proving the schannel backend.
+  readable `AUDCLNT_E_UNSUPPORTED_FORMAT` message; the final `as-cmd.exe`
+  (SHA-256 `8d984573…ea831c`) was played by the real v0.3.4 Android Client for
+  ~11 minutes (6 probes, 1,997–2,000 datagrams/6 s, 440 Hz, 0 heartbeat misses,
+  0 app crashes). The GUI HTTPS update check was smoke-tested on run
+  42766244106.
 
-The older run 42710876060 artifacts remain the pre-fix baseline.
+Run 42766244106 (`ebdd468`, `AudioShareServer.exe`
+`93a456642ad52db1c934b0f818b441cfe25a232650d1065ebff7e2e8abab2e0c` and zip
+`b200f5fd8d8d4f84387028e586b717db72f6097249fdc8931a1cff1282c01839`) remains
+the baseline that includes the first two fixes but not the broadcast fix; run
+42710876060 remains the original pre-fix baseline.
 
 Not executed: missing-WebView2 clean-VM dialog, per-user/fixed-version
-WebView2, Windows 10, a real reboot/login, and a real Android Client.
+WebView2, Windows 10, and a real reboot/login. A real Android Client was
+executed on one Android 12 phone (see ticket 15).
 

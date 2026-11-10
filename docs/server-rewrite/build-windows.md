@@ -13,9 +13,10 @@ tests. The follow-up CI run
 (`ebdd468`) is green on all four jobs, and its artifacts include those fixes and
 were smoke-tested on Windows 11. A third defect — the UDP broadcast loop
 blocking on a slow Wi-Fi peer — was found during the real-phone 60-minute run
-and is fixed in the working tree; a further CI run is required to include it in
-the release artifacts. Windows 10 and the missing-WebView2 clean-VM path remain
-manual gates.
+and is fixed. The final CI run
+[42777988420](https://github.com/W0n9/audio-share/actions/runs/42777988420)
+(`9626b10`) is green on all four jobs and its artifacts include all three
+fixes. Windows 10 and the missing-WebView2 clean-VM path remain manual gates.
 
 The Windows release is a **portable `AudioShareServer.exe`** with no installer.
 The GUI targets Windows 10+ and requires the Microsoft Edge WebView2 Runtime,
@@ -203,6 +204,8 @@ mapping).
 | CI `audio-share-server-cmd-windows.zip` (run 42710876060) | 686,081 B | `6f8f864779d0290ab720af5c3f1855075765b7652bdd0fe04533ad665af4bd42` |
 | CI `AudioShareServer.exe` (run 42766244106, fixes included) | 11,973,120 B | `93a456642ad52db1c934b0f818b441cfe25a232650d1065ebff7e2e8abab2e0c` |
 | CI `audio-share-server-cmd-windows.zip` (run 42766244106) | 686,340 B | `b200f5fd8d8d4f84387028e586b717db72f6097249fdc8931a1cff1282c01839` |
+| CI `AudioShareServer.exe` (run 42777988420, all three fixes) | 11,966,464 B | `a3ee857ac315b7e6ec3b79ad1248317f75b1cbe6b20a6ed220100d0ec77b2cbf` |
+| CI `audio-share-server-cmd-windows.zip` (run 42777988420) | 688,182 B | `216c95808d79a55c3309cf4b58004db4534165398083a19beb9378fa3a7993ef` |
 | locally built fixed `AudioShareServer.exe` | 11,970,048 B | `f2d14db7cd66e52f821d04307e6bd2085530b70a332f50d1019e714576683925` |
 
 Both CI `.sha256` sidecars matched with `Get-FileHash`; the zip contains
@@ -273,14 +276,16 @@ Not executed on this host and still open:
    let a PC probe receive 1,198 datagrams/440 Hz per 6 s; the fixed 60-minute
    phone soak is the regression test.
 
-Both fixes are covered by Windows unit tests and ran in the green
-`Rust (windows-latest)` job of run 42766244106. The new artifacts were
-smoke-tested on Windows 11: `as-cmd --version` 0.4.0, `-l`, and
-`--list-encoding`; `--channels 1` now prints the readable
-`AUDCLNT_E_UNSUPPORTED_FORMAT` message; the GUI update check completed an HTTPS
-request and reported a readable HTTP 403 GitHub rate-limit message (the shared
-IP was rate-limited), proving the schannel TLS backend works. The older run
-42710876060 artifacts are retained as the pre-fix baseline.
+All three fixes are covered by tests, and the final `Rust (windows-latest)`
+job in run 42777988420 is green. The final artifacts were smoke-tested on
+Windows 11: `as-cmd --version` 0.4.0, `-l`, `--list-encoding`, and the
+readable mono `AUDCLNT_E_UNSUPPORTED_FORMAT` error. The final `as-cmd.exe`
+(SHA-256 `8d984573600def6ead0c0effcfcb3e5750adb6472091a36de661e42393ea831c`)
+was also played by the real v0.3.4 Android Client for ~11 minutes (six probes
+at two-minute intervals: 1,997–2,000 datagrams per 6 s, 440 Hz, max gap 21 ms,
+0 heartbeat misses, phone AudioTrack active throughout, 0 app crashes). The
+GUI HTTPS update check was smoke-tested earlier (run 42766244106). The older
+run 42710876060 artifacts are retained as the pre-fix baseline.
 
 ## Manual acceptance checklist (Windows 10 and Windows 11)
 

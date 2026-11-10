@@ -1,7 +1,9 @@
 # Real v0.3.4 Android APK acceptance (ticket 15)
 
-Status: **EXECUTED on one Android 12 phone on 2026-11-10** (Xiaomi
-M2007J22C, Android 12 / API 31, arm64; released v0.3.4 APK, SHA-256
+Status: **EXECUTED on one Android 12 phone on 2026-11-10** (Xiaomi/Redmi
+M2007J22C, Android 12 / API 31, arm64; MIUI V14.0.6.0.SJECNXM
+`Redmi/cannon/cannon:12/SP1A.210812.016/V14.0.6.0.SJECNXM:user/release-keys`;
+released v0.3.4 APK, SHA-256
 `77cc93d32a3e6b6117b9c202ff5be69082ea5711087c23e6877cef5ac4a471b4`). The
 10 executable stereo combinations played through the real client; the 10 mono
 combinations are **N/A on the Windows Realtek endpoint** because the driver
@@ -215,8 +217,10 @@ and a deliberately non-reading UDP peer connected, the PC probe still received
 `audio-share-artifacts/android/` contains the probe JSONs
 (`{enc}-48k-probe.json`, `{enc}-44100-probe.json`), AudioFlinger lines
 (`*-audioflinger.txt`), the phone screenshots (`phone-playing.png`,
-`s16-48k-home.png`, `heartbeat-wifi-off.png`), the mono stderr, and (after the
-run) the 60-minute `soak-60m/soak.csv`, probes, screenshot, and logcat.
+`s16-48k-home.png`, `heartbeat-wifi-off.png`), the mono stderr, the 60-minute
+`soak-60m-fixed/` evidence, and the final CI artifact smoke
+`ci-final-smoke/` (6 probes over ~11 minutes, 1,997–2,000 datagrams/6 s,
+440 Hz, 0 heartbeat misses, 0 app crashes).
 
 ## Relationship to the release gate
 
