@@ -1,0 +1,6 @@
+Server 0.4.1
+- The Server GUI is rebuilt around a focused main window: one server status, a circular Start/Stop action, quick Endpoint/Encoding settings, and a collapsible Network configuration.
+- Appearance now offers System, Light, and Dark themes, applied immediately and persisted in config.ini.
+- Settings is a single scrolling page with grouped sections (Appearance, Startup & window, Updates, System, About) and no duplicated server fields.
+- The Host field again suggests the machine's local IPv4 addresses while keeping free text.
+- The Wire Protocol, capture pipeline, and as-cmd are unchanged; the Android Client remains v0.3.4 and no APK is included.

@@ -109,7 +109,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "as-cmd"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "assert_cmd",
  "audio-share-core",
@@ -300,7 +300,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "audio-share-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "if-addrs",
  "pipewire",
@@ -316,7 +316,7 @@ dependencies = [
 
 [[package]]
 name = "audio-share-server-gui"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "audio-share-core",
  "serde",
@@ -3006,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "pipewire-spike"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3226,7 +3226,7 @@ dependencies = [
 
 [[package]]
 name = "protocol-harness"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "audio-share-core",
@@ -5003,7 +5003,7 @@ dependencies = [
 
 [[package]]
 name = "wasapi-spike"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "audio-share-core",
