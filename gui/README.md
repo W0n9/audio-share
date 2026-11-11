@@ -112,6 +112,16 @@ xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- bash -c '
   runs. Defaults: selected default host, port 65530, endpoint `default`,
   encoding `default`, `WhenClose=1`.
 
+## Modernization (tickets 01-05)
+
+The shell follows the selected Variant C layout: a centered status and
+circular Start/Stop, quick Endpoint and Encoding controls, a collapsible
+Network configuration whose Host field suggests the enumerated local IPv4
+addresses, and one scrolling Settings page with grouped disclosures
+(Appearance with System / Light / Dark theme, Startup & window, Updates,
+System, About). See
+[`docs/server-rewrite/gui-modernization-acceptance.md`](../docs/server-rewrite/gui-modernization-acceptance.md).
+
 ## Extension points for later tickets
 
 - 11: Windows firewall repair and sound panel commands/routes.
