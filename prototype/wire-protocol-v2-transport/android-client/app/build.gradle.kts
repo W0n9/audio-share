@@ -80,6 +80,10 @@ val buildNative by tasks.registering(Exec::class) {
     environment("ANDROID_HOME", providers.environmentVariable("ANDROID_HOME").orElse("").get())
     commandLine("cargo", "build", "--release", "--target", cargoTarget)
     outputs.file(cargoOut.resolve("libaudio_share_proto_native.so"))
+    // cargo never sees edits otherwise: the output lives in native/target,
+    // which gradle clean does not remove
+    inputs.dir(nativeDir.resolve("src"))
+    inputs.file(nativeDir.resolve("Cargo.toml"))
 }
 
 val stripNative by tasks.registering(Exec::class) {

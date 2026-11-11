@@ -35,7 +35,7 @@ fn get_session(handle: i64) -> Result<Arc<Session>, String> {
         .ok_or_else(|| format!("unknown session handle {handle}"))
 }
 
-fn jstring_or_empty(env: &mut JNIEnv, s: &str) -> jni::sys::jstring {
+fn jstring_or_empty(mut env: JNIEnv, s: &str) -> jni::sys::jstring {
     env.new_string(s)
         .map(|j| j.into_raw())
         .unwrap_or(std::ptr::null_mut())
@@ -58,7 +58,7 @@ where
 
 #[no_mangle]
 pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_createSession(
-    env: &mut JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     host: JString,
     port: jint,
@@ -67,7 +67,16 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_createSession(
 ) -> jlong {
     #[cfg(target_os = "android")]
     crate::init_android_logger();
-    guard(|| {
+    // Instrumentation: the error string must reach logcat — returning a bare 0
+    // made every createSession failure undiagnosable on device.
+    match guard(|| {
+        log::info!(
+            "createSession raw ptrs: env={:p} host={:p} port={port} pin={:p} cred={:p}",
+            env.get_raw() as *const std::ffi::c_void,
+            host.as_raw() as *const std::ffi::c_void,
+            pinned_spki_sha256_hex.as_raw() as *const std::ffi::c_void,
+            credential.as_raw() as *const std::ffi::c_void,
+        );
         let host: String = env
             .get_string(&host)
             .map(|s| s.to_string_lossy().into_owned())
@@ -97,13 +106,18 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_createSession(
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
         sessions().lock().unwrap().insert(id, Arc::new(session));
         Ok(id)
-    })
-    .unwrap_or(0)
+    }) {
+        Ok(id) => id,
+        Err(e) => {
+            log::error!("createSession failed: {e}");
+            0
+        }
+    }
 }
 
 #[no_mangle]
 pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_connect(
-    env: &mut JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
     bind_local_address: JString,
@@ -128,7 +142,7 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_connect(
 
 #[no_mangle]
 pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_subscribe(
-    _env: &mut JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) -> jboolean {
@@ -141,7 +155,7 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_subscribe(
 
 #[no_mangle]
 pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_unsubscribe(
-    _env: &mut JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) -> jboolean {
@@ -154,7 +168,7 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_unsubscribe(
 
 #[no_mangle]
 pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_stop(
-    _env: &mut JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) {
@@ -169,7 +183,7 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_stop(
 /// Destroy the session: drop the registry entry, runtime shuts down with it.
 #[no_mangle]
 pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_destroy(
-    _env: &mut JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) {
@@ -186,7 +200,7 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_destroy(
 /// on unknown handle.
 #[no_mangle]
 pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_getState(
-    env: &mut JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) -> jni::sys::jstring {
@@ -203,7 +217,7 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_getState(
 /// Full stats JSON (see crate::stats for the contract). Empty string on error.
 #[no_mangle]
 pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_getStats(
-    env: &mut JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) -> jni::sys::jstring {
@@ -221,7 +235,7 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_getStats(
 /// false if already attached or the buffer is not direct.
 #[no_mangle]
 pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_attachBuffer(
-    env: &mut JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
     buffer: JByteBuffer,
@@ -259,7 +273,7 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_attachBuffer(
 /// the fd (or the socket/pfd) after this call.
 #[no_mangle]
 pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_rebind(
-    _env: &mut JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
     fd: jint,

@@ -1,0 +1,255 @@
+11-11 23:01:16.465 E/audio_share_proto_nat..(17944): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:01:16.967 E/audio_share_proto_nat..(17944): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:01:17.498 E/audio_share_proto_nat..(17944): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:01:19.112 E/audio_share_proto_nat..(17944): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:01:21.509 E/audio_share_proto_nat..(17944): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:01:27.578 E/audio_share_proto_nat..(17944): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:01:37.010 E/audio_share_proto_nat..(17944): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:01:54.631 E/audio_share_proto_nat..(17944): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:02:05.794 E/audio_share_proto_nat..(17944): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:02:24.634 E/audio_share_proto_nat..(17944): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:02:33.126 E/audio_share_proto_nat..(17944): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:02:45.007 E/audio_share_proto_nat..(18072): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:02:45.506 E/audio_share_proto_nat..(18072): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:02:45.960 E/audio_share_proto_nat..(18072): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:02:47.346 E/audio_share_proto_nat..(18072): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:02:49.707 E/audio_share_proto_nat..(18072): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:02:55.523 E/audio_share_proto_nat..(18072): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:03:06.686 E/audio_share_proto_nat..(18072): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:03:20.025 E/audio_share_proto_nat..(18072): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:03:33.917 E/audio_share_proto_nat..(18072): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:03:43.128 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:03:43.128 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:03:43.672 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:03:43.672 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:03:44.136 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:03:44.136 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:03:45.536 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:03:45.536 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:03:47.853 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:03:47.853 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:03:54.147 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:03:54.147 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:04:00.739 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:04:00.739 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:04:24.149 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:04:24.149 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:04:30.744 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:04:30.744 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:04:49.134 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:04:49.134 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:04:56.450 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:04:56.450 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:05:14.613 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:05:14.613 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:05:23.678 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:05:23.679 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:05:44.616 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:05:44.616 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:05:53.682 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:05:53.683 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:06:14.618 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:06:14.618 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:06:23.688 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:06:23.688 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:06:38.704 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:06:38.704 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:06:53.692 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:06:53.692 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:07:04.398 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:07:04.399 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:07:22.813 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:07:22.813 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:07:34.401 I/audio_share_proto_nat..(18193): createSession raw ptrs: env=0x77b520e150 host=0x772a8e67ec port=65531 pin=0x772a8e67f4 cred=0x772a8e67f8
+11-11 23:07:34.401 E/audio_share_proto_nat..(18193): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:07:52.159 I/audio_share_proto_nat..(18409): createSession raw ptrs: env=0x77b520e150 host=0x772bb6b7ec port=65531 pin=0x772bb6b7f4 cred=0x772bb6b7f8
+11-11 23:07:52.159 E/audio_share_proto_nat..(18409): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:07:52.749 I/audio_share_proto_nat..(18409): createSession raw ptrs: env=0x77b520e150 host=0x772bb6b7ec port=65531 pin=0x772bb6b7f4 cred=0x772bb6b7f8
+11-11 23:07:52.749 E/audio_share_proto_nat..(18409): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:07:53.275 I/audio_share_proto_nat..(18409): createSession raw ptrs: env=0x77b520e150 host=0x772bb6b7ec port=65531 pin=0x772bb6b7f4 cred=0x772bb6b7f8
+11-11 23:07:53.275 E/audio_share_proto_nat..(18409): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:07:54.396 I/audio_share_proto_nat..(18409): createSession raw ptrs: env=0x77b520e150 host=0x772bb6b7ec port=65531 pin=0x772bb6b7f4 cred=0x772bb6b7f8
+11-11 23:07:54.396 E/audio_share_proto_nat..(18409): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:07:57.080 I/audio_share_proto_nat..(18409): createSession raw ptrs: env=0x77b520e150 host=0x772bb6b7ec port=65531 pin=0x772bb6b7f4 cred=0x772bb6b7f8
+11-11 23:07:57.080 E/audio_share_proto_nat..(18409): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:08:02.574 I/audio_share_proto_nat..(18409): createSession raw ptrs: env=0x77b520e150 host=0x772bb6b7ec port=65531 pin=0x772bb6b7f4 cred=0x772bb6b7f8
+11-11 23:08:02.574 E/audio_share_proto_nat..(18409): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:08:12.702 I/audio_share_proto_nat..(18409): createSession raw ptrs: env=0x77b520e150 host=0x772bb6b7ec port=65531 pin=0x772bb6b7f4 cred=0x772bb6b7f8
+11-11 23:08:12.702 E/audio_share_proto_nat..(18409): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:08:32.578 I/audio_share_proto_nat..(18409): createSession raw ptrs: env=0x77b520e150 host=0x772bb6b7ec port=65531 pin=0x772bb6b7f4 cred=0x772bb6b7f8
+11-11 23:08:32.579 E/audio_share_proto_nat..(18409): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:08:39.020 I/audio_share_proto_nat..(18409): createSession raw ptrs: env=0x77b520e150 host=0x772bb6b7ec port=65531 pin=0x772bb6b7f4 cred=0x772bb6b7f8
+11-11 23:08:39.020 E/audio_share_proto_nat..(18409): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:09:02.582 I/audio_share_proto_nat..(18409): createSession raw ptrs: env=0x77b520e150 host=0x772bb6b7ec port=65531 pin=0x772bb6b7f4 cred=0x772bb6b7f8
+11-11 23:09:02.583 E/audio_share_proto_nat..(18409): createSession failed: host: Null pointer deref in *JNIEnv
+11-11 23:09:10.700 I/audio_share_proto_nat..(18526): createSession raw ptrs: env=0xb400007790388a80 host=0x772cbef7ec port=65531 pin=0x772cbef7f4 cred=0x772cbef7f8
+11-11 23:09:10.700 I/audio_share_proto_nat..(18526): media ring attached (4194304 bytes)
+11-11 23:09:10.703 I/audio_share_proto_nat..(18526): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:09:11.214 I/audio_share_proto_nat..(18526): createSession raw ptrs: env=0xb400007790388a80 host=0x772cbef7ec port=65531 pin=0x772cbef7f4 cred=0x772cbef7f8
+11-11 23:09:11.214 I/audio_share_proto_nat..(18526): media ring attached (4194304 bytes)
+11-11 23:09:11.215 I/audio_share_proto_nat..(18526): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:09:40.705 W/audio_share_proto_nat..(18526): session ended: handshake: timed out
+11-11 23:09:40.705 W/audio_share_proto_nat..(18526): control error: session ended: handshake: timed out
+11-11 23:09:41.217 W/audio_share_proto_nat..(18526): session ended: handshake: timed out
+11-11 23:09:41.217 W/audio_share_proto_nat..(18526): control error: session ended: handshake: timed out
+11-11 23:09:41.290 I/ProtoSession(18526): playback stopped: session ended
+11-11 23:09:41.290 I/audio_share_proto_nat..(18526): session stopped (LOCAL NORMAL)
+11-11 23:09:42.466 I/audio_share_proto_nat..(18526): createSession raw ptrs: env=0xb400007790388a80 host=0x772cbef7ec port=65531 pin=0x772cbef7f4 cred=0x772cbef7f8
+11-11 23:09:42.467 I/audio_share_proto_nat..(18526): media ring attached (4194304 bytes)
+11-11 23:09:42.468 I/audio_share_proto_nat..(18526): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:10:12.471 W/audio_share_proto_nat..(18526): session ended: handshake: timed out
+11-11 23:10:12.471 W/audio_share_proto_nat..(18526): control error: session ended: handshake: timed out
+11-11 23:10:12.606 I/ProtoSession(18526): playback stopped: session ended
+11-11 23:10:12.606 I/audio_share_proto_nat..(18526): session stopped (LOCAL NORMAL)
+11-11 23:10:14.954 I/audio_share_proto_nat..(18526): createSession raw ptrs: env=0xb400007790388a80 host=0x772cbef7ec port=65531 pin=0x772cbef7f4 cred=0x772cbef7f8
+11-11 23:10:14.956 I/audio_share_proto_nat..(18526): media ring attached (4194304 bytes)
+11-11 23:10:14.958 I/audio_share_proto_nat..(18526): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:10:44.961 W/audio_share_proto_nat..(18526): session ended: handshake: timed out
+11-11 23:10:44.962 W/audio_share_proto_nat..(18526): control error: session ended: handshake: timed out
+11-11 23:10:45.094 I/ProtoSession(18526): playback stopped: session ended
+11-11 23:10:45.095 I/audio_share_proto_nat..(18526): session stopped (LOCAL NORMAL)
+11-11 23:10:49.643 I/audio_share_proto_nat..(18526): createSession raw ptrs: env=0xb400007790388a80 host=0x772cbef7ec port=65531 pin=0x772cbef7f4 cred=0x772cbef7f8
+11-11 23:10:49.644 I/audio_share_proto_nat..(18526): media ring attached (4194304 bytes)
+11-11 23:10:49.646 I/audio_share_proto_nat..(18526): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:11:19.651 W/audio_share_proto_nat..(18526): session ended: handshake: timed out
+11-11 23:11:19.651 W/audio_share_proto_nat..(18526): control error: session ended: handshake: timed out
+11-11 23:11:19.779 I/ProtoSession(18526): playback stopped: session ended
+11-11 23:11:19.780 I/audio_share_proto_nat..(18526): session stopped (LOCAL NORMAL)
+11-11 23:11:27.527 I/audio_share_proto_nat..(18526): createSession raw ptrs: env=0xb400007790388a80 host=0x772cbef7ec port=65531 pin=0x772cbef7f4 cred=0x772cbef7f8
+11-11 23:11:27.528 I/audio_share_proto_nat..(18526): media ring attached (4194304 bytes)
+11-11 23:11:27.530 I/audio_share_proto_nat..(18526): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:11:57.533 W/audio_share_proto_nat..(18526): session ended: handshake: timed out
+11-11 23:11:57.533 W/audio_share_proto_nat..(18526): control error: session ended: handshake: timed out
+11-11 23:11:57.669 I/ProtoSession(18526): playback stopped: session ended
+11-11 23:11:57.669 I/audio_share_proto_nat..(18526): session stopped (LOCAL NORMAL)
+11-11 23:12:12.878 I/audio_share_proto_nat..(18526): createSession raw ptrs: env=0xb400007790388a80 host=0x772cbef7ec port=65531 pin=0x772cbef7f4 cred=0x772cbef7f8
+11-11 23:12:12.879 I/audio_share_proto_nat..(18526): media ring attached (4194304 bytes)
+11-11 23:12:12.881 I/audio_share_proto_nat..(18526): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:12:30.473 I/audio_share_proto_nat..(18706): createSession raw ptrs: env=0xb400007790389a80 host=0x77310cc7ec port=65531 pin=0x77310cc7f4 cred=0x77310cc7f8
+11-11 23:12:30.473 I/audio_share_proto_nat..(18706): media ring attached (4194304 bytes)
+11-11 23:12:30.475 I/audio_share_proto_nat..(18706): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:12:30.476 W/ProtoSession(18706): rebind: Binding socket to network 217 failed: EPERM (Operation not permitted)
+11-11 23:12:30.477 I/audio_share_proto_nat..(18706): session stopped (LOCAL NORMAL)
+11-11 23:12:30.477 I/audio_share_proto_nat..(18706): session stopped (LOCAL NORMAL)
+11-11 23:12:30.477 I/ProtoSession(18706): playback stopped: network change (rebind fallback)
+11-11 23:12:30.477 W/audio_share_proto_nat..(18706): session ended: shutdown during handshake
+11-11 23:12:30.477 W/audio_share_proto_nat..(18706): control error: session ended: shutdown during handshake
+11-11 23:12:30.978 I/audio_share_proto_nat..(18706): createSession raw ptrs: env=0xb400007790389a80 host=0x77310cc7ec port=65531 pin=0x77310cc7f4 cred=0x77310cc7f8
+11-11 23:12:30.978 I/audio_share_proto_nat..(18706): media ring attached (4194304 bytes)
+11-11 23:12:30.979 I/audio_share_proto_nat..(18706): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:12:31.025 I/audio_share_proto_nat..(18706): QUIC established
+11-11 23:12:31.229 I/audio_share_proto_nat..(18706): SUBSCRIBE sent
+11-11 23:12:31.272 I/audio_share_proto_nat..(18706): media start: instance 1 gen 1 48000 Hz 2 ch
+11-11 23:13:52.840 I/audio_share_proto_nat..(18792): createSession raw ptrs: env=0xb400007790389a80 host=0x77301fb7ec port=65531 pin=0x77301fb7f4 cred=0x77301fb7f8
+11-11 23:13:52.841 I/audio_share_proto_nat..(18792): media ring attached (4194304 bytes)
+11-11 23:13:52.842 I/audio_share_proto_nat..(18792): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:13:52.845 W/ProtoSession(18792): rebind: Binding socket to network 217 failed: EPERM (Operation not permitted)
+11-11 23:13:52.846 I/audio_share_proto_nat..(18792): session stopped (LOCAL NORMAL)
+11-11 23:13:52.846 I/audio_share_proto_nat..(18792): session stopped (LOCAL NORMAL)
+11-11 23:13:52.846 W/audio_share_proto_nat..(18792): session ended: shutdown during handshake
+11-11 23:13:52.846 I/ProtoSession(18792): playback stopped: network change (rebind fallback)
+11-11 23:13:52.846 W/audio_share_proto_nat..(18792): control error: session ended: shutdown during handshake
+11-11 23:13:53.397 I/audio_share_proto_nat..(18792): createSession raw ptrs: env=0xb400007790389a80 host=0x77301fb7ec port=65531 pin=0x77301fb7f4 cred=0x77301fb7f8
+11-11 23:13:53.397 I/audio_share_proto_nat..(18792): media ring attached (4194304 bytes)
+11-11 23:13:53.398 I/audio_share_proto_nat..(18792): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:13:53.443 W/audio_share_proto_nat..(18792): session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity
+11-11 23:13:53.443 W/audio_share_proto_nat..(18792): control error: session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity
+11-11 23:13:53.648 I/ProtoSession(18792): playback stopped: session ended
+11-11 23:13:53.648 I/audio_share_proto_nat..(18792): session stopped (LOCAL NORMAL)
+11-11 23:13:54.716 I/audio_share_proto_nat..(18792): createSession raw ptrs: env=0xb400007790389a80 host=0x77301fb7ec port=65531 pin=0x77301fb7f4 cred=0x77301fb7f8
+11-11 23:13:54.717 I/audio_share_proto_nat..(18792): media ring attached (4194304 bytes)
+11-11 23:13:54.717 I/audio_share_proto_nat..(18792): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:13:54.764 W/audio_share_proto_nat..(18792): session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity
+11-11 23:13:54.764 W/audio_share_proto_nat..(18792): control error: session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity
+11-11 23:13:54.968 I/ProtoSession(18792): playback stopped: session ended
+11-11 23:13:54.968 I/audio_share_proto_nat..(18792): session stopped (LOCAL NORMAL)
+11-11 23:13:56.669 I/audio_share_proto_nat..(18792): createSession raw ptrs: env=0xb400007790389a80 host=0x77301fb7ec port=65531 pin=0x77301fb7f4 cred=0x77301fb7f8
+11-11 23:13:56.670 I/audio_share_proto_nat..(18792): media ring attached (4194304 bytes)
+11-11 23:13:56.671 I/audio_share_proto_nat..(18792): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:13:56.723 W/audio_share_proto_nat..(18792): session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity
+11-11 23:13:56.723 W/audio_share_proto_nat..(18792): control error: session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity
+11-11 23:13:56.922 I/ProtoSession(18792): playback stopped: session ended
+11-11 23:13:56.923 I/audio_share_proto_nat..(18792): session stopped (LOCAL NORMAL)
+11-11 23:14:00.448 I/audio_share_proto_nat..(18792): createSession raw ptrs: env=0xb400007790389a80 host=0x77301fb7ec port=65531 pin=0x77301fb7f4 cred=0x77301fb7f8
+11-11 23:14:00.448 I/audio_share_proto_nat..(18792): media ring attached (4194304 bytes)
+11-11 23:14:00.449 I/audio_share_proto_nat..(18792): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:14:00.496 W/audio_share_proto_nat..(18792): session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity
+11-11 23:14:00.496 W/audio_share_proto_nat..(18792): control error: session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity
+11-11 23:14:00.700 I/ProtoSession(18792): playback stopped: session ended
+11-11 23:14:00.700 I/audio_share_proto_nat..(18792): session stopped (LOCAL NORMAL)
+11-11 23:14:07.928 I/audio_share_proto_nat..(18792): createSession raw ptrs: env=0xb400007790389a80 host=0x77301fb7ec port=65531 pin=0x77301fb7f4 cred=0x77301fb7f8
+11-11 23:14:07.929 I/audio_share_proto_nat..(18792): media ring attached (4194304 bytes)
+11-11 23:14:07.930 I/audio_share_proto_nat..(18792): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:14:07.977 W/audio_share_proto_nat..(18792): session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity
+11-11 23:14:07.977 W/audio_share_proto_nat..(18792): control error: session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity
+11-11 23:14:08.180 I/ProtoSession(18792): playback stopped: session ended
+11-11 23:14:08.180 I/audio_share_proto_nat..(18792): session stopped (LOCAL NORMAL)
+11-11 23:14:19.781 I/audio_share_proto_nat..(18878): createSession raw ptrs: env=0xb400007790389a80 host=0x772a0ca7ec port=65531 pin=0x772a0ca7f4 cred=0x772a0ca7f8
+11-11 23:14:19.781 I/audio_share_proto_nat..(18878): media ring attached (4194304 bytes)
+11-11 23:14:19.782 I/audio_share_proto_nat..(18878): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:14:19.784 W/ProtoSession(18878): rebind: Binding socket to network 217 failed: EPERM (Operation not permitted)
+11-11 23:14:19.784 I/audio_share_proto_nat..(18878): session stopped (LOCAL NORMAL)
+11-11 23:14:19.784 I/audio_share_proto_nat..(18878): session stopped (LOCAL NORMAL)
+11-11 23:14:19.784 I/ProtoSession(18878): playback stopped: network change (rebind fallback)
+11-11 23:14:19.784 W/audio_share_proto_nat..(18878): session ended: shutdown during handshake
+11-11 23:14:19.784 W/audio_share_proto_nat..(18878): control error: session ended: shutdown during handshake
+11-11 23:14:20.285 I/audio_share_proto_nat..(18878): createSession raw ptrs: env=0xb400007790389a80 host=0x772a0ca7ec port=65531 pin=0x772a0ca7f4 cred=0x772a0ca7f8
+11-11 23:14:20.285 I/audio_share_proto_nat..(18878): media ring attached (4194304 bytes)
+11-11 23:14:20.286 I/audio_share_proto_nat..(18878): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:14:20.332 I/audio_share_proto_nat..(18878): QUIC established
+11-11 23:14:20.376 W/audio_share_proto_nat..(18878): session ended: auth rejected (code BadCredential)
+11-11 23:14:20.376 W/audio_share_proto_nat..(18878): control error: session ended: auth rejected (code BadCredential)
+11-11 23:14:20.536 I/ProtoSession(18878): playback stopped: session ended
+11-11 23:14:20.536 I/audio_share_proto_nat..(18878): session stopped (LOCAL NORMAL)
+11-11 23:14:21.443 I/audio_share_proto_nat..(18878): createSession raw ptrs: env=0xb400007790389a80 host=0x772a0ca7ec port=65531 pin=0x772a0ca7f4 cred=0x772a0ca7f8
+11-11 23:14:21.443 I/audio_share_proto_nat..(18878): media ring attached (4194304 bytes)
+11-11 23:14:21.444 I/audio_share_proto_nat..(18878): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:14:21.492 I/audio_share_proto_nat..(18878): QUIC established
+11-11 23:14:21.537 W/audio_share_proto_nat..(18878): session ended: auth rejected (code BadCredential)
+11-11 23:14:21.537 W/audio_share_proto_nat..(18878): control error: session ended: auth rejected (code BadCredential)
+11-11 23:14:21.694 I/ProtoSession(18878): playback stopped: session ended
+11-11 23:14:21.694 I/audio_share_proto_nat..(18878): session stopped (LOCAL NORMAL)
+11-11 23:14:23.774 I/audio_share_proto_nat..(18878): createSession raw ptrs: env=0xb400007790389a80 host=0x772a0ca7ec port=65531 pin=0x772a0ca7f4 cred=0x772a0ca7f8
+11-11 23:14:23.775 I/audio_share_proto_nat..(18878): media ring attached (4194304 bytes)
+11-11 23:14:23.775 I/audio_share_proto_nat..(18878): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:14:23.823 I/audio_share_proto_nat..(18878): QUIC established
+11-11 23:14:23.869 W/audio_share_proto_nat..(18878): session ended: auth rejected (code BadCredential)
+11-11 23:14:23.869 W/audio_share_proto_nat..(18878): control error: session ended: auth rejected (code BadCredential)
+11-11 23:14:24.027 I/ProtoSession(18878): playback stopped: session ended
+11-11 23:14:24.027 I/audio_share_proto_nat..(18878): session stopped (LOCAL NORMAL)
+11-11 23:14:28.136 I/audio_share_proto_nat..(18878): createSession raw ptrs: env=0xb400007790389a80 host=0x772a0ca7ec port=65531 pin=0x772a0ca7f4 cred=0x772a0ca7f8
+11-11 23:14:28.137 I/audio_share_proto_nat..(18878): media ring attached (4194304 bytes)
+11-11 23:14:28.141 I/audio_share_proto_nat..(18878): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:14:28.190 I/audio_share_proto_nat..(18878): QUIC established
+11-11 23:14:28.236 W/audio_share_proto_nat..(18878): session ended: auth rejected (code BadCredential)
+11-11 23:14:28.236 W/audio_share_proto_nat..(18878): control error: session ended: auth rejected (code BadCredential)
+11-11 23:14:28.390 I/ProtoSession(18878): playback stopped: session ended
+11-11 23:14:28.390 I/audio_share_proto_nat..(18878): session stopped (LOCAL NORMAL)
+11-11 23:14:37.890 I/audio_share_proto_nat..(18878): createSession raw ptrs: env=0xb400007790389a80 host=0x772a0ca7ec port=65531 pin=0x772a0ca7f4 cred=0x772a0ca7f8
+11-11 23:14:37.891 I/audio_share_proto_nat..(18878): media ring attached (4194304 bytes)
+11-11 23:14:37.892 I/audio_share_proto_nat..(18878): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:14:37.940 I/audio_share_proto_nat..(18878): QUIC established
+11-11 23:14:37.985 W/audio_share_proto_nat..(18878): session ended: auth rejected (code BadCredential)
+11-11 23:14:37.985 W/audio_share_proto_nat..(18878): control error: session ended: auth rejected (code BadCredential)
+11-11 23:14:38.143 I/ProtoSession(18878): playback stopped: session ended
+11-11 23:14:38.143 I/audio_share_proto_nat..(18878): session stopped (LOCAL NORMAL)
+11-11 23:14:51.886 I/audio_share_proto_nat..(18972): createSession raw ptrs: env=0xb400007790389a80 host=0x772b6ae7ec port=65531 pin=0x772b6ae7f4 cred=0x772b6ae7f8
+11-11 23:14:51.886 I/audio_share_proto_nat..(18972): media ring attached (4194304 bytes)
+11-11 23:14:51.888 W/ProtoSession(18972): rebind: Binding socket to network 217 failed: EPERM (Operation not permitted)
+11-11 23:14:51.888 I/audio_share_proto_nat..(18972): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:14:51.888 I/audio_share_proto_nat..(18972): session stopped (LOCAL NORMAL)
+11-11 23:14:51.888 I/audio_share_proto_nat..(18972): session stopped (LOCAL NORMAL)
+11-11 23:14:51.888 I/ProtoSession(18972): playback stopped: network change (rebind fallback)
+11-11 23:14:51.935 I/audio_share_proto_nat..(18972): QUIC established
+11-11 23:14:52.341 W/audio_share_proto_nat..(18972): session ended: control after close
+11-11 23:14:52.341 W/audio_share_proto_nat..(18972): control error: session ended: control after close
+11-11 23:14:52.468 I/audio_share_proto_nat..(18972): createSession raw ptrs: env=0xb400007790389a80 host=0x772b6ae7ec port=65531 pin=0x772b6ae7f4 cred=0x772b6ae7f8
+11-11 23:14:52.468 I/audio_share_proto_nat..(18972): media ring attached (4194304 bytes)
+11-11 23:14:52.468 I/audio_share_proto_nat..(18972): connecting to 100.94.170.124:65531 ALPN audio-share/v2
+11-11 23:14:53.519 I/audio_share_proto_nat..(18972): QUIC established
+11-11 23:14:53.721 I/audio_share_proto_nat..(18972): SUBSCRIBE sent
+11-11 23:14:53.939 I/audio_share_proto_nat..(18972): media start: instance 1 gen 1 48000 Hz 2 ch
+11-11 23:18:32.078 I/ProtoSession(18972): playback stopped: user stop
+11-11 23:18:32.078 I/audio_share_proto_nat..(18972): UNSUBSCRIBE sent
+11-11 23:18:32.078 I/audio_share_proto_nat..(18972): session stopped (LOCAL NORMAL)
+11-11 23:18:32.078 I/audio_share_proto_nat..(18972): session stopped (LOCAL NORMAL)
