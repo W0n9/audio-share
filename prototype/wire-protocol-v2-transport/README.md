@@ -101,12 +101,16 @@ Run a client (happy path, ~1 s of media):
 
 Client flags/modes: `--pin-file F`, `--credential TOKEN`, `--alpn S`
 (default `audio-share/v2`), `--wrong-alpn`, `--wrong-pin`, `--wrong-credential`
-(negative tests), `--duration-ms`, `--min-datagrams`, `--stop-reading-ms`
-(slow-reader demonstration), `--mtud`, `-v/-vv`. Modes: `happy` (default),
-`hold` (subscribe, then wait for a server-initiated close — used for the
-server-stop case), `no-auth-subscribe`, `bad-msg-type`. Every run prints one
-`RESULT ...` line with counters and exits 0 when the intended flow completed
-(intended negative outcomes included).
+(negative tests), `--duration-ms`, `--idle-ms`, `--min-datagrams`,
+`--stop-reading-ms` (slow-reader demonstration), `--mtud`, `-v/-vv`. Modes:
+`happy` (default), `hold` (subscribe, then wait for a server-initiated close —
+used for the server-stop case), `idle` (auth, stay connected-but-unsubscribed
+for `--idle-ms`, then clean CLOSE — used for the resource-capture matrix cell),
+`no-auth-subscribe`, `bad-msg-type`. Every run prints one `RESULT ...` line
+with counters and exits 0 when the intended flow completed (intended negative
+outcomes included). The client binds the wildcard address of the server
+address's family (`0.0.0.0:0` for IPv4 targets, `[::]:0` for IPv6 targets) so
+both families are reachable.
 
 Scripted smoke run (8 cases, PASS/FAIL each, appends to
 `evidence/desktop-e2e.log`):
