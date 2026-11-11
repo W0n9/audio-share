@@ -74,6 +74,9 @@ version comparison.
   acceptance procedure and evidence package.
 - [GUI acceptance checklist](gui-acceptance-checklist.md) — manual desktop
   tray/menu/toast, Windows runtime, and Wayland checks.
+- [GUI modernization acceptance](gui-modernization-acceptance.md) — Variant C
+  manual acceptance for the modernized Server GUI (themes, disclosures,
+  window sizes, keyboard, prototype cleanup), extending the baseline.
 
 **Some real release gates remain open.** The 8-hour release soak passed on the
 Linux host (see [Soak](soak.md)). The Windows packaging artifacts were built
