@@ -6,6 +6,7 @@
 pub mod codec;
 pub mod control;
 pub mod media;
+pub mod ring;
 pub mod stats;
 pub mod verify;
 
