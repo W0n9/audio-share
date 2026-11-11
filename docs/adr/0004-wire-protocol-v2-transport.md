@@ -1,6 +1,6 @@
 # ADR-0004: Wire Protocol v2 transport uses quinn (QUIC + TLS 1.3) with one reliable control stream and unreliable DATAGRAM media
 
-Status: proposed (2026-11-11)
+Status: accepted (2026-11-12)
 
 ## Context
 
