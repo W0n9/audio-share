@@ -1,0 +1,35 @@
+[package]
+name = "audio-share-proto-native"
+version = "0.1.0"
+edition = "2021"
+description = "Throwaway prototype: quinn/rustls transport core for the wire-protocol-v2 Android client (ticket 01)"
+# Standalone crate — deliberately NOT part of the repo root cargo workspace
+# (prototype isolation; the root workspace owns production crates/ only).
+[workspace]
+
+[lib]
+name = "audio_share_proto_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+quinn = { version = "0.11", default-features = false, features = ["rustls-ring", "runtime-tokio", "log"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+rustls-pki-types = "1"
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros", "io-util"] }
+jni = "0.21"
+log = "0.4"
+ring = "0.17"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.14"
+
+[dev-dependencies]
+rcgen = "0.13"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+# NOTE: no panic="abort" — the JNI boundary relies on catch_unwind; aborting the
+# process on panic would kill the whole Android app instead of failing the call.
+strip = "none"
