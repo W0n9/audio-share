@@ -369,6 +369,7 @@ async fn send_frame(tx: &mut SendStream, frame: &Frame) -> std::io::Result<()> {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // payload fields are diagnostics; violation_text summarizes
 enum ReadFrameError {
     Eof,
     EmptyFrame,

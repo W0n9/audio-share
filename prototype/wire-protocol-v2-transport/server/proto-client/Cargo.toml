@@ -17,8 +17,10 @@ quinn.workspace = true
 rustls.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 anyhow.workspace = true
 bytes.workspace = true
+clap.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

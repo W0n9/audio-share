@@ -73,7 +73,14 @@ pub struct SessionStats {
 
 impl SessionStats {
     pub fn new() -> Self {
-        Self::default()
+        let stats = Self::default();
+        stats
+            .close_sent_reason
+            .store(CLOSE_UNSET, Ordering::Relaxed);
+        stats
+            .close_received_reason
+            .store(CLOSE_UNSET, Ordering::Relaxed);
+        stats
     }
 
     pub fn closed(&self) -> bool {

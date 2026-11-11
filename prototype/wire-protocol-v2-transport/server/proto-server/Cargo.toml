@@ -18,7 +18,9 @@ rustls.workspace = true
 rcgen.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 anyhow.workspace = true
 bytes.workspace = true
+clap.workspace = true
 
 [dev-dependencies]
