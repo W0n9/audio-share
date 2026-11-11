@@ -34,5 +34,10 @@
   (`docs/server-rewrite/img/gui-mod-05-host-addresses-zh.png`). The CI
   artifact was re-cut in run 42988001959 at `6dd11de`
   (`sha256 722aa366…f06f3`, 12,031,488 bytes; the CI log shows the same
-  `index-DKDcBJa4.js` frontend asset as the local build).
+  `index-DKDcBJa4.js` frontend asset as the local build). Release-artifact
+  behavior verified from the background via the WebView2 CDP endpoint
+  (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port`): `#host`
+  has `list="host-addresses"` and the datalist contains `192.168.137.1`,
+  `100.96.123.50`, and `10.8.144.155`; the window stayed
+  minimized/background, and the debug port was closed with the process.
 
