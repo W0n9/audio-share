@@ -1,0 +1,10 @@
+[package]
+name = "e2e"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]

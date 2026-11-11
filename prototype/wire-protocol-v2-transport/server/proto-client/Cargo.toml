@@ -1,0 +1,13 @@
+[package]
+name = "proto-client"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "proto-client"
+path = "src/main.rs"
+
+[dependencies]
