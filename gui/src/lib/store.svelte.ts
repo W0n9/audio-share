@@ -6,8 +6,10 @@ import {
   type Notice,
   type ServerStatus,
   type Settings,
+  type Theme,
   type UpdateCheckResult,
 } from "./ipc";
+import { applyTheme } from "./theme";
 import { t } from "./i18n.svelte";
 
 export type View = "main" | "settings";
@@ -25,6 +27,7 @@ const DEFAULT_SETTINGS: Settings = {
   whenClose: "minimize",
   autoUpdate: false,
   language: "default",
+  theme: "system",
   running: false,
 };
 
@@ -34,6 +37,8 @@ class ServerStore {
   settings = $state<Settings>({ ...DEFAULT_SETTINGS });
   bootstrap = $state<Bootstrap | null>(null);
   endpoints = $state<Endpoint[]>([]);
+  /** Local IPv4 addresses offered as Host suggestions, default first. */
+  hostAddresses = $state<string[]>([]);
   /** Structured migration/recovery warnings shown in the banner. */
   notices = $state<Notice[]>([]);
   /** Newest release found by any check; drives the in-app banner. */
@@ -89,6 +94,7 @@ class ServerStore {
     this.bootstrap = data;
     this.status = data.status;
     this.settings = data.settings;
+    this.hostAddresses = data.hostAddresses;
     this.notices = data.configNotices;
     this.update = data.update;
     if (data.update?.status === "newer") {
@@ -150,8 +156,8 @@ class ServerStore {
   }
 
   /**
-   * Persist autostart/launch/close/update/language settings. Allowed while
-   * the server runs; Rust applies the login entry first for autostart.
+   * Persist autostart/launch/close/update/language/theme settings. Allowed
+   * while the server runs; Rust applies the login entry first for autostart.
    */
   async persistApplication(): Promise<void> {
     if (this.applicationLocked) return;
@@ -161,6 +167,7 @@ class ServerStore {
       whenClose: this.settings.whenClose,
       autoUpdate: this.settings.autoUpdate,
       language: this.settings.language,
+      theme: this.settings.theme,
     };
     this.saving = true;
     this.saveError = null;
@@ -185,6 +192,23 @@ class ServerStore {
     await this.persistApplication();
   }
 
+  /**
+   * Change the theme, apply it immediately, and persist it with the rest of
+   * the application settings. If the save fails and the re-read restores the
+   * stored value, the applied theme follows the file again. While a save is
+   * in flight (`applicationLocked`) the change is dropped instead: applying
+   * optimistically there would leave the document themed with neither a save
+   * nor a corrective re-read behind it.
+   */
+  async setTheme(theme: Theme): Promise<void> {
+    if (this.settings.theme === theme) return;
+    if (this.applicationLocked) return;
+    this.settings.theme = theme;
+    applyTheme(theme);
+    await this.persistApplication();
+    if (this.settings.theme !== theme) applyTheme(this.settings.theme);
+  }
+
   /** Restore Host/Port/Endpoint/Encoding defaults and write them. */
   async reset(): Promise<void> {
     if (this.settingsLocked) return;
@@ -201,6 +225,16 @@ class ServerStore {
 
   dismissNotices(): void {
     this.notices = [];
+  }
+
+  /** Switch to the settings view. */
+  openSettings(): void {
+    this.view = "settings";
+  }
+
+  /** Return from the settings view to the main view. */
+  closeSettings(): void {
+    this.view = "main";
   }
 
   /** A manual update check reports Up To Date, a new version, or an error. */

@@ -74,6 +74,9 @@ version comparison.
   acceptance procedure and evidence package.
 - [GUI acceptance checklist](gui-acceptance-checklist.md) — manual desktop
   tray/menu/toast, Windows runtime, and Wayland checks.
+- [GUI modernization acceptance](gui-modernization-acceptance.md) — Variant C
+  manual acceptance for the modernized Server GUI (themes, disclosures,
+  window sizes, keyboard, prototype cleanup), extending the baseline.
 
 **Some real release gates remain open.** The 8-hour release soak passed on the
 Linux host (see [Soak](soak.md)). The Windows packaging artifacts were built
@@ -83,17 +86,25 @@ firewall UAC approve/cancel, Sound Panel, autostart, i18n, update check); see
 [Windows build](build-windows.md), [capture](capture-windows.md), and the
 [GUI checklist](gui-acceptance-checklist.md). Three Windows runtime defects were
 fixed: the HTTPS update-check TLS backend, the WASAPI `Initialize` error
-mapping, and a UDP broadcast stall on a slow Wi-Fi peer. The final CI run
-[42777988420](https://github.com/W0n9/audio-share/actions/runs/42777988420)
-(`9626b10`) is green on all four jobs; its artifacts include all three fixes
-and were smoke-tested (GUI HTTPS update check, as-cmd version/list/encoding and
-mono error, and ~11 minutes of real-phone playback). The real v0.3.4 APK was
-executed on one Android 12 phone (48 kHz stereo × 5 encodings, 44.1 kHz
+mapping, and a UDP broadcast stall on a slow Wi-Fi peer. The real v0.3.4 APK
+was executed on one Android 12 phone (48 kHz stereo × 5 encodings, 44.1 kHz
 closest-match, reconnect, heartbeat, and a **passing 60-minute playback**).
-Still not executed: mono (N/A on the Realtek endpoint), a two-Android-client
-run, sleep/resume, real-hardware hotplug, Windows 10, a missing-WebView2 clean
-VM, and the real Linux desktop tray. These are tracked as `ready-for-human` in
-tickets 13, 15, and 16.
+
+The modernized Server GUI (tickets 01-05) completed acceptance on Windows 11
+and Android on 2026-11-11: the maintainer finished the real-desktop pass, the
+v0.3.4 APK re-check passed, and the Host-address regression found during the
+pass was fixed and verified in the release artifact. The final CI run
+[42988001959](https://github.com/W0n9/audio-share/actions/runs/42988001959)
+(`6dd11de`) is green; its Windows artifact was behavior-checked from the
+background (`#host` binds `list="host-addresses"` with the enumerated local
+IPv4 addresses). See
+[GUI modernization acceptance](gui-modernization-acceptance.md). Windows 10 is
+explicitly accepted as untested (no host available).
+
+Still not executed from the earlier baseline: mono (N/A on the Realtek
+endpoint), a two-Android-client run, sleep/resume, real-hardware hotplug, a
+missing-WebView2 clean VM, and the real Linux desktop tray. These are tracked
+as `ready-for-human` in tickets 13, 15, and 16.
 
 ## Spikes (historical)
 

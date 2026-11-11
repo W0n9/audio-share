@@ -24,6 +24,12 @@ export type WhenClose = "exit" | "minimize";
 export type Locale = "en-US" | "zh-CN";
 
 /**
+ * GUI color scheme (`[App] theme`): `system` follows the operating system,
+ * the other two pin the matching token set.
+ */
+export type Theme = "system" | "light" | "dark";
+
+/**
  * Linux help topics replacing the Windows-only maintenance actions. Rust maps
  * each id to a fixed documentation URL; the webview never supplies a URL.
  */
@@ -43,6 +49,7 @@ export interface Settings {
   whenClose: WhenClose;
   autoUpdate: boolean;
   language: string;
+  theme: Theme;
   running: boolean;
 }
 
@@ -53,6 +60,7 @@ export interface ApplicationSettings {
   whenClose: WhenClose;
   autoUpdate: boolean;
   language: string;
+  theme: Theme;
 }
 
 /** Structured migration/recovery/startup message; see `notice.<code>` keys. */
@@ -85,6 +93,8 @@ export interface Bootstrap {
   locale: Locale;
   status: ServerStatus;
   settings: Settings;
+  /** Local IPv4 addresses offered as Host suggestions, default first. */
+  hostAddresses: string[];
   /** Structured migration/recovery warnings; empty when the config was clean. */
   configNotices: Notice[];
   /** An update already found by a background check, if any. */

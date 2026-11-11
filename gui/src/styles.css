@@ -1,17 +1,100 @@
-/* Prototype A visual tokens and layout (tray-first single window). */
+/* Visual tokens for the Server GUI.
+ *
+ * One systematic light/dark set drives every surface, control, semantic
+ * color, and focus ring; values follow the Variant C design
+ * (prototype/server-gui-modernization @ 604f0d5). The document element
+ * carries data-theme="light" or "dark" — set by src/lib/theme.ts before the
+ * shell mounts, so the explicit [data-theme="dark"] block is authoritative.
+ * The prefers-color-scheme fallback below only covers the moment before that
+ * script runs; the two dark token blocks must stay identical.
+ */
+
 :root {
-  --bg: #e9e9f0;
+  color-scheme: light;
+  --bg: #f4f5f9;
   --surface: #ffffff;
-  --surface-2: #f6f6f9;
-  --text: #1b1b1f;
-  --muted: #6b6b76;
-  --line: #dcdce3;
-  --accent: #0a84ff;
-  --green: #34c759;
-  --red: #ff453a;
+  --surface-2: #eceef4;
+  --input: #ffffff;
+  --text: #191a21;
+  --muted: #707483;
+  --line: #e1e3ea;
+  --accent: #625bf6;
+  --accent-hover: #514ce3;
+  --accent-soft: #eeedff;
+  /* Text/icon color on solid accent or danger fills. */
+  --accent-contrast: #ffffff;
+  --green: #189b55;
+  --green-soft: #e4f5eb;
+  --red: #b93f3f;
+  --red-soft: #fbeaea;
+  --red-line: rgba(185, 63, 63, 0.32);
+  --warn-soft: rgba(255, 149, 0, 0.12);
+  --warn-line: rgba(255, 149, 0, 0.42);
+  --shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.14);
+  --brand: linear-gradient(135deg, #0a84ff, #5e5ce6);
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Pre-script fallback: follow the OS until data-theme is set. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #111318;
+    --surface: #1a1d24;
+    --surface-2: #242832;
+    --input: #15181e;
+    --text: #f0f1f5;
+    --muted: #9a9ead;
+    --line: #2d323d;
+    --accent: #928cff;
+    --accent-hover: #a49fff;
+    --accent-soft: #2b284b;
+    --accent-contrast: #151324;
+    --green: #54cc89;
+    --green-soft: #19372a;
+    --red: #ff8585;
+    --red-soft: #3b2328;
+    --red-line: rgba(255, 133, 133, 0.35);
+    --warn-soft: rgba(255, 159, 10, 0.16);
+    --warn-line: rgba(255, 159, 10, 0.45);
+    --shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111318;
+  --surface: #1a1d24;
+  --surface-2: #242832;
+  --input: #15181e;
+  --text: #f0f1f5;
+  --muted: #9a9ead;
+  --line: #2d323d;
+  --accent: #928cff;
+  --accent-hover: #a49fff;
+  --accent-soft: #2b284b;
+  --accent-contrast: #151324;
+  --green: #54cc89;
+  --green-soft: #19372a;
+  --red: #ff8585;
+  --red-soft: #3b2328;
+  --red-line: rgba(255, 133, 133, 0.35);
+  --warn-soft: rgba(255, 159, 10, 0.16);
+  --warn-line: rgba(255, 159, 10, 0.45);
+  --shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* Reduced motion: keep color/opacity feedback but drop every non-essential
+   transition and animation. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
 }
 
 * {
@@ -35,6 +118,10 @@ button,
 input,
 select {
   font: inherit;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 
 button {
@@ -43,48 +130,63 @@ button {
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
-  outline: 2px solid rgba(10, 132, 255, 0.35);
-  outline-offset: 1px;
+select:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 #app {
-  min-height: 100%;
+  height: 100%;
 }
 
+/* The shell fills the window exactly; each view scrolls its own content so
+   the header, banners, and footer stay reachable at the 380×560 minimum. */
 .app {
-  min-height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--surface);
 }
 
+.view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.view-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
 .header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 16px 16px 10px;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  padding: 12px 20px;
   flex: none;
 }
 
-.brand-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  flex: none;
-  background: linear-gradient(135deg, #0a84ff, #5e5ce6);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  font-size: 18px;
-}
-
-.titles {
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
   min-width: 0;
 }
 
-.name {
-  font-weight: 750;
+.brand-mark {
+  color: var(--accent);
+  display: grid;
+  place-items: center;
 }
 
 .sub {
@@ -93,80 +195,230 @@ select:focus-visible {
   margin-top: 2px;
 }
 
+.header-title {
+  font-size: 14px;
+}
+
+/* Balances the Settings/Back button so the title stays centred. */
+.header-spacer {
+  width: 32px;
+}
+
 .icon-btn {
-  margin-left: auto;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1px solid transparent;
+  background: transparent;
   width: 32px;
   height: 32px;
-  border-radius: 9px;
+  border-radius: 10px;
   color: var(--muted);
+  display: grid;
+  place-items: center;
   flex: none;
 }
 
-.status-hero {
-  padding: 2px 16px 14px;
+.icon-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
 }
 
-.status-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 18px;
-  font-weight: 750;
+/* --- Main view (Variant C): one status, one action, quick settings --- */
+
+.main-scroll {
+  padding: 0 20px 16px;
 }
 
-.dot {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
+.hero {
+  padding: 19px 0 18px;
+  text-align: center;
+}
+
+.hero-dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  margin: 0 auto 13px;
   border-radius: 50%;
-  background: #b9b9c3;
-  flex: none;
+  background: var(--muted);
+  box-shadow: 0 0 0 7px var(--surface-2);
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
-.dot.on {
+.hero-dot.is-running {
   background: var(--green);
-  box-shadow: 0 0 0 4px rgba(52, 199, 89, 0.16);
+  box-shadow: 0 0 0 7px var(--green-soft);
 }
 
-.dot.pending {
+/* Starting/Stopping feedback: the pending halo, no persistent animation. */
+.hero-dot.is-pending {
   background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.16);
+  box-shadow: 0 0 0 7px var(--accent-soft);
 }
 
-.address {
-  font-family: var(--mono);
-  font-size: 12px;
+.hero-title {
+  margin: 0 0 9px;
+  font-size: 26px;
+  line-height: 1.15;
+  letter-spacing: -0.045em;
+}
+
+.address-chip {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--bg);
   color: var(--muted);
-  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
   overflow-wrap: anywhere;
 }
 
-.body {
-  padding: 0 16px;
+.main-action {
+  margin: 17px auto 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.action-circle {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 24%, transparent);
+  transition:
+    transform 120ms ease,
+    background-color 120ms ease;
+}
+
+.main-action:hover:not(:disabled) .action-circle {
+  transform: translateY(-1px);
+  background: var(--accent-hover);
+}
+
+/* Stop: the restrained danger style — soft field, danger icon, no glow. */
+.main-action.stop .action-circle {
+  border-color: var(--red-line);
+  background: var(--red-soft);
+  color: var(--red);
+  box-shadow: none;
+}
+
+.main-action.stop:hover:not(:disabled) .action-circle {
+  background: color-mix(in srgb, var(--red) 16%, var(--red-soft));
+}
+
+.quick-settings {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.quick-row {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
 
-.btn-primary {
-  border: 0;
-  border-radius: 10px;
-  padding: 12px 16px;
-  font-weight: 700;
-  color: #fff;
-  background: var(--accent);
-  width: 100%;
+.quick-row + .quick-row {
+  border-top: 1px solid var(--line);
 }
 
-.btn-primary.stop {
-  background: var(--red);
+.quick-row label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 10px;
 }
 
-.btn-primary:disabled {
-  opacity: 0.55;
-  cursor: default;
+.quick-row select {
+  width: 172px;
+  max-width: 55%;
+  flex: none;
+  border-color: transparent;
+  background: var(--bg);
+  text-align: right;
+}
+
+/* --- Collapsible region (native details/summary semantics) --- */
+
+.disclosure {
+  border-bottom: 1px solid var(--line);
+}
+
+.disclosure summary {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure summary > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.disclosure summary > svg {
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.disclosure[open] summary > svg {
+  transform: rotate(180deg);
+}
+
+.disclosure-content {
+  padding: 2px 0 13px;
+}
+
+.network-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 10px;
+}
+
+.server-reset {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.server-reset-label {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.server-reset .link {
+  font-size: 11px;
+  padding: 3px 0;
 }
 
 .field {
@@ -191,7 +443,7 @@ select {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 9px 10px;
-  background: #fff;
+  background: var(--input);
   color: var(--text);
   min-width: 0;
 }
@@ -206,21 +458,25 @@ select {
 }
 
 .error {
-  margin: 0 16px 12px;
+  margin: 0 20px 12px;
   padding: 10px 12px;
-  border: 1px solid rgba(255, 69, 58, 0.35);
-  background: rgba(255, 69, 58, 0.08);
-  color: #a4231a;
+  border: 1px solid var(--red-line);
+  background: var(--red-soft);
+  color: var(--red);
   border-radius: 10px;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 
+.main-scroll .error {
+  margin: 0 0 12px;
+}
+
 .banner {
-  margin: 0 16px 12px;
+  margin: 0 20px 12px;
   padding: 10px 12px;
-  border: 1px solid rgba(255, 149, 0, 0.4);
-  background: rgba(255, 149, 0, 0.1);
+  border: 1px solid var(--warn-line);
+  background: var(--warn-soft);
   border-radius: 10px;
   font-size: 12px;
 }
@@ -249,25 +505,29 @@ select {
   padding: 12px 0 6px;
 }
 
-.settings-list .field {
-  margin-bottom: 10px;
-}
-
-.server-fields {
-  margin-bottom: 10px;
-}
-
-.reset-row {
-  border-top: 1px solid var(--line);
-}
-
 .footer {
   margin-top: auto;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px 14px;
+  gap: 12px;
+  padding: 10px 20px;
+  min-height: 42px;
   border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.footer-hint {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Groups the Hide/Quit links on the right of the settings footer. */
+.footer-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
 .link {
@@ -278,14 +538,30 @@ select {
   padding: 4px 0;
 }
 
+.link:hover {
+  text-decoration: underline;
+}
+
 .link.muted {
   color: var(--muted);
 }
 
-.settings-list {
-  display: flex;
-  flex-direction: column;
-  padding: 0 16px;
+.settings-scroll {
+  padding: 0 20px 16px;
+}
+
+.settings-scroll .error {
+  margin: 0 0 12px;
+}
+
+/* Disclosures separate with a top rule; the last one closes the group. */
+.settings-groups .disclosure {
+  border-bottom: 0;
+  border-top: 1px solid var(--line);
+}
+
+.settings-groups .disclosure:last-child {
+  border-bottom: 1px solid var(--line);
 }
 
 .row {
@@ -336,10 +612,31 @@ select {
   font-weight: 600;
 }
 
-.placeholder {
-  margin: 12px 16px 0;
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--bg);
+  flex: none;
+}
+
+.segmented button {
+  border: 0;
+  background: transparent;
   color: var(--muted);
+  border-radius: 7px;
+  padding: 5px 12px;
   font-size: 12px;
+  font-weight: 600;
+}
+
+.segmented button.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 650;
+  box-shadow: var(--shadow-soft);
 }
 
 input:disabled,
@@ -352,6 +649,10 @@ button:disabled {
 @media (max-width: 430px) {
   .field-row {
     flex-direction: column;
+  }
+
+  .network-row {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -370,64 +671,22 @@ button:disabled {
   color: var(--accent);
 }
 
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(20, 20, 24, 0.38);
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  z-index: 20;
+/* About disclosure content: the version/license line and the copyright
+   share one muted meta style. */
+.about-block {
+  padding: 3px 0 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
 }
 
-.modal {
-  width: min(340px, 100%);
-  background: var(--surface);
-  border-radius: 14px;
-  padding: 18px;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
-}
-
-.modal h2 {
-  margin: 0 0 8px;
-  font-size: 16px;
-}
-
-.about-product {
-  font-weight: 700;
-  margin-bottom: 12px;
-}
-
-.about-fields {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px 14px;
-  margin: 0 0 12px;
+.about-name {
   font-size: 13px;
+  font-weight: 650;
 }
 
-.about-fields dt {
-  color: var(--muted);
-}
-
-.about-fields dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.about-fields .link {
-  padding: 0;
-  text-align: left;
-  font-weight: 600;
-}
-
-.about-copyright {
+.about-meta {
   color: var(--muted);
   font-size: 12px;
-  margin: 0 0 14px;
-}
-
-.about-actions {
-  display: flex;
-  justify-content: flex-end;
 }
