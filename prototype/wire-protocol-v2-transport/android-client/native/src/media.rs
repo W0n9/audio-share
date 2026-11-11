@@ -150,6 +150,11 @@ impl MediaTracker {
         }
     }
 
+    /// Highest sequence accepted for the current instance (None before any datagram).
+    pub fn latest(&self) -> Option<u32> {
+        self.latest
+    }
+
     /// Called when MEDIA_START reconfigures the stream (new instance/gen).
     pub fn reconfigure(&mut self, config: crate::control::MediaConfig) {
         self.config = config;
@@ -476,6 +481,16 @@ mod tests {
         let v = t.observe(hdr(1, 9, 0, 0), &payload);
         assert_eq!(v.kind, ObserveKind::Ok { gap: 0 });
         assert_eq!(t.config_mismatches, 1);
+    }
+
+    #[test]
+    fn latest_tracks_high_water_mark() {
+        let mut t = MediaTracker::new(config(1, 1));
+        assert_eq!(t.latest(), None);
+        let mk = |seq: u32| (hdr(1, 1, seq, u64::from(seq) * 240), render_payload(u64::from(seq) * 240, 240, 2));
+        let (h, p) = mk(7);
+        t.observe(h, &p);
+        assert_eq!(t.latest(), Some(7));
     }
 
     #[test]

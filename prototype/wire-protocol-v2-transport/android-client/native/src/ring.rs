@@ -18,6 +18,8 @@ pub struct MediaRing {
     write_pos: u64,
     pub writes: u64,
     pub oversize_drops: u64,
+    /// Payload bytes dropped because a chunk exceeded the whole ring.
+    pub dropped_bytes: u64,
 }
 
 // The ring is used from one native media task only (JNI attach happens on the
@@ -38,6 +40,7 @@ impl MediaRing {
             write_pos: 0,
             writes: 0,
             oversize_drops: 0,
+            dropped_bytes: 0,
         }
     }
 
@@ -54,6 +57,7 @@ impl MediaRing {
     pub fn write(&mut self, bytes: &[u8]) -> bool {
         if bytes.len() > self.capacity {
             self.oversize_drops += 1;
+            self.dropped_bytes += bytes.len() as u64;
             return false;
         }
         if bytes.is_empty() {
@@ -110,7 +114,7 @@ mod tests {
     fn with_ring(cap: usize, f: impl FnOnce(&mut Vec<u8>, MediaRing)) {
         let mut backing = vec![0u8; cap];
         let ptr = backing.as_mut_ptr();
-        let mut ring = unsafe { MediaRing::attach(ptr, cap) };
+        let ring = unsafe { MediaRing::attach(ptr, cap) };
         f(&mut backing, ring);
     }
 
@@ -163,6 +167,7 @@ mod tests {
         with_ring(8, |_, mut ring| {
             assert!(!ring.write(&[0u8; 9]));
             assert_eq!(ring.oversize_drops, 1);
+            assert_eq!(ring.dropped_bytes, 9);
             assert_eq!(ring.write_pos(), 0, "nothing written for oversize chunk");
         });
         with_ring(8, |_, mut ring| {

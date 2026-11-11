@@ -5,8 +5,10 @@
 
 pub mod codec;
 pub mod control;
+pub mod jni;
 pub mod media;
 pub mod ring;
+pub mod session;
 pub mod stats;
 pub mod verify;
 
