@@ -32,5 +32,7 @@
   with a debug build: the Host field shows the datalist arrow and local
   address suggestions
   (`docs/server-rewrite/img/gui-mod-05-host-addresses-zh.png`). The CI
-  artifact still needs a re-cut for the shipped binary.
+  artifact was re-cut in run 42988001959 at `6dd11de`
+  (`sha256 722aa366…f06f3`, 12,031,488 bytes; the CI log shows the same
+  `index-DKDcBJa4.js` frontend asset as the local build).
 

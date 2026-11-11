@@ -34,10 +34,14 @@ Hosts/evidence for this file:
   (debug, embedded dist), driven with `xdotool` clicks/keys and ImageMagick
   `import` screenshots, per the headless recipe in [`linux.md`](linux.md).
 - Windows 11 Enterprise 10.0.26300 (maintainer's machine), WebView2 runtime,
-  150% display scaling, portable exe from CI run 42971305804
-  (sha256 `4b8ec767…0578af`, 12,030,464 bytes). The exe hash and embedded
-  frontend were verified before the pass; the ticket agent then drove the
-  running app from the background with `PostMessage` clicks and `PrintWindow`
+  150% display scaling. The acceptance pass started on the CI run 42971305804
+  portable exe (sha256 `4b8ec767…0578af`, 12,030,464 bytes); the final
+  ticket-05 build is CI run 42988001959 at `6dd11de`
+  (sha256 `722aa366…f06f3`, 12,031,488 bytes; the CI log shows the same
+  `index-DKDcBJa4.js` frontend asset as the local build). The exe hash and
+  embedded frontend were verified before the pass; the ticket agent then drove
+  the running app from the background with `PostMessage` clicks and
+  `PrintWindow`
   captures (no foreground focus stolen), per the maintainer's request.
   Screenshots use the `gui-mod-04-win-*` prefix. Covered here: Light / Dark /
   System selection, theme persistence to `config.ini`, Starting / Stopping
