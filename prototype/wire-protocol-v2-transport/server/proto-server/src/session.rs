@@ -89,9 +89,16 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
                 match handle_frame(&frame, &shared, &stats, &conn, &mut tx, &mut media).await {
                     Flow::Continue => {}
                     Flow::CloseWith(reason, prelude) => {
-                        break_close(
-                            &conn, &mut tx, &mut rx, &stats, reason, prelude, &mut shutdown_seen,
-                        )
+                        CloseContext {
+                            conn: &conn,
+                            tx: &mut tx,
+                            rx: &mut rx,
+                            stats: &stats,
+                            reason,
+                            prelude,
+                            shutdown_seen: &mut shutdown_seen,
+                        }
+                        .run()
                         .await;
                         break;
                     }
@@ -99,51 +106,60 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
             }
             SessionEvent::PeerEof => {
                 tracing::debug!("client half-closed the control stream without CLOSE");
-                break_close(
-                    &conn,
-                    &mut tx,
-                    &mut rx,
-                    &stats,
-                    CloseReason::Normal,
-                    None,
-                    &mut shutdown_seen,
-                )
+                CloseContext {
+                    conn: &conn,
+                    tx: &mut tx,
+                    rx: &mut rx,
+                    stats: &stats,
+                    reason: CloseReason::Normal,
+                    prelude: None,
+                    shutdown_seen: &mut shutdown_seen,
+                }
+                .run()
                 .await;
                 break;
             }
             SessionEvent::IdleTimeout => {
-                break_close(
-                    &conn,
-                    &mut tx,
-                    &mut rx,
-                    &stats,
-                    CloseReason::IdleTimeout,
-                    None,
-                    &mut shutdown_seen,
-                )
+                CloseContext {
+                    conn: &conn,
+                    tx: &mut tx,
+                    rx: &mut rx,
+                    stats: &stats,
+                    reason: CloseReason::IdleTimeout,
+                    prelude: None,
+                    shutdown_seen: &mut shutdown_seen,
+                }
+                .run()
                 .await;
                 break;
             }
             SessionEvent::Shutdown => {
                 shutdown_seen = true;
-                break_close(
-                    &conn,
-                    &mut tx,
-                    &mut rx,
-                    &stats,
-                    CloseReason::ServerStop,
-                    None,
-                    &mut shutdown_seen,
-                )
+                CloseContext {
+                    conn: &conn,
+                    tx: &mut tx,
+                    rx: &mut rx,
+                    stats: &stats,
+                    reason: CloseReason::ServerStop,
+                    prelude: None,
+                    shutdown_seen: &mut shutdown_seen,
+                }
+                .run()
                 .await;
                 break;
             }
             SessionEvent::ExtraStream => {
                 tracing::debug!("unexpected second bidirectional stream");
-                break_close(
-                    &conn, &mut tx, &mut rx, &stats, CloseReason::ProtocolError, None,
-                    &mut shutdown_seen,
-                )
+                CloseContext {
+                    conn: &conn,
+                    tx: &mut tx,
+                    rx: &mut rx,
+                    stats: &stats,
+                    reason: CloseReason::ProtocolError,
+                    prelude: None,
+                    shutdown_seen: &mut shutdown_seen,
+                }
+                .run()
                 .await;
                 break;
             }
@@ -161,9 +177,16 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
                     }
                     _ => (CloseReason::ProtocolError, None),
                 };
-                break_close(
-                    &conn, &mut tx, &mut rx, &stats, reason, prelude, &mut shutdown_seen,
-                )
+                CloseContext {
+                    conn: &conn,
+                    tx: &mut tx,
+                    rx: &mut rx,
+                    stats: &stats,
+                    reason,
+                    prelude,
+                    shutdown_seen: &mut shutdown_seen,
+                }
+                .run()
                 .await;
                 break;
             }
@@ -413,45 +436,55 @@ async fn read_frame(rx: &mut RecvStream) -> Result<Frame, ReadFrameError> {
     frame::parse(ty_buf[0], &payload).map_err(ReadFrameError::Parse)
 }
 
-/// Full graceful close: send any prelude frame (e.g. AUTH_ERR), the CLOSE
-/// frame, half-close, wait briefly for the peer to finish reading, then close
-/// the transport with a matching application error code.
-async fn break_close(
-    conn: &Connection,
-    tx: &mut SendStream,
-    rx: &mut RecvStream,
-    stats: &Arc<SessionStats>,
+/// Everything one graceful close needs. The `break_close` parameter list was
+/// repeated verbatim at every call site; the struct carries the same values.
+struct CloseContext<'a> {
+    conn: &'a Connection,
+    tx: &'a mut SendStream,
+    rx: &'a mut RecvStream,
+    stats: &'a Arc<SessionStats>,
     reason: CloseReason,
+    /// Frame sent before CLOSE (e.g. AUTH_ERR before CLOSE(AUTH_FAILED)).
     prelude: Option<Frame>,
-    shutdown_seen: &mut bool,
-) {
-    stats.set_state(SessionState::Closing);
-    if matches!(reason, CloseReason::ServerStop) {
-        *shutdown_seen = true;
-    }
-    if let Some(prelude) = prelude {
-        if matches!(prelude, Frame::AuthErr(_)) {
-            stats.auth_err_out.fetch_add(1, Ordering::Relaxed);
+    /// Set on a server-stop close so the session loop knows the endpoint is
+    /// being torn down by `ServerHandle::stop`.
+    shutdown_seen: &'a mut bool,
+}
+
+impl CloseContext<'_> {
+    /// Full graceful close: send any prelude frame (e.g. AUTH_ERR), the CLOSE
+    /// frame, half-close, wait briefly for the peer to finish reading, then
+    /// close the transport with a matching application error code.
+    async fn run(self) {
+        let Self { conn, tx, rx, stats, reason, prelude, shutdown_seen } = self;
+        stats.set_state(SessionState::Closing);
+        if matches!(reason, CloseReason::ServerStop) {
+            *shutdown_seen = true;
         }
-        let _ = send_frame(tx, &prelude).await;
+        if let Some(prelude) = prelude {
+            if matches!(prelude, Frame::AuthErr(_)) {
+                stats.auth_err_out.fetch_add(1, Ordering::Relaxed);
+            }
+            let _ = send_frame(tx, &prelude).await;
+        }
+        if matches!(reason, CloseReason::ProtocolError) {
+            stats.protocol_errors_out.fetch_add(1, Ordering::Relaxed);
+        }
+        let close_frame = Frame::Close(reason);
+        if send_frame(tx, &close_frame).await.is_ok() {
+            stats.close_out.fetch_add(1, Ordering::Relaxed);
+        }
+        stats.mark_close_sent(reason as u8);
+        let _ = tx.finish();
+        // Give the peer a moment to drain the stream before the transport close.
+        let _ = tokio::time::timeout(Duration::from_millis(500), read_frame(rx)).await;
+        conn.close(
+            quinn::VarInt::from_u32(reason as u32),
+            close_reason_ascii(reason),
+        );
+        stats.set_state(SessionState::Closed);
+        stats.closed.store(true, Ordering::Relaxed);
     }
-    if matches!(reason, CloseReason::ProtocolError) {
-        stats.protocol_errors_out.fetch_add(1, Ordering::Relaxed);
-    }
-    let close_frame = Frame::Close(reason);
-    if send_frame(tx, &close_frame).await.is_ok() {
-        stats.close_out.fetch_add(1, Ordering::Relaxed);
-    }
-    stats.mark_close_sent(reason as u8);
-    let _ = tx.finish();
-    // Give the peer a moment to drain the stream before the transport close.
-    let _ = tokio::time::timeout(Duration::from_millis(500), read_frame(rx)).await;
-    conn.close(
-        quinn::VarInt::from_u32(reason as u32),
-        close_reason_ascii(reason),
-    );
-    stats.set_state(SessionState::Closed);
-    stats.closed.store(true, Ordering::Relaxed);
 }
 
 fn close_reason_ascii(reason: CloseReason) -> &'static [u8] {
