@@ -4,7 +4,7 @@
 //! numeric fields unsigned decimal, all string values escaped JSON strings.
 //! This is a prototype contract only.
 
-use crate::control::{ClientState, CloseOrigin, CloseReason, MediaConfig};
+use crate::control::{ClientState, CloseOrigin, CloseReason, MediaStartPayload};
 
 /// One consistent snapshot of everything Kotlin displays.
 #[derive(Debug, Clone, PartialEq)]
@@ -14,7 +14,7 @@ pub struct StatsSnapshot {
     pub control_errors: u64,
     pub last_control_error: String,
     /// None until MEDIA_START has been seen.
-    pub media_config: Option<MediaConfig>,
+    pub media_config: Option<MediaStartPayload>,
     pub media: MediaCounters,
     pub buffer: BufferStats,
 }
@@ -71,7 +71,6 @@ fn close_reason_name(reason: &CloseReason) -> &'static str {
         CloseReason::AuthFailed => "AUTH_FAILED",
         CloseReason::IdleTimeout => "IDLE_TIMEOUT",
         CloseReason::InternalError => "INTERNAL_ERROR",
-        CloseReason::Unknown(_) => "UNKNOWN",
     }
 }
 
@@ -84,7 +83,7 @@ fn close_origin_name(origin: &CloseOrigin) -> &'static str {
 
 fn sample_format_name(f: u8) -> &'static str {
     match f {
-        1 => "f32le",
+        proto_core::media::SAMPLE_FORMAT_F32LE => "f32le",
         _ => "unknown",
     }
 }
@@ -178,8 +177,8 @@ pub fn render(s: &StatsSnapshot) -> String {
 mod tests {
     use super::*;
 
-    fn config() -> MediaConfig {
-        MediaConfig {
+    fn config() -> MediaStartPayload {
+        MediaStartPayload {
             stream_instance_id: 1,
             config_generation: 1,
             sample_rate: 48000,

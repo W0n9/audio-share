@@ -28,7 +28,7 @@ prototype/wire-protocol-v2-transport/
 
 ## Prototype protocol conventions (binding for both halves)
 
-From `.scratch/wire-protocol-v2/prototype-brief.md`:
+From [`BRIEF.md`](BRIEF.md) (frozen snapshot of the prototype contract):
 
 - Control plane: one QUIC bidirectional stream, `u32 BE frame_len | u8 type |
   payload`, `frame_len = 1 + payload.len()`, cap 64 KiB; types 0x01–0x07
@@ -75,7 +75,7 @@ Android-side versions (NDK, AGP, Kotlin, target SDK) are recorded in
 ```bash
 cd server
 cargo build --release          # bins in target/release/
-cargo test --workspace         # 46 tests (24 proto-core units + 21 e2e + config assertion)
+cargo test --workspace         # 47 tests (24 proto-core units + 22 e2e + config assertion)
 ```
 
 Start a server (defaults: bind 127.0.0.1:**65531** — never the v1 port 65530 —
@@ -86,7 +86,11 @@ credential `test-credential-do-not-use`, 60 s idle timeout):
 # prints: PROTO_SERVER_READY addr=127.0.0.1:65531 spki=<64 hex chars>
 ```
 
-Flags: `--credential TOKEN` (or `$PROTO_TEST_CREDENTIAL`), `--idle-timeout-secs N`
+Flags: `--credential TOKEN` (or `$PROTO_TEST_CREDENTIAL`),
+`--revoked-credential TOKEN` (repeatable — a listed token gets the exact
+bad-credential wire treatment, `AUTH_ERR(BAD_CREDENTIAL)` + `CLOSE(AUTH_FAILED)`,
+but is counted under the distinct `revoked` stat so evidence can distinguish it
+from a plain wrong token), `--idle-timeout-secs N`
 (0 disables), `--chunk-ms` (media batch size in ms of audio, default 5),
 `--queue-capacity` (default 256), `--mtud` (enable DPLPMTUD, default off —
 see below), `-v/-vv`. SIGINT stops the server with `CLOSE(SERVER_STOP)` to all
@@ -138,6 +142,7 @@ scripts/run-e2e.sh
 | correct pin handshakes, rogue SPKI fails | `server/e2e/tests/security.rs`, client pin verifier | PASS |
 | `audio-share/v2` succeeds, incompatible ALPN fails before app data | `server/e2e/tests/security.rs` (server accepts 0 sessions) | PASS |
 | valid credential succeeds; wrong/empty credential → `AUTH_ERR(BAD_CREDENTIAL)` + `CLOSE(AUTH_FAILED)` | `server/e2e/tests/security.rs` | PASS |
+| revoked credential → same `BAD_CREDENTIAL`/`AUTH_FAILED` wire treatment, distinct `revoked` stat; valid credential accepted in the same run | `server/e2e/tests/security.rs` | PASS |
 | SUBSCRIBE without AUTH → `AUTH_ERR(NOT_AUTHENTICATED)` + `CLOSE(PROTOCOL_ERROR)` | `server/e2e/tests/protocol.rs` | PASS |
 | unknown msg_type / oversized length / bad payload length / unknown close reason → `CLOSE(PROTOCOL_ERROR)` | `server/e2e/tests/protocol.rs` | PASS |
 | non-UTF-8 AUTH → `AUTH_ERR(MALFORMED)` + `CLOSE(AUTH_FAILED)` | `server/e2e/tests/protocol.rs` | PASS |
@@ -239,22 +244,32 @@ noted; each row states what the prototype did about it.
 ## Android client half (android-client/)
 
 - Build + size evidence: [`android-client/BUILD.md`](android-client/BUILD.md)
-- `cargo test` (host, in `android-client/native/`): **54 tests green** —
-  frame codec, client control state machine, gap/dup/reorder accounting,
+- `cargo test` (host, in `android-client/native/`): **58 tests green** —
+  frame codec (incl. cross-end contract tests against the shared proto-core
+  codec), client control state machine, gap/dup/reorder accounting,
   deterministic byte verification, SPKI-pinned verifier (rcgen certs), ring
-  buffer, stats JSON contract.
-- Measured sizes (arm64-v8a): raw `.so` 8,761,880 B → stripped 2,303,408 B
-  (2.20 MiB); release APK 2,337,519 B vs empty baseline 33,429 B —
-  **native increment 2.20 MiB, within the ~5 MiB gate**.
+  buffer, network-change rebind primitive, stats JSON contract.
+- Measured sizes (arm64-v8a, re-measured after dedupe + rebind): raw `.so`
+  8,778,032 B → stripped 2,305,128 B (2.20 MiB); release APK 2,339,239 B vs
+  empty baseline 33,757 B — **native increment 2.20 MiB, within the ~5 MiB
+  gate** (+1,720 B stripped vs. the pre-dedupe build).
 - minSdk 26 gate holds; zero external Android dependencies; R8 rule required:
   `-keep class dev.prototype.wireproto.ProtoNative { *; }`.
-- JNI surface: 9 low-frequency functions (createSession/connect/subscribe/
-  unsubscribe/stop/destroy/getState/getStats/attachBuffer). Media crosses JNI
-  exactly once, as one attached direct ByteBuffer; no per-datagram calls.
+- JNI surface: 10 low-frequency functions (createSession/connect/subscribe/
+  unsubscribe/stop/destroy/getState/getStats/attachBuffer/rebind). Media
+  crosses JNI exactly once, as one attached direct ByteBuffer; no
+  per-datagram calls.
 - Client buffer: 4 MiB overwrite-oldest ring (~10.9 s of stereo f32 @48 kHz),
   9,600 B (50 ms) prefetch target before playback starts.
 - Gap counters are arrival-time evidence (late fill-ins count as `reordered`
   and do not decrement `gaps`).
+- Network migration is **implemented, device-validated NOT RUN**: on
+  `NetworkCallback.onAvailable` the Kotlin side creates a socket
+  route-pinned with `Network.bindSocket`, hands its fd to native
+  `rebind()` (JNI, low-frequency), which rebuilds a `std::net::UdpSocket` and
+  calls quinn's `Endpoint::rebind()`; failure falls back to teardown +
+  bounded-backoff reconnect. The rebind primitive is host-tested
+  (endpoint-level); a live Wi-Fi↔cellular migration run is a device gate.
 
 ## What this prototype does NOT cover
 
@@ -262,7 +277,8 @@ NOT RUN, handled by later gates:
 
 - real-device Android runs (handshake, subscribe, consume, counters, clean
   stop), foreground-service lifecycle, screen-off/process death,
-  Wi-Fi↔cellular migration (scaffolded; no device attached on this host);
+  Wi-Fi↔cellular migration end-to-end (rebind implemented; no device attached
+  on this host);
 - ALPN/0-RTT on-wire assertions from the Android side;
 - the GO/NO-GO verdict — that is the ticket reporter's job once device runs
   exist.

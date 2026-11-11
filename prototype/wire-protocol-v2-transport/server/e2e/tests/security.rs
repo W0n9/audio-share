@@ -109,3 +109,52 @@ async fn empty_credential_is_bad_credential_not_protocol_error() {
     assert_eq!(close_after, Some(CloseReason::AuthFailed));
     server.stop().await;
 }
+
+/// A revoked credential gets the exact bad-credential wire treatment
+/// (`AUTH_ERR(BAD_CREDENTIAL)` + `CLOSE(AUTH_FAILED)`) but is counted under a
+/// distinct stat so evidence can distinguish revocation from a plain typo; the
+/// valid credential stays accepted in the same run.
+#[tokio::test]
+async fn revoked_credential_rejected_like_bad_credential_while_valid_credential_accepted() {
+    init_test_logging();
+    let server = spawn_server_with(|cfg| {
+        cfg.credential = TEST_CREDENTIAL.to_string();
+        cfg.revoked_credentials = vec!["revoked-token".to_string()];
+    })
+    .await;
+
+    // Revoked token: same wire outcome as a bad credential.
+    let mut conn = proto_client::connect(&client_config(&server))
+        .await
+        .expect("handshake ok");
+    let error = conn
+        .auth("revoked-token")
+        .await
+        .expect_err("revoked credential must be rejected");
+    let ClientError::AuthRejected { code, close_after } = error else {
+        panic!("expected an auth rejection, got {error:?}");
+    };
+    assert_eq!(code, AuthErrCode::BadCredential);
+    assert_eq!(close_after, Some(CloseReason::AuthFailed));
+
+    let stats = server.session_stats();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].auth_err_revoked, 1, "counted under the revoked stat");
+    assert_eq!(stats[0].auth_err_bad_credential, 0, "distinct from a plain typo");
+    assert_eq!(stats[0].auth_err_out, 1);
+    assert_eq!(stats[0].close_sent_reason.as_deref(), Some("AuthFailed"));
+
+    // Valid credential still accepted in the same run.
+    let mut conn2 = proto_client::connect(&client_config(&server))
+        .await
+        .expect("handshake ok");
+    let session_id = conn2
+        .auth(TEST_CREDENTIAL)
+        .await
+        .expect("valid credential accepted");
+    assert!(session_id > 0);
+    let stats = server.session_stats();
+    assert_eq!(stats.len(), 2);
+    assert_eq!(stats[1].auth_ok_out, 1);
+    server.stop().await;
+}

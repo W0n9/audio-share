@@ -12,13 +12,20 @@ name = "audio_share_proto_native"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# Single source of the prototype wire contract (frame codec, media header,
+# deterministic waveform, SPKI helpers) — shared with the server workspace.
+# Path dep works despite the deliberate root-workspace opt-out above.
+proto-core = { path = "../../server/proto-core" }
 quinn = { version = "0.11", default-features = false, features = ["rustls-ring", "runtime-tokio", "log"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
 rustls-pki-types = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
 jni = "0.21"
 log = "0.4"
-ring = "0.17"
+# `ring` itself is no longer a direct dependency: SPKI sha256 comes from
+# proto-core, and rustls' ring provider pulls ring transitively. The
+# CC_aarch64_* env wiring in .cargo/config.toml is still needed for ring's
+# build script (transitive via rustls).
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"

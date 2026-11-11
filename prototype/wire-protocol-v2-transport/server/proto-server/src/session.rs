@@ -19,7 +19,7 @@ use proto_core::media::{
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::mpsc;
 
-use crate::stats::{self, SessionStats, STATE_CLOSING, STATE_CLOSED, STATE_PLAYING, STATE_READY};
+use crate::stats::{self, SessionState, SessionStats};
 use crate::Shared;
 
 /// Bumped when a capture restart would occur; the prototype starts a new
@@ -34,13 +34,13 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
         .lock()
         .expect("session registry mutex")
         .push(stats.clone());
-    stats.set_state(stats::STATE_CONNECTING);
+    stats.set_state(stats::SessionState::Connecting);
 
     let (mut tx, mut rx) = match conn.accept_bi().await {
         Ok(streams) => streams,
         Err(e) => {
             tracing::debug!(error = %e, "control stream never opened");
-            stats.set_state(stats::STATE_CLOSED);
+            stats.set_state(stats::SessionState::Closed);
             return;
         }
     };
@@ -89,9 +89,16 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
                 match handle_frame(&frame, &shared, &stats, &conn, &mut tx, &mut media).await {
                     Flow::Continue => {}
                     Flow::CloseWith(reason, prelude) => {
-                        break_close(
-                            &conn, &mut tx, &mut rx, &stats, reason, prelude, &mut shutdown_seen,
-                        )
+                        CloseContext {
+                            conn: &conn,
+                            tx: &mut tx,
+                            rx: &mut rx,
+                            stats: &stats,
+                            reason,
+                            prelude,
+                            shutdown_seen: &mut shutdown_seen,
+                        }
+                        .run()
                         .await;
                         break;
                     }
@@ -99,51 +106,60 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
             }
             SessionEvent::PeerEof => {
                 tracing::debug!("client half-closed the control stream without CLOSE");
-                break_close(
-                    &conn,
-                    &mut tx,
-                    &mut rx,
-                    &stats,
-                    CloseReason::Normal,
-                    None,
-                    &mut shutdown_seen,
-                )
+                CloseContext {
+                    conn: &conn,
+                    tx: &mut tx,
+                    rx: &mut rx,
+                    stats: &stats,
+                    reason: CloseReason::Normal,
+                    prelude: None,
+                    shutdown_seen: &mut shutdown_seen,
+                }
+                .run()
                 .await;
                 break;
             }
             SessionEvent::IdleTimeout => {
-                break_close(
-                    &conn,
-                    &mut tx,
-                    &mut rx,
-                    &stats,
-                    CloseReason::IdleTimeout,
-                    None,
-                    &mut shutdown_seen,
-                )
+                CloseContext {
+                    conn: &conn,
+                    tx: &mut tx,
+                    rx: &mut rx,
+                    stats: &stats,
+                    reason: CloseReason::IdleTimeout,
+                    prelude: None,
+                    shutdown_seen: &mut shutdown_seen,
+                }
+                .run()
                 .await;
                 break;
             }
             SessionEvent::Shutdown => {
                 shutdown_seen = true;
-                break_close(
-                    &conn,
-                    &mut tx,
-                    &mut rx,
-                    &stats,
-                    CloseReason::ServerStop,
-                    None,
-                    &mut shutdown_seen,
-                )
+                CloseContext {
+                    conn: &conn,
+                    tx: &mut tx,
+                    rx: &mut rx,
+                    stats: &stats,
+                    reason: CloseReason::ServerStop,
+                    prelude: None,
+                    shutdown_seen: &mut shutdown_seen,
+                }
+                .run()
                 .await;
                 break;
             }
             SessionEvent::ExtraStream => {
                 tracing::debug!("unexpected second bidirectional stream");
-                break_close(
-                    &conn, &mut tx, &mut rx, &stats, CloseReason::ProtocolError, None,
-                    &mut shutdown_seen,
-                )
+                CloseContext {
+                    conn: &conn,
+                    tx: &mut tx,
+                    rx: &mut rx,
+                    stats: &stats,
+                    reason: CloseReason::ProtocolError,
+                    prelude: None,
+                    shutdown_seen: &mut shutdown_seen,
+                }
+                .run()
                 .await;
                 break;
             }
@@ -161,15 +177,22 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
                     }
                     _ => (CloseReason::ProtocolError, None),
                 };
-                break_close(
-                    &conn, &mut tx, &mut rx, &stats, reason, prelude, &mut shutdown_seen,
-                )
+                CloseContext {
+                    conn: &conn,
+                    tx: &mut tx,
+                    rx: &mut rx,
+                    stats: &stats,
+                    reason,
+                    prelude,
+                    shutdown_seen: &mut shutdown_seen,
+                }
+                .run()
                 .await;
                 break;
             }
             SessionEvent::TransportDead => {
                 tracing::debug!("transport closed by peer");
-                stats.set_state(stats::STATE_CLOSED);
+                stats.set_state(stats::SessionState::Closed);
                 stats.closed.store(true, Ordering::Relaxed);
                 break;
             }
@@ -241,10 +264,19 @@ async fn handle_frame(
     match frame {
         Frame::Auth { token } => {
             stats.frames_auth_in.fetch_add(1, Ordering::Relaxed);
-            match stats.state.load(Ordering::Relaxed) {
-                stats::STATE_CONNECTING => {
-                    stats.set_state(stats::STATE_AUTHENTICATING);
-                    if constant_time_eq(token, &shared.config.credential) {
+            match stats.current_state() {
+                stats::SessionState::Connecting => {
+                    stats.set_state(stats::SessionState::Authenticating);
+                    // Revoked tokens are denied exactly like bad credentials
+                    // (same wire frames), counted under their own stat.
+                    if shared.config.revoked_credentials.iter().any(|t| t == token) {
+                        stats.auth_err_revoked.fetch_add(1, Ordering::Relaxed);
+                        return Flow::CloseWith(
+                            CloseReason::AuthFailed,
+                            Some(Frame::AuthErr(frame::AuthErrCode::BadCredential)),
+                        );
+                    }
+                    if credential_eq(token, &shared.config.credential) {
                         let session_id = shared
                             .next_session_id
                             .fetch_add(1, Ordering::Relaxed);
@@ -258,7 +290,7 @@ async fn handle_frame(
                             return Flow::CloseWith(CloseReason::InternalError, None);
                         }
                         stats.auth_ok_out.fetch_add(1, Ordering::Relaxed);
-                        stats.set_state(stats::STATE_READY);
+                        stats.set_state(stats::SessionState::Ready);
                         tracing::info!(session_id, "client authenticated");
                         Flow::Continue
                     } else {
@@ -279,7 +311,7 @@ async fn handle_frame(
         }
         Frame::Subscribe => {
             stats.frames_subscribe_in.fetch_add(1, Ordering::Relaxed);
-            if stats.state.load(Ordering::Relaxed) != stats::STATE_READY {
+            if stats.current_state() != stats::SessionState::Ready {
                 // SUBSCRIBE is only legal in READY. Pre-auth subscriptions get
                 // an explicit AUTH_ERR(NOT_AUTHENTICATED) in addition to the
                 // PROTOCOL_ERROR close.
@@ -316,21 +348,21 @@ async fn handle_frame(
                 shared.config.forwarder_delay,
                 instance,
             );
-            stats.set_state(STATE_PLAYING);
+            stats.set_state(SessionState::Playing);
             *media = Some(pump);
             tracing::info!(instance, "media started");
             Flow::Continue
         }
         Frame::Unsubscribe => {
             stats.frames_unsubscribe_in.fetch_add(1, Ordering::Relaxed);
-            if stats.state.load(Ordering::Relaxed) != STATE_PLAYING {
+            if stats.current_state() != SessionState::Playing {
                 return Flow::CloseWith(CloseReason::ProtocolError, None);
             }
             if let Some(pump) = media.take() {
                 pump.stop().await;
             }
             stats.media_unsubscribes.fetch_add(1, Ordering::Relaxed);
-            stats.set_state(STATE_READY);
+            stats.set_state(SessionState::Ready);
             tracing::info!("media stopped");
             Flow::Continue
         }
@@ -354,9 +386,9 @@ async fn handle_frame(
 }
 
 /// Credential comparison. The prototype uses a throwaway LAN token; a plain
-/// comparison is sufficient here and deliberately NOT presented as a hardened
-/// constant-time primitive.
-fn constant_time_eq(a: &str, b: &str) -> bool {
+/// byte comparison is sufficient here. It must not (and does not) claim to be
+/// a constant-time primitive — the name deliberately avoids any such claim.
+fn credential_eq(a: &str, b: &str) -> bool {
     a.as_bytes() == b.as_bytes()
 }
 
@@ -404,45 +436,55 @@ async fn read_frame(rx: &mut RecvStream) -> Result<Frame, ReadFrameError> {
     frame::parse(ty_buf[0], &payload).map_err(ReadFrameError::Parse)
 }
 
-/// Full graceful close: send any prelude frame (e.g. AUTH_ERR), the CLOSE
-/// frame, half-close, wait briefly for the peer to finish reading, then close
-/// the transport with a matching application error code.
-async fn break_close(
-    conn: &Connection,
-    tx: &mut SendStream,
-    rx: &mut RecvStream,
-    stats: &Arc<SessionStats>,
+/// Everything one graceful close needs. The `break_close` parameter list was
+/// repeated verbatim at every call site; the struct carries the same values.
+struct CloseContext<'a> {
+    conn: &'a Connection,
+    tx: &'a mut SendStream,
+    rx: &'a mut RecvStream,
+    stats: &'a Arc<SessionStats>,
     reason: CloseReason,
+    /// Frame sent before CLOSE (e.g. AUTH_ERR before CLOSE(AUTH_FAILED)).
     prelude: Option<Frame>,
-    shutdown_seen: &mut bool,
-) {
-    stats.set_state(STATE_CLOSING);
-    if matches!(reason, CloseReason::ServerStop) {
-        *shutdown_seen = true;
-    }
-    if let Some(prelude) = prelude {
-        if matches!(prelude, Frame::AuthErr(_)) {
-            stats.auth_err_out.fetch_add(1, Ordering::Relaxed);
+    /// Set on a server-stop close so the session loop knows the endpoint is
+    /// being torn down by `ServerHandle::stop`.
+    shutdown_seen: &'a mut bool,
+}
+
+impl CloseContext<'_> {
+    /// Full graceful close: send any prelude frame (e.g. AUTH_ERR), the CLOSE
+    /// frame, half-close, wait briefly for the peer to finish reading, then
+    /// close the transport with a matching application error code.
+    async fn run(self) {
+        let Self { conn, tx, rx, stats, reason, prelude, shutdown_seen } = self;
+        stats.set_state(SessionState::Closing);
+        if matches!(reason, CloseReason::ServerStop) {
+            *shutdown_seen = true;
         }
-        let _ = send_frame(tx, &prelude).await;
+        if let Some(prelude) = prelude {
+            if matches!(prelude, Frame::AuthErr(_)) {
+                stats.auth_err_out.fetch_add(1, Ordering::Relaxed);
+            }
+            let _ = send_frame(tx, &prelude).await;
+        }
+        if matches!(reason, CloseReason::ProtocolError) {
+            stats.protocol_errors_out.fetch_add(1, Ordering::Relaxed);
+        }
+        let close_frame = Frame::Close(reason);
+        if send_frame(tx, &close_frame).await.is_ok() {
+            stats.close_out.fetch_add(1, Ordering::Relaxed);
+        }
+        stats.mark_close_sent(reason as u8);
+        let _ = tx.finish();
+        // Give the peer a moment to drain the stream before the transport close.
+        let _ = tokio::time::timeout(Duration::from_millis(500), read_frame(rx)).await;
+        conn.close(
+            quinn::VarInt::from_u32(reason as u32),
+            close_reason_ascii(reason),
+        );
+        stats.set_state(SessionState::Closed);
+        stats.closed.store(true, Ordering::Relaxed);
     }
-    if matches!(reason, CloseReason::ProtocolError) {
-        stats.protocol_errors_out.fetch_add(1, Ordering::Relaxed);
-    }
-    let close_frame = Frame::Close(reason);
-    if send_frame(tx, &close_frame).await.is_ok() {
-        stats.close_out.fetch_add(1, Ordering::Relaxed);
-    }
-    stats.mark_close_sent(reason as u8);
-    let _ = tx.finish();
-    // Give the peer a moment to drain the stream before the transport close.
-    let _ = tokio::time::timeout(Duration::from_millis(500), read_frame(rx)).await;
-    conn.close(
-        quinn::VarInt::from_u32(reason as u32),
-        close_reason_ascii(reason),
-    );
-    stats.set_state(STATE_CLOSED);
-    stats.closed.store(true, Ordering::Relaxed);
 }
 
 fn close_reason_ascii(reason: CloseReason) -> &'static [u8] {

@@ -2,7 +2,7 @@
 //!
 //! Throwaway code answering the ticket-01 transport question only; it does not
 //! freeze the v2 normative wire layout. Behavior contract lives in
-//! `.scratch/wire-protocol-v2/prototype-brief.md`.
+//! `prototype/wire-protocol-v2-transport/BRIEF.md`.
 //!
 //! Session state machine (prototype-simple):
 //! `CONNECTING → AUTHENTICATING → READY → PLAYING → CLOSING/CLOSED`.
@@ -39,6 +39,10 @@ pub struct ServerConfig {
     pub bind: SocketAddr,
     /// The single accepted AUTH credential token.
     pub credential: String,
+    /// Tokens treated as revoked: they get the exact bad-credential wire
+    /// treatment (`AUTH_ERR(BAD_CREDENTIAL)` + `CLOSE(AUTH_FAILED)`) but are
+    /// counted under the distinct `auth_err_revoked` stat.
+    pub revoked_credentials: Vec<String>,
     /// Idle timeout applied while in CONNECTING/READY (no media flowing).
     /// `None` disables it.
     pub idle_timeout: Option<Duration>,
@@ -63,6 +67,7 @@ impl Default for ServerConfig {
         Self {
             bind: DEFAULT_BIND,
             credential: DEFAULT_CREDENTIAL.to_string(),
+            revoked_credentials: Vec::new(),
             idle_timeout: Some(Duration::from_secs(60)),
             chunk_target_ms: 5,
             queue_capacity: 256,
@@ -150,9 +155,9 @@ impl ServerHandle {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         // Application error code on the QUIC transport close mirrors the
-        // CLOSE-frame reason value.
+        // CLOSE-frame reason value (`CloseReason` is the single source).
         self.endpoint
-            .close(quinn::VarInt::from_u32(stats::CLOSE_REASON_SERVER_STOP), b"server-stop");
+            .close(quinn::VarInt::from_u32(proto_core::frame::CloseReason::ServerStop as u32), b"server-stop");
     }
 }
 

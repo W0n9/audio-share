@@ -112,3 +112,41 @@ PASS: server stop
 ==================================================================
 RESULT: all 8 cases PASS
 ==================================================================
+==================================================================
+=== wire-protocol-v2 transport prototype — desktop e2e run
+=== date (UTC):  2026-11-11T10:30:35Z
+=== command:     scripts/run-e2e.sh 
+=== host:        Linux 6.8.0-139-generic x86_64 GNU/Linux
+=== toolchain:   rustc 1.98.1 (48a229cea 2026-09-01); cargo 1.98.1 (797e8a9bc 2026-08-05)
+=== crates:      quinn=0.11.12 quinn-proto=0.11.19 rustls=0.23.46 ring=0.17.14 rcgen=0.13.2 tokio=1.54.1 (from server/Cargo.lock)
+==================================================================
+--- building release bins
+--- starting server
+--- server ready at 127.0.0.1:56014, spki 56aef4a329b43be9...
+--- CASE 1: happy path (auth, subscribe, media, unsubscribe, close)
+   | mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=321 frames=38542 bytes=314756 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=804
+PASS: happy path
+--- CASE 2: wrong ALPN (audio-share/v9) fails handshake before app data
+   | mode=happy ok=true expected_failure=wrong-alpn detail="handshake failed: aborted by peer: the cryptographic handshake failed: error 120: peer doesn't support any known protocol" duration_ms=1
+PASS: wrong alpn
+--- CASE 3: wrong pinned SPKI fails verification
+   | mode=happy ok=true expected_failure=wrong-pin detail="handshake failed: the cryptographic handshake failed: error 40: unexpected error: server SPKI sha256 does not match pinned value" duration_ms=2
+PASS: wrong pin
+--- CASE 4: wrong credential gets AUTH_ERR(BAD_CREDENTIAL) + CLOSE(AUTH_FAILED)
+   | mode=happy ok=true expected_failure=auth-failure auth_err=BadCredential close_after=Some(AuthFailed) duration_ms=3
+PASS: wrong credential
+--- CASE 5: SUBSCRIBE without AUTH gets AUTH_ERR(NOT_AUTHENTICATED) + CLOSE(PROTOCOL_ERROR)
+   | mode=no-auth-subscribe ok=true auth_err=NotAuthenticated close_reason=ProtocolError duration_ms=3
+PASS: subscribe without auth
+--- CASE 6: unknown msg_type gets CLOSE(PROTOCOL_ERROR)
+   | mode=bad-msg-type ok=true close_reason=ProtocolError duration_ms=3
+PASS: unknown msg type
+--- CASE 7: slow reader (pauses 500 ms mid-stream, control stays alive)
+   | mode=happy ok=true session_id=3 instance=1 mds=1162 mds_end=1162 datagrams=361 frames=43342 bytes=353956 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=905
+PASS: slow reader
+--- CASE 8: server stop delivers CLOSE(SERVER_STOP) to a subscribed client
+   | mode=hold ok=true close_reason=ServerStop transport_code=1 transport_text=server-stop duration_ms=596
+PASS: server stop
+==================================================================
+RESULT: all 8 cases PASS
+==================================================================

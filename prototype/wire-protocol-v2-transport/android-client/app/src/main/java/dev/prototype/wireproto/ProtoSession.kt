@@ -22,7 +22,8 @@ import kotlin.random.Random
 /**
  * Kotlin-side session owner: JNI handle lifecycle, direct-ByteBuffer media
  * consumer, bounded exponential backoff with jitter, and the
- * ConnectivityManager.NetworkCallback migration scaffold.
+ * ConnectivityManager.NetworkCallback migration (rebind implemented — see the
+ * NetworkCallback section below; device validation pending).
  *
  * DEVICE/NETWORK ONLY — this class is exercised on the emulator/device path;
  * none of it runs in host JVM tests. Untested parts are called out inline.
@@ -322,14 +323,19 @@ class ProtoSession(
         return out
     }
 
-    // ---- NetworkCallback migration scaffold -------------------------------
+    // ---- NetworkCallback migration -----------------------------------------
     //
-    // SCAFFOLD, honestly labeled: we observe the default network and, on
-    // change, hand its local address to native connect() as a UDP bind hint.
-    // This does NOT pin the route the way Network.bindSocket(fd) would, and
-    // quinn endpoint rebind / true migration is NOT wired here — a network
-    // change tears the session down and reconnects with backoff. All of that
-    // is device-gated (see BUILD.md).
+    // IMPLEMENTED (device validation still pending — see BUILD.md): we
+    // observe the default network; on onAvailable we create a DatagramSocket
+    // bound to the new Network (Network.bindSocket — real route pinning) and
+    // hand its raw fd to native rebind(), which rebuilds a std::net::UdpSocket
+    // and calls quinn Endpoint::rebind(), moving all connections to the new
+    // socket live. If the rebind fails, the pre-existing teardown +
+    // bounded-backoff reconnect is the fallback. onLost always tears down:
+    // the route is gone, there is nothing to rebind to.
+    //
+    // FD OWNERSHIP: the fd (and its owning socket/pfd objects) transfers to
+    // native on the rebind call — never close them on the JVM side.
 
     private fun registerNetworkCallback() {
         if (networkCallbackRegistered) return
@@ -342,36 +348,68 @@ class ProtoSession(
                     listener.onLog("network available: $activeNetworkAddress")
                     if (!running.get()) return
                     val h = handle.get()
-                    if (h != 0L) {
-                        // kill the session on the stale network; backoff reconnects
-                        ProtoNative.stop(h)
-                        ProtoNative.destroy(h)
-                        handle.set(0)
-                        subscribed.set(false)
-                        stopPlayback("network change")
+                    if (h == 0L) {
+                        // no live session to migrate: normal reconnect path
                         scheduleReconnect()
-                    } else {
-                        scheduleReconnect()
+                        return
                     }
+                    if (tryRebind(h, network)) return
+                    // rebind failed or was rejected: teardown + backoff reconnect
+                    teardownForReconnect("network change (rebind fallback)")
                 }
 
                 override fun onLost(network: Network) {
                     listener.onLog("network lost: stopping media")
                     if (!running.get()) return
-                    val h = handle.get()
-                    if (h != 0L) {
-                        ProtoNative.stop(h)
-                        ProtoNative.destroy(h)
-                        handle.set(0)
-                        subscribed.set(false)
-                        stopPlayback("network lost")
-                        scheduleReconnect()
+                    if (handle.get() != 0L) {
+                        teardownForReconnect("network lost")
                     }
                 }
             }
         connectivityManager.registerNetworkCallback(request, callback)
         registeredCallback = callback
         networkCallbackRegistered = true
+    }
+
+    /**
+     * Try the implemented migration path: a socket route-pinned to [network],
+     * handed to native rebind() as a raw fd. Returns true when the endpoint
+     * was rebound (fd ownership moved to native either way).
+     */
+    private fun tryRebind(h: Long, network: Network): Boolean {
+        return try {
+            val socket = java.net.DatagramSocket()
+            network.bindSocket(socket) // route-pin to this Network
+            // fromDatagramSocket wraps the socket's existing fd (no dup);
+            // after the handoff below, native owns the fd and neither the
+            // socket nor the pfd may be closed on the JVM side.
+            val pfd = android.os.ParcelFileDescriptor.fromDatagramSocket(socket)
+            val fd = pfd.fd
+            val ok = ProtoNative.rebind(h, fd)
+            if (ok) {
+                listener.onLog("endpoint rebound to network $network (fd $fd)")
+            } else {
+                listener.onLog("native rebind failed; falling back to reconnect")
+            }
+            ok
+        } catch (e: Exception) {
+            Log.w(TAG, "rebind: ${e.message}")
+            listener.onLog("rebind failed: ${e.message}")
+            false
+        }
+    }
+
+    /** Teardown of the current session, then the bounded-backoff reconnect. */
+    private fun teardownForReconnect(reason: String) {
+        val h = handle.get()
+        if (h != 0L) {
+            ProtoNative.stop(h)
+            ProtoNative.destroy(h)
+            handle.set(0)
+            subscribed.set(false)
+            stopPlayback(reason)
+        }
+        scheduleReconnect()
     }
 
     private fun unregisterNetworkCallback() {

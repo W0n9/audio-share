@@ -1,46 +1,25 @@
-//! Control-plane frame codec (throwaway prototype shape, ticket 01).
+//! Control-plane framing for the Android client, single-sourced on
+//! `proto_core::frame`.
 //!
-//! Wire shape fixed by the prototype brief:
-//! `u32 BE frame_len | u8 msg_type | payload` with `frame_len = 1 + payload.len()`
-//! and a 64 KiB cap on `frame_len`. NOT the normative v2 layout.
+//! The wire shape — `u32 BE frame_len | u8 msg_type | payload`,
+//! `frame_len = 1 + payload.len()`, 64 KiB cap, all seven message types and
+//! their payload layouts — is owned by `proto_core::frame` (the same crate
+//! the server half uses) and is NOT re-declared here. This module keeps only
+//! client-side extras: the streaming decoder across push boundaries, the
+//! string-typed error used at the JNI boundary, and the message type
+//! constants as re-exports for readability. NOT the normative v2 layout.
 
-/// Hard cap on a whole frame (length field included) from the brief: 64 KiB.
-pub const MAX_FRAME_LEN: usize = 64 * 1024;
+pub use proto_core::frame::{Frame, MAX_FRAME_LEN};
 
-pub const TYPE_AUTH: u8 = 0x01;
-pub const TYPE_AUTH_OK: u8 = 0x02;
-pub const TYPE_AUTH_ERR: u8 = 0x03;
-pub const TYPE_SUBSCRIBE: u8 = 0x04;
-pub const TYPE_MEDIA_START: u8 = 0x05;
-pub const TYPE_UNSUBSCRIBE: u8 = 0x06;
-pub const TYPE_CLOSE: u8 = 0x07;
+use proto_core::frame;
 
-/// One decoded control message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ControlMsg {
-    /// 0x01 AUTH: utf-8 test credential token.
-    Auth(String),
-    /// 0x02 AUTH_OK: u32 BE session_id.
-    AuthOk(u32),
-    /// 0x03 AUTH_ERR: u8 code (1=BAD_CREDENTIAL 2=NOT_AUTHENTICATED 3=MALFORMED 4=RATE_LIMITED).
-    AuthErr(u8),
-    /// 0x04 SUBSCRIBE: empty.
-    Subscribe,
-    /// 0x05 MEDIA_START: u32 stream_instance_id, u32 config_generation, u32 sample_rate,
-    /// u8 channels, u8 sample_format (1=f32le) — all BE.
-    MediaStart {
-        stream_instance_id: u32,
-        config_generation: u32,
-        sample_rate: u32,
-        channels: u8,
-        sample_format: u8,
-    },
-    /// 0x06 UNSUBSCRIBE: empty.
-    Unsubscribe,
-    /// 0x07 CLOSE: u8 reason (0=NORMAL 1=SERVER_STOP 2=PROTOCOL_ERROR 3=AUTH_FAILED
-    /// 4=IDLE_TIMEOUT 5=INTERNAL_ERROR).
-    Close(u8),
-}
+pub const TYPE_AUTH: u8 = frame::msg_type::AUTH;
+pub const TYPE_AUTH_OK: u8 = frame::msg_type::AUTH_OK;
+pub const TYPE_AUTH_ERR: u8 = frame::msg_type::AUTH_ERR;
+pub const TYPE_SUBSCRIBE: u8 = frame::msg_type::SUBSCRIBE;
+pub const TYPE_MEDIA_START: u8 = frame::msg_type::MEDIA_START;
+pub const TYPE_UNSUBSCRIBE: u8 = frame::msg_type::UNSUBSCRIBE;
+pub const TYPE_CLOSE: u8 = frame::msg_type::CLOSE;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodecError(pub String);
@@ -54,54 +33,17 @@ impl std::error::Error for CodecError {}
 
 pub type CodecResult<T> = Result<T, CodecError>;
 
-/// Encode one control message into the wire frame.
-pub fn encode_frame(msg: &ControlMsg) -> Vec<u8> {
-    let mut body = Vec::with_capacity(64);
-    let ty = match msg {
-        ControlMsg::Auth(token) => {
-            body.extend_from_slice(token.as_bytes());
-            TYPE_AUTH
-        }
-        ControlMsg::AuthOk(id) => {
-            body.extend_from_slice(&id.to_be_bytes());
-            TYPE_AUTH_OK
-        }
-        ControlMsg::AuthErr(code) => {
-            body.push(*code);
-            TYPE_AUTH_ERR
-        }
-        ControlMsg::Subscribe => TYPE_SUBSCRIBE,
-        ControlMsg::MediaStart {
-            stream_instance_id,
-            config_generation,
-            sample_rate,
-            channels,
-            sample_format,
-        } => {
-            body.extend_from_slice(&stream_instance_id.to_be_bytes());
-            body.extend_from_slice(&config_generation.to_be_bytes());
-            body.extend_from_slice(&sample_rate.to_be_bytes());
-            body.push(*channels);
-            body.push(*sample_format);
-            TYPE_MEDIA_START
-        }
-        ControlMsg::Unsubscribe => TYPE_UNSUBSCRIBE,
-        ControlMsg::Close(reason) => {
-            body.push(*reason);
-            TYPE_CLOSE
-        }
-    };
-    let frame_len = (1 + body.len()) as u32;
-    debug_assert!(frame_len as usize <= MAX_FRAME_LEN);
-    let mut out = Vec::with_capacity(4 + body.len());
-    out.extend_from_slice(&frame_len.to_be_bytes());
-    out.push(ty);
-    out.extend_from_slice(&body);
-    out
+/// Encode one control message with the shared proto-core codec. The client
+/// never sends a frame large enough to hit the 64 KiB cap (the credential is
+/// size-capped at the JNI boundary), but the shared codec is fallible so the
+/// error is propagated instead of assumed impossible.
+pub fn encode_frame(msg: &Frame) -> CodecResult<Vec<u8>> {
+    frame::encode(msg).map_err(|e| CodecError(e.to_string()))
 }
 
 /// Streaming frame decoder: feed raw bytes off the QUIC control stream,
-/// pop whole frames as they complete.
+/// pop whole frames as they complete. The length-prefix state machine is
+/// client-side; payload decoding delegates to `proto_core::frame::parse`.
 #[derive(Default)]
 pub struct FrameDecoder {
     buf: Vec<u8>,
@@ -114,15 +56,15 @@ impl FrameDecoder {
 
     /// Append raw bytes, then drain any complete frames out.
     /// Errors are sticky: once a malformed frame is seen the stream is unusable.
-    pub fn push(&mut self, bytes: &[u8]) -> CodecResult<Vec<ControlMsg>> {
+    pub fn push(&mut self, bytes: &[u8]) -> CodecResult<Vec<Frame>> {
         self.buf.extend_from_slice(bytes);
         let mut out = Vec::new();
         loop {
             if self.buf.len() < 4 {
                 return Ok(out);
             }
-            let frame_len = u32::from_be_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]])
-                as usize;
+            let frame_len =
+                u32::from_be_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]);
             if frame_len < 1 {
                 return Err(CodecError(format!("frame_len {frame_len} < 1")));
             }
@@ -131,83 +73,39 @@ impl FrameDecoder {
                     "frame_len {frame_len} exceeds cap {MAX_FRAME_LEN}"
                 )));
             }
-            let total = 4 + frame_len;
+            let total = 4 + frame_len as usize;
             if self.buf.len() < total {
                 return Ok(out);
             }
             let frame = self.buf.drain(..total).collect::<Vec<u8>>();
-            out.push(decode_frame_body(&frame[5..], frame[4])?);
+            out.push(
+                frame::parse(frame[4], &frame[5..]).map_err(|e| CodecError(e.to_string()))?,
+            );
         }
-    }
-}
-
-/// Decode the type byte + payload of one frame (the u32 length prefix already consumed).
-fn decode_frame_body(payload: &[u8], ty: u8) -> CodecResult<ControlMsg> {
-    let need = |n: usize| -> CodecResult<()> {
-        if payload.len() != n {
-            Err(CodecError(format!(
-                "type 0x{ty:02x}: payload len {} != {n}",
-                payload.len()
-            )))
-        } else {
-            Ok(())
-        }
-    };
-    match ty {
-        TYPE_AUTH => Ok(ControlMsg::Auth(
-            String::from_utf8(payload.to_vec())
-                .map_err(|_| CodecError("AUTH payload is not utf-8".into()))?,
-        )),
-        TYPE_AUTH_OK => {
-            need(4)?;
-            Ok(ControlMsg::AuthOk(u32::from_be_bytes([
-                payload[0], payload[1], payload[2], payload[3],
-            ])))
-        }
-        TYPE_AUTH_ERR => {
-            need(1)?;
-            Ok(ControlMsg::AuthErr(payload[0]))
-        }
-        TYPE_SUBSCRIBE => {
-            need(0)?;
-            Ok(ControlMsg::Subscribe)
-        }
-        TYPE_MEDIA_START => {
-            need(14)?;
-            Ok(ControlMsg::MediaStart {
-                stream_instance_id: u32::from_be_bytes([
-                    payload[0], payload[1], payload[2], payload[3],
-                ]),
-                config_generation: u32::from_be_bytes([
-                    payload[4], payload[5], payload[6], payload[7],
-                ]),
-                sample_rate: u32::from_be_bytes([
-                    payload[8], payload[9], payload[10], payload[11],
-                ]),
-                channels: payload[12],
-                sample_format: payload[13],
-            })
-        }
-        TYPE_UNSUBSCRIBE => {
-            need(0)?;
-            Ok(ControlMsg::Unsubscribe)
-        }
-        TYPE_CLOSE => {
-            need(1)?;
-            Ok(ControlMsg::Close(payload[0]))
-        }
-        other => Err(CodecError(format!("unknown msg_type 0x{other:02x}"))),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proto_core::frame::{AuthErrCode, CloseReason, MediaStartPayload};
+
+    fn media_start() -> Frame {
+        Frame::MediaStart(MediaStartPayload {
+            stream_instance_id: 1,
+            config_generation: 1,
+            sample_rate: 48000,
+            channels: 2,
+            sample_format: proto_core::media::SAMPLE_FORMAT_F32LE,
+        })
+    }
 
     #[test]
     fn auth_roundtrip() {
-        let msg = ControlMsg::Auth("test-credential-do-not-use".to_string());
-        let bytes = encode_frame(&msg);
+        let msg = Frame::Auth {
+            token: "test-credential-do-not-use".to_string(),
+        };
+        let bytes = encode_frame(&msg).unwrap();
         // length prefix = 1 + token len
         let expect_len = 1 + "test-credential-do-not-use".len() as u32;
         assert_eq!(&bytes[..4], &expect_len.to_be_bytes());
@@ -220,53 +118,41 @@ mod tests {
     #[test]
     fn all_message_types_roundtrip() {
         let msgs = vec![
-            ControlMsg::Auth(String::new()),
-            ControlMsg::Auth("tok".into()),
-            ControlMsg::AuthOk(0xdead_beef),
-            ControlMsg::AuthErr(4),
-            ControlMsg::Subscribe,
-            ControlMsg::MediaStart {
-                stream_instance_id: 7,
-                config_generation: 1,
-                sample_rate: 48000,
-                channels: 2,
-                sample_format: 1,
-            },
-            ControlMsg::Unsubscribe,
-            ControlMsg::Close(2),
+            Frame::Auth { token: String::new() },
+            Frame::Auth { token: "tok".into() },
+            Frame::AuthOk { session_id: 0xdead_beef },
+            Frame::AuthErr(AuthErrCode::RateLimited),
+            Frame::Subscribe,
+            media_start(),
+            Frame::Unsubscribe,
+            Frame::Close(CloseReason::ProtocolError),
         ];
         for msg in msgs {
             let mut dec = FrameDecoder::new();
-            assert_eq!(dec.push(&encode_frame(&msg)).unwrap(), vec![msg.clone()]);
+            assert_eq!(dec.push(&encode_frame(&msg).unwrap()).unwrap(), vec![msg.clone()]);
         }
     }
 
     #[test]
     fn pipelined_frames_decode_in_order() {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(&encode_frame(&ControlMsg::Auth("abc".into())));
-        bytes.extend_from_slice(&encode_frame(&ControlMsg::Subscribe));
-        bytes.extend_from_slice(&encode_frame(&ControlMsg::AuthOk(9)));
+        bytes.extend_from_slice(&encode_frame(&Frame::Auth { token: "abc".into() }).unwrap());
+        bytes.extend_from_slice(&encode_frame(&Frame::Subscribe).unwrap());
+        bytes.extend_from_slice(&encode_frame(&Frame::AuthOk { session_id: 9 }).unwrap());
         let mut dec = FrameDecoder::new();
         assert_eq!(
             dec.push(&bytes).unwrap(),
             vec![
-                ControlMsg::Auth("abc".into()),
-                ControlMsg::Subscribe,
-                ControlMsg::AuthOk(9)
+                Frame::Auth { token: "abc".into() },
+                Frame::Subscribe,
+                Frame::AuthOk { session_id: 9 }
             ]
         );
     }
 
     #[test]
     fn split_across_pushes() {
-        let bytes = encode_frame(&ControlMsg::MediaStart {
-            stream_instance_id: 1,
-            config_generation: 1,
-            sample_rate: 48000,
-            channels: 2,
-            sample_format: 1,
-        });
+        let bytes = encode_frame(&media_start()).unwrap();
         let mut dec = FrameDecoder::new();
         // byte-by-byte: no frame may appear until the last byte lands
         for (i, b) in bytes.iter().enumerate() {
@@ -288,7 +174,7 @@ mod tests {
     #[test]
     fn oversized_frame_rejected() {
         // frame_len = cap + 1, valid-looking so far
-        let big = (MAX_FRAME_LEN as u32 + 1).to_be_bytes();
+        let big = (MAX_FRAME_LEN + 1).to_be_bytes();
         let mut dec = FrameDecoder::new();
         assert!(dec.push(&big).is_err());
     }
@@ -298,15 +184,20 @@ mod tests {
         // frame_len = 1, type byte = 0x99
         let mut dec = FrameDecoder::new();
         let err = dec.push(&[0, 0, 0, 1, 0x99]).unwrap_err();
-        assert!(err.0.contains("unknown msg_type"), "got: {err}");
+        assert!(
+            err.0.contains("unknown msg_type"),
+            "got: {err}"
+        );
     }
 
     #[test]
     fn malformed_payload_length_rejected() {
         // AUTH_OK needs exactly 4 payload bytes; give 3
         let mut dec = FrameDecoder::new();
-        let err = dec.push(&[0, 0, 0, 4, TYPE_AUTH_OK, 1, 2, 3]).unwrap_err();
-        assert!(err.0.contains("payload len 3 != 4"), "got: {err}");
+        let err = dec
+            .push(&[0, 0, 0, 4, TYPE_AUTH_OK, 1, 2, 3])
+            .unwrap_err();
+        assert!(err.0.contains("payload length"), "got: {err}");
         // SUBSCRIBE must be empty; give 1 byte
         let mut dec = FrameDecoder::new();
         assert!(dec.push(&[0, 0, 0, 2, TYPE_SUBSCRIBE, 0x00]).is_err());
@@ -320,14 +211,60 @@ mod tests {
     #[test]
     fn max_cap_frame_accepted() {
         // exactly at the cap: frame_len = 1 + payload, huge utf-8 AUTH token
-        let payload_len = MAX_FRAME_LEN - 1;
+        let payload_len = MAX_FRAME_LEN as usize - 1;
         let mut dec = FrameDecoder::new();
-        let mut bytes = (MAX_FRAME_LEN as u32).to_be_bytes().to_vec();
+        let mut bytes = (MAX_FRAME_LEN).to_be_bytes().to_vec();
         bytes.push(TYPE_AUTH);
         bytes.extend(std::iter::repeat(b'a').take(payload_len));
         assert_eq!(
             dec.push(&bytes).unwrap(),
-            vec![ControlMsg::Auth("a".repeat(payload_len))]
+            vec![Frame::Auth {
+                token: "a".repeat(payload_len)
+            }]
         );
+    }
+
+    // ---- cross-end contract (single-sourced on proto-core) ----------------
+
+    /// The server half encodes with `proto_core::frame::encode`; the client
+    /// decoder must accept those exact bytes for every message type.
+    #[test]
+    fn server_encoded_frames_decode_on_client() {
+        let frames = vec![
+            Frame::Auth {
+                token: "test-credential-do-not-use".into(),
+            },
+            Frame::AuthOk { session_id: 0xdead_beef },
+            Frame::AuthErr(AuthErrCode::RateLimited),
+            Frame::Subscribe,
+            media_start(),
+            Frame::Unsubscribe,
+            Frame::Close(CloseReason::InternalError),
+        ];
+        for frame in &frames {
+            let bytes = proto_core::frame::encode(frame).expect("server-side encode");
+            let mut dec = FrameDecoder::new();
+            assert_eq!(dec.push(&bytes).unwrap(), vec![frame.clone()]);
+        }
+    }
+
+    /// The client encoder's bytes must parse with the server half's
+    /// `proto_core::frame::parse` (length prefix stripped).
+    #[test]
+    fn client_encoded_frames_parse_on_server() {
+        let frames = vec![
+            Frame::Auth { token: "tok".into() },
+            Frame::Subscribe,
+            media_start(),
+            Frame::Unsubscribe,
+            Frame::Close(CloseReason::Normal),
+            Frame::AuthErr(AuthErrCode::BadCredential),
+        ];
+        for frame in &frames {
+            let bytes = encode_frame(frame).expect("client-side encode");
+            let parsed =
+                proto_core::frame::parse(bytes[4], &bytes[5..]).expect("server-side parse");
+            assert_eq!(&parsed, frame);
+        }
     }
 }

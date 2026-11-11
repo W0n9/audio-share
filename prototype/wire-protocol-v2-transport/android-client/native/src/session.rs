@@ -1,16 +1,19 @@
 //! QUIC session glue: tokio runtime, quinn client, control stream loop,
-//! datagram receive loop, ring feeding.
+//! datagram receive loop, ring feeding, and the network-change rebind path.
 //!
-//! DEVICE/NETWORK ONLY: none of this is exercised by host tests (this crate's
-//! test scope is codec/state/verifier/ring logic; the e2e server is a separate
-//! crate). Everything compiles under `cargo test`; runtime behavior is
-//! explicitly UNTESTED until run against a real server on a device.
+//! Mostly DEVICE/NETWORK ONLY: the connect/control/datagram loops are not
+//! exercised by host tests (this crate's test scope is codec/state/verifier/
+//! ring logic; the e2e server is a separate crate). Everything compiles under
+//! `cargo test`; runtime behavior is explicitly UNTESTED until run against a
+//! real server on a device. EXCEPTION: the rebind path (`rebind` /
+//! `rebind_endpoint_from_raw_fd`) IS host-tested — it only needs a bare
+//! endpoint, no live QUIC connection.
 
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::codec::{encode_frame, ControlMsg, FrameDecoder};
+use crate::codec::{encode_frame, Frame, FrameDecoder};
 use crate::control::{ClientState, CloseInfo, CloseOrigin, CloseReason};
 use crate::media::{MediaHeader, MediaTracker};
 use crate::ring::MediaRing;
@@ -199,7 +202,10 @@ impl Session {
         // one reliable bidirectional control stream; AUTH before anything else
         // (never early data — this is a post-handshake 1-RTT write).
         let (mut tx, mut rx) = conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
-        let auth = encode_frame(&ControlMsg::Auth(self.config.credential.clone()));
+        let auth = encode_frame(&Frame::Auth {
+            token: self.config.credential.clone(),
+        })
+        .map_err(|e| format!("encode auth: {e}"))?;
         tx.write_all(&auth)
             .await
             .map_err(|e| format!("send auth: {e}"))?;
@@ -232,7 +238,7 @@ impl Session {
                             reason: CloseReason::AuthFailed,
                             origin: CloseOrigin::Remote,
                         }));
-                        break 'control Err(format!("auth rejected (code {code})"));
+                        break 'control Err(format!("auth rejected (code {code:?})"));
                     }
                     Err(crate::control::ControlError::AfterClose) => {
                         break 'control Err("control after close".into());
@@ -241,8 +247,11 @@ impl Session {
                         self.record_control_error(m);
                         // brief: violations get CLOSE(PROTOCOL_ERROR), not silence
                         let mut tx_guard = self.shared.control_stream.lock().await;
-                        if let Some(tx) = tx_guard.as_mut() {
-                            let _ = tx.write_all(&encode_frame(&ControlMsg::Close(2))).await;
+                        if let (Some(tx), Ok(close_bytes)) = (
+                            tx_guard.as_mut(),
+                            encode_frame(&Frame::Close(CloseReason::ProtocolError)),
+                        ) {
+                            let _ = tx.write_all(&close_bytes).await;
                         }
                         drop(tx_guard);
                         self.set_state(ClientState::Closed(CloseInfo {
@@ -313,7 +322,8 @@ impl Session {
             let mut tx_guard = self.shared.control_stream.lock().await;
             match tx_guard.as_mut() {
                 Some(tx) => {
-                    let frame = encode_frame(&ControlMsg::Subscribe);
+                    let frame = encode_frame(&Frame::Subscribe)
+                        .map_err(|e| format!("encode subscribe: {e}"))?;
                     tx.write_all(&frame)
                         .await
                         .map_err(|e| format!("send subscribe: {e}"))?;
@@ -336,7 +346,8 @@ impl Session {
             let mut tx_guard = self.shared.control_stream.lock().await;
             match tx_guard.as_mut() {
                 Some(tx) => {
-                    let frame = encode_frame(&ControlMsg::Unsubscribe);
+                    let frame = encode_frame(&Frame::Unsubscribe)
+                        .map_err(|e| format!("encode unsubscribe: {e}"))?;
                     tx.write_all(&frame)
                         .await
                         .map_err(|e| format!("send unsubscribe: {e}"))?;
@@ -357,8 +368,10 @@ impl Session {
         }
         self.runtime.block_on(async {
             let mut tx_guard = self.shared.control_stream.lock().await;
-            if let Some(tx) = tx_guard.as_mut() {
-                let _ = tx.write_all(&encode_frame(&ControlMsg::Close(0))).await;
+            if let (Some(tx), Ok(close_bytes)) =
+                (tx_guard.as_mut(), encode_frame(&Frame::Close(CloseReason::Normal)))
+            {
+                let _ = tx.write_all(&close_bytes).await;
             }
         });
         self.shared.shutdown.notify_waiters();
@@ -434,6 +447,54 @@ impl Session {
         log::info!("media ring attached ({capacity} bytes)");
         Ok(())
     }
+
+    /// Network-change migration: rebind the QUIC endpoint onto a UDP socket
+    /// the JVM created and route-pinned to the active Android `Network`
+    /// (`Network.bindSocket`), handed over as a raw fd. Low-frequency (once
+    /// per network change). On failure the caller falls back to teardown +
+    /// bounded-backoff reconnect (the fd is consumed either way, see the
+    /// unsafe helper below).
+    ///
+    /// Host-tested (endpoint-level); end-to-end behavior against a live QUIC
+    /// connection on a device is NOT RUN.
+    pub fn rebind(&self, fd: i32) -> Result<(), String> {
+        if self.shared.stopping.load(Ordering::SeqCst) {
+            return Err("session stopped".into());
+        }
+        let endpoint = self
+            .shared
+            .endpoint
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("no endpoint (not connected)")?;
+        // quinn's rebind registers the socket with the runtime's IO driver,
+        // which requires a runtime context — the JNI thread has none, so run
+        // it with this session's runtime.
+        self.runtime.block_on(async {
+            // SAFETY: the JNI contract transfers fd ownership to native
+            // (Kotlin must never close or reuse it afterwards); the socket
+            // is dropped (fd closed) if the rebind fails.
+            unsafe { rebind_endpoint_from_raw_fd(&endpoint, fd) }
+        })
+    }
+}
+
+/// Reconstruct a `std::net::UdpSocket` from a raw fd handed over by the JVM
+/// side and rebind the endpoint onto it (quinn `Endpoint::rebind`): all
+/// connections on the endpoint switch to the new socket live.
+///
+/// # Safety
+/// `fd` must be a valid, open UDP socket file descriptor whose ownership is
+/// transferred to this function: after the call the JVM side must never close
+/// or reuse it. The reconstructed socket is consumed by `Endpoint::rebind` on
+/// success and dropped (closing the fd) on failure.
+unsafe fn rebind_endpoint_from_raw_fd(endpoint: &quinn::Endpoint, fd: i32) -> Result<(), String> {
+    use std::os::fd::FromRawFd;
+    let socket = UdpSocket::from_raw_fd(fd);
+    endpoint
+        .rebind(socket)
+        .map_err(|e| format!("endpoint rebind: {e}"))
 }
 
 /// Device-only datagram loop: parse header, verify, feed the ring. UNTESTED
@@ -448,12 +509,8 @@ async fn media_pump(shared: Arc<SharedState>) {
             d = conn.read_datagram() => {
                 match d {
                     Ok(datagram) => {
-                        if datagram.len() < crate::media::MEDIA_HEADER_LEN {
-                            continue;
-                        }
-                        let (header, payload) = datagram.split_at(crate::media::MEDIA_HEADER_LEN);
-                        let header = match MediaHeader::parse(header) {
-                            Ok(h) => h,
+                        let (header, payload) = match MediaHeader::parse(&datagram) {
+                            Ok(v) => v,
                             Err(_) => continue,
                         };
                         let forward = {
@@ -491,5 +548,78 @@ impl ToSocketAddrsErr for (&str, u16) {
         self.to_socket_addrs()
             .map(|i| i.collect())
             .map_err(|e| format!("resolve {}:{}: {e}", self.0, self.1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::fd::IntoRawFd;
+
+    fn test_config() -> SessionConfig {
+        SessionConfig {
+            host: "127.0.0.1".to_string(),
+            port: 65531,
+            pinned_spki_hex: "00".repeat(32),
+            credential: "test-credential-do-not-use".to_string(),
+        }
+    }
+
+    /// Creates a bound UDP socket and hands its fd over raw (ownership moves
+    /// away from the Rust wrapper via the proper `into_raw_fd` transfer),
+    /// mirroring the JVM JNI fd contract.
+    fn transfer_bound_socket() -> (i32, u16) {
+        let sock = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let port = sock.local_addr().expect("local addr").port();
+        (sock.into_raw_fd(), port)
+    }
+
+    /// The migration path's core primitive: a bare client endpoint rebinds
+    /// onto a raw fd exactly like the one handed over from the JVM side.
+    #[tokio::test]
+    async fn rebind_endpoint_swaps_the_underlying_socket() {
+        let first = UdpSocket::bind("127.0.0.1:0").expect("bind first");
+        let endpoint = quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            None,
+            first,
+            Arc::new(quinn::TokioRuntime),
+        )
+        .expect("endpoint");
+        let old_port = endpoint.local_addr().expect("local addr").port();
+
+        let (fd, new_port) = transfer_bound_socket();
+        unsafe { rebind_endpoint_from_raw_fd(&endpoint, fd) }.expect("rebind");
+
+        assert_ne!(
+            endpoint.local_addr().expect("local addr after rebind").port(),
+            old_port,
+            "endpoint must now use the second socket"
+        );
+        assert_eq!(
+            endpoint.local_addr().expect("local addr after rebind").port(),
+            new_port,
+        );
+        endpoint.wait_idle().await; // drop cleanly, no live connections
+    }
+
+    /// A rebind is impossible before the handshake stored the endpoint; the
+    /// fd must not be touched on that error path (caller falls back to
+    /// teardown + backoff reconnect).
+    #[test]
+    fn rebind_without_stored_endpoint_fails_before_touching_the_fd() {
+        let session = Session::new(test_config()).expect("session");
+        let (fd, _port) = transfer_bound_socket();
+        let err = session.rebind(fd).expect_err("no endpoint yet");
+        assert!(err.contains("no endpoint"), "got: {err}");
+    }
+
+    /// A stopped session refuses to rebind.
+    #[test]
+    fn rebind_on_stopped_session_fails() {
+        let session = Session::new(test_config()).expect("session");
+        session.shared.stopping.store(true, Ordering::SeqCst);
+        let (fd, _port) = transfer_bound_socket();
+        assert!(session.rebind(fd).is_err());
     }
 }

@@ -25,6 +25,12 @@ struct Args {
     #[arg(long)]
     credential: Option<String>,
 
+    /// A token to treat as revoked (repeatable). It gets the exact
+    /// bad-credential wire treatment (AUTH_ERR(BAD_CREDENTIAL) +
+    /// CLOSE(AUTH_FAILED)) but is counted under the distinct `revoked` stat.
+    #[arg(long = "revoked-credential")]
+    revoked_credentials: Vec<String>,
+
     /// Write the SPKI sha256 (64 lowercase hex chars) to this file.
     #[arg(long)]
     spki_out: Option<std::path::PathBuf>,
@@ -71,6 +77,7 @@ fn main() -> anyhow::Result<()> {
     let config = ServerConfig {
         bind: args.bind,
         credential,
+        revoked_credentials: args.revoked_credentials,
         idle_timeout: if args.idle_timeout_secs == 0 {
             None
         } else {
@@ -116,7 +123,7 @@ async fn run(config: ServerConfig, spki_out: Option<std::path::PathBuf>) -> anyh
     for stats in server.session_stats() {
         println!(
             "PROTO_SERVER_SESSION id={} addr={} state={} frames_in=(auth:{} sub:{} unsub:{} close:{}) \
-             frames_out=(auth_ok:{} auth_err:{} media_start:{} close:{} protocol_err:{}) \
+             frames_out=(auth_ok:{} auth_err:{} revoked:{} media_start:{} close:{} protocol_err:{}) \
              media=(produced:{} sent:{} queue_dropped:{} sendbuf_dropped:{} bytes:{} batches:{}) \
              close_sent={:?} close_received={:?}",
             stats.session_id,
@@ -128,6 +135,7 @@ async fn run(config: ServerConfig, spki_out: Option<std::path::PathBuf>) -> anyh
             stats.frames_close_in,
             stats.auth_ok_out,
             stats.auth_err_out,
+            stats.auth_err_revoked,
             stats.media_start_out,
             stats.close_out,
             stats.protocol_errors_out,

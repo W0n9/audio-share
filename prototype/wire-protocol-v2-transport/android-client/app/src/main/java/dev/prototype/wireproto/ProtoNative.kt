@@ -54,4 +54,18 @@ object ProtoNative {
      * native side writes verified media bytes into it. Call once per session.
      */
     external fun attachBuffer(handle: Long, buffer: ByteBuffer): Boolean
+
+    /**
+     * Network-change migration: rebind the QUIC endpoint onto the UDP socket
+     * whose raw fd is passed in. The fd must come from a socket created and
+     * route-pinned with [Network.bindSocket] (e.g. via
+     * `ParcelFileDescriptor.fromDatagramSocket(...).getFd()`).
+     *
+     * FD OWNERSHIP: the fd transfers to native on call — on success AND on
+     * failure. The JVM side must never close or reuse the socket afterwards.
+     *
+     * Returns false when the rebind failed; the caller then falls back to
+     * teardown + bounded-backoff reconnect.
+     */
+    external fun rebind(handle: Long, fd: Int): Boolean
 }
