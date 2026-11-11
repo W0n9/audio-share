@@ -136,20 +136,38 @@ button {
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
 #app {
-  min-height: 100%;
+  height: 100%;
 }
 
+/* The shell fills the window exactly; each view scrolls its own content so
+   the header, banners, and footer stay reachable at the 380×560 minimum. */
 .app {
-  min-height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--surface);
+}
+
+.view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.view-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
 
 .header {
@@ -197,72 +215,204 @@ select:focus-visible {
   flex: none;
 }
 
-.status-hero {
-  padding: 2px 16px 14px;
+/* --- Main view (Variant C): one status, one action, quick settings --- */
+
+.main-scroll {
+  padding: 0 20px 16px;
 }
 
-.status-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 18px;
-  font-weight: 750;
+.hero {
+  padding: 19px 0 18px;
+  text-align: center;
 }
 
-.dot {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
+.hero-dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  margin: 0 auto 13px;
   border-radius: 50%;
   background: var(--muted);
-  flex: none;
+  box-shadow: 0 0 0 7px var(--surface-2);
   transition:
     background-color 120ms ease,
     box-shadow 120ms ease;
 }
 
-.dot.on {
+.hero-dot.is-running {
   background: var(--green);
-  box-shadow: 0 0 0 4px var(--green-soft);
+  box-shadow: 0 0 0 7px var(--green-soft);
 }
 
-.dot.pending {
+/* Starting/Stopping feedback: the pending halo, no persistent animation. */
+.hero-dot.is-pending {
   background: var(--accent);
-  box-shadow: 0 0 0 4px var(--accent-soft);
+  box-shadow: 0 0 0 7px var(--accent-soft);
 }
 
-.address {
-  font-family: var(--mono);
-  font-size: 12px;
+.hero-title {
+  margin: 0 0 9px;
+  font-size: 26px;
+  line-height: 1.15;
+  letter-spacing: -0.045em;
+}
+
+.address-chip {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--bg);
   color: var(--muted);
-  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
   overflow-wrap: anywhere;
 }
 
-.body {
-  padding: 0 16px;
+.main-action {
+  margin: 17px auto 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.action-circle {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 24%, transparent);
+  transition:
+    transform 120ms ease,
+    background-color 120ms ease;
+}
+
+.main-action:hover:not(:disabled) .action-circle {
+  transform: translateY(-1px);
+  background: var(--accent-hover);
+}
+
+/* Stop: the restrained danger style — soft field, danger icon, no glow. */
+.main-action.stop .action-circle {
+  border-color: var(--red-line);
+  background: var(--red-soft);
+  color: var(--red);
+  box-shadow: none;
+}
+
+.main-action.stop:hover:not(:disabled) .action-circle {
+  background: color-mix(in srgb, var(--red) 16%, var(--red-soft));
+}
+
+.quick-settings {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.quick-row {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
 
-.btn-primary {
-  border: 0;
-  border-radius: 10px;
-  padding: 12px 16px;
-  font-weight: 700;
-  color: var(--accent-contrast);
-  background: var(--accent);
-  width: 100%;
+.quick-row + .quick-row {
+  border-top: 1px solid var(--line);
 }
 
-.btn-primary.stop {
-  background: var(--red);
+.quick-row label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 10px;
 }
 
-.btn-primary:disabled {
-  opacity: 0.55;
-  cursor: default;
+.quick-row select {
+  width: 172px;
+  max-width: 55%;
+  flex: none;
+  border-color: transparent;
+  background: var(--bg);
+  text-align: right;
+}
+
+/* --- Collapsible region (native details/summary semantics) --- */
+
+.disclosure {
+  border-bottom: 1px solid var(--line);
+}
+
+.disclosure summary {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure summary > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.disclosure summary > svg {
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.disclosure[open] summary > svg {
+  transform: rotate(180deg);
+}
+
+.disclosure-content {
+  padding: 2px 0 13px;
+}
+
+.network-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 10px;
+}
+
+.server-reset {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.server-reset-label {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.server-reset .link {
+  font-size: 11px;
+  padding: 3px 0;
 }
 
 .field {
@@ -302,7 +452,7 @@ select {
 }
 
 .error {
-  margin: 0 16px 12px;
+  margin: 0 20px 12px;
   padding: 10px 12px;
   border: 1px solid var(--red-line);
   background: var(--red-soft);
@@ -312,8 +462,12 @@ select {
   overflow-wrap: anywhere;
 }
 
+.main-scroll .error {
+  margin: 0 0 12px;
+}
+
 .banner {
-  margin: 0 16px 12px;
+  margin: 0 20px 12px;
   padding: 10px 12px;
   border: 1px solid var(--warn-line);
   background: var(--warn-soft);
@@ -362,8 +516,17 @@ select {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px 14px;
+  gap: 12px;
+  padding: 10px 20px;
+  min-height: 42px;
   border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.footer-hint {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .link {
@@ -374,6 +537,10 @@ select {
   padding: 4px 0;
 }
 
+.link:hover {
+  text-decoration: underline;
+}
+
 .link.muted {
   color: var(--muted);
 }
@@ -381,7 +548,7 @@ select {
 .settings-list {
   display: flex;
   flex-direction: column;
-  padding: 0 16px;
+  padding: 0 20px;
 }
 
 .row {
@@ -459,12 +626,6 @@ select {
   box-shadow: var(--shadow-soft);
 }
 
-.placeholder {
-  margin: 12px 16px 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 input:disabled,
 select:disabled,
 button:disabled {
@@ -475,6 +636,10 @@ button:disabled {
 @media (max-width: 430px) {
   .field-row {
     flex-direction: column;
+  }
+
+  .network-row {
+    grid-template-columns: 1fr;
   }
 }
 
