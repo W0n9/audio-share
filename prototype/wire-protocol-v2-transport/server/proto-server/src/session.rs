@@ -253,7 +253,7 @@ async fn handle_frame(
                             Some(Frame::AuthErr(frame::AuthErrCode::BadCredential)),
                         );
                     }
-                    if constant_time_eq(token, &shared.config.credential) {
+                    if credential_eq(token, &shared.config.credential) {
                         let session_id = shared
                             .next_session_id
                             .fetch_add(1, Ordering::Relaxed);
@@ -363,9 +363,9 @@ async fn handle_frame(
 }
 
 /// Credential comparison. The prototype uses a throwaway LAN token; a plain
-/// comparison is sufficient here and deliberately NOT presented as a hardened
-/// constant-time primitive.
-fn constant_time_eq(a: &str, b: &str) -> bool {
+/// byte comparison is sufficient here. It must not (and does not) claim to be
+/// a constant-time primitive — the name deliberately avoids any such claim.
+fn credential_eq(a: &str, b: &str) -> bool {
     a.as_bytes() == b.as_bytes()
 }
 
