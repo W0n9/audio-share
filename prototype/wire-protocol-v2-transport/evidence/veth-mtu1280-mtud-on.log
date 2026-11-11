@@ -1,0 +1,15 @@
+=== cell 9 run mtud-on: reduced path MTU (veth MTU 1280/1280), no netem, --mtud
+=== date (UTC): 2026-11-11T09:02:27Z
+=== host: Linux 6.8.0-139-generic x86_64 GNU/Linux; toolchain: rustc 1.98.1 (48a229cea 2026-09-01)
+=== bins: proto-server 0.1.0 / proto-client 0.1.0, built from git 57e9798198fdc76e968ebf9b60e914548e553869
+=== path: proto-a MTU=1280 (host) <-> proto-b MTU=1280 (netns proto-ns); qdisc host: qdisc noqueue 0: root refcnt 2 ; qdisc netns: qdisc noqueue 0: root refcnt 2  (no impairment)
+=== commands:
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind 10.77.0.2:65531 --spki-out <tmp>/spki.hex --mtud -v
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr 10.77.0.2:65531 --pin "$(cat <tmp>/spki.hex)" --duration-ms 3000 --min-datagrams 800 --mtud
+=== mds semantics: client mds = max_datagram_size() queried right after subscribe (BEFORE adaptation completes); mds_end = same query at end of run; max_datagram_len = largest datagram actually received = server-side adapted sizing.
+PROTO_SERVER_READY addr=10.77.0.2:65531 spki=9a25ef68193021225052cdc5fb463dcac3014cc3a0a49bfc2ecf0e2233c90aec
+mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1192 datagrams=1201 frames=144146 bytes=1177188 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=25 misaligned=0 max_datagram_len=1188 close_reason=Normal duration_ms=3005
+--- client exit code: 0
+--- server session line:
+PROTO_SERVER_SESSION id=1 addr=10.77.0.1:39134 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:1202 sent:1202 queue_dropped:0 sendbuf_dropped:0 bytes:1177960 batches:601) close_sent=Some("Normal") close_received=Some("Normal")
+=== cell 9 verdict (mtud-on): PASS — path MTU 1280 both ends, no netem. Observed max_datagram_size: mds=1162 at subscribe (1200-byte initial MTU) -> mds_end=1192 (client DPLPMTUD adapted to the 1280-byte path); largest received datagram max_datagram_len=1188 (server re-queries per 5 ms tick and sizes min(mds-20, chunk), so the server-side adapted limit tracked the same path). gaps=0, duplicates=0, close clean. oversized=25 datagrams exceeded the CLIENT own max_datagram_size() at their arrival instant — measurement artifact of the cross-endpoint adaptation race, NOT a protocol violation: max_datagram_size() is per-direction (the client value bounds client->server sends, not received datagrams); the server never exceeded its own current limit (enforced by sizing + debug_assert in proto-server session.rs), and every datagram (<=1188 B) fit the 1280-byte path without IP fragmentation (quinn-udp sets PMTUD/disallow-fragmentation on Linux; no EMSGSIZE or reassembly occurred).

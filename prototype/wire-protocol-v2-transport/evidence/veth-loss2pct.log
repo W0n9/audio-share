@@ -1,0 +1,61 @@
+=== cell 4: loss 2% (netem loss 2% on proto-b, server->client)
+=== date (UTC): 2026-11-11T08:34:49Z
+=== host: Linux 6.8.0-139-generic x86_64 GNU/Linux; toolchain: rustc 1.98.1 (48a229cea 2026-09-01)
+=== bins: proto-server 0.1.0 / proto-client 0.1.0, built from git 57e9798198fdc76e968ebf9b60e914548e553869
+=== topology: proto-a (host, 10.77.0.1/24, MTU 1500) <-> proto-b (netns proto-ns, 10.77.0.2/24); impairment on proto-b EGRESS only (server->client: MEDIA_START, media datagrams, server CLOSE); client->server direction unimpaired
+=== commands:
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/scripts/impairment.sh loss 2% proto-b
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind 10.77.0.2:65531 --spki-out <tmp>/spki.hex -v
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr 10.77.0.2:65531 --pin "$(cat <tmp>/spki.hex)" --duration-ms 5000 --min-datagrams 1500
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/scripts/impairment.sh clear proto-b   (after the run)
+Illegal "loss percent"
+netem loss 2%% on proto-b
+qdisc noqueue 0: root refcnt 2 
+PROTO_SERVER_READY addr=10.77.0.2:65531 spki=b1650b0d79a7eaa02c4cd6d4897ee63b44e0b4021168c9737ba8500f0f6c4e2e
+--- client stdout/stderr:
+mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=1993 frames=239182 bytes=1953316 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=5006
+--- client exit code: 0
+--- proto-a counter samples (rx = server->client arrivals) every 500ms:
+1794386090.328747 rx_bytes=2220 rx_pkts=14 rx_drop=0 tx_pkts=11
+1794386090.843888 rx_bytes=215339 rx_pkts=122 rx_drop=0 tx_pkts=120
+1794386091.358937 rx_bytes=427708 rx_pkts=225 rx_drop=0 tx_pkts=223
+1794386091.874228 rx_bytes=638017 rx_pkts=327 rx_drop=0 tx_pkts=325
+1794386092.389834 rx_bytes=844204 rx_pkts=427 rx_drop=0 tx_pkts=425
+1794386092.904789 rx_bytes=1056573 rx_pkts=530 rx_drop=0 tx_pkts=528
+   ... (10 samples total; rx_pkts min/max/mean below)
+   rx_pkts/500ms min=14 max=942 mean=479.5
+--- Udp InDatagrams/OutDatagrams (host-wide) before->after client run: 59410501 494002 -> 59411530 494002
+PROTO_SERVER_SESSION id=1 addr=10.77.0.1:60028 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:1994 sent:1994 queue_dropped:0 sendbuf_dropped:0 bytes:1954120 batches:997) close_sent=Some("Normal") close_received=Some("Normal")
+root qdisc removed from proto-b (if any)
+qdisc noqueue 0: root refcnt 2 
+=== (block above: profile NOT applied — harness passed "2%" and impairment.sh appends "%" itself, tc rejected "2%%" (see "Illegal loss percent", qdisc stayed noqueue); block below is the real 2% loss run)
+=== cell 4: loss 2% (netem loss 2% on proto-b, server->client)
+=== date (UTC): 2026-11-11T08:37:23Z
+=== host: Linux 6.8.0-139-generic x86_64 GNU/Linux; toolchain: rustc 1.98.1 (48a229cea 2026-09-01)
+=== bins: proto-server 0.1.0 / proto-client 0.1.0, built from git 57e9798198fdc76e968ebf9b60e914548e553869
+=== topology: proto-a (host, 10.77.0.1/24, MTU 1500) <-> proto-b (netns proto-ns, 10.77.0.2/24); impairment on proto-b EGRESS only (server->client: MEDIA_START, media datagrams, server CLOSE); client->server direction unimpaired
+=== commands:
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/scripts/impairment.sh loss 2 proto-b
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind 10.77.0.2:65531 --spki-out <tmp>/spki.hex -v
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr 10.77.0.2:65531 --pin "$(cat <tmp>/spki.hex)" --duration-ms 5000 --min-datagrams 1500
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/scripts/impairment.sh clear proto-b   (after the run)
+netem loss 2% on proto-b
+qdisc netem 8004: root refcnt 37 limit 1000 loss 2%
+PROTO_SERVER_READY addr=10.77.0.2:65531 spki=c11366162be1fc24b50267915cbc609de5ea73888f414977d4db89ba86ad5b6b
+--- client stdout/stderr:
+mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=1961 frames=235342 bytes=1921956 gaps=40 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=5006
+--- client exit code: 0
+--- proto-a counter DELTAS per 500ms interval (rx = server->client arrivals, tx = client->server):
+t=1794386244.955254 d_rx_pkts=108 d_rx_bytes=212303 d_tx_pkts=108 rx_drop=0
+t=1794386245.471323 d_rx_pkts=101 d_rx_bytes=206220 d_tx_pkts=100 rx_drop=0
+t=1794386245.986962 d_rx_pkts=103 d_rx_bytes=210349 d_tx_pkts=102 rx_drop=0
+t=1794386246.502505 d_rx_pkts=103 d_rx_bytes=210338 d_tx_pkts=102 rx_drop=0
+t=1794386247.017416 d_rx_pkts=103 d_rx_bytes=206313 d_tx_pkts=100 rx_drop=0
+t=1794386247.533017 d_rx_pkts=104 d_rx_bytes=208362 d_tx_pkts=101 rx_drop=0
+t=1794386248.049030 d_rx_pkts=101 d_rx_bytes=204210 d_tx_pkts=99 rx_drop=0
+t=1794386248.563716 d_rx_pkts=101 d_rx_bytes=204224 d_tx_pkts=99 rx_drop=0
+t=1794386249.078055 d_rx_pkts=104 d_rx_bytes=210391 d_tx_pkts=102 rx_drop=0
+--- host-wide Udp counters before->after client run: udp_in=59412408 udp_out=61652450 rcvbuf_err=44939 sndbuf_err=0 -> udp_in=59413437 udp_out=61653475 rcvbuf_err=44939 sndbuf_err=0
+PROTO_SERVER_SESSION id=1 addr=10.77.0.1:35078 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:2002 sent:2002 queue_dropped:0 sendbuf_dropped:0 bytes:1961960 batches:1001) close_sent=Some("Normal") close_received=Some("Normal")
+root qdisc removed from proto-b (if any)
+qdisc noqueue 0: root refcnt 2 

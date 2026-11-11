@@ -1,0 +1,20 @@
+=== cell 2 rerun: IPv6 loopback (::1) full happy-path client run, AFTER client family-bind fix (commit 7eeeb74)
+=== date (UTC): 2026-11-11T08:26:22Z
+=== host: Linux 6.8.0-139-generic x86_64 GNU/Linux; toolchain: rustc 1.98.1 (48a229cea 2026-09-01); kernel 6.8.0-139-generic
+=== bins: proto-server 0.1.0 / proto-client 0.1.0, built from git 4f17ac089d8441daa4b850eabcb8598545686ffd (client code at 7eeeb74+)
+=== pre-fix failure kept verbatim in evidence/ipv6-loopback-happy.log
+=== commands:
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind '[::1]:65531' --spki-out <tmp>/spki.hex
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr '[::1]:65531' --pin "$(cat <tmp>/spki.hex)" --duration-ms 1000 --min-datagrams 100
+PROTO_SERVER_READY addr=[::1]:65531 spki=c495188ba0f5228595118b061c02a67d4dec6befd722d3fe240749dc36caadf9
+--- client stdout/stderr:
+mode=happy ok=true session_id=1 instance=1 mds=1162 datagrams=401 frames=48142 bytes=393156 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=1005
+--- client exit code: 0
+--- server log (incl. shutdown session lines):
+[2m2026-11-11T08:26:22.516181Z[0m [32m INFO[0m [2mproto_server[0m[2m:[0m prototype server listening [3maddr[0m[2m=[0m[::1]:65531 [3mspki_sha256[0m[2m=[0mc495188ba0f5228595118b061c02a67d4dec6befd722d3fe240749dc36caadf9
+PROTO_SERVER_READY addr=[::1]:65531 spki=c495188ba0f5228595118b061c02a67d4dec6befd722d3fe240749dc36caadf9
+[2m2026-11-11T08:26:23.042996Z[0m [32m INFO[0m [2mproto_server::session[0m[2m:[0m client authenticated [3msession_id[0m[2m=[0m1
+[2m2026-11-11T08:26:23.043460Z[0m [32m INFO[0m [2mproto_server::session[0m[2m:[0m media started [3minstance[0m[2m=[0m1
+[2m2026-11-11T08:26:24.044666Z[0m [32m INFO[0m [2mproto_server::session[0m[2m:[0m media stopped
+[2m2026-11-11T08:26:24.054691Z[0m [32m INFO[0m [2mproto_server[0m[2m:[0m shutdown requested
+PROTO_SERVER_SESSION id=1 addr=[::1]:43047 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:402 sent:402 queue_dropped:0 sendbuf_dropped:0 bytes:393960 batches:201) close_sent=Some("Normal") close_received=Some("Normal")

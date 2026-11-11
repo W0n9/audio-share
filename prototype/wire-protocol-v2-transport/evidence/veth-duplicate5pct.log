@@ -1,0 +1,59 @@
+=== cell 6: duplicate 5% (netem duplicate 5% on proto-b, server->client)
+=== date (UTC): 2026-11-11T08:39:14Z
+=== host: Linux 6.8.0-139-generic x86_64 GNU/Linux; toolchain: rustc 1.98.1 (48a229cea 2026-09-01)
+=== bins: proto-server 0.1.0 / proto-client 0.1.0, built from git 57e9798198fdc76e968ebf9b60e914548e553869
+=== topology: proto-a (host, 10.77.0.1/24, MTU 1500) <-> proto-b (netns proto-ns, 10.77.0.2/24); impairment on proto-b EGRESS only (server->client: MEDIA_START, media datagrams, server CLOSE); client->server direction unimpaired
+=== commands:
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/scripts/impairment.sh duplicate 5 proto-b
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind 10.77.0.2:65531 --spki-out <tmp>/spki.hex -v
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr 10.77.0.2:65531 --pin "$(cat <tmp>/spki.hex)" --duration-ms 5000 --min-datagrams 1500
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/scripts/impairment.sh clear proto-b   (after the run)
+netem duplicate 5% on proto-b
+qdisc netem 8006: root refcnt 37 limit 1000 duplicate 5%
+qdisc netem 8006: root refcnt 37 limit 1000 duplicate 5%
+PROTO_SERVER_READY addr=10.77.0.2:65531 spki=c91c8cfd292394dee38c1c7e55e4e96b31a6855ba948e537f2fa548cd3786a75
+--- client stdout/stderr:
+mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=2001 frames=240142 bytes=1961156 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=5006
+--- client exit code: 0
+--- proto-a counter DELTAS per 500ms interval (rx = server->client arrivals, tx = client->server):
+t=1794386356.346557 d_rx_pkts=112 d_rx_bytes=220541 d_tx_pkts=109 rx_drop=0
+t=1794386356.862415 d_rx_pkts=108 d_rx_bytes=222691 d_tx_pkts=103 rx_drop=0
+t=1794386357.377845 d_rx_pkts=106 d_rx_bytes=218547 d_tx_pkts=103 rx_drop=0
+t=1794386357.892697 d_rx_pkts=109 d_rx_bytes=224760 d_tx_pkts=103 rx_drop=0
+t=1794386358.408055 d_rx_pkts=110 d_rx_bytes=226811 d_tx_pkts=103 rx_drop=0
+t=1794386358.923185 d_rx_pkts=107 d_rx_bytes=220609 d_tx_pkts=103 rx_drop=0
+t=1794386359.438042 d_rx_pkts=110 d_rx_bytes=226809 d_tx_pkts=103 rx_drop=0
+t=1794386359.954181 d_rx_pkts=108 d_rx_bytes=222667 d_tx_pkts=103 rx_drop=0
+t=1794386360.470052 d_rx_pkts=108 d_rx_bytes=222667 d_tx_pkts=103 rx_drop=0
+--- host-wide Udp counters before->after client run: udp_in=59415155 udp_out=61654803 rcvbuf_err=44939 sndbuf_err=0 -> udp_in=59416229 udp_out=61655839 rcvbuf_err=44939 sndbuf_err=0
+PROTO_SERVER_SESSION id=1 addr=10.77.0.1:45448 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:2002 sent:2002 queue_dropped:0 sendbuf_dropped:0 bytes:1961960 batches:1001) close_sent=Some("Normal") close_received=Some("Normal")
+root qdisc removed from proto-b (if any)
+qdisc noqueue 0: root refcnt 2 
+
+=== cell 6 supplement: wire-level packet duplication vs app-visible duplicates
+=== date (UTC): 2026-11-11T08:41:27Z
+=== why: quinn enforces QUIC packet-number dedup, so a duplicated QUIC packet is discarded BEFORE the app; the counters above (duplicates=0) are the correct app-level result. This supplement measures the wire to prove duplication happened and was absorbed.
+=== method: tcpdump -i proto-a counting server->client UDP packets (src host 10.77.0.2) during a 3000 ms happy-path run; run A without duplication, run B with netem duplicate 5% on proto-b (server->client egress).
+--- run A (no duplication)
+/tmp/mx/cell6b_dup_proof.sh: 行 23: NAME: 未绑定的变量
+--- run B (netem duplicate 5%)
+/tmp/mx/cell6b_dup_proof.sh: 行 23: NAME: 未绑定的变量
+=== interpretation: run B wire count ~= run A + ~5%; app datagrams unchanged and duplicates=0 -> duplication absorbed by QUIC packet-number dedup, no app-visible duplicate sequences, no double decode.
+
+=== cell 6 supplement: wire-level packet duplication vs app-visible duplicates
+=== date (UTC): 2026-11-11T08:41:51Z
+=== why: quinn enforces QUIC packet-number dedup, so a duplicated QUIC packet is discarded BEFORE the app; the counters above (duplicates=0) are the correct app-level result. This supplement measures the wire to prove duplication happened and was absorbed.
+=== method: tcpdump -i proto-a counting server->client UDP packets (src host 10.77.0.2) during a 3000 ms happy-path run; run A without duplication, run B with netem duplicate 5% on proto-b (server->client egress).
+--- run A (no duplication)
+run nodup: client_exit=0 client_line: 
+mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=1193 frames=143182 bytes=1169316 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal
+run nodup: server session: media=(produced:1194 sent:1194 queue_dropped:0 sendbuf_dropped:0 bytes:1170120 batches:597)
+run nodup: WIRE packets server->client on proto-a (tcpdump): 1211
+run nodup: client app datagrams: datagrams=1193
+--- run B (netem duplicate 5%)
+run dup5: client_exit=0 client_line: 
+mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=1193 frames=143182 bytes=1169316 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal
+run dup5: server session: media=(produced:1194 sent:1194 queue_dropped:0 sendbuf_dropped:0 bytes:1170120 batches:597)
+run dup5: WIRE packets server->client on proto-a (tcpdump): 1238
+run dup5: client app datagrams: datagrams=1193
+=== interpretation: run B wire count ~= run A + ~5%; app datagrams unchanged and duplicates=0 -> duplication absorbed by QUIC packet-number dedup, no app-visible duplicate sequences, no double decode.

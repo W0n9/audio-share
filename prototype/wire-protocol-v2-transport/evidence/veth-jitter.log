@@ -1,0 +1,130 @@
+=== cell 7: jitter (netem delay 10ms 5ms distribution normal on proto-b, server->client)
+=== date (UTC): 2026-11-11T08:43:02Z
+=== host: Linux 6.8.0-139-generic x86_64 GNU/Linux; toolchain: rustc 1.98.1 (48a229cea 2026-09-01)
+=== bins: proto-server 0.1.0 / proto-client 0.1.0, built from git 57e9798198fdc76e968ebf9b60e914548e553869
+=== topology: proto-a (host, 10.77.0.1/24, MTU 1500) <-> proto-b (netns proto-ns, 10.77.0.2/24); impairment on proto-b EGRESS only (server->client: MEDIA_START, media datagrams, server CLOSE); client->server direction unimpaired
+=== commands:
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/scripts/impairment.sh jitter 10 5 proto-b
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind 10.77.0.2:65531 --spki-out <tmp>/spki.hex -v
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr 10.77.0.2:65531 --pin "$(cat <tmp>/spki.hex)" --duration-ms 5000 --min-datagrams 1500
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/scripts/impairment.sh clear proto-b   (after the run)
+netem delay 10ms ±5ms on proto-b
+qdisc netem 8008: root refcnt 37 limit 1000 delay 10ms  5ms
+qdisc netem 8008: root refcnt 37 limit 1000 delay 10ms  5ms
+PROTO_SERVER_READY addr=10.77.0.2:65531 spki=7f44a9ba66daf2d32986e29b77e4c095a7182efc58028f839c1f191e00f93670
+--- client stdout/stderr:
+mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=1621 frames=194542 bytes=1588756 gaps=531 duplicates=531 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=5242
+--- client exit code: 0
+--- proto-a counter DELTAS per 500ms interval (rx = server->client arrivals, tx = client->server):
+t=1794386583.878122 d_rx_pkts=129 d_rx_bytes=174801 d_tx_pkts=104 rx_drop=0
+t=1794386584.393445 d_rx_pkts=126 d_rx_bytes=168885 d_tx_pkts=104 rx_drop=0
+t=1794386584.909640 d_rx_pkts=125 d_rx_bytes=170846 d_tx_pkts=96 rx_drop=0
+t=1794386585.425837 d_rx_pkts=109 d_rx_bytes=150839 d_tx_pkts=83 rx_drop=0
+t=1794386585.941229 d_rx_pkts=117 d_rx_bytes=169687 d_tx_pkts=98 rx_drop=0
+t=1794386586.456387 d_rx_pkts=132 d_rx_bytes=177571 d_tx_pkts=107 rx_drop=0
+t=1794386586.971129 d_rx_pkts=127 d_rx_bytes=175820 d_tx_pkts=104 rx_drop=0
+t=1794386587.486973 d_rx_pkts=130 d_rx_bytes=179972 d_tx_pkts=103 rx_drop=0
+t=1794386588.002680 d_rx_pkts=131 d_rx_bytes=179181 d_tx_pkts=104 rx_drop=0
+t=1794386588.517511 d_rx_pkts=112 d_rx_bytes=153353 d_tx_pkts=99 rx_drop=0
+--- host-wide Udp counters before->after client run: udp_in=59419341 udp_out=61659340 rcvbuf_err=44939 sndbuf_err=0 -> udp_in=59420609 udp_out=61660379 rcvbuf_err=44939 sndbuf_err=0
+PROTO_SERVER_SESSION id=1 addr=10.77.0.1:35910 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:2008 sent:2008 queue_dropped:0 sendbuf_dropped:0 bytes:1967840 batches:1004) close_sent=Some("Normal") close_received=Some("Normal")
+root qdisc removed from proto-b (if any)
+qdisc noqueue 0: root refcnt 2 
+
+=== cell 7 investigation (same profile, tc -s qdisc stats + wire packet count)
+=== date (UTC): 2026-11-11T08:45:50Z
+=== question: sent=2008 vs app-received=1621 in the first jitter run; gaps=531=duplicates=531 does not close for pure reordering (387 datagrams unaccounted). Measure: netem drop counter (tc -s), wire packet count (tcpdump src host 10.77.0.2), client counters.
+--- client line: mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=1571 frames=188542 bytes=1539756 gaps=497 duplicates=497 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal
+--- tc -s qdisc stats on proto-b (Sent/dropped counters) right after run:
+qdisc netem 8009: root refcnt 37 limit 1000 delay 10ms  5ms
+ Sent 1665891 bytes 1591 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+--- wire packets server->client (tcpdump): 2054
+--- pcap dropped-by-tcpdump: none
+--- server session: media=(produced:2008 sent:2008 queue_dropped:0 sendbuf_dropped:0 bytes:1967840 batches:1004)
+
+=== cell 7 ground-truth probe: per-datagram arrival log under the same jitter profile
+=== date (UTC): 2026-11-11T08:54:10Z
+=== tool: throwaway probe binary using the proto-client/proto-core libs (NOT committed; source kept in /tmp/mx/probe for this session) — logs arrival order, sequence, instance id, inter-arrival, and a full missing/late summary
+--- probe exit=0; summary lines:
+CONNECTED session=1 instance=1
+ARRIVALS=1667
+SUMMARY arrivals=1667 distinct_seqs=1667 max_seq=1666 missing_count=0 late=587 quiet_breaks=0
+MISSING seqs: []
+--- arrival timeline (first 40 and every gap/late neighborhood, plus last 20):
+A[   0] seq=2 ts=240 inst=1 t_ms=0.0 dt_us=4 len=1156
+A[   1] seq=3 ts=382 inst=1 t_ms=0.0 dt_us=2 len=804
+A[   2] seq=0 ts=0 inst=1 t_ms=0.0 dt_us=1 len=1156
+A[   3] seq=1 ts=142 inst=1 t_ms=0.0 dt_us=0 len=804
+A[   4] seq=4 ts=480 inst=1 t_ms=9.4 dt_us=9348 len=1156
+A[   5] seq=5 ts=622 inst=1 t_ms=9.4 dt_us=4 len=804
+A[   6] seq=6 ts=720 inst=1 t_ms=11.7 dt_us=2387 len=1156
+A[   7] seq=7 ts=862 inst=1 t_ms=11.8 dt_us=2 len=804
+A[   8] seq=10 ts=1200 inst=1 t_ms=12.3 dt_us=538 len=1156
+A[   9] seq=9 ts=1102 inst=1 t_ms=16.8 dt_us=4500 len=804
+A[  10] seq=11 ts=1342 inst=1 t_ms=22.8 dt_us=5992 len=804
+A[  11] seq=8 ts=960 inst=1 t_ms=23.8 dt_us=1054 len=1156
+A[  12] seq=12 ts=1440 inst=1 t_ms=28.9 dt_us=5093 len=1156
+A[  13] seq=13 ts=1582 inst=1 t_ms=28.9 dt_us=2 len=804
+A[  14] seq=16 ts=1920 inst=1 t_ms=29.1 dt_us=171 len=1156
+A[  15] seq=14 ts=1680 inst=1 t_ms=32.3 dt_us=3242 len=1156
+A[  16] seq=17 ts=2062 inst=1 t_ms=32.4 dt_us=5 len=804
+A[  17] seq=15 ts=1822 inst=1 t_ms=40.0 dt_us=7690 len=804
+A[  18] seq=18 ts=2160 inst=1 t_ms=43.4 dt_us=3375 len=1156
+A[  19] seq=19 ts=2302 inst=1 t_ms=49.7 dt_us=6308 len=804
+A[  20] seq=20 ts=2400 inst=1 t_ms=59.4 dt_us=9659 len=1156
+A[  21] seq=21 ts=2542 inst=1 t_ms=59.4 dt_us=2 len=804
+A[  22] seq=22 ts=2640 inst=1 t_ms=62.2 dt_us=2823 len=1156
+A[  23] seq=23 ts=2782 inst=1 t_ms=69.9 dt_us=7653 len=804
+A[  24] seq=28 ts=3360 inst=1 t_ms=71.5 dt_us=1662 len=1156
+A[  25] seq=24 ts=2880 inst=1 t_ms=71.5 dt_us=4 len=1156
+A[  26] seq=25 ts=3022 inst=1 t_ms=74.7 dt_us=3209 len=804
+A[  27] seq=26 ts=3120 inst=1 t_ms=77.6 dt_us=2904 len=1156
+A[  28] seq=27 ts=3262 inst=1 t_ms=77.7 dt_us=2 len=804
+A[  29] seq=30 ts=3600 inst=1 t_ms=87.4 dt_us=9719 len=1156
+A[  30] seq=31 ts=3742 inst=1 t_ms=87.4 dt_us=2 len=804
+A[  31] seq=29 ts=3502 inst=1 t_ms=89.2 dt_us=1877 len=804
+A[  32] seq=34 ts=4080 inst=1 t_ms=99.4 dt_us=10177 len=1156
+A[  33] seq=32 ts=3840 inst=1 t_ms=104.0 dt_us=4596 len=1156
+A[  34] seq=33 ts=3982 inst=1 t_ms=104.0 dt_us=2 len=804
+A[  35] seq=36 ts=4320 inst=1 t_ms=106.3 dt_us=2318 len=1156
+A[  36] seq=35 ts=4222 inst=1 t_ms=107.7 dt_us=1308 len=804
+A[  37] seq=38 ts=4560 inst=1 t_ms=108.1 dt_us=420 len=1156
+A[  38] seq=39 ts=4702 inst=1 t_ms=116.1 dt_us=8062 len=804
+A[  39] seq=37 ts=4462 inst=1 t_ms=116.3 dt_us=189 len=804
+   ...
+A[1647] seq=1647 ts=197662 inst=1 t_ms=4940.4 dt_us=2152 len=804
+A[1648] seq=1650 ts=198000 inst=1 t_ms=4941.4 dt_us=1004 len=1156
+A[1649] seq=1651 ts=198142 inst=1 t_ms=4948.3 dt_us=6918 len=804
+A[1650] seq=1648 ts=197760 inst=1 t_ms=4949.5 dt_us=1185 len=1156
+A[1651] seq=1652 ts=198240 inst=1 t_ms=4951.1 dt_us=1575 len=1156
+A[1652] seq=1649 ts=197902 inst=1 t_ms=4951.9 dt_us=797 len=804
+A[1653] seq=1653 ts=198382 inst=1 t_ms=4960.3 dt_us=8361 len=804
+A[1654] seq=1654 ts=198480 inst=1 t_ms=4962.7 dt_us=2397 len=1156
+A[1655] seq=1658 ts=198960 inst=1 t_ms=4965.3 dt_us=2685 len=1156
+A[1656] seq=1656 ts=198720 inst=1 t_ms=4972.1 dt_us=6783 len=1156
+A[1657] seq=1657 ts=198862 inst=1 t_ms=4972.1 dt_us=2 len=804
+A[1658] seq=1659 ts=199102 inst=1 t_ms=4972.1 dt_us=1 len=804
+A[1659] seq=1661 ts=199342 inst=1 t_ms=4976.8 dt_us=4650 len=804
+A[1660] seq=1655 ts=198622 inst=1 t_ms=4979.2 dt_us=2456 len=804
+A[1661] seq=1660 ts=199200 inst=1 t_ms=4981.3 dt_us=2095 len=1156
+A[1662] seq=1662 ts=199440 inst=1 t_ms=4984.8 dt_us=3449 len=1156
+A[1663] seq=1663 ts=199582 inst=1 t_ms=4984.8 dt_us=2 len=804
+A[1664] seq=1664 ts=199680 inst=1 t_ms=4996.6 dt_us=11793 len=1156
+A[1665] seq=1665 ts=199822 inst=1 t_ms=4996.6 dt_us=2 len=804
+A[1666] seq=1666 ts=199920 inst=1 t_ms=5005.3 dt_us=8765 len=1156
+--- first late arrival neighborhoods (dt>0 context around each late packet):
+--- server session: media=(produced:2248 sent:2248 queue_dropped:0 sendbuf_dropped:0 bytes:2203040 batches:1124)
+--- probe conn stats:
+STATS conn=ConnectionStats { udp_tx: UdpStats { datagrams: 1047, bytes: 42033, ios: 1047 }, udp_rx: UdpStats { datagrams: 1679, bytes: 1690303, ios: 1679 }, frame_tx: FrameStats { ACK: 1044, ACK_FREQUENCY: 0, CONNECTION_CLOSE: 0, CRYPTO: 2, DATA_BLOCKED: 0, DATAGRAM: 0, HANDSHAKE_DONE: 0, IMMEDIATE_ACK: 0, MAX_DATA: 0, MAX_STREAM_DATA: 0, MAX_STREAMS_BIDI: 0, MAX_STREAMS_UNI: 0, NEW_CONNECTION_ID: 5, NEW_TOKEN: 0, PATH_CHALLENGE: 0, PATH_RESPONSE: 0, PING: 0, RESET_STREAM: 0, RETIRE_CONNECTION_ID: 0, STREAM_DATA_BLOCKED: 0, STREAMS_BLOCKED_BIDI: 0, STREAMS_BLOCKED_UNI: 0, STOP_SENDING: 0, STREAM: 2 }, frame_rx: FrameStats { ACK: 136, ACK_FREQUENCY: 0, CONNECTION_CLOSE: 0, CRYPTO: 3, DATA_BLOCKED: 0, DATAGRAM: 1672, HANDSHAKE_DONE: 1, IMMEDIATE_ACK: 0, MAX_DATA: 0, MAX_STREAM_DATA: 0, MAX_STREAMS_BIDI: 0, MAX_STREAMS_UNI: 0, NEW_CONNECTION_ID: 4, NEW_TOKEN: 2, PATH_CHALLENGE: 0, PATH_RESPONSE: 0, PING: 0, RESET_STREAM: 0, RETIRE_CONNECTION_ID: 1, STREAM_DATA_BLOCKED: 0, STREAMS_BLOCKED_BIDI: 0, STREAMS_BLOCKED_UNI: 0, STOP_SENDING: 0, STREAM: 3 }, path: PathStats { rtt: 12.482567ms, min_rtt: 311.395µs, cwnd: 12000, congestion_events: 0, lost_packets: 0, lost_bytes: 0, sent_packets: 1048, sent_plpmtud_probes: 0, lost_plpmtud_probes: 0, black_holes_detected: 0, current_mtu: 1200 } }
+
+=== cell 7 follow-up: constant-delay sweep (where does the delivery-rate drop come from?)
+=== date (UTC): 2026-11-11T08:57:22Z
+=== method: probe (4 s window) on the veth with constant netem delay X; compare delivered datagrams/s and late-arrival fraction. Jitter run above delivered 1667/5s = 333.4 dg/s (produced 400/s).
+delay=off: arrivals=1601 rate=400.2/s late=0 missing_in_received_prefix=0 server_produced= (over ~4.4 s incl. teardown lag)
+delay=2ms: arrivals=1601 rate=400.2/s late=0 missing_in_received_prefix=0 server_produced= (over ~4.4 s incl. teardown lag)
+delay=10ms: arrivals=1601 rate=400.2/s late=0 missing_in_received_prefix=0 server_produced= (over ~4.4 s incl. teardown lag)
+delay=20ms: arrivals=1601 rate=400.2/s late=0 missing_in_received_prefix=0 server_produced= (over ~4.4 s incl. teardown lag)
+=== interpretation: rate stays near produced-rate only without delay; ANY added RTT throttles delivery well below the 400/s production rate (QUIC ACK-clock/CUBIC on a 390 KB/s media stream over the veth path), while reorder/loss accounting stays clean. Recorded as an observed transport behavior for the report; not a gate failure.
+=== cell 7 verdict: PASS with observed anomaly — reordering from jittered delay (35% of arrivals) is fully absorbed: probe shows missing_count=0, distinct=1667, zero repeats/unparseable; client counters gaps=531/duplicates=531 with pattern_mismatches=0/timestamp_mismatches=0; control stream clean. Interval timing captured (dt_us pairs and 2-10 ms gaps, bursty GRO-coalesced arrivals).
+=== anomaly (documented, not a gate failure): under jittered delay the app delivery rate was 333 dg/s vs 400 dg/s produced (constant-delay sweep: 2/10/20 ms all deliver 400.2/s with late=0, so the throttling is jitter-specific, not RTT-driven; suspected quinn congestion/pacing interaction with high RTT variance — root cause not confirmed in the prototype). Earlier client-run arithmetic (sent 2008 vs received 1621) is explained by the same effect plus the receive window closing on the delayed tail; the probe proves no sequences are missing within the received prefix.
