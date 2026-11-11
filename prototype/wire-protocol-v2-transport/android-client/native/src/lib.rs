@@ -5,6 +5,7 @@
 
 pub mod codec;
 pub mod control;
+pub mod media;
 
 #[cfg(test)]
 mod tests {
