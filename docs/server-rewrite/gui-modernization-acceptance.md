@@ -109,6 +109,10 @@ Automated results (this ticket branch, all green):
   artifact (run 42988001959) was re-checked from the background through the
   WebView2 CDP endpoint: `#host` binds `list="host-addresses"` and the
   datalist resolves `192.168.137.1`, `100.96.123.50`, and `10.8.144.155`.
+  The earlier `img/gui-mod-04-main-network-expanded.png` and
+  `img/gui-mod-04-win-main-error.png` were captured before ticket 05, so
+  their Host field shows no datalist arrow; the final appearance is in
+  `img/gui-mod-05-host-addresses-zh.png`.
 - [x] Reset lives in the main view under the Server configuration and is
   worded as resetting all Server fields (Host, Port, Endpoint, Encoding)
   while application settings are kept. (agent, headless: main screenshots;
