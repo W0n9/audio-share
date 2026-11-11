@@ -1,17 +1,106 @@
-/* Prototype A visual tokens and layout (tray-first single window). */
+/* Visual tokens for the Server GUI.
+ *
+ * One systematic light/dark set drives every surface, control, semantic
+ * color, and focus ring; values follow the Variant C design
+ * (prototype/server-gui-modernization @ 604f0d5). The document element
+ * carries data-theme="light" or "dark" — set by src/lib/theme.ts before the
+ * shell mounts, so the explicit [data-theme="dark"] block is authoritative.
+ * The prefers-color-scheme fallback below only covers the moment before that
+ * script runs; the two dark token blocks must stay identical.
+ */
+
 :root {
-  --bg: #e9e9f0;
+  color-scheme: light;
+  --bg: #f4f5f9;
   --surface: #ffffff;
-  --surface-2: #f6f6f9;
-  --text: #1b1b1f;
-  --muted: #6b6b76;
-  --line: #dcdce3;
-  --accent: #0a84ff;
-  --green: #34c759;
-  --red: #ff453a;
+  --surface-2: #eceef4;
+  --input: #ffffff;
+  --text: #191a21;
+  --muted: #707483;
+  --line: #e1e3ea;
+  --accent: #625bf6;
+  --accent-hover: #514ce3;
+  --accent-soft: #eeedff;
+  /* Text/icon color on solid accent or danger fills. */
+  --accent-contrast: #ffffff;
+  --green: #189b55;
+  --green-soft: #e4f5eb;
+  --red: #b93f3f;
+  --red-soft: #fbeaea;
+  --red-line: rgba(185, 63, 63, 0.32);
+  --warn-soft: rgba(255, 149, 0, 0.12);
+  --warn-line: rgba(255, 149, 0, 0.42);
+  --overlay: rgba(15, 16, 22, 0.44);
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  --shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.14);
+  --brand: linear-gradient(135deg, #0a84ff, #5e5ce6);
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Pre-script fallback: follow the OS until data-theme is set. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #111318;
+    --surface: #1a1d24;
+    --surface-2: #242832;
+    --input: #15181e;
+    --text: #f0f1f5;
+    --muted: #9a9ead;
+    --line: #2d323d;
+    --accent: #928cff;
+    --accent-hover: #a49fff;
+    --accent-soft: #2b284b;
+    --accent-contrast: #151324;
+    --green: #54cc89;
+    --green-soft: #19372a;
+    --red: #ff8585;
+    --red-soft: #3b2328;
+    --red-line: rgba(255, 133, 133, 0.35);
+    --warn-soft: rgba(255, 159, 10, 0.16);
+    --warn-line: rgba(255, 159, 10, 0.45);
+    --overlay: rgba(0, 0, 0, 0.55);
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
+    --shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111318;
+  --surface: #1a1d24;
+  --surface-2: #242832;
+  --input: #15181e;
+  --text: #f0f1f5;
+  --muted: #9a9ead;
+  --line: #2d323d;
+  --accent: #928cff;
+  --accent-hover: #a49fff;
+  --accent-soft: #2b284b;
+  --accent-contrast: #151324;
+  --green: #54cc89;
+  --green-soft: #19372a;
+  --red: #ff8585;
+  --red-soft: #3b2328;
+  --red-line: rgba(255, 133, 133, 0.35);
+  --warn-soft: rgba(255, 159, 10, 0.16);
+  --warn-line: rgba(255, 159, 10, 0.45);
+  --overlay: rgba(0, 0, 0, 0.55);
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
+  --shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* Reduced motion: keep color/opacity feedback but drop every non-essential
+   transition and animation. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
 }
 
 * {
@@ -35,6 +124,10 @@ button,
 input,
 select {
   font: inherit;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 
 button {
@@ -44,8 +137,8 @@ button {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 2px solid rgba(10, 132, 255, 0.35);
-  outline-offset: 1px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 #app {
@@ -72,7 +165,7 @@ select:focus-visible {
   height: 36px;
   border-radius: 10px;
   flex: none;
-  background: linear-gradient(135deg, #0a84ff, #5e5ce6);
+  background: var(--brand);
   color: #fff;
   display: grid;
   place-items: center;
@@ -121,18 +214,21 @@ select:focus-visible {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: #b9b9c3;
+  background: var(--muted);
   flex: none;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .dot.on {
   background: var(--green);
-  box-shadow: 0 0 0 4px rgba(52, 199, 89, 0.16);
+  box-shadow: 0 0 0 4px var(--green-soft);
 }
 
 .dot.pending {
   background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.16);
+  box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
 .address {
@@ -155,7 +251,7 @@ select:focus-visible {
   border-radius: 10px;
   padding: 12px 16px;
   font-weight: 700;
-  color: #fff;
+  color: var(--accent-contrast);
   background: var(--accent);
   width: 100%;
 }
@@ -191,7 +287,7 @@ select {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 9px 10px;
-  background: #fff;
+  background: var(--input);
   color: var(--text);
   min-width: 0;
 }
@@ -208,9 +304,9 @@ select {
 .error {
   margin: 0 16px 12px;
   padding: 10px 12px;
-  border: 1px solid rgba(255, 69, 58, 0.35);
-  background: rgba(255, 69, 58, 0.08);
-  color: #a4231a;
+  border: 1px solid var(--red-line);
+  background: var(--red-soft);
+  color: var(--red);
   border-radius: 10px;
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -219,8 +315,8 @@ select {
 .banner {
   margin: 0 16px 12px;
   padding: 10px 12px;
-  border: 1px solid rgba(255, 149, 0, 0.4);
-  background: rgba(255, 149, 0, 0.1);
+  border: 1px solid var(--warn-line);
+  background: var(--warn-soft);
   border-radius: 10px;
   font-size: 12px;
 }
@@ -360,7 +456,7 @@ select {
   background: var(--surface);
   color: var(--text);
   font-weight: 650;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--shadow-soft);
 }
 
 .placeholder {
@@ -400,7 +496,7 @@ button:disabled {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(20, 20, 24, 0.38);
+  background: var(--overlay);
   display: grid;
   place-items: center;
   padding: 20px;
@@ -412,7 +508,7 @@ button:disabled {
   background: var(--surface);
   border-radius: 14px;
   padding: 18px;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow);
 }
 
 .modal h2 {
