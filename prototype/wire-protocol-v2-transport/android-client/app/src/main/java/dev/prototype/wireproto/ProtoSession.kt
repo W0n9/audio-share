@@ -109,6 +109,16 @@ class ProtoSession(
 
     fun isRunning() = running.get()
 
+    /**
+     * Automation/testing switch: when false the UDP socket binds the wildcard
+     * address instead of the NetworkCallback's local-address hint. The hint
+     * pins the socket to the active network's interface — which breaks
+     * routing when the destination is reached through a VPN overlay (e.g.
+     * tailscale), because the route to it lives on tun, not on the physical
+     * network the hint names. Device finding, 2026-11-11.
+     */
+    @Volatile var bindHintEnabled = true
+
     // ---- session lifecycle with backoff ------------------------------------
 
     private fun startSession() {
@@ -125,7 +135,7 @@ class ProtoSession(
             if (!ProtoNative.attachBuffer(h, mediaBuffer)) {
                 listener.onLog("attachBuffer failed")
             }
-            val bind = activeNetworkAddress ?: ""
+            val bind = if (bindHintEnabled) (activeNetworkAddress ?: "") else ""
             listener.onLog("connect(host=$host port=$port bind=$bind)")
             val ok = ProtoNative.connect(h, bind)
             if (!ok) {

@@ -1,0 +1,28 @@
+# Device validation evidence — 2026-11-11
+# Device: Xiaomi M2007J22C (cannon), Android 12 / API 31, arm64-v8a, KernelSU root present
+# Server: proto-server 0.0.0.0:65531 on build host, quinn 0.11.12/rustls 0.23.46
+# Path: tailscale overlay (direct IPv6 2409:8a34:... endpoint), phone Wi-Fi 192.168.124.9, noBindHint=true
+# NOTE: full logcat in device-logcat.log; SPKI pin 060fb8...416f; credential test-credential-do-not-use
+
+## CASE 1 positive: handshake+AUTH+SUBSCRIBE+media (device)
+# RESULT: PLAYING; 65,486 datagrams / 62,866,560 B / 7,858,320 frames (163.7 s audio); byte_errors=0 malformed=0 control_errors=0
+# gaps=4862 reorder=4863 (tailscale overlay), reliable control unaffected; playback consumer started (48000 Hz, 2 ch)
+
+## CASE 2 negative: wrong SPKI pin (device)
+# RESULT: rejected at cryptographic handshake: "server SPKI does not match pinned identity" (quinn error 40); no app data; backoff retries";
+
+## CASE 3 negative: wrong credential (device)
+# RESULT: "auth rejected (code BadCredential)" over encrypted control stream; session ended; server did not start media"
+
+## CASE 4 screen-off playback (device)
+# RESULT: power-key off 10 s — dumpsys media.audio_flinger showed 1 active audio track while screen off; counters kept advancing after wake; state stayed PLAYING
+
+## CASE 5 clean stop (device)
+# RESULT: client "session stopped (LOCAL NORMAL)", AudioTrack stop; server "media stopped" same second"
+
+## CASE 6 rebind path (device)
+# RESULT: NetworkCallback fired (network 217); Network.bindSocket -> EPERM (Operation not permitted) on this MIUI build; fallback teardown+backoff reconnect succeeded (design fallback)
+
+## CASE 7 JNI findings (device)
+# FINDING 1: JNI surface had never run on device: env: &mut JNIEnv signature broke every createSession call (jni 0.21 requires JNIEnv by value per crate docs) — fixed, all functions by-value
+# FINDING 2: NetworkCallback bind hint (local address of active network) breaks VPN-overlay routing (tailscale): socket pinned to wlan0 cannot reach the tailnet address — noBindHint switch added; design note for migration

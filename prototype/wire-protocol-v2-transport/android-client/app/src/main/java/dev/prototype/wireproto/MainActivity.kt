@@ -52,6 +52,16 @@ class MainActivity : android.app.Activity() {
         })
 
         buildUi()
+
+        // adb automation hook: am start -S -e host H -e port P -e pin PIN
+        // [-e credential C] -e autoConnect true — fills fields (or overrides
+        // defaults) and optionally presses Connect. UI path is unchanged.
+        intent.getStringExtra("host")?.let { hostInput.setText(it) }
+        intent.getStringExtra("port")?.let { portInput.setText(it) }
+        intent.getStringExtra("pin")?.let { pinInput.setText(it) }
+        intent.getStringExtra("credential")?.let { credentialInput.setText(it) }
+        if (intent.getBooleanExtra("noBindHint", false)) session.bindHintEnabled = false
+        if (intent.getBooleanExtra("autoConnect", false)) connectButton.performClick()
     }
 
     private fun buildUi() {
