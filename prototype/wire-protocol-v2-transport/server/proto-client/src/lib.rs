@@ -58,6 +58,7 @@ pub enum ClientError {
 }
 
 /// Established test client: owns the single bidirectional control stream.
+#[derive(Debug)]
 pub struct ClientConn {
     conn: Connection,
     tx: SendStream,

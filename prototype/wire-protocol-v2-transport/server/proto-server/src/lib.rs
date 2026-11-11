@@ -293,3 +293,34 @@ async fn accept_loop(
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runtime assertion for the 0-RTT evidence path: the rustls server
+    /// config this server actually runs must have 0-RTT (early data)
+    /// disabled and the exact prototype ALPN set. quinn-level evidence
+    /// (enable_0rtt/accept_0rtt never called) is a source audit documented
+    /// in the README; no quinn runtime API exposes the negotiated 0-RTT
+    /// state.
+    #[test]
+    fn server_tls_config_disables_0rtt_and_sets_alpn() {
+        let (cert, key, spki) = generate_identity().expect("identity");
+        let tls = build_tls_server_config(
+            rustls::pki_types::CertificateDer::from(cert.der().as_ref().to_vec()),
+            rustls::pki_types::PrivatePkcs8KeyDer::from(key),
+        )
+        .expect("tls config");
+        assert_eq!(
+            tls.max_early_data_size, 0,
+            "0-RTT must stay disabled on the server"
+        );
+        assert_eq!(
+            tls.alpn_protocols,
+            vec![proto_core::frame::ALPN.to_vec()],
+            "ALPN must be exactly audio-share/v2"
+        );
+        assert_eq!(proto_core::spki::to_hex(&spki).len(), 64);
+    }
+}
