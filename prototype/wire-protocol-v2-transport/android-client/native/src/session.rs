@@ -10,7 +10,7 @@ use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::codec::{encode_frame, ControlMsg, FrameDecoder};
+use crate::codec::{encode_frame, Frame, FrameDecoder};
 use crate::control::{ClientState, CloseInfo, CloseOrigin, CloseReason};
 use crate::media::{MediaHeader, MediaTracker};
 use crate::ring::MediaRing;
@@ -199,7 +199,10 @@ impl Session {
         // one reliable bidirectional control stream; AUTH before anything else
         // (never early data — this is a post-handshake 1-RTT write).
         let (mut tx, mut rx) = conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
-        let auth = encode_frame(&ControlMsg::Auth(self.config.credential.clone()));
+        let auth = encode_frame(&Frame::Auth {
+            token: self.config.credential.clone(),
+        })
+        .map_err(|e| format!("encode auth: {e}"))?;
         tx.write_all(&auth)
             .await
             .map_err(|e| format!("send auth: {e}"))?;
@@ -232,7 +235,7 @@ impl Session {
                             reason: CloseReason::AuthFailed,
                             origin: CloseOrigin::Remote,
                         }));
-                        break 'control Err(format!("auth rejected (code {code})"));
+                        break 'control Err(format!("auth rejected (code {code:?})"));
                     }
                     Err(crate::control::ControlError::AfterClose) => {
                         break 'control Err("control after close".into());
@@ -241,8 +244,11 @@ impl Session {
                         self.record_control_error(m);
                         // brief: violations get CLOSE(PROTOCOL_ERROR), not silence
                         let mut tx_guard = self.shared.control_stream.lock().await;
-                        if let Some(tx) = tx_guard.as_mut() {
-                            let _ = tx.write_all(&encode_frame(&ControlMsg::Close(2))).await;
+                        if let (Some(tx), Ok(close_bytes)) = (
+                            tx_guard.as_mut(),
+                            encode_frame(&Frame::Close(CloseReason::ProtocolError)),
+                        ) {
+                            let _ = tx.write_all(&close_bytes).await;
                         }
                         drop(tx_guard);
                         self.set_state(ClientState::Closed(CloseInfo {
@@ -313,7 +319,8 @@ impl Session {
             let mut tx_guard = self.shared.control_stream.lock().await;
             match tx_guard.as_mut() {
                 Some(tx) => {
-                    let frame = encode_frame(&ControlMsg::Subscribe);
+                    let frame = encode_frame(&Frame::Subscribe)
+                        .map_err(|e| format!("encode subscribe: {e}"))?;
                     tx.write_all(&frame)
                         .await
                         .map_err(|e| format!("send subscribe: {e}"))?;
@@ -336,7 +343,8 @@ impl Session {
             let mut tx_guard = self.shared.control_stream.lock().await;
             match tx_guard.as_mut() {
                 Some(tx) => {
-                    let frame = encode_frame(&ControlMsg::Unsubscribe);
+                    let frame = encode_frame(&Frame::Unsubscribe)
+                        .map_err(|e| format!("encode unsubscribe: {e}"))?;
                     tx.write_all(&frame)
                         .await
                         .map_err(|e| format!("send unsubscribe: {e}"))?;
@@ -357,8 +365,10 @@ impl Session {
         }
         self.runtime.block_on(async {
             let mut tx_guard = self.shared.control_stream.lock().await;
-            if let Some(tx) = tx_guard.as_mut() {
-                let _ = tx.write_all(&encode_frame(&ControlMsg::Close(0))).await;
+            if let (Some(tx), Ok(close_bytes)) =
+                (tx_guard.as_mut(), encode_frame(&Frame::Close(CloseReason::Normal)))
+            {
+                let _ = tx.write_all(&close_bytes).await;
             }
         });
         self.shared.shutdown.notify_waiters();
@@ -448,12 +458,8 @@ async fn media_pump(shared: Arc<SharedState>) {
             d = conn.read_datagram() => {
                 match d {
                     Ok(datagram) => {
-                        if datagram.len() < crate::media::MEDIA_HEADER_LEN {
-                            continue;
-                        }
-                        let (header, payload) = datagram.split_at(crate::media::MEDIA_HEADER_LEN);
-                        let header = match MediaHeader::parse(header) {
-                            Ok(h) => h,
+                        let (header, payload) = match MediaHeader::parse(&datagram) {
+                            Ok(v) => v,
                             Err(_) => continue,
                         };
                         let forward = {

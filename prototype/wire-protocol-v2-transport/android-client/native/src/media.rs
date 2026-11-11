@@ -1,11 +1,13 @@
-//! Media-plane datagram header + deterministic-media verification.
+//! Media-plane verification (client-side accounting) on top of the shared
+//! proto-core media primitives.
 //!
-//! Header shape fixed by the prototype brief (20 bytes, all BE):
-//! `u32 stream_instance_id | u32 config_generation | u32 sequence | u64 timestamp`
-//! Payload: raw f32le interleaved PCM, frame-aligned.
+//! The 20-byte BE header layout, the deterministic waveform formula and the
+//! frame-alignment rules are owned by `proto_core::media` and NOT re-declared
+//! here. What stays client-side: the arrival-time gap/duplicate/reorder
+//! accounting and deterministic byte verification (MediaTracker).
 //!
-//! Deterministic content (prototype convention, shared with the Rust server):
-//! the sample value at absolute sample-frame position `p` is
+//! Deterministic content (prototype convention, single-sourced in
+//! proto-core): the sample value at absolute sample-frame position `p` is
 //! `sin(2*pi*440*p/48000) as f32`, identical for every channel of frame `p`.
 //! `timestamp` in the header is the sample-frame position of the first PCM
 //! frame in the payload, on the capture clock. Bit-exactness is asserted on
@@ -14,67 +16,16 @@
 //!
 //! This module is host-testable: gaps, duplicates, reorder, byte verification.
 
-/// u64 timestamps in the header; seq is u32.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MediaHeader {
-    pub stream_instance_id: u32,
-    pub config_generation: u32,
-    pub sequence: u32,
-    pub timestamp: u64,
-}
+pub use proto_core::media::{MediaHeader, MEDIA_HEADER_LEN};
 
-pub const MEDIA_HEADER_LEN: usize = 20;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HeaderError {
-    TooShort(usize),
-}
-
-impl std::fmt::Display for HeaderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HeaderError::TooShort(n) => write!(f, "media datagram {} bytes < header {MEDIA_HEADER_LEN}", n),
-        }
-    }
-}
-
-impl MediaHeader {
-    pub fn parse(bytes: &[u8]) -> Result<Self, HeaderError> {
-        if bytes.len() < MEDIA_HEADER_LEN {
-            return Err(HeaderError::TooShort(bytes.len()));
-        }
-        Ok(MediaHeader {
-            stream_instance_id: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            config_generation: u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
-            sequence: u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
-            timestamp: u64::from_be_bytes([
-                bytes[12], bytes[13], bytes[14], bytes[15], bytes[16], bytes[17], bytes[18],
-                bytes[19],
-            ]),
-        })
-    }
-
-    pub fn encode(&self) -> [u8; MEDIA_HEADER_LEN] {
-        let mut out = [0u8; MEDIA_HEADER_LEN];
-        out[0..4].copy_from_slice(&self.stream_instance_id.to_be_bytes());
-        out[4..8].copy_from_slice(&self.config_generation.to_be_bytes());
-        out[8..12].copy_from_slice(&self.sequence.to_be_bytes());
-        out[12..20].copy_from_slice(&self.timestamp.to_be_bytes());
-        out
-    }
-}
-
-/// Deterministic test sample: identical for every channel of frame `p`.
-#[inline]
-pub fn sample_at(p: u64) -> f32 {
-    (2.0 * std::f64::consts::PI * 440.0 * p as f64 / 48000.0) as f32
-}
+use crate::control::MediaStartPayload;
+use proto_core::media::sample_value;
 
 /// Render the deterministic payload a server would send for frames [p0, p0+n).
 pub fn render_payload(p0: u64, n_frames: u32, channels: u8) -> Vec<u8> {
     let mut out = Vec::with_capacity(n_frames as usize * 4 * channels as usize);
     for i in 0..u64::from(n_frames) {
-        let s = sample_at(p0 + i).to_le_bytes();
+        let s = sample_value(p0 + i).to_le_bytes();
         for _ in 0..channels {
             out.extend_from_slice(&s);
         }
@@ -108,7 +59,7 @@ pub struct ObserveVerdict {
 
 /// Sequence/gap/dup accounting + deterministic byte verification for one session.
 pub struct MediaTracker {
-    pub config: crate::control::MediaConfig,
+    pub config: MediaStartPayload,
     latest: Option<u32>,
     /// Exact dedup over all u32 seqs: bit `seq % REORDER_WINDOW` is valid only
     /// when its word's lap tag equals `seq / REORDER_WINDOW`. 16 KiB.
@@ -130,7 +81,7 @@ pub struct MediaTracker {
 const REORDER_WINDOW: u64 = 8192;
 
 impl MediaTracker {
-    pub fn new(config: crate::control::MediaConfig) -> Self {
+    pub fn new(config: MediaStartPayload) -> Self {
         let words = (REORDER_WINDOW / 64) as usize;
         MediaTracker {
             config,
@@ -156,7 +107,7 @@ impl MediaTracker {
     }
 
     /// Called when MEDIA_START reconfigures the stream (new instance/gen).
-    pub fn reconfigure(&mut self, config: crate::control::MediaConfig) {
+    pub fn reconfigure(&mut self, config: MediaStartPayload) {
         self.config = config;
         self.latest = None;
         self.seen_lap.iter_mut().for_each(|w| *w = u32::MAX);
@@ -195,7 +146,7 @@ impl MediaTracker {
             self.config_mismatches += 1;
         }
 
-        let frame_bytes = self.config.frame_bytes();
+        let frame_bytes = proto_core::media::frame_bytes(self.config.channels);
         if payload.len() % frame_bytes != 0 {
             self.malformed_payloads += 1;
             return ObserveVerdict {
@@ -253,7 +204,7 @@ impl MediaTracker {
             let n_frames = (payload.len() / frame_bytes) as u64;
             let mut mismatch_frame: Option<u64> = None;
             'outer: for i in 0..n_frames {
-                let expect = sample_at(header.timestamp + i).to_le_bytes();
+                let expect = sample_value(header.timestamp + i).to_le_bytes();
                 let off = (i * frame_bytes as u64) as usize;
                 for c in 0..self.config.channels as usize {
                     let got = &payload[off + c * 4..off + c * 4 + 4];
@@ -284,10 +235,10 @@ impl MediaTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::MediaConfig;
+    use crate::control::MediaStartPayload;
 
-    fn config(instance: u32, gen: u32) -> crate::control::MediaConfig {
-        MediaConfig {
+    fn config(instance: u32, gen: u32) -> MediaStartPayload {
+        MediaStartPayload {
             stream_instance_id: instance,
             config_generation: gen,
             sample_rate: 48000,
@@ -310,7 +261,7 @@ mod tests {
         let h = hdr(0x11223344, 0x55667788, 0x99aabbcc, 0x1122334455667788);
         let bytes = h.encode();
         assert_eq!(bytes.len(), 20);
-        assert_eq!(MediaHeader::parse(&bytes).unwrap(), h);
+        assert_eq!(MediaHeader::parse(&bytes).unwrap().0, h);
         // explicit BE layout check
         assert_eq!(&bytes[0..4], &[0x11, 0x22, 0x33, 0x44]);
         assert_eq!(&bytes[8..12], &[0x99, 0xaa, 0xbb, 0xcc]);
@@ -321,7 +272,7 @@ mod tests {
     fn header_too_short_rejected() {
         assert_eq!(
             MediaHeader::parse(&[0u8; 19]),
-            Err(HeaderError::TooShort(19))
+            Err(proto_core::media::MediaParseError::TooShort(19))
         );
     }
 
@@ -440,7 +391,7 @@ mod tests {
         assert_eq!(t.byte_errors, 0);
         assert_eq!(t.forwarded_bytes, payload.len() as u64);
         // channels carry the same value (prototype convention)
-        let s0 = sample_at(p0).to_le_bytes();
+        let s0 = sample_value(p0).to_le_bytes();
         assert_eq!(&payload[0..4], &s0);
         assert_eq!(&payload[4..8], &s0);
     }

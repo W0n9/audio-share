@@ -6,8 +6,13 @@
 //! checking, no expiry checking — the pin IS the identity check for the
 //! prototype, matching the brief's "clients PIN that SPKI hash".
 //!
+//! SPKI extraction, sha256 and hex parsing are single-sourced on
+//! `proto_core::spki` (the server crate's helpers). The verifier itself is
+//! client-side (the server pins nothing).
+//!
 //! Host-testable against rcgen-generated certs without a QUIC connection.
 
+use proto_core::spki::{extract_spki_der, parse_hex32, spki_sha256, to_hex, HexError, SpkiError};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::WebPkiSupportedAlgorithms;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -17,166 +22,22 @@ use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpkiPin(pub [u8; 32]);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PinError {
-    BadHexLen(usize),
-    BadHex,
-}
-
-impl std::fmt::Display for PinError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PinError::BadHexLen(n) => write!(f, "SPKI pin must be 64 hex chars, got {n}"),
-            PinError::BadHex => write!(f, "SPKI pin contains non-hex characters"),
-        }
-    }
-}
-
 impl SpkiPin {
     /// Parse the 64-hex-char SPKI sha256 string printed by the server.
-    pub fn from_hex(s: &str) -> Result<Self, PinError> {
-        let s = s.trim().to_lowercase();
-        if s.len() != 64 {
-            return Err(PinError::BadHexLen(s.len()));
-        }
-        let mut out = [0u8; 32];
-        for (i, b) in out.iter_mut().enumerate() {
-            let hi = hex_val(s.as_bytes()[2 * i]).ok_or(PinError::BadHex)?;
-            let lo = hex_val(s.as_bytes()[2 * i + 1]).ok_or(PinError::BadHex)?;
-            *b = (hi << 4) | lo;
-        }
-        Ok(SpkiPin(out))
+    pub fn from_hex(s: &str) -> Result<Self, HexError> {
+        Ok(SpkiPin(parse_hex32(s)?))
     }
 
     pub fn to_hex(&self) -> String {
-        let mut s = String::with_capacity(64);
-        for b in self.0 {
-            s.push_str(&format!("{b:02x}"));
-        }
-        s
+        to_hex(&self.0)
     }
 
     /// Compute the pin of a DER-encoded X.509 certificate (server-print helper /
     /// test tooling / negative-case construction).
-    pub fn of_certificate(cert_der: &[u8]) -> Result<Self, String> {
-        let spki = extract_spki(cert_der)?;
-        Ok(SpkiPin(sha256(spki)))
+    pub fn of_certificate(cert_der: &[u8]) -> Result<Self, SpkiError> {
+        let spki = extract_spki_der(cert_der)?;
+        Ok(SpkiPin(spki_sha256(&spki)))
     }
-}
-
-fn hex_val(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        _ => None,
-    }
-}
-
-pub fn sha256(data: &[u8]) -> [u8; 32] {
-    let d = ring::digest::digest(&ring::digest::SHA256, data);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(d.as_ref());
-    out
-}
-
-/// Walk a DER TLV: returns (tag, content range, offset past the TLV).
-fn der_tlv(buf: &[u8], at: usize) -> Result<(u8, std::ops::Range<usize>, usize), String> {
-    if at >= buf.len() {
-        return Err("der: truncated at tag".into());
-    }
-    let tag = buf[at];
-    let mut i = at + 1;
-    if i >= buf.len() {
-        return Err("der: truncated at length".into());
-    }
-    let first = buf[i];
-    i += 1;
-    let len = if first < 0x80 {
-        first as usize
-    } else {
-        let n = (first & 0x7f) as usize;
-        if n == 0 || n > 4 {
-            return Err(format!("der: unsupported length form {first:#x}"));
-        }
-        if i + n > buf.len() {
-            return Err("der: truncated long length".into());
-        }
-        let mut v = 0usize;
-        for k in 0..n {
-            v = (v << 8) | buf[i + k] as usize;
-        }
-        i += n;
-        v
-    };
-    let end = i + len;
-    if end > buf.len() {
-        return Err(format!(
-            "der: TLV content {}..{end} exceeds buffer {}",
-            i,
-            buf.len()
-        ));
-    }
-    Ok((tag, i..end, end))
-}
-
-/// Parse the immediate children of a constructed TLV.
-fn der_children(buf: &[u8], content: std::ops::Range<usize>) -> Result<Vec<(u8, std::ops::Range<usize>)>, String> {
-    let mut out = Vec::new();
-    let mut i = content.start;
-    while i < content.end {
-        let (tag, r, next) = der_tlv(buf, i)?;
-        out.push((tag, r));
-        i = next;
-    }
-    Ok(out)
-}
-
-/// Extract the SubjectPublicKeyInfo TLV (full DER, including its tag+length)
-/// from an X.509 certificate: SEQUENCE{ tbs: SEQUENCE{ [0]?, serial, sigalg,
-/// issuer, validity, subject, spki, ... }, sigalg, sig }.
-pub fn extract_spki(cert_der: &[u8]) -> Result<&[u8], String> {
-    let (tag, cert_content, _) = der_tlv(cert_der, 0)?;
-    if tag != 0x30 {
-        return Err(format!("der: certificate tag {tag:#x} != SEQUENCE"));
-    }
-    let tbs_children = der_children(cert_der, cert_content)?;
-    let (tbs_tag, tbs_content) = tbs_children
-        .first()
-        .ok_or("der: certificate has no children")?
-        .clone();
-    if tbs_tag != 0x30 {
-        return Err(format!("der: tbsCertificate tag {tbs_tag:#x} != SEQUENCE"));
-    }
-    let children = der_children(cert_der, tbs_content)?;
-    // skip optional [0] EXPLICIT version (context tag 0xa0)
-    let start = if children.first().map(|c| c.0) == Some(0xa0) { 1 } else { 0 };
-    // remaining: serial(0) sigalg(1) issuer(2) validity(3) subject(4) spki(5)
-    let spki = children
-        .get(start + 5)
-        .ok_or("der: tbsCertificate has too few elements for SPKI")?;
-    if spki.0 != 0x30 {
-        return Err(format!("der: element {} is not the SPKI SEQUENCE", spki.0));
-    }
-    // include the SPKI's own tag+length: back up from content start
-    // (re-derive the header: tag byte + length bytes)
-    let content_start = spki.1.start;
-    let header_len = header_len_of(cert_der, content_start)?;
-    Ok(&cert_der[content_start - header_len..spki.1.end])
-}
-
-/// Length of the DER header (tag + length bytes) immediately before `content_start`.
-fn header_len_of(buf: &[u8], content_start: usize) -> Result<usize, String> {
-    // walk backwards: content_start-1 is the last length byte
-    if content_start < 2 {
-        return Err("der: bad header".into());
-    }
-    let first = buf[content_start - 1];
-    let hdr = if first < 0x80 {
-        2 // tag + short length
-    } else {
-        2 + (first & 0x7f) as usize
-    };
-    Ok(hdr)
 }
 
 /// The verifier: accepts exactly one SPKI sha256, delegates signature checks to
@@ -188,7 +49,7 @@ pub struct PinnedSpkiVerifier {
 }
 
 impl PinnedSpkiVerifier {
-    pub fn new(pinned_spki_sha256_hex: &str) -> Result<Self, PinError> {
+    pub fn new(pinned_spki_sha256_hex: &str) -> Result<Self, HexError> {
         Ok(PinnedSpkiVerifier {
             pin: SpkiPin::from_hex(pinned_spki_sha256_hex)?,
             algorithms: rustls::crypto::ring::default_provider()
@@ -211,7 +72,7 @@ impl ServerCertVerifier for PinnedSpkiVerifier {
         _now: UnixTime,
     ) -> Result<ServerCertVerified, TlsError> {
         let got = SpkiPin::of_certificate(end_entity.as_ref())
-            .map_err(|e| TlsError::General(e))?;
+            .map_err(|e| TlsError::General(e.to_string()))?;
         if got == self.pin {
             Ok(ServerCertVerified::assertion())
         } else {
@@ -258,18 +119,12 @@ mod tests {
     }
 
     #[test]
-    fn spki_extraction_matches_rcgen_public_key_der() {
-        let (key, cert) = self_signed_cert();
-        let expect_der = key.public_key_der();
-        let expect: &[u8] = expect_der.as_ref();
-        assert_eq!(extract_spki(&cert).unwrap(), expect);
-    }
-
-    #[test]
     fn pin_of_certificate_is_sha256_of_spki() {
         let (key, cert) = self_signed_cert();
         let pin = SpkiPin::of_certificate(&cert).unwrap();
-        assert_eq!(pin.0, sha256(key.public_key_der().as_ref()));
+        // independent digest over rcgen's own SPKI serialization
+        let expect = spki_sha256(key.public_key_der().as_ref());
+        assert_eq!(pin.0, expect);
         // roundtrip through the hex form the server prints
         let hex = pin.to_hex();
         assert_eq!(hex.len(), 64);
@@ -292,8 +147,8 @@ mod tests {
 
     #[test]
     fn pin_from_hex_rejects_bad_input() {
-        assert_eq!(SpkiPin::from_hex("abc"), Err(PinError::BadHexLen(3)));
-        assert_eq!(SpkiPin::from_hex(&"g".repeat(64)), Err(PinError::BadHex));
+        assert_eq!(SpkiPin::from_hex("abc"), Err(HexError::BadLength(3)));
+        assert!(SpkiPin::from_hex(&"g".repeat(64)).is_err());
     }
 
     #[test]

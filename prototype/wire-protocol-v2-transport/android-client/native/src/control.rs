@@ -2,26 +2,13 @@
 //! server states: CONNECTING→AUTHENTICATING→READY→PLAYING→CLOSING/CLOSED).
 //!
 //! Transport-agnostic and host-testable: the QUIC session layer feeds decoded
-//! `ControlMsg`s in and obeys the returned verdicts. Never processes control
-//! before AUTH succeeds; SUBSCRIBE legal only in READY.
+//! `Frame`s (single-sourced from proto-core) in and obeys the returned
+//! verdicts. Never processes control before AUTH succeeds; SUBSCRIBE legal
+//! only in READY.
 
-use crate::codec::ControlMsg;
+pub use proto_core::frame::{AuthErrCode, CloseReason, MediaStartPayload};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MediaConfig {
-    pub stream_instance_id: u32,
-    pub config_generation: u32,
-    pub sample_rate: u32,
-    pub channels: u8,
-    pub sample_format: u8,
-}
-
-impl MediaConfig {
-    /// Bytes per interleaved stereo sample frame (f32le assumed for format 1).
-    pub fn frame_bytes(&self) -> usize {
-        4 * self.channels as usize
-    }
-}
+use crate::codec::Frame;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientState {
@@ -32,35 +19,9 @@ pub enum ClientState {
     /// AUTH_OK seen. SUBSCRIBE allowed.
     Ready,
     /// SUBSCRIBE sent and MEDIA_START received with this config.
-    Playing(MediaConfig),
+    Playing(MediaStartPayload),
     /// Terminal. No control processing, no playback claims afterwards.
     Closed(CloseInfo),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CloseReason {
-    Normal,
-    ServerStop,
-    ProtocolError,
-    AuthFailed,
-    IdleTimeout,
-    InternalError,
-    /// Prototype catch-all for codes we don't know.
-    Unknown(u8),
-}
-
-impl CloseReason {
-    pub fn from_code(code: u8) -> Self {
-        match code {
-            0 => CloseReason::Normal,
-            1 => CloseReason::ServerStop,
-            2 => CloseReason::ProtocolError,
-            3 => CloseReason::AuthFailed,
-            4 => CloseReason::IdleTimeout,
-            5 => CloseReason::InternalError,
-            other => CloseReason::Unknown(other),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,7 +30,7 @@ pub struct CloseInfo {
     pub origin: CloseOrigin,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseOrigin {
     /// Server sent CLOSE.
     Remote,
@@ -82,7 +43,7 @@ pub enum ControlError {
     /// Violation worth CLOSE(PROTOCOL_ERROR) semantics; also counted in stats.
     Protocol(String),
     /// AUTH_ERR received: bad credential / rate limit etc. Terminal for the session.
-    AuthRejected { code: u8 },
+    AuthRejected { code: AuthErrCode },
     /// Anything received after the session closed.
     AfterClose,
 }
@@ -101,26 +62,26 @@ impl ClientState {
     }
 
     /// Pure transition: fold one received control message.
-    pub fn on_control(&mut self, msg: &ControlMsg) -> Result<ControlVerdict, ControlError> {
+    pub fn on_control(&mut self, msg: &Frame) -> Result<ControlVerdict, ControlError> {
         if let ClientState::Closed(_) = self {
             return Err(ControlError::AfterClose);
         }
         match (self.clone(), msg) {
             // AUTH verdicts are only meaningful while awaiting them.
-            (ClientState::AwaitingAuth, ControlMsg::AuthOk(_)) => {
+            (ClientState::AwaitingAuth, Frame::AuthOk { .. }) => {
                 *self = ClientState::Ready;
                 Ok(ControlVerdict::Ok)
             }
-            (ClientState::AwaitingAuth, ControlMsg::AuthErr(code)) => {
+            (ClientState::AwaitingAuth, Frame::AuthErr(code)) => {
                 *self = ClientState::Closed(CloseInfo {
                     reason: CloseReason::AuthFailed,
                     origin: CloseOrigin::Remote,
                 });
                 Err(ControlError::AuthRejected { code: *code })
             }
-            (ClientState::AwaitingAuth, ControlMsg::Close(r)) => {
+            (ClientState::AwaitingAuth, Frame::Close(reason)) => {
                 *self = ClientState::Closed(CloseInfo {
-                    reason: CloseReason::from_code(*r),
+                    reason: *reason,
                     origin: CloseOrigin::Remote,
                 });
                 Ok(ControlVerdict::Ok)
@@ -133,25 +94,13 @@ impl ClientState {
                 "control received before connect".into(),
             )),
 
-            (ClientState::Ready, ControlMsg::MediaStart {
-                stream_instance_id,
-                config_generation,
-                sample_rate,
-                channels,
-                sample_format,
-            }) => {
-                *self = ClientState::Playing(MediaConfig {
-                    stream_instance_id: *stream_instance_id,
-                    config_generation: *config_generation,
-                    sample_rate: *sample_rate,
-                    channels: *channels,
-                    sample_format: *sample_format,
-                });
+            (ClientState::Ready, Frame::MediaStart(payload)) => {
+                *self = ClientState::Playing(*payload);
                 Ok(ControlVerdict::Ok)
             }
-            (ClientState::Ready, ControlMsg::Close(r)) => {
+            (ClientState::Ready, Frame::Close(reason)) => {
                 *self = ClientState::Closed(CloseInfo {
-                    reason: CloseReason::from_code(*r),
+                    reason: *reason,
                     origin: CloseOrigin::Remote,
                 });
                 Ok(ControlVerdict::Ok)
@@ -160,26 +109,14 @@ impl ClientState {
                 "received {} in READY", other_type(other)
             ))),
 
-            (ClientState::Playing(_), ControlMsg::MediaStart {
-                stream_instance_id,
-                config_generation,
-                sample_rate,
-                channels,
-                sample_format,
-            }) => {
+            (ClientState::Playing(_), Frame::MediaStart(payload)) => {
                 // capture restart / config change: same shape, new instance id
-                *self = ClientState::Playing(MediaConfig {
-                    stream_instance_id: *stream_instance_id,
-                    config_generation: *config_generation,
-                    sample_rate: *sample_rate,
-                    channels: *channels,
-                    sample_format: *sample_format,
-                });
+                *self = ClientState::Playing(*payload);
                 Ok(ControlVerdict::Ok)
             }
-            (ClientState::Playing(_), ControlMsg::Close(r)) => {
+            (ClientState::Playing(_), Frame::Close(reason)) => {
                 *self = ClientState::Closed(CloseInfo {
-                    reason: CloseReason::from_code(*r),
+                    reason: *reason,
                     origin: CloseOrigin::Remote,
                 });
                 Ok(ControlVerdict::Ok)
@@ -201,9 +138,9 @@ impl ClientState {
         matches!(self, ClientState::Ready | ClientState::Playing(_))
     }
 
-    pub fn media_config(&self) -> Option<MediaConfig> {
+    pub fn media_config(&self) -> Option<MediaStartPayload> {
         match self {
-            ClientState::Playing(cfg) => Some(cfg.clone()),
+            ClientState::Playing(cfg) => Some(*cfg),
             _ => None,
         }
     }
@@ -224,15 +161,15 @@ impl ClientState {
     }
 }
 
-fn other_type(msg: &ControlMsg) -> &'static str {
+fn other_type(msg: &Frame) -> &'static str {
     match msg {
-        ControlMsg::Auth(_) => "AUTH",
-        ControlMsg::AuthOk(_) => "AUTH_OK",
-        ControlMsg::AuthErr(_) => "AUTH_ERR",
-        ControlMsg::Subscribe => "SUBSCRIBE",
-        ControlMsg::MediaStart { .. } => "MEDIA_START",
-        ControlMsg::Unsubscribe => "UNSUBSCRIBE",
-        ControlMsg::Close(_) => "CLOSE",
+        Frame::Auth { .. } => "AUTH",
+        Frame::AuthOk { .. } => "AUTH_OK",
+        Frame::AuthErr(_) => "AUTH_ERR",
+        Frame::Subscribe => "SUBSCRIBE",
+        Frame::MediaStart(_) => "MEDIA_START",
+        Frame::Unsubscribe => "UNSUBSCRIBE",
+        Frame::Close(_) => "CLOSE",
     }
 }
 
@@ -244,20 +181,20 @@ mod tests {
         ClientState::AwaitingAuth
     }
 
-    fn media_start(instance: u32, gen: u32) -> ControlMsg {
-        ControlMsg::MediaStart {
+    fn media_start(instance: u32, gen: u32) -> Frame {
+        Frame::MediaStart(MediaStartPayload {
             stream_instance_id: instance,
             config_generation: gen,
             sample_rate: 48000,
             channels: 2,
             sample_format: 1,
-        }
+        })
     }
 
     #[test]
     fn auth_ok_in_awaiting_auth_transitions_to_ready() {
         let mut s = awaiting_auth();
-        assert_eq!(s.on_control(&ControlMsg::AuthOk(42)), Ok(ControlVerdict::Ok));
+        assert_eq!(s.on_control(&Frame::AuthOk { session_id: 42 }), Ok(ControlVerdict::Ok));
         assert_eq!(s, ClientState::Ready);
         assert!(s.can_subscribe());
         assert_eq!(s.state_name(), "READY");
@@ -267,13 +204,13 @@ mod tests {
     fn auth_err_is_terminal_auth_failure() {
         let mut s = awaiting_auth();
         assert_eq!(
-            s.on_control(&ControlMsg::AuthErr(1)),
-            Err(ControlError::AuthRejected { code: 1 })
+            s.on_control(&Frame::AuthErr(AuthErrCode::BadCredential)),
+            Err(ControlError::AuthRejected { code: AuthErrCode::BadCredential })
         );
         assert!(s.is_closed());
         // and nothing is processed afterwards
         assert_eq!(
-            s.on_control(&ControlMsg::AuthOk(1)),
+            s.on_control(&Frame::AuthOk { session_id: 1 }),
             Err(ControlError::AfterClose)
         );
     }
@@ -291,7 +228,7 @@ mod tests {
     fn control_in_idle_is_protocol_error() {
         let mut s = ClientState::initial();
         assert!(matches!(
-            s.on_control(&ControlMsg::AuthOk(1)),
+            s.on_control(&Frame::AuthOk { session_id: 1 }),
             Err(ControlError::Protocol(_))
         ));
     }
@@ -299,9 +236,9 @@ mod tests {
     #[test]
     fn duplicate_auth_ok_rejected_in_ready() {
         let mut s = awaiting_auth();
-        s.on_control(&ControlMsg::AuthOk(1)).unwrap();
+        s.on_control(&Frame::AuthOk { session_id: 1 }).unwrap();
         assert!(matches!(
-            s.on_control(&ControlMsg::AuthOk(1)),
+            s.on_control(&Frame::AuthOk { session_id: 1 }),
             Err(ControlError::Protocol(_))
         ));
     }
@@ -309,11 +246,11 @@ mod tests {
     #[test]
     fn media_start_in_ready_starts_playing() {
         let mut s = awaiting_auth();
-        s.on_control(&ControlMsg::AuthOk(1)).unwrap();
+        s.on_control(&Frame::AuthOk { session_id: 1 }).unwrap();
         s.on_control(&media_start(3, 1)).unwrap();
         assert_eq!(
             s,
-            ClientState::Playing(MediaConfig {
+            ClientState::Playing(MediaStartPayload {
                 stream_instance_id: 3,
                 config_generation: 1,
                 sample_rate: 48000,
@@ -329,7 +266,7 @@ mod tests {
     #[test]
     fn media_start_reconfigures_new_instance() {
         let mut s = awaiting_auth();
-        s.on_control(&ControlMsg::AuthOk(1)).unwrap();
+        s.on_control(&Frame::AuthOk { session_id: 1 }).unwrap();
         s.on_control(&media_start(1, 1)).unwrap();
         s.on_control(&media_start(2, 1)).unwrap();
         assert_eq!(s.media_config().unwrap().stream_instance_id, 2);
@@ -341,12 +278,12 @@ mod tests {
             awaiting_auth(),
             {
                 let mut s = awaiting_auth();
-                s.on_control(&ControlMsg::AuthOk(1)).unwrap();
+                s.on_control(&Frame::AuthOk { session_id: 1 }).unwrap();
                 s
             },
         ] {
             let mut s = start;
-            s.on_control(&ControlMsg::Close(1)).unwrap();
+            s.on_control(&Frame::Close(CloseReason::ServerStop)).unwrap();
             assert_eq!(
                 s,
                 ClientState::Closed(CloseInfo {
@@ -359,17 +296,19 @@ mod tests {
 
     #[test]
     fn close_reason_codes_map() {
-        assert_eq!(CloseReason::from_code(0), CloseReason::Normal);
-        assert_eq!(CloseReason::from_code(3), CloseReason::AuthFailed);
-        assert_eq!(CloseReason::from_code(200), CloseReason::Unknown(200));
+        // the mapping lives in proto-core; the client relies on parse()
+        // rejecting unknown codes before a Close ever reaches this machine
+        assert_eq!(CloseReason::from_u8(0), Some(CloseReason::Normal));
+        assert_eq!(CloseReason::from_u8(3), Some(CloseReason::AuthFailed));
+        assert_eq!(CloseReason::from_u8(200), None);
     }
 
     #[test]
     fn auth_err_in_ready_is_protocol_error_not_auth_rejection() {
         let mut s = awaiting_auth();
-        s.on_control(&ControlMsg::AuthOk(1)).unwrap();
+        s.on_control(&Frame::AuthOk { session_id: 1 }).unwrap();
         assert!(matches!(
-            s.on_control(&ControlMsg::AuthErr(4)),
+            s.on_control(&Frame::AuthErr(AuthErrCode::RateLimited)),
             Err(ControlError::Protocol(_))
         ));
         // state machine treats it as fault; caller issues CLOSE(PROTOCOL_ERROR)
@@ -379,7 +318,7 @@ mod tests {
     fn unsubscribe_not_legal_in_awaiting_auth_or_closed() {
         assert!(!awaiting_auth().can_unsubscribe());
         let mut s = awaiting_auth();
-        s.on_control(&ControlMsg::Close(0)).unwrap();
+        s.on_control(&Frame::Close(CloseReason::Normal)).unwrap();
         assert!(!s.can_unsubscribe());
         assert!(!s.can_subscribe());
     }
