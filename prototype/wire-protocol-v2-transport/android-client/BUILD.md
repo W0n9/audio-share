@@ -112,8 +112,13 @@ rebind code) and the gate verdict is unchanged.
 
 **~5 MiB gate: PASS on this evidence.** The stripped arm64 `.so` increment is
 2.20 MiB (44% of the provisional 5 MiB gate). The whole release APK including
-the native library is 2.23 MiB. ABI approach: single-ABI filter rather than
-splits; the per-arm64 contribution is identical for splits/AAB.
+the native library is 2.23 MiB. ABI approach: a **single-ABI `abiFilters =
+["arm64-v8a"]` build was used instead of full ABI splits or an App Bundle** —
+the prototype question is only the per-device cost on the dominant 64-bit ARM
+target, and because each ABI ships its own independent `.so`, adding more ABIs
+would not change the arm64 increment measured here (it is the same arm64
+`libaudio_share_proto_native.so` either way); an AAB would merely repackage
+the same per-ABI artifacts.
 
 Rough .so size composition (from dependency weight at `opt-level="z"`,
 `lto=fat`, `codegen-units=1`): the bulk is quinn+rustls+ring (TLS + QUIC),
@@ -155,6 +160,18 @@ per network change (`rebind`). Media bytes cross JNI exactly once — as one
 ring writes into it and Kotlin reads it with the monotonic `buffer.write_pos`
 cursor from `getStats` JSON. There is no per-datagram callback, no UniFFI, no
 per-packet JNI traffic.
+
+## Error type: `Result<_, String>` (prototype simplification)
+
+All fallible native entry points surface errors as `Result<_, String>`
+formatted at the JNI boundary, instead of a typed error hierarchy. This is a
+**deliberate prototype simplification, not a pattern to copy**: the throwaway
+JNI surface is ten low-frequency functions with no error-handling contract
+beyond "show the string in the log view", and a typed error enum (plus its
+translation rules across the FFI boundary) would buy nothing for code that is
+discarded after the transport question is answered. The few callers that
+branch on an error (auth rejection, rebind fallback) match on behavior they
+observe elsewhere (state/counters), not by parsing the string.
 
 ## minSdk / dependency platform constraints
 
