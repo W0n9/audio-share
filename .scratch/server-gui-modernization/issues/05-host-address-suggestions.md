@@ -4,7 +4,7 @@
 
 **Blocked by:** 无
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 后端暴露本机 IPv4 地址列表:过滤 loopback、去重、默认地址在前,且不改变 `default_host()` 的结果。
 - [ ] Bootstrap 将地址列表传给前端(`hostAddresses`),不新增轮询或网络监听。
@@ -21,3 +21,16 @@
   loopback and non-Up interfaces); the modernized Tauri field regressed to a
   plain `<input type="text">`. The Rust core already enumerates interfaces for
   `default_host()` via `if_addrs`, so the fix can reuse that path.
+- 2026-11-11: implemented on `ticket/gui-mod-05-host-addresses` (commit
+  `bb6e24b`), merged fast-forward into `integration/server-gui-modernization`.
+  Core adds `local_addresses()` (deduplicated, v0.3.4 default first) and
+  routes `default_host()` through it; the Tauri `Bootstrap` carries
+  `hostAddresses`; the Host input uses a `datalist` while keeping free text.
+  Checks: `cargo test -p audio-share-core` 35 passed (3 new),
+  `cargo test -p audio-share-server-gui` 93 passed, `npm run check` 0 errors /
+  0 warnings, `npm run build` 139 modules. Verified on the Windows 11 desktop
+  with a debug build: the Host field shows the datalist arrow and local
+  address suggestions
+  (`docs/server-rewrite/img/gui-mod-05-host-addresses-zh.png`). The CI
+  artifact still needs a re-cut for the shipped binary.
+
