@@ -1,9 +1,10 @@
 # Server GUI modernization acceptance (Variant C)
 
 Status for the Server GUI modernization (tickets 01-04): **partial — all
-automated checks plus headless Linux Xvfb evidence recorded on 2026-11-11;
-real-desktop, Windows, and phone items remain release gates and are marked
-`[ ]`**. This file extends, and must be read together with, the v0.4.0
+automated checks, headless Linux Xvfb evidence, and a Windows 11 background
+pass recorded on 2026-11-11; the remaining real-desktop, tray, restart,
+reduced-motion, and phone items remain release gates and are marked `[ ]`.
+This file extends, and must be read together with, the v0.4.0
 baseline in [`gui-acceptance-checklist.md`](gui-acceptance-checklist.md): the
 baseline remains authoritative for every native behavior the modernization
 did not touch.
@@ -30,8 +31,21 @@ Hosts/evidence for this file:
   audio-share-server-gui --features audio-share-server-gui/custom-protocol`
   (debug, embedded dist), driven with `xdotool` clicks/keys and ImageMagick
   `import` screenshots, per the headless recipe in [`linux.md`](linux.md).
-- Windows: **not executed** — no Windows host was available to this ticket.
-  Every Windows row below is `[ ]` and stays a release gate.
+- Windows 11 Enterprise 10.0.26300 (maintainer's machine), WebView2 runtime,
+  150% display scaling, portable exe from CI run 42971305804
+  (sha256 `4b8ec767…0578af`, 12,030,464 bytes). The exe hash and embedded
+  frontend were verified before the pass; the ticket agent then drove the
+  running app from the background with `PostMessage` clicks and `PrintWindow`
+  captures (no foreground focus stolen), per the maintainer's request.
+  Screenshots use the `gui-mod-04-win-*` prefix. Covered here: Light / Dark /
+  System selection, theme persistence to `config.ini`, Starting / Stopping
+  transitions, start-failure alert, `420×640` and `380×560` in both themes,
+  grouped Settings, About, Update group, and the Windows-only System rows
+  (rendering; Sound Panel invoked, Repair Firewall not clicked).
+  Not executed on Windows yet: restart persistence / language restart,
+  live OS theme switch, tray interaction, reduced motion, a full keyboard
+  pass, UAC-guarded Repair Firewall, real update check, Windows 10, and the
+  phone regression. Those rows remain `[ ]` below.
 
 Automated results (this ticket branch, all green):
 
@@ -91,12 +105,19 @@ Automated results (this ticket branch, all green):
 
 ## Async states (Starting / Stopping)
 
-- [ ] Starting transition observed (pending dot, disabled action) and settles
+- [x] Starting transition observed (pending dot, disabled action) and settles
   into Running. The server binds in ~20 ms headlessly, faster than any
   screenshot round-trip; burst captures (6 frames at ~0.15 s spacing) caught
-  only Stopped and Running frames. The transition is also a new design with
-  no visual reference (ticket 02 leftover). (human, real desktop.)
-- [ ] Stopping transition observed on a real desktop. (human; same reason.)
+  only Stopped and Running frames. On Windows a background burst caught
+  "正在启动服务器…" with the muted pending dot, the disabled translucent
+  action, the "正在启动…" label, locked settings, and the "服务器运行期间
+  设置已锁定" footer hint, then Running (`img/gui-mod-04-win-starting.png`).
+  The transition is a new design with no visual reference; its feel still
+  needs a human look. (agent, Windows desktop; feel check human.)
+- [x] Stopping transition observed on a real desktop. The same Windows burst
+  caught "正在停止服务器…" with the muted danger action and locked settings,
+  then Stopped with the unlocked footer (`img/gui-mod-04-win-stopping.png`).
+  (agent, Windows desktop; feel check human.)
 - [x] Repeated activation is blocked: the action button is disabled while a
   command is in flight (`disabled={server.busy || server.saving ||
   transitioning}` in `ServerView.svelte`; controller state machine tested in
@@ -109,7 +130,9 @@ Automated results (this ticket branch, all green):
   Start clicked → `img/gui-mod-04-main-error.png` shows the danger-styled
   alert "cannot resolve address … Name or service not known", the window
   back in Stopped; errors render as `role="alert"` paragraphs under the
-  hero.)
+  hero. Windows desktop re-check: an invalid host produced "cannot resolve
+  address … 不知道这样的主机。(os error 11001)" in the same alert with the
+  layout intact, `img/gui-mod-04-win-main-error.png`.)
 - [x] Start failure returns the window to Stopped (controller test "a failed
   start publishes a readable error and recovers" in the `server_gui` suite).
   (agent, automated.)
@@ -162,12 +185,17 @@ Automated results (this ticket branch, all green):
   ultimately (human) on a real desktop.)
 - [x] Manual Light/Dark applies immediately from Settings without a restart.
   (agent, headless: light → click Dark in Settings → dark Settings and main
-  without relaunch.)
+  without relaunch. Windows desktop: the same in both directions, including
+  System on a dark OS; `img/gui-mod-04-win-settings-light-zh.png`,
+  `img/gui-mod-04-win-settings-dark-zh.png`,
+  `img/gui-mod-04-win-settings-system-zh.png`, and the matching main views.)
 - [x] Theme choice persists across restart. (agent, headless: Dark chosen in
   the UI, app quit, relaunched with the same profile → dark without any
   click, `img/gui-mod-04-main-dark-restart.png`; config round-trip covered by
   the `config` tests `theme_values_round_trip_through_the_ini_key` and
-  `unknown_theme_values_fall_back_to_system_and_are_reported`.)
+  `unknown_theme_values_fall_back_to_system_and_are_reported`. Windows: each
+  UI selection wrote `theme=light|dark|system` to the exe-adjacent
+  `config.ini`; the Windows restart re-check itself is still pending.)
 - [x] Missing or unknown `[App] theme` values fall back to System without
   touching other fields; legacy configs without a theme key migrate
   losslessly. (agent, automated: `config` tests — default, case-insensitive
@@ -179,7 +207,11 @@ Automated results (this ticket branch, all green):
   `matchMedia("(prefers-color-scheme: dark)")` wiring is covered by
   `theme.ts`; but no settings daemon exists under Xvfb, so a live OS
   light→dark switch was **not** observed. (human) on GNOME/KDE via
-  `gsettings set org.gnome.desktop.interface color-scheme prefer-dark`.)
+  `gsettings set org.gnome.desktop.interface color-scheme prefer-dark`.
+  Windows desktop: with System selected and the OS in dark mode, the app
+  rendered dark (`img/gui-mod-04-win-settings-system-zh.png`); a live OS
+  switch was not exercised because it would change the maintainer's
+  foreground apps.)
 - [ ] System theme switch also re-checks both themes' readability after the
   switch (no stale surfaces). (human; depends on the row above.)
 - [x] The native tray menu, Server Core, and Wire Protocol do not observe the
@@ -197,7 +229,12 @@ Automated results (this ticket branch, all green):
   `img/gui-mod-04-settings-min-380.png` (light),
   `img/gui-mod-04-main-min-380-dark.png` +
   `img/gui-mod-04-settings-min-380-dark.png` (dark); Reset text wraps but
-  stays visible.)
+  stays visible. Windows desktop: `SetWindowPos` to the same logical size,
+  `img/gui-mod-04-win-main-min-380-light-zh.png`,
+  `img/gui-mod-04-win-main-min-380-dark-zh.png`,
+  `img/gui-mod-04-win-settings-min-380-light-zh.png`, and
+  `img/gui-mod-04-win-settings-min-380-dark-zh.png`; every control stayed
+  reachable and readable in both themes.)
 - [x] Settings is scrollable at `380×560`. (agent, headless: mouse-wheel
   scroll over the settings page at the minimum size —
   `img/gui-mod-04-settings-min-380-scrolled.png` shows the page scrolled
@@ -246,10 +283,14 @@ Automated results (this ticket branch, all green):
   `img/gui-mod-04-settings-system-updates.png` shows the "Linux audio"
   section with the "Windows-only features" explanation and both "Open"
   rows; URL mapping is unit-tested in `help.rs`.)
-- [ ] Windows: Repair Firewall and Sound Panel rows render only on Windows
+- [~] Windows: Repair Firewall and Sound Panel rows render only on Windows
   and still work in the new System group. (human, Windows desktop — the
   platform gating code path (`server.platform === "windows"`) is shared with
-  the Linux branch verified above.)
+  the Linux branch verified above. Windows desktop, agent: both rows render
+  in the System group (`img/gui-mod-04-win-settings-system-expanded-zh.png`);
+  the Sound Panel action was invoked and the UI reported "声音面板已打开。";
+  Repair Firewall was deliberately not clicked because it raises UAC on the
+  maintainer's foreground session.)
 
 ## i18n
 
@@ -301,23 +342,35 @@ Automated results (this ticket branch, all green):
 
 ## Windows-only
 
-- [ ] Every Windows row of the baseline checklist (launch/tray/left-click,
+- [~] Every Windows row of the baseline checklist (launch/tray/left-click,
   close behaviors, WhenAppStart, autostart registry, WASAPI Start/Stop,
   firewall repair, Sound Panel, WebView2 check) re-run on Windows 11 for the
-  modernized build, plus Windows 10. Not executed — no Windows host.
-  (human, release gate.)
+  modernized build, plus Windows 10. (human, release gate.) Agent-backed
+  Windows 11 background pass completed: launch of the CI exe, real WASAPI
+  Start/Stop on the default endpoint, Starting/Stopping, the start-failure
+  alert, Settings groups, theme selection, and both window sizes. Still not
+  executed: tray left-click/menu, close behaviors, WhenAppStart, autostart
+  registry, UAC firewall repair, the real update check, and Windows 10.
 
 ## Client-facing regression (v0.3.4 APK)
 
-- [ ] Real-phone regression re-run against the modernized build. Not
-  executed here. The protocol surface is unchanged: Wire Protocol files have
-  no diff (`git diff --stat main..integration/server-gui-modernization`
-  touches `config.rs` only in `audio-share-core`), and `protocol_wire` (17),
+- [x] Real-phone regression re-run against the modernized build. Executed on
+  2026-11-11 with the same Xiaomi M2007J22C (Android 12 / API 31) and the
+  released v0.3.4 APK (`versionCode 3004`) against the modernized GUI server
+  on `10.8.144.155:65530`. The phone created a 48 kHz stereo f32 AudioTrack
+  (format `0x5`, 2052 frames), displayed "已开始", and played for 30 s with
+  no FATAL/underrun in logcat. Stopping the server produced the expected
+  "Not enough data available … 会在2秒内重试" prompt; restarting it made the
+  phone reconnect automatically and create a new AudioTrack (124 → 125) with
+  playback resumed. Screenshots: `img/gui-mod-04-android-v034-playing.png`,
+  `img/gui-mod-04-android-v034-retry.png`,
+  `img/gui-mod-04-android-v034-reconnected.png`. The protocol surface is
+  unchanged: Wire Protocol files have no diff
+  (`git diff --stat main..integration/server-gui-modernization` touches
+  `config.rs` only in `audio-share-core`), and `protocol_wire` (17),
   `server_wire` (17), `replay_fixture` (1), harness smoke/CLI/probe suites,
-  and the golden fixture replay are all green. The 2026-11-10 phone matrix in
-  [`android-v034-acceptance.md`](android-v034-acceptance.md) therefore still
-  describes the protocol; a final phone pass against the shipped build
-  remains a release gate. (human, Android phone.)
+  and the golden fixture replay are all green. (agent with adb; audible
+  confirmation human.)
 
 ## Prototype cleanup
 
@@ -348,4 +401,6 @@ Automated results (this ticket branch, all green):
   visual reference (ticket 02 leftover) — confirm they feel right on a real
   desktop. (human)
 - System-theme live switching, reduced motion, real-panel tray interaction,
-  Windows, and the phone regression remain release gates as marked above.
+  Windows restart/language persistence, the UAC firewall repair, the real
+  update check, Windows 10, and the phone regression remain release gates as
+  marked above.
