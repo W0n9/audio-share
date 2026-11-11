@@ -6,8 +6,10 @@ import {
   type Notice,
   type ServerStatus,
   type Settings,
+  type Theme,
   type UpdateCheckResult,
 } from "./ipc";
+import { applyTheme } from "./theme";
 import { t } from "./i18n.svelte";
 
 export type View = "main" | "settings";
@@ -25,6 +27,7 @@ const DEFAULT_SETTINGS: Settings = {
   whenClose: "minimize",
   autoUpdate: false,
   language: "default",
+  theme: "system",
   running: false,
 };
 
@@ -150,8 +153,8 @@ class ServerStore {
   }
 
   /**
-   * Persist autostart/launch/close/update/language settings. Allowed while
-   * the server runs; Rust applies the login entry first for autostart.
+   * Persist autostart/launch/close/update/language/theme settings. Allowed
+   * while the server runs; Rust applies the login entry first for autostart.
    */
   async persistApplication(): Promise<void> {
     if (this.applicationLocked) return;
@@ -161,6 +164,7 @@ class ServerStore {
       whenClose: this.settings.whenClose,
       autoUpdate: this.settings.autoUpdate,
       language: this.settings.language,
+      theme: this.settings.theme,
     };
     this.saving = true;
     this.saveError = null;
@@ -183,6 +187,19 @@ class ServerStore {
     this.settings.language = language;
     this.languageRestartHint = true;
     await this.persistApplication();
+  }
+
+  /**
+   * Change the theme, apply it immediately, and persist it with the rest of
+   * the application settings. If the save fails and the re-read restores the
+   * stored value, the applied theme follows the file again.
+   */
+  async setTheme(theme: Theme): Promise<void> {
+    if (this.settings.theme === theme) return;
+    this.settings.theme = theme;
+    applyTheme(theme);
+    await this.persistApplication();
+    if (this.settings.theme !== theme) applyTheme(this.settings.theme);
   }
 
   /** Restore Host/Port/Endpoint/Encoding defaults and write them. */
