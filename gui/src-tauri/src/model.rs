@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use audio_share_core::config::{
-    ConfigNotice, WhenAppStart, WhenClose, CONFIG_VERSION, DEFAULT_LANGUAGE,
+    ConfigNotice, ThemeSetting, WhenAppStart, WhenClose, CONFIG_VERSION, DEFAULT_LANGUAGE,
 };
 use serde::{Deserialize, Serialize};
 
@@ -198,8 +198,8 @@ impl From<&ConfigNotice> for Notice {
 /// Application-level settings that may change while the server is running.
 ///
 /// Server fields (host/port/endpoint/encoding) stay locked while running, per
-/// v0.3.4; autostart, launch/close behavior, update checks, and language are
-/// independent of the running server.
+/// v0.3.4; autostart, launch/close behavior, update checks, language, and the
+/// GUI theme are independent of the running server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationSettings {
@@ -213,6 +213,8 @@ pub struct ApplicationSettings {
     pub auto_update: bool,
     /// `default`, `en-US`, or `zh-CN`.
     pub language: String,
+    /// GUI color scheme: `system`, `light`, or `dark`.
+    pub theme: ThemeSetting,
 }
 
 impl From<&Settings> for ApplicationSettings {
@@ -223,6 +225,7 @@ impl From<&Settings> for ApplicationSettings {
             when_close: settings.when_close,
             auto_update: settings.auto_update,
             language: settings.language.clone(),
+            theme: settings.theme,
         }
     }
 }
@@ -303,6 +306,7 @@ mod tests {
         assert!(!settings.autostart);
         assert!(!settings.auto_update);
         assert_eq!(settings.language, "default");
+        assert_eq!(settings.theme, ThemeSetting::System);
         assert!(!settings.running);
         assert!(!settings.host.is_empty(), "a bind host is always offered");
     }
@@ -368,6 +372,7 @@ mod tests {
             when_close: audio_share_core::config::WhenClose::Exit,
             auto_update: true,
             language: "zh-CN".to_owned(),
+            theme: ThemeSetting::Dark,
             running: true,
         };
         let json = serde_json::to_value(&settings).unwrap();
@@ -380,6 +385,7 @@ mod tests {
         assert_eq!(json["whenClose"], "exit");
         assert_eq!(json["autoUpdate"], true);
         assert_eq!(json["language"], "zh-CN");
+        assert_eq!(json["theme"], "dark");
         assert_eq!(json["running"], true);
 
         let round_trip: Settings = serde_json::from_value(json).unwrap();
@@ -547,6 +553,7 @@ mod tests {
             when_close: WhenClose::Exit,
             auto_update: true,
             language: "zh-CN".to_owned(),
+            theme: ThemeSetting::Dark,
             ..Settings::default()
         };
         let json = serde_json::to_value(ApplicationSettings::from(&settings)).unwrap();
@@ -555,5 +562,6 @@ mod tests {
         assert_eq!(json["whenClose"], "exit");
         assert_eq!(json["autoUpdate"], true);
         assert_eq!(json["language"], "zh-CN");
+        assert_eq!(json["theme"], "dark");
     }
 }
