@@ -19,7 +19,7 @@ use proto_core::media::{
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::mpsc;
 
-use crate::stats::{self, SessionStats, STATE_CLOSING, STATE_CLOSED, STATE_PLAYING, STATE_READY};
+use crate::stats::{self, SessionState, SessionStats};
 use crate::Shared;
 
 /// Bumped when a capture restart would occur; the prototype starts a new
@@ -34,13 +34,13 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
         .lock()
         .expect("session registry mutex")
         .push(stats.clone());
-    stats.set_state(stats::STATE_CONNECTING);
+    stats.set_state(stats::SessionState::Connecting);
 
     let (mut tx, mut rx) = match conn.accept_bi().await {
         Ok(streams) => streams,
         Err(e) => {
             tracing::debug!(error = %e, "control stream never opened");
-            stats.set_state(stats::STATE_CLOSED);
+            stats.set_state(stats::SessionState::Closed);
             return;
         }
     };
@@ -169,7 +169,7 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
             }
             SessionEvent::TransportDead => {
                 tracing::debug!("transport closed by peer");
-                stats.set_state(stats::STATE_CLOSED);
+                stats.set_state(stats::SessionState::Closed);
                 stats.closed.store(true, Ordering::Relaxed);
                 break;
             }
@@ -241,9 +241,9 @@ async fn handle_frame(
     match frame {
         Frame::Auth { token } => {
             stats.frames_auth_in.fetch_add(1, Ordering::Relaxed);
-            match stats.state.load(Ordering::Relaxed) {
-                stats::STATE_CONNECTING => {
-                    stats.set_state(stats::STATE_AUTHENTICATING);
+            match stats.current_state() {
+                stats::SessionState::Connecting => {
+                    stats.set_state(stats::SessionState::Authenticating);
                     // Revoked tokens are denied exactly like bad credentials
                     // (same wire frames), counted under their own stat.
                     if shared.config.revoked_credentials.iter().any(|t| t == token) {
@@ -267,7 +267,7 @@ async fn handle_frame(
                             return Flow::CloseWith(CloseReason::InternalError, None);
                         }
                         stats.auth_ok_out.fetch_add(1, Ordering::Relaxed);
-                        stats.set_state(stats::STATE_READY);
+                        stats.set_state(stats::SessionState::Ready);
                         tracing::info!(session_id, "client authenticated");
                         Flow::Continue
                     } else {
@@ -288,7 +288,7 @@ async fn handle_frame(
         }
         Frame::Subscribe => {
             stats.frames_subscribe_in.fetch_add(1, Ordering::Relaxed);
-            if stats.state.load(Ordering::Relaxed) != stats::STATE_READY {
+            if stats.current_state() != stats::SessionState::Ready {
                 // SUBSCRIBE is only legal in READY. Pre-auth subscriptions get
                 // an explicit AUTH_ERR(NOT_AUTHENTICATED) in addition to the
                 // PROTOCOL_ERROR close.
@@ -325,21 +325,21 @@ async fn handle_frame(
                 shared.config.forwarder_delay,
                 instance,
             );
-            stats.set_state(STATE_PLAYING);
+            stats.set_state(SessionState::Playing);
             *media = Some(pump);
             tracing::info!(instance, "media started");
             Flow::Continue
         }
         Frame::Unsubscribe => {
             stats.frames_unsubscribe_in.fetch_add(1, Ordering::Relaxed);
-            if stats.state.load(Ordering::Relaxed) != STATE_PLAYING {
+            if stats.current_state() != SessionState::Playing {
                 return Flow::CloseWith(CloseReason::ProtocolError, None);
             }
             if let Some(pump) = media.take() {
                 pump.stop().await;
             }
             stats.media_unsubscribes.fetch_add(1, Ordering::Relaxed);
-            stats.set_state(STATE_READY);
+            stats.set_state(SessionState::Ready);
             tracing::info!("media stopped");
             Flow::Continue
         }
@@ -425,7 +425,7 @@ async fn break_close(
     prelude: Option<Frame>,
     shutdown_seen: &mut bool,
 ) {
-    stats.set_state(STATE_CLOSING);
+    stats.set_state(SessionState::Closing);
     if matches!(reason, CloseReason::ServerStop) {
         *shutdown_seen = true;
     }
@@ -450,7 +450,7 @@ async fn break_close(
         quinn::VarInt::from_u32(reason as u32),
         close_reason_ascii(reason),
     );
-    stats.set_state(STATE_CLOSED);
+    stats.set_state(SessionState::Closed);
     stats.closed.store(true, Ordering::Relaxed);
 }
 

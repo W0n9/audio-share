@@ -155,9 +155,9 @@ impl ServerHandle {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         // Application error code on the QUIC transport close mirrors the
-        // CLOSE-frame reason value.
+        // CLOSE-frame reason value (`CloseReason` is the single source).
         self.endpoint
-            .close(quinn::VarInt::from_u32(stats::CLOSE_REASON_SERVER_STOP), b"server-stop");
+            .close(quinn::VarInt::from_u32(proto_core::frame::CloseReason::ServerStop as u32), b"server-stop");
     }
 }
 

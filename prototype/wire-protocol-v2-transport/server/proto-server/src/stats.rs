@@ -2,38 +2,50 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
-/// CLOSE reason values (mirror of `proto_core::frame::CloseReason`); used as
-/// the QUIC application-error code on transport close and as an "unset"
-/// sentinel base for atomic slots.
-pub const CLOSE_REASON_NORMAL: u32 = 0;
-pub const CLOSE_REASON_SERVER_STOP: u32 = 1;
-pub const CLOSE_REASON_PROTOCOL_ERROR: u32 = 2;
-pub const CLOSE_REASON_AUTH_FAILED: u32 = 3;
-pub const CLOSE_REASON_IDLE_TIMEOUT: u32 = 4;
-pub const CLOSE_REASON_INTERNAL_ERROR: u32 = 5;
+/// The prototype server state machine (`CONNECTING → AUTHENTICATING → READY →
+/// PLAYING → CLOSING/CLOSED`). `#[repr(u8)]` values are the atomic slot
+/// encoding in `SessionStats::state`; the enum is the single source of truth
+/// (no duplicated constants).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SessionState {
+    Connecting = 0,
+    Authenticating = 1,
+    Ready = 2,
+    Playing = 3,
+    Closing = 4,
+    Closed = 5,
+}
 
-/// Sentinel meaning "no CLOSE recorded in this direction yet".
-const CLOSE_UNSET: u8 = 255;
+impl SessionState {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Connecting),
+            1 => Some(Self::Authenticating),
+            2 => Some(Self::Ready),
+            3 => Some(Self::Playing),
+            4 => Some(Self::Closing),
+            5 => Some(Self::Closed),
+            _ => None,
+        }
+    }
 
-/// Session state machine positions.
-pub const STATE_CONNECTING: u8 = 0;
-pub const STATE_AUTHENTICATING: u8 = 1;
-pub const STATE_READY: u8 = 2;
-pub const STATE_PLAYING: u8 = 3;
-pub const STATE_CLOSING: u8 = 4;
-pub const STATE_CLOSED: u8 = 5;
-
-pub fn state_name(state: u8) -> &'static str {
-    match state {
-        STATE_CONNECTING => "CONNECTING",
-        STATE_AUTHENTICATING => "AUTHENTICATING",
-        STATE_READY => "READY",
-        STATE_PLAYING => "PLAYING",
-        STATE_CLOSING => "CLOSING",
-        STATE_CLOSED => "CLOSED",
-        _ => "UNKNOWN",
+    /// Name used in stats snapshots and the session log line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Connecting => "CONNECTING",
+            Self::Authenticating => "AUTHENTICATING",
+            Self::Ready => "READY",
+            Self::Playing => "PLAYING",
+            Self::Closing => "CLOSING",
+            Self::Closed => "CLOSED",
+        }
     }
 }
+
+/// Sentinel meaning "no CLOSE recorded in this direction yet" (never a valid
+/// `CloseReason` value).
+const CLOSE_UNSET: u8 = 255;
 
 /// Lock-free per-session counters shared between the session task, media
 /// tasks, and test snapshots.
@@ -90,8 +102,14 @@ impl SessionStats {
         self.closed.load(Ordering::Relaxed)
     }
 
-    pub fn set_state(&self, state: u8) {
-        self.state.store(state, Ordering::Relaxed);
+    pub fn set_state(&self, state: SessionState) {
+        self.state.store(state as u8, Ordering::Relaxed);
+    }
+
+    /// Current state; falls back to `Closed` only for the CLOSE_UNSET-era
+    /// default value a freshly default-constructed instance would carry.
+    pub fn current_state(&self) -> SessionState {
+        SessionState::from_u8(self.state.load(Ordering::Relaxed)).unwrap_or(SessionState::Closed)
     }
 
     pub fn mark_close_sent(&self, reason: u8) {
@@ -110,7 +128,7 @@ impl SessionStats {
                 .lock()
                 .expect("remote addr mutex")
                 .clone(),
-            state: state_name(self.state.load(Ordering::Relaxed)).to_string(),
+            state: self.current_state().name().to_string(),
             frames_auth_in: self.frames_auth_in.load(Ordering::Relaxed),
             frames_subscribe_in: self.frames_subscribe_in.load(Ordering::Relaxed),
             frames_unsubscribe_in: self.frames_unsubscribe_in.load(Ordering::Relaxed),
