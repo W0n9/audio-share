@@ -31,6 +31,9 @@ pub enum AuthErrCode {
     BadCredential = 1,
     NotAuthenticated = 2,
     Malformed = 3,
+    /// Reserved for wire-contract stability; never sent by this prototype
+    /// (there is no rate limiting). Kept decodable so a future sender does
+    /// not break this client.
     RateLimited = 4,
 }
 
