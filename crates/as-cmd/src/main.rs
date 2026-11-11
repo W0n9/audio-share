@@ -35,7 +35,7 @@ use tracing_subscriber::registry::LookupSpan;
 /// Homepage printed by `-v/--version`.
 const HOMEPAGE: &str = "https://github.com/mkckr0/audio-share";
 
-/// Binary version (`0.4.0` for the rewrite).
+/// Binary version, from the crate metadata.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Parser)]

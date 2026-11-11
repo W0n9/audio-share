@@ -41,7 +41,10 @@ fn version_matches_the_old_layout_with_the_rewrite_version() {
             .assert()
             .success()
             .stdout(predicate::str::contains("as-cmd\n"))
-            .stdout(predicate::str::contains("version: 0.4.0"))
+            .stdout(predicate::str::contains(concat!(
+                "version: ",
+                env!("CARGO_PKG_VERSION")
+            )))
             .stdout(predicate::str::contains(
                 "url: https://github.com/mkckr0/audio-share",
             ));
