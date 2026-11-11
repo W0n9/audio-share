@@ -54,11 +54,11 @@
   });
 
   function openSettings(): void {
-    server.view = "settings";
+    server.openSettings();
   }
 
   function closeSettings(): void {
-    server.view = "main";
+    server.closeSettings();
   }
 
   function noticeText(notice: Notice): string {

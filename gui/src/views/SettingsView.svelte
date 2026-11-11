@@ -2,6 +2,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { server } from "../lib/store.svelte";
   import { locales, t } from "../lib/i18n.svelte";
+  import ErrorLine from "../lib/ErrorLine.svelte";
   import Icon from "../lib/Icon.svelte";
   import LinuxSettings from "./LinuxSettings.svelte";
 
@@ -11,8 +12,18 @@
   const HOMEPAGE = "https://github.com/mkckr0/audio-share";
   const appLocked = $derived(server.applicationLocked);
 
+  const THEME_OPTIONS = [
+    { value: "system", labelKey: "settings.themeSystem" },
+    { value: "light", labelKey: "settings.themeLight" },
+    { value: "dark", labelKey: "settings.themeDark" },
+  ] as const;
+
   function persistApplication(): void {
     void server.persistApplication();
+  }
+
+  function closeSettings(): void {
+    server.closeSettings();
   }
 
   function languageChanged(event: Event): void {
@@ -30,12 +41,8 @@
 
 <section class="view">
   <div class="view-scroll settings-scroll">
-    {#if server.error}
-      <p class="error" role="alert">{server.error}</p>
-    {/if}
-    {#if server.saveError}
-      <p class="error" role="alert">{server.saveError}</p>
-    {/if}
+    <ErrorLine message={server.error} />
+    <ErrorLine message={server.saveError} />
 
     <!-- Appearance stays expanded; the remaining groups are disclosures. -->
     <section class="appearance">
@@ -47,33 +54,17 @@
           <div class="sub">{t("settings.themeHint")}</div>
         </div>
         <div class="segmented" role="group" aria-label={t("settings.theme")}>
-          <button
-            type="button"
-            class:active={server.settings.theme === "system"}
-            aria-pressed={server.settings.theme === "system"}
-            disabled={appLocked}
-            onclick={() => void server.setTheme("system")}
-          >
-            {t("settings.themeSystem")}
-          </button>
-          <button
-            type="button"
-            class:active={server.settings.theme === "light"}
-            aria-pressed={server.settings.theme === "light"}
-            disabled={appLocked}
-            onclick={() => void server.setTheme("light")}
-          >
-            {t("settings.themeLight")}
-          </button>
-          <button
-            type="button"
-            class:active={server.settings.theme === "dark"}
-            aria-pressed={server.settings.theme === "dark"}
-            disabled={appLocked}
-            onclick={() => void server.setTheme("dark")}
-          >
-            {t("settings.themeDark")}
-          </button>
+          {#each THEME_OPTIONS as option (option.value)}
+            <button
+              type="button"
+              class:active={server.settings.theme === option.value}
+              aria-pressed={server.settings.theme === option.value}
+              disabled={appLocked}
+              onclick={() => void server.setTheme(option.value)}
+            >
+              {t(option.labelKey)}
+            </button>
+          {/each}
         </div>
       </div>
 
@@ -264,7 +255,7 @@
   </div>
 
   <footer class="footer">
-    <button class="link" onclick={() => (server.view = "main")}>{t("action.back")}</button>
+    <button class="link" onclick={closeSettings}>{t("action.back")}</button>
     <div class="footer-group">
       <button class="link muted" onclick={() => server.hide()}>{t("action.hide")}</button>
       <button class="link muted" onclick={() => server.quit()}>{t("action.quit")}</button>

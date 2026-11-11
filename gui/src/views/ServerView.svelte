@@ -3,6 +3,7 @@
   import { t } from "../lib/i18n.svelte";
   import { encodings, encodingLabel } from "../lib/encodings";
   import { statusLabel } from "../lib/status";
+  import ErrorLine from "../lib/ErrorLine.svelte";
   import Icon from "../lib/Icon.svelte";
 
   const state = $derived(server.status.state);
@@ -74,12 +75,8 @@
       </button>
     </section>
 
-    {#if error}
-      <p class="error" role="alert">{error}</p>
-    {/if}
-    {#if server.saveError}
-      <p class="error" role="alert">{server.saveError}</p>
-    {/if}
+    <ErrorLine message={error} />
+    <ErrorLine message={server.saveError} />
 
     <section class="quick-settings">
       <div class="quick-row">

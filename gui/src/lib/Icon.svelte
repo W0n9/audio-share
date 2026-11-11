@@ -6,7 +6,7 @@
    * `currentColor` so tokens drive their color.
    */
   interface Props {
-    name: "audio" | "back" | "chevron" | "globe" | "music" | "play" | "power" | "settings" | "stop";
+    name: "audio" | "back" | "chevron" | "globe" | "music" | "play" | "settings" | "stop";
     size?: number;
   }
 
@@ -41,8 +41,6 @@
   {:else if name === "globe"}
     <circle cx="12" cy="12" r="9" />
     <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
-  {:else if name === "power"}
-    <path d="M12 2v10M18.4 6.6a9 9 0 1 1-12.8 0" />
   {:else if name === "music"}
     <path d="M9 18V5l12-2v13" />
     <circle cx="6" cy="18" r="3" />
