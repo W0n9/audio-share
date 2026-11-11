@@ -6,8 +6,9 @@
   import LinuxSettings from "./LinuxSettings.svelte";
 
   // Server settings persist immediately on change. Application settings
-  // (autostart, launch/close, update, language) persist immediately too but
-  // stay editable while the server runs; language applies on next launch.
+  // (autostart, launch/close, update, language, theme) persist immediately
+  // too but stay editable while the server runs; language applies on next
+  // launch, the theme applies at once.
   const HOMEPAGE = "https://github.com/mkckr0/audio-share";
   const locked = $derived(server.settingsLocked);
   const appLocked = $derived(server.applicationLocked);
@@ -105,6 +106,44 @@
       <div class="sub">{t("settings.resetHint")}</div>
     </div>
     <button class="ghost" disabled={locked} onclick={reset}>{t("action.reset")}</button>
+  </div>
+
+  <div class="section-title">{t("settings.appearanceSection")}</div>
+
+  <div class="row">
+    <div class="row-text">
+      <div class="label">{t("settings.theme")}</div>
+      <div class="sub">{t("settings.themeHint")}</div>
+    </div>
+    <div class="segmented" role="group" aria-label={t("settings.theme")}>
+      <button
+        type="button"
+        class:active={server.settings.theme === "system"}
+        aria-pressed={server.settings.theme === "system"}
+        disabled={appLocked}
+        onclick={() => void server.setTheme("system")}
+      >
+        {t("settings.themeSystem")}
+      </button>
+      <button
+        type="button"
+        class:active={server.settings.theme === "light"}
+        aria-pressed={server.settings.theme === "light"}
+        disabled={appLocked}
+        onclick={() => void server.setTheme("light")}
+      >
+        {t("settings.themeLight")}
+      </button>
+      <button
+        type="button"
+        class:active={server.settings.theme === "dark"}
+        aria-pressed={server.settings.theme === "dark"}
+        disabled={appLocked}
+        onclick={() => void server.setTheme("dark")}
+      >
+        {t("settings.themeDark")}
+      </button>
+    </div>
   </div>
 
   <div class="section-title">{t("settings.applicationSection")}</div>
