@@ -37,6 +37,8 @@ class ServerStore {
   settings = $state<Settings>({ ...DEFAULT_SETTINGS });
   bootstrap = $state<Bootstrap | null>(null);
   endpoints = $state<Endpoint[]>([]);
+  /** Local IPv4 addresses offered as Host suggestions, default first. */
+  hostAddresses = $state<string[]>([]);
   /** Structured migration/recovery warnings shown in the banner. */
   notices = $state<Notice[]>([]);
   /** Newest release found by any check; drives the in-app banner. */
@@ -92,6 +94,7 @@ class ServerStore {
     this.bootstrap = data;
     this.status = data.status;
     this.settings = data.settings;
+    this.hostAddresses = data.hostAddresses;
     this.notices = data.configNotices;
     this.update = data.update;
     if (data.update?.status === "newer") {

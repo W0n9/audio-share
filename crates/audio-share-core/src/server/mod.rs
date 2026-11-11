@@ -75,8 +75,20 @@ impl Default for ServerConfig {
 /// ranges (for example `192.169`-`192.175` and `11.x`); 0.4.0 keeps the exact
 /// comparison so the default Host does not change on those networks.
 pub fn default_host() -> Option<std::net::Ipv4Addr> {
-    let interfaces = if_addrs::get_if_addrs().ok()?;
-    select_default_address(
+    local_addresses().into_iter().next()
+}
+
+/// Every usable local IPv4 address, deduplicated, with [`default_host`]'s
+/// choice first.
+///
+/// The GUI offers this list as Host suggestions; v0.3.4's MFC combo enumerated
+/// the same non-loopback interfaces. Enumeration order is preserved for the
+/// remaining addresses.
+pub fn local_addresses() -> Vec<std::net::Ipv4Addr> {
+    let Ok(interfaces) = if_addrs::get_if_addrs() else {
+        return Vec::new();
+    };
+    arrange_addresses(
         interfaces
             .into_iter()
             .filter_map(|interface| match interface.addr {
@@ -84,6 +96,23 @@ pub fn default_host() -> Option<std::net::Ipv4Addr> {
                 _ => None,
             }),
     )
+}
+
+/// Deduplicate addresses and move the v0.3.4 default choice to the front.
+fn arrange_addresses(
+    addresses: impl IntoIterator<Item = std::net::Ipv4Addr>,
+) -> Vec<std::net::Ipv4Addr> {
+    let mut unique: Vec<std::net::Ipv4Addr> = Vec::new();
+    for address in addresses {
+        if !unique.contains(&address) {
+            unique.push(address);
+        }
+    }
+    if let Some(default) = select_default_address(unique.iter().copied()) {
+        unique.retain(|address| *address != default);
+        unique.insert(0, default);
+    }
+    unique
 }
 
 /// The three masks v0.3.4 used to select its default address.
@@ -623,6 +652,30 @@ mod tests {
         );
         assert_eq!(select_default_address([public]), Some(public));
         assert_eq!(select_default_address([]), None);
+    }
+
+    #[test]
+    fn local_addresses_dedupes_and_puts_the_default_first() {
+        let public = Ipv4Addr::new(8, 8, 8, 8);
+        let private = Ipv4Addr::new(192, 168, 1, 2);
+
+        assert_eq!(
+            arrange_addresses([public, private, public]),
+            vec![private, public]
+        );
+    }
+
+    #[test]
+    fn local_addresses_keeps_enumeration_order_without_a_private_address() {
+        let first = Ipv4Addr::new(8, 8, 8, 8);
+        let second = Ipv4Addr::new(1, 1, 1, 1);
+
+        assert_eq!(arrange_addresses([first, second]), vec![first, second]);
+    }
+
+    #[test]
+    fn local_addresses_of_a_machine_without_addresses_is_empty() {
+        assert!(arrange_addresses(std::iter::empty::<Ipv4Addr>()).is_empty());
     }
 
     #[test]

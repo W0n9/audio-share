@@ -121,10 +121,16 @@
             <input
               id="host"
               type="text"
+              list="host-addresses"
               bind:value={server.settings.host}
               disabled={locked}
               onchange={persist}
             />
+            <datalist id="host-addresses">
+              {#each server.hostAddresses as address (address)}
+                <option value={address}></option>
+              {/each}
+            </datalist>
           </div>
           <div class="field">
             <label for="port">{t("field.port")}</label>

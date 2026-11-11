@@ -138,6 +138,8 @@ pub struct Bootstrap {
     pub status: ServerStatus,
     /// Persisted settings.
     pub settings: Settings,
+    /// Local IPv4 addresses offered as Host suggestions, default first.
+    pub host_addresses: Vec<String>,
     /// Structured migration/recovery warnings; empty when clean.
     pub config_notices: Vec<Notice>,
     /// An update already found by a background check, if any.
@@ -262,6 +264,10 @@ pub fn bootstrap(
         locale: locale.tag().to_owned(),
         status: status.clone(),
         settings: settings.clone(),
+        host_addresses: audio_share_core::server::local_addresses()
+            .into_iter()
+            .map(|address| address.to_string())
+            .collect(),
         config_notices: notices.to_vec(),
         update,
     }
@@ -468,6 +474,7 @@ mod tests {
 
         let json = serde_json::to_value(&data).unwrap();
         assert_eq!(json["locale"], "zh-CN");
+        assert!(json["hostAddresses"].is_array());
         assert_eq!(json["configNotices"][0]["code"], "migrated");
         assert_eq!(json["configNotices"][0]["params"]["from"], "1");
         assert_eq!(json["update"]["status"], "newer");
