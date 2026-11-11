@@ -482,12 +482,15 @@ impl MediaPump {
         Self { producer, forwarder }
     }
 
-    /// Stops the producer (media is unreliable: queued datagrams may drain but
-    /// are never replayed) and waits for the forwarder to finish.
+    /// Stops the producer immediately; the forwarder is left to self-terminate
+    /// when the queue drains (bounded, ≤ queue_capacity) or the connection
+    /// dies. It must never be awaited from the control path — a slow drain
+    /// would stall UNSUBSCRIBE/CLOSE handling.
     async fn stop(self) {
         self.producer.abort();
         let _ = self.producer.await;
-        let _ = tokio::time::timeout(Duration::from_secs(1), self.forwarder).await;
+        // Detach the forwarder: bounded queue drain, no control-path latency.
+        drop(self.forwarder);
     }
 }
 
