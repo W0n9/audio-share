@@ -201,7 +201,14 @@ async fn run(args: Args) -> anyhow::Result<String> {
                 .await
                 {
                     Ok(Ok(dg)) => {
-                        verifier.check(&dg, mds);
+                        // Re-queried per datagram so the oversized invariant is
+                        // checked against the CURRENT limit (relevant when
+                        // DPLPMTUD adapts mid-run); falls back to the value
+                        // queried right after subscribe.
+                        let limit = conn
+                            .max_datagram_size()
+                            .unwrap_or(mds);
+                        verifier.check(&dg, limit);
                         if args.stop_reading_ms > 0 && verifier.datagrams == 10 {
                             // Slow-reader demonstration: stop consuming.
                             tokio::time::sleep(Duration::from_millis(args.stop_reading_ms)).await;
@@ -219,6 +226,7 @@ async fn run(args: Args) -> anyhow::Result<String> {
                 ));
             }
 
+            let mds_end = conn.max_datagram_size().context("datagrams lost mid-run")?;
             conn.unsubscribe().await.context("unsubscribe")?;
             conn.send_close_normal().await.context("send CLOSE")?;
             let reason = conn
@@ -231,7 +239,7 @@ async fn run(args: Args) -> anyhow::Result<String> {
             );
 
             Ok(counters(format!(
-                "session_id={session_id} instance={} mds={mds} datagrams={} frames={} bytes={} gaps={} duplicates={} \
+                "session_id={session_id} instance={} mds={mds} mds_end={mds_end:?} datagrams={} frames={} bytes={} gaps={} duplicates={} \
                  pattern_mismatches={} timestamp_mismatches={} oversized={} misaligned={} max_datagram_len={} close_reason={reason:?}",
                 media_start.stream_instance_id,
                 verifier.datagrams,
