@@ -22,12 +22,12 @@ Every item the baseline's "Engineering Details Left Open" and ADR-0004's consequ
 | D2 | MTUD / DPLPMTUD policy | **DPLPMTUD enabled** (quinn default). Senders MUST size every media datagram from the current `max_datagram_size()` at send time (§7.3); caching a size across path changes and cross-end size assertions are forbidden; receivers MUST NOT validate a sender's datagram size against their own local limit. | Prototype observed DPLPMTUD racing its own cross-end assertions and pinned a value with it disabled (prototype-report §5; ADR-0004 §Consequences); mds 1162→1192 at path MTU 1280, 1414 at 1500 (prototype-report §4) | |
 | D3 | Idle timeout + keep-alive | `max_idle_timeout = 30 s`, symmetric, both sides (value deliberately adopted, recorded — not a silently inherited default); `keep_alive_interval = 10 s` both sides (≥ 3 probes per window). No application-level heartbeat message in v2.0; media traffic and the 5 s diagnostics cadence keep live sessions busy; the idle timeout is the fallback when a Close cannot be delivered. | quinn's default 30 s silently killed idle prototype sessions on desktop and device (prototype-report §4, §5; ADR-0004 §Consequences) | |
 | D4 | Media header layout | Fixed **24-byte** header (§7.1): `stream_instance_id` u32, `config_generation` u32, `sequence` u32, `timestamp` u64, `flags` u32 — all network byte order. Sequence width **32 bit**, wrap specified (§7.2). | Prototype's 20-byte BE header (instance/generation/sequence/timestamp) proved byte-exact on device (prototype-report §1); the flags word is a new decision the prototype left open | |
-| D5 | Protobuf field-number allocation | Envelope `oneof` bands with uniform conventions (§4.1–§4.2): field 1 = `request_id` on every request/response, field 2 = `Status` on every response; bands 1–15 connection, 16–31 pairing, 32–47 subscription/configuration, 48–63 stream lifecycle, 64–79 diagnostics, 80+ reserved. v2 `SampleFormat` values intentionally mirror v1 `AudioFormat.Encoding` numbers. | New allocation (baseline left field numbers open); the v1 mirror reduces implementer confusion (`docs/protocol.md` §3) | |
+| D5 | Protobuf field-number allocation | Envelope `oneof` bands with uniform conventions (§4.1–§4.2): field 1 = `request_id` on every request/response, field 2 = `Status` on every response; bands 1–15 connection (auth, negotiation, errors, close), 16–31 pairing, 32–47 subscription/configuration, 48–63 stream lifecycle, 64–79 diagnostics, 80+ reserved. v2 `SampleFormat` values intentionally mirror v1 `AudioFormat.Encoding` numbers. | New allocation (baseline left field numbers open); the auth/pairing exchange shapes follow the pairing spec's message sequences (ticket 04 §6.2, §9.1) and receive their field numbers here; the v1 mirror reduces implementer confusion (`docs/protocol.md` §3) | |
 | D6 | Error-code numbering | Seven stable bands, codes frozen once published, never renumbered: 100 version/capability · 200 pairing/auth/authz · 300 busy/rate/session · 400 control protocol · 500 Server Core lifecycle · 600 network/transport · 700 Client lifecycle (§6). 207–209 reserved for the pairing specification (ticket 04). | New registry (baseline left numbering open); the required classes are enumerated in baseline §Control-Plane Semantics | |
-| D7 | Reviewed crypto suite choices | TLS 1.3 only (rustls); suites = rustls default set: `TLS_AES_256_GCM_SHA384`, `TLS_AES_128_GCM_SHA256`, `TLS_CHACHA20_POLY1305_SHA256`; key exchange X25519. Server identity: self-signed **ECDSA P-256** certificate, pinned by SHA-256 of the SPKI. Pairing nonce: **128-bit** from a CSPRNG. Pairing/client identity key algorithm and storage: owned by the pairing specification (ticket 04). | Prototype: ECDSA P-256 + SPKI pin verified on device — wrong pin rejected at the TLS handshake, wrong credential rejected with a defined error (prototype-report §1, §2 gate 3); baseline §First Pairing requires a ≥ 128-bit single-use nonce | |
+| D7 | Reviewed crypto suite choices | TLS 1.3 only (rustls); suites = rustls default set: `TLS_AES_256_GCM_SHA384`, `TLS_AES_128_GCM_SHA256`, `TLS_CHACHA20_POLY1305_SHA256`; key exchange X25519. SPKI pin = SHA-256(SPKI DER). Server identity key: **Ed25519**, self-signed certificate (pairing spec PR-1 — identity keys are owned by ticket 04). Client identity key: ECDSA P-256 + SHA-256 in Android Keystore (PR-2). Authorization: application-layer signed challenge over the encrypted control stream — no bearer token, no mutual TLS (pairing spec §9.1, PR-9). Pairing nonce: **128-bit** CSPRNG. | Prototype proved the rcgen/rustls self-signed + SPKI-pin path on device with an ECDSA P-256 certificate — the identical pin mechanism; wrong pin rejected at the TLS handshake, wrong credential rejected with a defined error (prototype-report §1, §2 gate 3); the Ed25519 key choice is pairing-spec decision PR-1; baseline §First Pairing requires a ≥ 128-bit single-use nonce | |
 | D8 | QR payload encoding | **Owned by ticket 04** (`docs/wire-protocol-v2/pairing.md`). Constraint from this spec: the payload MUST carry protocol major, Server address hint, full Server identity public key or long fingerprint, and a ≥ 128-bit single-use short-lived nonce (baseline §First Pairing); the on-wire messages that consume it are §4.4 here. | Baseline §Engineering Details Left Open; ticket 04 requirements | |
 | D9 | SAS presentation | **Owned by ticket 04.** Constraints from this spec: ephemeral key exchange + hash commitment; an unverified SAS comparison claims no active-MITM protection; a six-digit code is never stretched into a session key; no custom PAKE in v2.0. | Baseline §First Pairing; ticket 04 requirements | |
-| D10 | Resource-limit defaults | §10: 16 concurrent sessions total; 1 active session per Client identity (a new one supersedes the old, code 303); 32 concurrent pre-auth sessions with a 10 s auth deadline and a 120 s pairing deadline; 10 auth/pairing failures per 5 min per source → 302; 8 outstanding requests per session; per-Client media send queue 256 datagrams (drop newest); control frame cap 64 KiB. | Prototype: 64 KiB frame cap and 256-datagram app-level queue (prototype-brief, non-normative — values re-decided here); baseline §Resource and Privacy Controls requires every bound | |
+| D10 | Resource-limit defaults | §10 (adopting the pairing/threat-model proposals where they overlap, TM-1–TM-8): 32 established sessions total (config range 1–256); 16 concurrent handshakes; 1 active session per Client identity (a new one supersedes the old, code 303, replacement counted); auth failures 5 per connection then Close, 20 per sliding 60 s per source → 302; pairing bounds 8 concurrent / 8 outstanding nonces / 10 min lifetime / 5 failures per 60 s per address; 8 outstanding requests per session → 302; pre-auth responses ≤ 128 B (no detail); error payload ≤ 512 B post-auth (`detail` ≤ 256 B); per-Client media send queue 256 datagrams (drop newest); control frame cap 64 KiB; 10 s auth exchange deadline. | Prototype: 64 KiB frame cap and 256-datagram app-level queue (prototype-brief, non-normative — values re-decided here); auth/pairing bounds adopted from ticket 04 (threat-model §6, pairing spec §5, §9.1); baseline §Resource and Privacy Controls requires every bound | |
 | D11 | Impairment profiles | Conformance matrix §11.2: loss 2%, reorder 25%/50%, duplicate 5%, jitter 10 ms ± 5 ms, congestion 300 kbit/s (queue 50), path MTU 1280, clock drift ±100 ppm, 25 s idle survival, reconnect fallback. | Prototype impairment evidence (prototype-report §4; `scripts/impairment.sh`); baseline §Later Implementation Acceptance requires deterministic injection of exactly these classes | |
 | D12 | Buffer tuning | Jitter-buffer target **60 ms**, hard limit **200 ms** (re-anchor above it); unknown-config hold ≤ 100 ms / ≤ 32 datagrams; send-ahead window ≤ 100 ms; drift rate-match ±100 ppm, accounted insert/delete when > 20 ms off target for > 5 s (§8). | 60 ms target = baseline §Measurable Initial Targets; the 256-datagram queue is prototype-proven; the remaining numbers are new explicit values, not library defaults | |
 
@@ -44,8 +44,8 @@ Implements: baseline §Candidate Transport, §Connection Rules, §Control-Plane 
 | Connection parameter | Value | Rule |
 |---|---|---|
 | QUIC handshake timeout (Client) | 5 s | exceed → classify 601, reconnect with backoff (§6.3) |
-| Auth deadline (arrival of the first app message → outcome) | 10 s | exceed → Server closes, 601 |
-| Pairing deadline (`PairingRequest` → `PairingResponse`) | 120 s | may await local admin approval; exceed → Error(206)+Close(206) |
+| Auth exchange deadline (`AuthInit` → `AuthResult` outcome) | 10 s | exceed → Server closes, 601 |
+| Pairing exchange deadline (`PairingRequest` → `PairingResult`) | 10 min | the pairing-session/nonce lifetime (pairing spec §5, TM-5); may await local admin approval; exceed → Error(206)+Close(206) |
 | Idle timeout | 30 s (D3) | fires → classify 601; **the fallback when a Close message cannot be delivered** |
 | Keep-alive interval | 10 s (D3) | both sides |
 | QUIC application close code | §6 registry code (u64) | every transport close carries the registry code; reason = the Close detail. Transport closes are diagnosable without application data. |
@@ -64,8 +64,8 @@ File `audio_share_v2.proto`, `syntax = "proto3"`, `package audio.share.v2`. One 
 
 | Band | Fields (oneof cases) | Contents |
 |---|---|---|
-| 1–15 | 1 `Authenticate` · 2 `AuthenticateResponse` · 3 `Negotiate` · 4 `NegotiateResponse` · 5 `Error` · 6 `Close` | connection lifecycle, errors, close |
-| 16–31 | 16 `PairingRequest` · 17 `PairingResponse` | pairing (crypto semantics: ticket 04) |
+| 1–15 | 1 `AuthInit` · 2 `AuthChallenge` · 3 `AuthProof` · 4 `AuthResult` · 5 `Error` · 6 `Close` | connection lifecycle: signed-challenge authentication, errors, close |
+| 16–31 | 16 `PairingRequest` · 17 `PairingResponse` · 18 `PairingConfirm` · 19 `PairingResult` | pairing (message sequence and crypto semantics: ticket 04) |
 | 32–47 | 32 `Subscribe` · 33 `SubscribeResponse` · 34 `Unsubscribe` · 35 `UnsubscribeResponse` · 36 `RequestConfiguration` · 37 `ConfigurationPublished` | subscription and configuration publication |
 | 48–63 | 48 `StreamStarted` · 49 `StreamEnded` | stream-instance lifecycle |
 | 64–79 | 64 `PlaybackDiagnostics` | diagnostics |
@@ -86,14 +86,14 @@ message Status {
 
 - `request_id`: sender-assigned, unique per sender per connection, monotonically increasing from 1; the receiver echoes it verbatim and never interprets it (opaque). `0` = "not a response" (pushes).
 - `retryable` / `requires_repairing`: senders MUST equal the §6 registry defaults in v2.0; per-instance refinement is a future revision.
-- `detail`: senders MUST cap at 256 bytes; receivers truncate for logging and MUST NOT reject a frame solely for a longer detail. Error responses are small by construction (≤ ~300 B typical, ≤ 64 KiB hard) — small unauthenticated requests never produce large error responses (baseline §Resource and Privacy Controls).
+- `detail`: senders MUST cap at 256 bytes; receivers truncate for logging and MUST NOT reject a frame solely for a longer detail. Error responses are small by construction (≤ ~300 B typical, ≤ 64 KiB hard) — small unauthenticated requests never produce large error responses (baseline §Resource and Privacy Controls). Responses sent before authentication completes (`AuthChallenge`, auth/pairing refusals) carry **no `detail`** — stable codes only, keeping pre-authentication responses ≤ 128 B (threat-model TM-6); the pairing exchange itself is exempt from the 128 B bound — its response is gated by single-use nonce possession and the pairing rate limits (TM-5), not by an authenticated session.
 
 ### 4.3 Message direction
 
 | Message | Direction | Mode |
 |---|---|---|
-| `Authenticate`, `PairingRequest`, `Negotiate`, `Subscribe`, `Unsubscribe`, `RequestConfiguration` | Client → Server | request |
-| `AuthenticateResponse`, `PairingResponse`, `NegotiateResponse`, `SubscribeResponse`, `UnsubscribeResponse` | Server → Client | response |
+| `AuthInit`, `AuthProof`, `PairingRequest`, `PairingConfirm`, `Negotiate`, `Subscribe`, `Unsubscribe`, `RequestConfiguration` | Client → Server | request |
+| `AuthChallenge`, `AuthResult`, `PairingResponse`, `PairingResult`, `NegotiateResponse`, `SubscribeResponse`, `UnsubscribeResponse` | Server → Client | response (within one `request_id` exchange) |
 | `ConfigurationPublished`, `StreamStarted`, `StreamEnded` | Server → Client | push |
 | `PlaybackDiagnostics` | Client → Server | push |
 | `Error` | both | unsolicited error or fatal-error companion |
@@ -101,14 +101,22 @@ message Status {
 
 ### 4.4 Messages and field allocations
 
-**Connection lifecycle (band 1–15)**
+**Connection lifecycle (band 1–15)** — authorization is a signed challenge against the Client identity key, never a bearer token (pairing spec §9.1, PR-9). One exchange shares the `request_id` the Client assigned in `AuthInit`; every message of the exchange echoes it.
 
 ```proto
-message Authenticate {
+message AuthInit {
   fixed64 request_id = 1;
-  bytes credential = 2;        // pairing-derived authorization credential; derivation: ticket 04
+  bytes client_public_key = 2; // ECDSA P-256, SEC1 compressed, 33 bytes (pairing spec §2, §9.1)
 }
-message AuthenticateResponse {
+message AuthChallenge {
+  fixed64 request_id = 1;
+  bytes server_random = 2;     // 32 bytes, CSPRNG (pairing spec §9.1)
+}
+message AuthProof {
+  fixed64 request_id = 1;
+  bytes signature = 2;         // ECDSA r||s, fixed 64 bytes (IEEE P1363), over SHA-256(auth_context)
+}
+message AuthResult {
   fixed64 request_id = 1;
   Status status = 2;
   fixed64 session_id = 3;      // Server-assigned (counter from 1); log/diagnostic correlation; set iff success
@@ -136,20 +144,45 @@ message Close {
 }
 ```
 
-**Pairing (band 16–31)** — envelope slots fixed here; cryptographic semantics (nonce lifetime, transcript binding, proof of possession, SAS derivation, credential derivation, persistence) are the pairing specification's, ticket 04.
+**Pairing (band 16–31)** — the four-message sequence, transcript binding, nonce lifecycle, and persistence are the pairing specification's (ticket 04 §5–§6, §8); this section fixes only their wire slots. Identity keys: Server Ed25519 (32-byte raw public key), Client ECDSA P-256 (33-byte SEC1 compressed) — pairing spec §2 (PR-1/PR-2); the prototype proved the identical rcgen/rustls SPKI-pin path with an ECDSA P-256 Server certificate (prototype-report §1, §5). `capabilities` carries the Client's *offered* optional-feature set (empty in v2.0) as an input to the pairing binding (§6.3 of the pairing spec); the authoritative negotiated intersection remains the `Negotiate` exchange below — pairing runs before negotiation, so the two sets coincide only when both are empty, as they are in v2.0.
 
 ```proto
+enum PairingMode {
+  PAIRING_MODE_UNSPECIFIED = 0;
+  PAIRING_MODE_QR = 1;         // QR payload presented; pairing_nonce required
+  PAIRING_MODE_SAS = 2;        // no camera; SAS comparison on both screens
+}
 message PairingRequest {
   fixed64 request_id = 1;
-  bytes pairing_nonce = 2;     // ≥ 16 bytes; from the QR payload; single-use, short-lived
-  bytes client_public_key = 3; // Client identity public key; encoding: ticket 04
-  string client_name = 4;      // ≤ 64 bytes UTF-8 display name
+  PairingMode pairing_mode = 2;
+  bytes pairing_nonce = 3;     // 16 bytes; QR mode only (pairing spec §4–§5)
+  bytes client_random = 4;     // 32 bytes, CSPRNG
+  bytes client_public_key = 5; // ECDSA P-256, SEC1 compressed, 33 bytes
+  uint32 protocol_major = 6;   // MUST equal the ALPN major (2)
+  repeated uint32 capabilities = 7; // Client's offered set; input to the binding
+  string client_name = 8;      // ≤ 63 bytes UTF-8 display name
 }
 message PairingResponse {
   fixed64 request_id = 1;
   Status status = 2;
-  bytes commitment = 3;        // hash commitment for SAS comparison; derivation: ticket 04
-  bytes credential = 4;        // set iff success; the credential for future Authenticate calls
+  PairingMode pairing_mode = 3;     // echo
+  bytes pairing_nonce = 4;          // echo, QR mode only
+  bytes client_random = 5;          // echo
+  bytes server_random = 6;          // 32 bytes, CSPRNG
+  bytes server_public_key = 7;      // 32 bytes raw Ed25519 identity public key
+  uint32 protocol_major = 8;        // echo
+  repeated uint32 capabilities = 9; // echo of the offered set
+  bytes binding = 10;               // 48 bytes, TLS-Exporter bound to the transcript (pairing spec §6.3)
+  bytes client_id = 11;             // 8 raw bytes = first 8 of SHA-256(client_public_key) (pairing spec §8.1)
+  string display_name = 12;         // accepted display name, ≤ 63 bytes UTF-8
+}
+message PairingConfirm {
+  fixed64 request_id = 1;
+  bytes binding_echo = 2;      // 48 bytes; the Client's own exporter derivation (pairing spec §6.3)
+}
+message PairingResult {
+  fixed64 request_id = 1;
+  Status status = 2;           // OK: pairing persisted; else a §6 code
 }
 ```
 
@@ -240,7 +273,7 @@ Implements: baseline §Control-Plane Semantics item 2 — explicit states, all l
 | State | Meaning | Entry action |
 |---|---|---|
 | CONNECTING | transport handshake done, control stream open (Client opened it); no app message processed yet | Server: capacity check (§10) |
-| AUTHENTICATING | a first app message (`Authenticate` or `PairingRequest`) is being validated | — |
+| AUTHENTICATING | an authentication (`AuthInit`/`AuthProof`) or pairing (`PairingRequest`/`PairingConfirm`) exchange is in progress | — |
 | NEGOTIATING | identity authenticated; awaiting/validating version + capabilities | — |
 | READY | authenticated ∧ negotiated. Configuration publication is a data condition, not a state | Server: push `ConfigurationPublished` if a Transfer Format is current |
 | PLAYING | READY ∧ subscribed ∧ a stream instance is active for this session | — |
@@ -251,20 +284,25 @@ Implements: baseline §Control-Plane Semantics item 2 — explicit states, all l
 
 | State | Event | Guard | Action | New state |
 |---|---|---|---|---|
-| CONNECTING | `Authenticate` | capacity ok | validate credential | AUTHENTICATING |
-| CONNECTING | `PairingRequest` | capacity ok; rate limit ok | validate nonce (single-use, unexpired, ≥ 16 B); start 120 s pairing deadline | AUTHENTICATING |
+| CONNECTING | `AuthInit` | capacity ok; auth-failure rate ok (TM-4) | generate 32 B `server_random`; send `AuthChallenge` | AUTHENTICATING (auth exchange) |
+| CONNECTING | `PairingRequest` | mode/major/nonce valid (QR: 16 B single-use nonce); pairing bounds ok (TM-5) | send `PairingResponse`(echoes, `server_random`, Server key, `binding`, `client_id`, `display_name`); start 10 min pairing deadline | AUTHENTICATING (pairing exchange) |
+| CONNECTING | `PairingRequest` | nonce invalid/expired/replayed, bad mode or major | send `PairingResult`(201)+Close(201); count pairing failure | CLOSING |
 | CONNECTING | capacity exceeded | — | transport close carrying 301 | CLOSED |
 | CONNECTING | any other `Frame`; unset body; length violation | — | Error(401 or 402)+Close(same) | CLOSING |
 | CONNECTING | second Client stream / Server-stream request | — | Error(402)+Close(402) | CLOSING |
-| CONNECTING | auth deadline (10 s) exceeded | — | transport close carrying 601 | CLOSED |
-| AUTHENTICATING | credential valid | — | send `AuthenticateResponse`(OK, session_id); if the identity already has an active session, close that one with Close(303) | NEGOTIATING |
-| AUTHENTICATING | credential invalid/unknown | failure rate not exceeded | count failure; Error(203, retryable=false, re-pair=true)+Close(203) | CLOSING |
-| AUTHENTICATING | identity denied/revoked | — | Error(204)+Close(204) | CLOSING |
-| AUTHENTICATING | `PairingRequest` nonce invalid/expired/replayed | — | count failure; Error(201)+Close(201) | CLOSING |
-| AUTHENTICATING | `PairingRequest` approved locally | — | persist pairing; send `PairingResponse`(OK, commitment, credential) | NEGOTIATING |
-| AUTHENTICATING | `PairingRequest` declined locally | — | Error(201, detail "declined")+Close(201) | CLOSING |
-| AUTHENTICATING | pairing deadline (120 s) exceeded | — | Error(206)+Close(206) | CLOSING |
-| AUTHENTICATING | auth/pairing failure rate exceeded | — | Error(302)+Close(302) | CLOSING |
+| CONNECTING / AUTHENTICATING | auth exchange deadline (10 s) exceeded | — | transport close carrying 601 | CLOSED |
+| AUTHENTICATING | `AuthProof`, signature valid, identity known and authorized | — | send `AuthResult`(OK, session_id); supersede: an older session of the same identity is closed with Close(303) | NEGOTIATING |
+| AUTHENTICATING | `AuthProof`, signature valid, identity matches no Server record | — | send `AuthResult`(202); count failure; the Client may re-`AuthInit` with another stored pairing | AUTHENTICATING |
+| AUTHENTICATING | `AuthProof`, signature valid, identity revoked/denied | — | send `AuthResult`(204); count failure | AUTHENTICATING |
+| AUTHENTICATING | `AuthProof`, signature invalid | < 5 failures on this connection | send `AuthResult`(203); count failure | AUTHENTICATING |
+| AUTHENTICATING | 5th auth failure on this connection | — | Close(203) | CLOSING |
+| AUTHENTICATING | `AuthInit` (retry) | < 5 failures on this connection; source rate ok | fresh challenge: send `AuthChallenge` | AUTHENTICATING |
+| AUTHENTICATING | source-address auth-failure rate exceeded (20 per sliding 60 s) | — | Close(302) | CLOSING |
+| AUTHENTICATING | `PairingConfirm`, `binding_echo` verified | local approval granted | persist pairing (pairing spec §8); send `PairingResult`(OK) | NEGOTIATING |
+| AUTHENTICATING | `PairingConfirm`, `binding_echo` verified | approval declined | send `PairingResult`(201, detail "declined")+Close(201) | CLOSING |
+| AUTHENTICATING | `PairingConfirm`, `binding_echo` mismatch | — | count pairing failure; send `PairingResult`(201)+Close(201) | CLOSING |
+| AUTHENTICATING | pairing failure rate exceeded (5 per sliding 60 s per address, TM-5) | — | Close(302) | CLOSING |
+| AUTHENTICATING | pairing deadline (10 min) exceeded | — | Error(206)+Close(206) | CLOSING |
 | NEGOTIATING | `Negotiate` major = 2, minor ≤ Server's | — | send `NegotiateResponse`(OK, Server minor, accepted capabilities); push `ConfigurationPublished` if a Transfer Format is current | READY |
 | NEGOTIATING | `Negotiate` major ≠ 2 or minor > Server's | — | Error(101)+Close(101) | CLOSING |
 | NEGOTIATING | `Negotiate` with an unhonorable capability | — | Error(102)+Close(102) | CLOSING |
@@ -297,13 +335,17 @@ CLOSING accepts no new requests; a Close in flight makes the teardown observable
 
 | State | Event | Guard | Action | New state |
 |---|---|---|---|---|
-| CONNECTING | handshake + stream open succeeded | SPKI pin verified | send `Authenticate` (paired) or `PairingRequest` (unpaired) | AUTHENTICATING |
+| CONNECTING | handshake + stream open succeeded | SPKI pin verified | send `AuthInit` (paired: a stored identity) or `PairingRequest` (unpaired) | AUTHENTICATING |
 | CONNECTING | handshake failed | pin mismatch | classify 205; no retry without user action | CLOSED |
 | CONNECTING | handshake failed | other (timeout, unreachable) | classify 601; reconnect with backoff (§6.3) | CLOSED |
-| AUTHENTICATING | `AuthenticateResponse` OK | — | send `Negotiate` | NEGOTIATING |
-| AUTHENTICATING | `PairingResponse` OK | — | persist credential; send `Negotiate` | NEGOTIATING |
-| AUTHENTICATING | response error | retryable=false codes (201/203/204/205) | surface to user; no automatic retry | CLOSED |
-| AUTHENTICATING | response deadline (10 s) exceeded | — | classify 601; reconnect with backoff | CLOSED |
+| AUTHENTICATING | `AuthChallenge` received | — | send `AuthProof`: ECDSA signature over SHA-256(auth_context) with the selected identity key (pairing spec §9.1) | AUTHENTICATING |
+| AUTHENTICATING | `AuthResult` OK | — | send `Negotiate` | NEGOTIATING |
+| AUTHENTICATING | `AuthResult` 202/203 (unknown identity or bad signature) | another stored pairing for this Server exists | send `AuthInit` with the next record | AUTHENTICATING |
+| AUTHENTICATING | `AuthResult` 202/203/204 | no further records to try | surface to user (202/203 → pairing flow; 204 → admin action); no automatic retry | CLOSED |
+| AUTHENTICATING | `PairingResponse` received | — | verify `binding` against the own exporter derivation (pairing spec §6.3); on mismatch abort locally; else send `PairingConfirm`(binding_echo) | AUTHENTICATING |
+| AUTHENTICATING | `PairingResult` OK | — | persist `client_id` and Server record; send `Negotiate` | NEGOTIATING |
+| AUTHENTICATING | `PairingResult` error (201/206) | — | surface to user (201 → fresh QR required — the nonce is single-use); no automatic retry | CLOSED |
+| AUTHENTICATING | exchange deadline (10 s auth, 10 min pairing) exceeded | — | classify 601; reconnect with backoff | CLOSED |
 | NEGOTIATING | `NegotiateResponse` OK | — | store accepted capabilities | READY |
 | NEGOTIATING | `NegotiateResponse` error | — | apply §6.3 policy | CLOSED |
 | NEGOTIATING | response deadline (10 s) exceeded | — | classify 601; reconnect with backoff | CLOSED |
@@ -349,11 +391,12 @@ Implements: baseline §Control-Plane Semantics items 6–7, §Resource and Priva
 |---|---|---|---|---|
 | 101 | VERSION_MISMATCH | major ≠ 2 or unsupported minor | no | no |
 | 102 | UNSUPPORTED_CAPABILITY | a listed capability cannot be honored | no | no |
-| 201 | PAIRING_REJECTED | nonce invalid/expired/single-use-replayed, or pairing declined | no | yes |
-| 203 | AUTHENTICATION_FAILED | credential invalid or unknown | no | yes |
-| 204 | AUTHORIZATION_DENIED | paired but denied (revoked, insufficient role) | no | no (admin action) |
+| 201 | PAIRING_REJECTED | nonce invalid/expired/single-use-replayed, binding mismatch, or pairing declined locally | no | yes |
+| 202 | AUTHORIZATION_UNKNOWN | signature valid but the identity matches no Server record — pair first | no | yes |
+| 203 | AUTHENTICATION_FAILED | signature verification failed (invalid proof) | no | yes |
+| 204 | AUTHORIZATION_DENIED | known identity denied (revoked, insufficient role) | no | no (admin action) |
 | 205 | SERVER_IDENTITY_MISMATCH | pinned SPKI ≠ presented certificate (detected at handshake; used as local classification and Close code) | no | yes (user-confirmed re-pairing) |
-| 206 | PAIRING_PENDING_TIMEOUT | no pairing decision within 120 s | yes | no |
+| 206 | PAIRING_PENDING_TIMEOUT | no pairing result within the 10 min pairing-session lifetime | yes | no |
 | 301 | BUSY | Server at capacity (total sessions or pre-auth sessions) | yes | no |
 | 302 | RATE_LIMITED | auth/pairing failure rate or outstanding-request rate exceeded | yes | no |
 | 303 | SESSION_SUPERSEDED | the same Client identity opened a new session | no | no |
@@ -368,7 +411,7 @@ Implements: baseline §Control-Plane Semantics items 6–7, §Resource and Priva
 | 602 | DATAGRAM_UNSUPPORTED | transport cannot carry media datagrams (no DATAGRAM support, or limit < header + one frame) | yes | no |
 | 701 | CLIENT_STOPPING | normal Client stop | no | no |
 
-Baseline class coverage: version/capability → 101/102 · pairing → 201 · authentication → 203 · authorization → 204 · busy/rate limit → 301/302 · malformed message/state → 401/402 · unsupported media configuration → 403 · capture failure → 501 · stream end → 502 · Server stop → 503 · normal Client stop → 701 · temporary network failure → 601.
+Baseline class coverage: version/capability → 101/102 · pairing → 201 · authentication → 203 · authorization → 202/204 · busy/rate limit → 301/302 · malformed message/state → 401/402 · unsupported media configuration → 403 · capture failure → 501 · stream end → 502 · Server stop → 503 · normal Client stop → 701 · temporary network failure → 601. Revocation-driven close of an active session uses 204 within ≤ 5 s of the authorization change (pairing spec §9.2, TM-9).
 
 ### 6.3 Client reconnect policy
 
@@ -378,7 +421,7 @@ Baseline class coverage: version/capability → 101/102 · pairing → 201 · au
 | 503, 601, 602 | reconnect with backoff |
 | 301, 302 | reconnect with backoff (retryable) |
 | 303 | no reconnect; surface (another session owns this identity) |
-| 101, 102, 201, 203, 204, 205, 401, 402, 403, 599 | no automatic reconnect; surface to user |
+| 101, 102, 201, 202, 203, 204, 205, 401, 402, 403, 599 | no automatic reconnect; surface to user (202/203/205 → pairing flow; 204 → admin action) |
 | transport loss without a Close message | classify 601 → reconnect with backoff |
 
 Backoff: 1 s base, ×2 per attempt, 30 s cap, ±20 % uniform jitter (the prototype's proven fallback used ±20 % jitter); reset to base when a session reaches READY. The Client never automatically falls back to v1 after a v2 failure, and a security failure never downgrades to plaintext or anonymous encryption (baseline §Dual-Protocol Migration, §Identity and Authorization).
@@ -519,18 +562,21 @@ Implements: baseline §Resource and Privacy Controls, §Connection Rules (D10).
 | Limit | Value | Enforcement |
 |---|---|---|
 | Control frame size | 64 KiB hard | validate before allocation; violation = 401 |
-| Concurrent sessions (Server total) | 16 | over → transport close carrying 301 |
-| Sessions per Client identity | 1 active; a new session supersedes the old (303) | at auth success |
-| Concurrent pre-auth sessions | 32 | over → transport close carrying 301 |
-| Auth deadline / pairing deadline | 10 s / 120 s | §3 |
-| Auth + pairing failure rate | 10 per 5 min per source address | over → 302 |
+| Established sessions (Server total) | 32, config range 1–256 (TM-2) | over → transport close carrying 301 |
+| Concurrent handshakes in progress | 16 (TM-1) | surplus connections rejected immediately |
+| Sessions per Client identity | 1 active; a new session supersedes the old (303), replacement counted (TM-3) | at auth success |
+| Auth failures per connection | 5, then Close(203) (TM-4) | §5.2 |
+| Auth failures per source address | 20 per sliding 60 s (TM-4) | over → 302 |
+| Pairing bounds | ≤ 8 concurrent pairing sessions · ≤ 8 outstanding nonces · 10 min lifetime · 5 failures per sliding 60 s per address (TM-5, pairing spec §5) | over → 302 / 201 |
+| Auth exchange deadline / pairing exchange deadline | 10 s / 10 min | §3 |
 | Outstanding requests per session | 8 | over → 302 |
-| Server per-Client media send queue | 256 datagrams, drop newest | §7.4 |
+| Pre-auth response size | ≤ 128 B for challenges and refusals (no `detail` pre-auth); pairing exchange exempt — nonce-gated (TM-6; see §12) | §4.2 |
+| Error payload size | ≤ 512 B post-auth; `detail` ≤ 256 bytes; stable codes only (TM-7) | §4.2 |
+| Server per-Client media send queue | 256 datagrams, drop newest (TM-8) | §7.4 |
 | Send-ahead window | 100 ms | §7.4 |
 | Client unknown-config hold | ≤ 100 ms or ≤ 32 datagrams | §7.6 |
 | Client jitter buffer | target 60 ms, hard limit 200 ms | §8 |
 | Retained generations per instance | current + 1 previous | older generations are counted drops |
-| Error `detail` | ≤ 256 bytes | §4.2 |
 
 ## 11. Verification
 
@@ -562,6 +608,8 @@ Malformed lengths, unknown fields/messages, version/capability conflicts, state 
 |---|---|---|
 | Idempotent `Unsubscribe` (OK when not subscribed) | §5.2 | alternative: 402; idempotency chosen for reconnect flows |
 | Duplicate `Subscribe` → 402 without close | §5.2 | v1 closed the connection; v2 has an error channel |
-| Pairing deadline 120 s | §3, D10 | placeholder pending ticket 04's approval UX |
-| Same-identity supersede (303) vs reject | §6.2 | supersede chosen: one identity per Client install |
+| Same-identity supersede (303) vs reject | §6.2 | supersede chosen; adopted from TM-3 (replacement counted) |
 | Reserved flag bits ignored (not rejected) | §7.1 | strict-drop alternative rejected for forward compatibility |
+| TM-6's ≤ 128 B pre-auth bound vs `PairingResponse` size (~250 B) | §10 | the pairing exchange is exempted as single-use-nonce-gated; the maintainer should confirm this reading of TM-6 |
+| `PairingRequest.capabilities` = offered set (pairing.md §6.2 says "negotiated") | §4.4 | the phase order (pairing before negotiation) forces the offered set; both are empty in v2.0 |
+| No Client proof-of-possession of its identity key inside the pairing exchange | — | pairing.md §6.2 shows no Client signature before `PairingResult`; possession is proven only at the later `AuthProof`. Flagged for ticket 04 / maintainer |
