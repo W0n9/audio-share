@@ -245,3 +245,28 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_attachBuffer(
     })
     .map_or(0, |b| b as jboolean)
 }
+
+/// Network-change migration: rebind the QUIC endpoint onto a UDP socket the
+/// JVM created and route-pinned to the active Android `Network`
+/// (`Network.bindSocket(DatagramSocket)`), passed as the raw fd
+/// (`ParcelFileDescriptor.fromDatagramSocket(...).getFd()`). Low-frequency
+/// (once per network change). Returns false when the rebind failed — the
+/// caller then falls back to teardown + bounded-backoff reconnect.
+///
+/// FD OWNERSHIP: the fd transfers to native on call — on success AND on
+/// failure (the socket is dropped, closing the fd, if the rebind errors, and
+/// the endpoint owns it on success). The JVM side must never close or reuse
+/// the fd (or the socket/pfd) after this call.
+#[no_mangle]
+pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_rebind(
+    _env: &mut JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    fd: jint,
+) -> jboolean {
+    guard(|| {
+        let session = get_session(handle)?;
+        session.rebind(fd).map(|_| true)
+    })
+    .map_or(0, |b| b as jboolean)
+}

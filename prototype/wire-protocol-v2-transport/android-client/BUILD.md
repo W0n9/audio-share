@@ -15,11 +15,15 @@ Standalone gradle project at `prototype/wire-protocol-v2-transport/android-clien
   `ConnectivityManager.NetworkCallback` migration scaffold).
 - `native/` — Rust crate `audio-share-proto-native` built as `cdylib`
   `libaudio_share_proto_native.so`: quinn client + rustls with SPKI-pinned
-  custom verifier, ALPN `audio-share/v2`, the brief's control frame codec +
-  client state machine, deterministic-media verification (sequence gaps /
-  duplicates / reorder / byte-exact waveform), tokio runtime, and the
+  custom verifier, ALPN `audio-share/v2`, control frame codec + client state
+  machine, deterministic-media verification (sequence gaps / duplicates /
+  reorder / byte-exact waveform), tokio runtime, network-change rebind
+  (`Network.bindSocket` fd handoff → quinn `Endpoint::rebind`), and the
   overwrite-oldest ring fed by the native datagram loop into the attached
-  direct ByteBuffer.
+  direct ByteBuffer. The wire contract itself (frame layout, media header,
+  waveform formula, SPKI helpers) is **single-sourced on `proto-core`** via a
+  plain path dependency on `../../server/proto-core` — the crate still opts
+  out of the root cargo workspace; no wire constant is declared twice.
 
 ## Exact versions (this build host, 2026-11-11)
 
@@ -51,7 +55,7 @@ by the gradle task (`export ANDROID_HOME=/home/w0n9/Android/Sdk`).
 export ANDROID_HOME=/home/w0n9/Android/Sdk
 rustup target add aarch64-linux-android
 cd prototype/wire-protocol-v2-transport/android-client/native
-cargo test                                   # 54 host tests, all green
+cargo test                                   # 58 host tests, all green
 cargo build --release --target aarch64-linux-android
 ```
 
@@ -91,15 +95,20 @@ cd prototype/wire-protocol-v2-transport/android-client
 
 ## Measured sizes (arm64-v8a only, `abiFilters = ["arm64-v8a"]`)
 
+Re-measured 2026-11-11 after the wire contract was single-sourced on
+proto-core and the rebind path was added; deltas vs. the first measurement
+were +16,152 B raw / +1,720 B stripped (+0.07% — within noise of the added
+rebind code) and the gate verdict is unchanged.
+
 | Artifact | Bytes | KiB | MiB |
 |---|---:|---:|---:|
-| `libaudio_share_proto_native.so` raw (debug-info symbols, not stripped) | 8,761,880 | 8556 | 8.36 |
-| `libaudio_share_proto_native.so` stripped (NDK `llvm-strip`) | 2,303,408 | 2249 | 2.20 |
-| APK release **with** native lib | 2,337,519 | 2283 | 2.23 |
-| APK release **baseline** (no native lib) | 33,429 | 32.6 | 0.032 |
-| **APK increment (native contribution)** | **2,304,090** | **2250** | **2.20** |
-| APK debug with native lib (R8 off) | 3,144,200 | 3071 | 3.00 |
-| APK debug baseline (R8 off) | 830,765 | 811 | 0.79 |
+| `libaudio_share_proto_native.so` raw (debug-info symbols, not stripped) | 8,778,032 | 8572 | 8.37 |
+| `libaudio_share_proto_native.so` stripped (NDK `llvm-strip`) | 2,305,128 | 2251 | 2.20 |
+| APK release **with** native lib | 2,339,239 | 2284 | 2.23 |
+| APK release **baseline** (no native lib) | 33,757 | 33.0 | 0.032 |
+| **APK increment (native contribution)** | **2,305,482** | **2251** | **2.20** |
+| APK debug with native lib (R8 off) | 3,141,687 | 3068 | 3.00 |
+| APK debug baseline (R8 off) | 831,313 | 812 | 0.79 |
 
 **~5 MiB gate: PASS on this evidence.** The stripped arm64 `.so` increment is
 2.20 MiB (44% of the provisional 5 MiB gate). The whole release APK including
@@ -134,16 +143,18 @@ Java_dev_prototype_wireproto_ProtoNative_createSession
 Java_dev_prototype_wireproto_ProtoNative_destroy
 Java_dev_prototype_wireproto_ProtoNative_getState
 Java_dev_prototype_wireproto_ProtoNative_getStats
+Java_dev_prototype_wireproto_ProtoNative_rebind
 Java_dev_prototype_wireproto_ProtoNative_stop
 Java_dev_prototype_wireproto_ProtoNative_subscribe
 Java_dev_prototype_wireproto_ProtoNative_unsubscribe
 ```
 
-All nine are low-frequency: session lifecycle and stats polling only. Media
-bytes cross JNI exactly once — as one `ByteBuffer.allocateDirect(4 MiB)`
-attached via `attachBuffer`; the native ring writes into it and Kotlin reads
-it with the monotonic `buffer.write_pos` cursor from `getStats` JSON. There is
-no per-datagram callback, no UniFFI, no per-packet JNI traffic.
+All ten are low-frequency: session lifecycle, stats polling, and one call
+per network change (`rebind`). Media bytes cross JNI exactly once — as one
+`ByteBuffer.allocateDirect(4 MiB)` attached via `attachBuffer`; the native
+ring writes into it and Kotlin reads it with the monotonic `buffer.write_pos`
+cursor from `getStats` JSON. There is no per-datagram callback, no UniFFI, no
+per-packet JNI traffic.
 
 ## minSdk / dependency platform constraints
 
@@ -159,26 +170,31 @@ no per-datagram callback, no UniFFI, no per-packet JNI traffic.
 
 ## Host test evidence (`cargo test` in `native/`)
 
-54 tests, all green, zero warnings; modules and what each guards:
+58 tests, all green, zero warnings; modules and what each guards:
 
-- `codec` (10): frame round-trips for all 7 message types, BE layout,
+- `codec` (11): frame round-trips for all 7 message types, BE layout,
   streaming decode across push boundaries, 64 KiB cap, zero/oversized/unknown
-  type/malformed-payload rejection.
-- `control` (10): AUTH_OK→READY, AUTH_ERR terminal, media-before-auth
+  type/malformed-payload rejection — all against the **shared proto-core
+  codec**, plus two cross-end contract tests (proto-core-encodes →
+  client-decodes and client-encodes → proto-core-parses).
+- `control` (11): AUTH_OK→READY, AUTH_ERR terminal, media-before-auth
   protocol error, duplicate AUTH, SUBSCRIBE-only-in-READY gating,
   MEDIA_START reconfiguration, CLOSE from any state, no processing after
   close.
-- `media` (13): 20-byte BE header parse, gap/reorder/duplicate accounting,
+- `media` (14): 20-byte BE header parse, gap/reorder/duplicate accounting,
   instance-change reset, deterministic waveform byte verification
   (incl. corruption detection at a computed sample position), misaligned
   payload rejection, config-generation mismatch counting.
 - `ring` (7): contiguous appends, wraparound, reader-lap detection by cursor
   arithmetic, oversize chunk drop + `dropped_bytes`, cursor consistency over
   10k writes.
-- `verify` (7): SPKI extraction matches rcgen's `public_key_der()`, pin hex
-  round-trip, pinned-cert acceptance, wrong-key rejection, garbage DER
-  rejection. (No QUIC connection needed — pure verifier logic against
-  rcgen-generated certs.)
+- `verify` (6): SPKI pin extraction/sha256 via proto-core matches rcgen's
+  `public_key_der()`, pin hex round-trip, pinned-cert acceptance, wrong-key
+  rejection, garbage DER rejection. (No QUIC connection needed — pure
+  verifier logic against rcgen-generated certs.)
+- `session` (3): network-change rebind primitive (endpoint rebinds onto a raw
+  fd transferred with `into_raw_fd`, local address follows), rebind failure
+  before the endpoint exists and on a stopped session without touching the fd.
 - `stats` (5): golden JSON shape, null sections, close object, escaping,
   null `highest_seq` before first datagram.
 
@@ -191,34 +207,51 @@ Everything below compiles but has no executable evidence from this host:
   early data unless explicitly enabled, which this prototype never does).
 - `session.rs` / `media_pump` runtime behavior (control loop, datagram loop,
   ring feeding under real traffic).
-- All nine JNI functions at runtime (no device; `adb devices` empty).
+- All ten JNI functions at runtime (no device; `adb devices` empty). The
+  rebind primitive's endpoint-level logic IS host-tested (see `session`
+  tests above); the JVM fd handoff and the live-connection migration are not.
 - Foreground service lifecycle, `startForeground` typed paths, screen-off,
   process death (`START_NOT_STICKY` is configured but unobserved).
 - Backoff reconnects under real network loss; NetworkCallback
-  onAvailable/onLost firing.
+  onAvailable/onLost firing; `Network.bindSocket` fd handoff;
+  `Endpoint::rebind` against a live QUIC connection on a real network change.
 - Playback consumption via `AudioTrack`.
 
-## Network migration: what is scaffolded vs. implemented (honesty section)
+## Network migration: what is implemented vs. device-validated (honesty section)
 
-Implemented in `ProtoSession`:
+Implemented (code on both ends, end-to-end behavior **NOT RUN** on a device):
 
 - `ConnectivityManager.NetworkCallback` (INTERNET capability filter) with
   `onAvailable` / `onLost` handlers; the active network's local address
   (IPv4 preferred) is captured and passed to native `connect()` as a UDP
-  socket bind hint.
-- Network change/loss tears the session down and reconnects with bounded
-  exponential backoff + jitter (500 ms → 30 s, ±20%).
+  socket bind hint for the initial connection.
+- **Network-change rebind (implemented, replacing the old scaffold):** on
+  `onAvailable` Kotlin creates a `DatagramSocket`, route-pins it to the new
+  `Network` via `Network.bindSocket(socket)`, wraps it with
+  `ParcelFileDescriptor.fromDatagramSocket(...)` and passes the raw fd to the
+  new JNI function `ProtoNative.rebind(handle, fd)`. Native rebuilds a
+  `std::net::UdpSocket` from the raw fd (`FromRawFd`) and calls quinn's
+  `Endpoint::rebind()`, which moves the endpoint — and all live connections —
+  onto the new socket. FD ownership transfers to native on call (success or
+  failure); the JVM side never closes the socket afterwards.
+- On rebind failure (or before any endpoint exists): the pre-existing
+  teardown + bounded exponential backoff with jitter (500 ms → 30 s, ±20%)
+  reconnect is the fallback. `onLost` always tears down (the route is gone).
 
-Not implemented (and why):
+Host-tested (in `session.rs`): the rebind primitive itself — a bare endpoint
+rebinds onto an `into_raw_fd`-transferred UDP fd and reports the new local
+address; rebind without a stored endpoint and rebind on a stopped session fail
+without touching the fd.
 
-- `Network.bindSocket(FileDescriptor)` route pinning: requires passing an fd
-  bound to the Android `Network` into the native QUIC endpoint (JNI fd pass +
-  quinn endpoint construction from that socket). The bind hint used here pins
-  the local address only — Android routing may still send via the default
-  network. This is a scaffold for the real mechanism, not a substitute.
-- quinn `Endpoint::rebind()` / QUIC connection migration: not wired; a network
-  change is a teardown+reconnect, so a migration test cannot even be attempted
-  with this build. This remains one of the prototype's untested gates.
+NOT RUN (needs a device; `adb devices` empty on this host):
+
+- an actual Wi-Fi↔cellular (or Wi-Fi↔Wi-Fi) migration while media flows:
+  callback firing, `Network.bindSocket` + fd handoff, `Endpoint::rebind`
+  under live QUIC traffic, continuity of the media stream across the swap;
+- whether QUIC path validation/`Response` migration actually completes on the
+  new network without a connection loss (the endpoint keeps connections, but
+  a full path change may still drop them — that is exactly what the device
+  run must answer).
 
 ## Build failures encountered (all fixed, recorded per scope)
 

@@ -1,10 +1,13 @@
 //! QUIC session glue: tokio runtime, quinn client, control stream loop,
-//! datagram receive loop, ring feeding.
+//! datagram receive loop, ring feeding, and the network-change rebind path.
 //!
-//! DEVICE/NETWORK ONLY: none of this is exercised by host tests (this crate's
-//! test scope is codec/state/verifier/ring logic; the e2e server is a separate
-//! crate). Everything compiles under `cargo test`; runtime behavior is
-//! explicitly UNTESTED until run against a real server on a device.
+//! Mostly DEVICE/NETWORK ONLY: the connect/control/datagram loops are not
+//! exercised by host tests (this crate's test scope is codec/state/verifier/
+//! ring logic; the e2e server is a separate crate). Everything compiles under
+//! `cargo test`; runtime behavior is explicitly UNTESTED until run against a
+//! real server on a device. EXCEPTION: the rebind path (`rebind` /
+//! `rebind_endpoint_from_raw_fd`) IS host-tested — it only needs a bare
+//! endpoint, no live QUIC connection.
 
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -444,6 +447,54 @@ impl Session {
         log::info!("media ring attached ({capacity} bytes)");
         Ok(())
     }
+
+    /// Network-change migration: rebind the QUIC endpoint onto a UDP socket
+    /// the JVM created and route-pinned to the active Android `Network`
+    /// (`Network.bindSocket`), handed over as a raw fd. Low-frequency (once
+    /// per network change). On failure the caller falls back to teardown +
+    /// bounded-backoff reconnect (the fd is consumed either way, see the
+    /// unsafe helper below).
+    ///
+    /// Host-tested (endpoint-level); end-to-end behavior against a live QUIC
+    /// connection on a device is NOT RUN.
+    pub fn rebind(&self, fd: i32) -> Result<(), String> {
+        if self.shared.stopping.load(Ordering::SeqCst) {
+            return Err("session stopped".into());
+        }
+        let endpoint = self
+            .shared
+            .endpoint
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("no endpoint (not connected)")?;
+        // quinn's rebind registers the socket with the runtime's IO driver,
+        // which requires a runtime context — the JNI thread has none, so run
+        // it with this session's runtime.
+        self.runtime.block_on(async {
+            // SAFETY: the JNI contract transfers fd ownership to native
+            // (Kotlin must never close or reuse it afterwards); the socket
+            // is dropped (fd closed) if the rebind fails.
+            unsafe { rebind_endpoint_from_raw_fd(&endpoint, fd) }
+        })
+    }
+}
+
+/// Reconstruct a `std::net::UdpSocket` from a raw fd handed over by the JVM
+/// side and rebind the endpoint onto it (quinn `Endpoint::rebind`): all
+/// connections on the endpoint switch to the new socket live.
+///
+/// # Safety
+/// `fd` must be a valid, open UDP socket file descriptor whose ownership is
+/// transferred to this function: after the call the JVM side must never close
+/// or reuse it. The reconstructed socket is consumed by `Endpoint::rebind` on
+/// success and dropped (closing the fd) on failure.
+unsafe fn rebind_endpoint_from_raw_fd(endpoint: &quinn::Endpoint, fd: i32) -> Result<(), String> {
+    use std::os::fd::FromRawFd;
+    let socket = UdpSocket::from_raw_fd(fd);
+    endpoint
+        .rebind(socket)
+        .map_err(|e| format!("endpoint rebind: {e}"))
 }
 
 /// Device-only datagram loop: parse header, verify, feed the ring. UNTESTED
@@ -497,5 +548,78 @@ impl ToSocketAddrsErr for (&str, u16) {
         self.to_socket_addrs()
             .map(|i| i.collect())
             .map_err(|e| format!("resolve {}:{}: {e}", self.0, self.1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::fd::IntoRawFd;
+
+    fn test_config() -> SessionConfig {
+        SessionConfig {
+            host: "127.0.0.1".to_string(),
+            port: 65531,
+            pinned_spki_hex: "00".repeat(32),
+            credential: "test-credential-do-not-use".to_string(),
+        }
+    }
+
+    /// Creates a bound UDP socket and hands its fd over raw (ownership moves
+    /// away from the Rust wrapper via the proper `into_raw_fd` transfer),
+    /// mirroring the JVM JNI fd contract.
+    fn transfer_bound_socket() -> (i32, u16) {
+        let sock = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let port = sock.local_addr().expect("local addr").port();
+        (sock.into_raw_fd(), port)
+    }
+
+    /// The migration path's core primitive: a bare client endpoint rebinds
+    /// onto a raw fd exactly like the one handed over from the JVM side.
+    #[tokio::test]
+    async fn rebind_endpoint_swaps_the_underlying_socket() {
+        let first = UdpSocket::bind("127.0.0.1:0").expect("bind first");
+        let endpoint = quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            None,
+            first,
+            Arc::new(quinn::TokioRuntime),
+        )
+        .expect("endpoint");
+        let old_port = endpoint.local_addr().expect("local addr").port();
+
+        let (fd, new_port) = transfer_bound_socket();
+        unsafe { rebind_endpoint_from_raw_fd(&endpoint, fd) }.expect("rebind");
+
+        assert_ne!(
+            endpoint.local_addr().expect("local addr after rebind").port(),
+            old_port,
+            "endpoint must now use the second socket"
+        );
+        assert_eq!(
+            endpoint.local_addr().expect("local addr after rebind").port(),
+            new_port,
+        );
+        endpoint.wait_idle().await; // drop cleanly, no live connections
+    }
+
+    /// A rebind is impossible before the handshake stored the endpoint; the
+    /// fd must not be touched on that error path (caller falls back to
+    /// teardown + backoff reconnect).
+    #[test]
+    fn rebind_without_stored_endpoint_fails_before_touching_the_fd() {
+        let session = Session::new(test_config()).expect("session");
+        let (fd, _port) = transfer_bound_socket();
+        let err = session.rebind(fd).expect_err("no endpoint yet");
+        assert!(err.contains("no endpoint"), "got: {err}");
+    }
+
+    /// A stopped session refuses to rebind.
+    #[test]
+    fn rebind_on_stopped_session_fails() {
+        let session = Session::new(test_config()).expect("session");
+        session.shared.stopping.store(true, Ordering::SeqCst);
+        let (fd, _port) = transfer_bound_socket();
+        assert!(session.rebind(fd).is_err());
     }
 }

@@ -244,22 +244,32 @@ noted; each row states what the prototype did about it.
 ## Android client half (android-client/)
 
 - Build + size evidence: [`android-client/BUILD.md`](android-client/BUILD.md)
-- `cargo test` (host, in `android-client/native/`): **54 tests green** —
-  frame codec, client control state machine, gap/dup/reorder accounting,
+- `cargo test` (host, in `android-client/native/`): **58 tests green** —
+  frame codec (incl. cross-end contract tests against the shared proto-core
+  codec), client control state machine, gap/dup/reorder accounting,
   deterministic byte verification, SPKI-pinned verifier (rcgen certs), ring
-  buffer, stats JSON contract.
-- Measured sizes (arm64-v8a): raw `.so` 8,761,880 B → stripped 2,303,408 B
-  (2.20 MiB); release APK 2,337,519 B vs empty baseline 33,429 B —
-  **native increment 2.20 MiB, within the ~5 MiB gate**.
+  buffer, network-change rebind primitive, stats JSON contract.
+- Measured sizes (arm64-v8a, re-measured after dedupe + rebind): raw `.so`
+  8,778,032 B → stripped 2,305,128 B (2.20 MiB); release APK 2,339,239 B vs
+  empty baseline 33,757 B — **native increment 2.20 MiB, within the ~5 MiB
+  gate** (+1,720 B stripped vs. the pre-dedupe build).
 - minSdk 26 gate holds; zero external Android dependencies; R8 rule required:
   `-keep class dev.prototype.wireproto.ProtoNative { *; }`.
-- JNI surface: 9 low-frequency functions (createSession/connect/subscribe/
-  unsubscribe/stop/destroy/getState/getStats/attachBuffer). Media crosses JNI
-  exactly once, as one attached direct ByteBuffer; no per-datagram calls.
+- JNI surface: 10 low-frequency functions (createSession/connect/subscribe/
+  unsubscribe/stop/destroy/getState/getStats/attachBuffer/rebind). Media
+  crosses JNI exactly once, as one attached direct ByteBuffer; no
+  per-datagram calls.
 - Client buffer: 4 MiB overwrite-oldest ring (~10.9 s of stereo f32 @48 kHz),
   9,600 B (50 ms) prefetch target before playback starts.
 - Gap counters are arrival-time evidence (late fill-ins count as `reordered`
   and do not decrement `gaps`).
+- Network migration is **implemented, device-validated NOT RUN**: on
+  `NetworkCallback.onAvailable` the Kotlin side creates a socket
+  route-pinned with `Network.bindSocket`, hands its fd to native
+  `rebind()` (JNI, low-frequency), which rebuilds a `std::net::UdpSocket` and
+  calls quinn's `Endpoint::rebind()`; failure falls back to teardown +
+  bounded-backoff reconnect. The rebind primitive is host-tested
+  (endpoint-level); a live Wi-Fi↔cellular migration run is a device gate.
 
 ## What this prototype does NOT cover
 
@@ -267,7 +277,8 @@ NOT RUN, handled by later gates:
 
 - real-device Android runs (handshake, subscribe, consume, counters, clean
   stop), foreground-service lifecycle, screen-off/process death,
-  Wi-Fi↔cellular migration (scaffolded; no device attached on this host);
+  Wi-Fi↔cellular migration end-to-end (rebind implemented; no device attached
+  on this host);
 - ALPN/0-RTT on-wire assertions from the Android side;
 - the GO/NO-GO verdict — that is the ticket reporter's job once device runs
   exist.
