@@ -93,6 +93,8 @@ export interface Bootstrap {
   locale: Locale;
   status: ServerStatus;
   settings: Settings;
+  /** Local IPv4 addresses offered as Host suggestions, default first. */
+  hostAddresses: string[];
   /** Structured migration/recovery warnings; empty when the config was clean. */
   configNotices: Notice[];
   /** An update already found by a background check, if any. */
