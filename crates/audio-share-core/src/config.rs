@@ -35,6 +35,46 @@ pub const DEFAULT_ENDPOINT: &str = "default";
 /// The value that follows the system locale.
 pub const DEFAULT_LANGUAGE: &str = "default";
 
+/// Which color scheme the Server GUI uses; `[App] theme` in `config.ini`.
+///
+/// The Server Core, tray, and wire protocol never read this value: it only
+/// selects the GUI's light/dark tokens.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeSetting {
+    /// Follow the operating system's color scheme.
+    #[default]
+    System,
+    /// Always use the light tokens.
+    Light,
+    /// Always use the dark tokens.
+    Dark,
+}
+
+impl ThemeSetting {
+    /// Parse a persisted theme name (`system`, `light`, `dark`).
+    ///
+    /// Matching is Win32-style: trimmed and case-insensitive. `None` for
+    /// anything else, including the empty string.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "system" => Some(Self::System),
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            _ => None,
+        }
+    }
+
+    /// The stable name written to `config.ini` and the IPC contract.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+}
+
 /// Legacy `[Capture] encoding` numbers.
 ///
 /// The numbers are frozen for downgrade compatibility: 0 = default,
@@ -230,6 +270,8 @@ pub struct Config {
     pub auto_update: bool,
     /// `default`, `en-US`, or `zh-CN`.
     pub language: String,
+    /// GUI color scheme: `system`, `light`, or `dark`.
+    pub theme: ThemeSetting,
     /// Persisted last server state for `WhenAppStart=keepLast`.
     pub running: bool,
 }
@@ -248,6 +290,7 @@ impl Default for Config {
             when_close: WhenClose::Minimize,
             auto_update: false,
             language: DEFAULT_LANGUAGE.to_owned(),
+            theme: ThemeSetting::System,
             running: false,
         }
     }
@@ -567,6 +610,18 @@ fn recognized_config(
             config.language = value.to_owned();
         }
     }
+    if let Some(value) = document.get("App", "theme") {
+        match ThemeSetting::from_name(&value) {
+            Some(theme) => config.theme = theme,
+            None => {
+                notices.push(ConfigNotice::InvalidValue {
+                    key: "theme".to_owned(),
+                    value: value.to_owned(),
+                });
+                corrected = true;
+            }
+        }
+    }
     if let Some(value) = document.get("App", "Running") {
         config.running = parse_int(value).is_some_and(|value| value != 0);
     }
@@ -608,6 +663,7 @@ fn parse_int(value: &str) -> Option<i32> {
 fn apply_config(document: &mut IniDocument, config: &Config) {
     document.set("App", "configVersion", &CONFIG_VERSION.to_string());
     document.set("App", "language", &config.language);
+    document.set("App", "theme", config.theme.name());
     document.set("App", "Running", bool_int(config.running));
     document.set("Network", "host", &config.host);
     document.set("Network", "port", &config.port.to_string());
