@@ -128,7 +128,7 @@ pub fn tray_enabled(state: ServerState) -> TrayEnabled {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Bootstrap {
-    /// Application version (`0.4.0`).
+    /// Application version, from the crate metadata.
     pub version: String,
     /// `windows`, `linux`, or `unknown`.
     pub platform: String,
@@ -459,7 +459,7 @@ mod tests {
             url: "https://example.test/v0.4.1".to_owned(),
         });
         let data = bootstrap(&settings, &status, &notices, update.clone(), Locale::ZhCn);
-        assert_eq!(data.version, "0.4.0");
+        assert_eq!(data.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(data.platform, platform_name());
         assert_eq!(data.locale, "zh-CN");
         assert_eq!(data.status, status);

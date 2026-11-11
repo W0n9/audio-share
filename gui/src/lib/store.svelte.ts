@@ -60,7 +60,7 @@ class ServerStore {
   saveError = $state<string | null>(null);
 
   get version(): string {
-    return this.bootstrap?.version ?? "0.4.0";
+    return this.bootstrap?.version ?? "unknown";
   }
 
   get platform(): string {
