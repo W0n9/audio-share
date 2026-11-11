@@ -192,10 +192,14 @@ class ServerStore {
   /**
    * Change the theme, apply it immediately, and persist it with the rest of
    * the application settings. If the save fails and the re-read restores the
-   * stored value, the applied theme follows the file again.
+   * stored value, the applied theme follows the file again. While a save is
+   * in flight (`applicationLocked`) the change is dropped instead: applying
+   * optimistically there would leave the document themed with neither a save
+   * nor a corrective re-read behind it.
    */
   async setTheme(theme: Theme): Promise<void> {
     if (this.settings.theme === theme) return;
+    if (this.applicationLocked) return;
     this.settings.theme = theme;
     applyTheme(theme);
     await this.persistApplication();
