@@ -39,6 +39,10 @@ pub struct ServerConfig {
     pub bind: SocketAddr,
     /// The single accepted AUTH credential token.
     pub credential: String,
+    /// Tokens treated as revoked: they get the exact bad-credential wire
+    /// treatment (`AUTH_ERR(BAD_CREDENTIAL)` + `CLOSE(AUTH_FAILED)`) but are
+    /// counted under the distinct `auth_err_revoked` stat.
+    pub revoked_credentials: Vec<String>,
     /// Idle timeout applied while in CONNECTING/READY (no media flowing).
     /// `None` disables it.
     pub idle_timeout: Option<Duration>,
@@ -63,6 +67,7 @@ impl Default for ServerConfig {
         Self {
             bind: DEFAULT_BIND,
             credential: DEFAULT_CREDENTIAL.to_string(),
+            revoked_credentials: Vec::new(),
             idle_timeout: Some(Duration::from_secs(60)),
             chunk_target_ms: 5,
             queue_capacity: 256,

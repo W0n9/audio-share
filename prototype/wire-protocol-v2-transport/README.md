@@ -75,7 +75,7 @@ Android-side versions (NDK, AGP, Kotlin, target SDK) are recorded in
 ```bash
 cd server
 cargo build --release          # bins in target/release/
-cargo test --workspace         # 46 tests (24 proto-core units + 21 e2e + config assertion)
+cargo test --workspace         # 47 tests (24 proto-core units + 22 e2e + config assertion)
 ```
 
 Start a server (defaults: bind 127.0.0.1:**65531** — never the v1 port 65530 —
@@ -86,7 +86,11 @@ credential `test-credential-do-not-use`, 60 s idle timeout):
 # prints: PROTO_SERVER_READY addr=127.0.0.1:65531 spki=<64 hex chars>
 ```
 
-Flags: `--credential TOKEN` (or `$PROTO_TEST_CREDENTIAL`), `--idle-timeout-secs N`
+Flags: `--credential TOKEN` (or `$PROTO_TEST_CREDENTIAL`),
+`--revoked-credential TOKEN` (repeatable — a listed token gets the exact
+bad-credential wire treatment, `AUTH_ERR(BAD_CREDENTIAL)` + `CLOSE(AUTH_FAILED)`,
+but is counted under the distinct `revoked` stat so evidence can distinguish it
+from a plain wrong token), `--idle-timeout-secs N`
 (0 disables), `--chunk-ms` (media batch size in ms of audio, default 5),
 `--queue-capacity` (default 256), `--mtud` (enable DPLPMTUD, default off —
 see below), `-v/-vv`. SIGINT stops the server with `CLOSE(SERVER_STOP)` to all
@@ -138,6 +142,7 @@ scripts/run-e2e.sh
 | correct pin handshakes, rogue SPKI fails | `server/e2e/tests/security.rs`, client pin verifier | PASS |
 | `audio-share/v2` succeeds, incompatible ALPN fails before app data | `server/e2e/tests/security.rs` (server accepts 0 sessions) | PASS |
 | valid credential succeeds; wrong/empty credential → `AUTH_ERR(BAD_CREDENTIAL)` + `CLOSE(AUTH_FAILED)` | `server/e2e/tests/security.rs` | PASS |
+| revoked credential → same `BAD_CREDENTIAL`/`AUTH_FAILED` wire treatment, distinct `revoked` stat; valid credential accepted in the same run | `server/e2e/tests/security.rs` | PASS |
 | SUBSCRIBE without AUTH → `AUTH_ERR(NOT_AUTHENTICATED)` + `CLOSE(PROTOCOL_ERROR)` | `server/e2e/tests/protocol.rs` | PASS |
 | unknown msg_type / oversized length / bad payload length / unknown close reason → `CLOSE(PROTOCOL_ERROR)` | `server/e2e/tests/protocol.rs` | PASS |
 | non-UTF-8 AUTH → `AUTH_ERR(MALFORMED)` + `CLOSE(AUTH_FAILED)` | `server/e2e/tests/protocol.rs` | PASS |

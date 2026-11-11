@@ -49,6 +49,9 @@ pub struct SessionStats {
     pub auth_ok_out: AtomicU64,
     pub auth_err_out: AtomicU64,
     pub auth_err_bad_credential: AtomicU64,
+    /// AUTH_ERR rejections of a listed `--revoked-credential` token (distinct
+    /// from `auth_err_bad_credential` so evidence can tell them apart).
+    pub auth_err_revoked: AtomicU64,
     pub auth_err_not_authenticated: AtomicU64,
     pub auth_err_malformed: AtomicU64,
     pub media_start_out: AtomicU64,
@@ -115,6 +118,7 @@ impl SessionStats {
             auth_ok_out: self.auth_ok_out.load(Ordering::Relaxed),
             auth_err_out: self.auth_err_out.load(Ordering::Relaxed),
             auth_err_bad_credential: self.auth_err_bad_credential.load(Ordering::Relaxed),
+            auth_err_revoked: self.auth_err_revoked.load(Ordering::Relaxed),
             auth_err_not_authenticated: self
                 .auth_err_not_authenticated
                 .load(Ordering::Relaxed),
@@ -159,6 +163,7 @@ pub struct SessionStatsSnapshot {
     pub auth_ok_out: u64,
     pub auth_err_out: u64,
     pub auth_err_bad_credential: u64,
+    pub auth_err_revoked: u64,
     pub auth_err_not_authenticated: u64,
     pub auth_err_malformed: u64,
     pub media_start_out: u64,

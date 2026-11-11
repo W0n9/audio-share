@@ -244,6 +244,15 @@ async fn handle_frame(
             match stats.state.load(Ordering::Relaxed) {
                 stats::STATE_CONNECTING => {
                     stats.set_state(stats::STATE_AUTHENTICATING);
+                    // Revoked tokens are denied exactly like bad credentials
+                    // (same wire frames), counted under their own stat.
+                    if shared.config.revoked_credentials.iter().any(|t| t == token) {
+                        stats.auth_err_revoked.fetch_add(1, Ordering::Relaxed);
+                        return Flow::CloseWith(
+                            CloseReason::AuthFailed,
+                            Some(Frame::AuthErr(frame::AuthErrCode::BadCredential)),
+                        );
+                    }
                     if constant_time_eq(token, &shared.config.credential) {
                         let session_id = shared
                             .next_session_id
