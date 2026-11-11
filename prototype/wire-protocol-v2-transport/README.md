@@ -1,31 +1,59 @@
-# wire-protocol-v2 transport prototype (ticket 01 — server side)
+# wire-protocol-v2 transport prototype (ticket 01)
 
-Throwaway code validating the candidate transport — **quinn + rustls/TLS 1.3 +
-one reliable bidirectional control stream + unreliable QUIC DATAGRAM media** —
-against the shape fixed in `.scratch/wire-protocol-v2/prototype-brief.md`.
+Throwaway prototype answering one question: can quinn + rustls/TLS 1.3 carry
+this project's v2 transport — one reliable bidirectional control stream plus
+unreliable QUIC DATAGRAM media — within the accepted boundaries?
 
-This directory answers a transport question only. It does NOT freeze the v2
-wire layout, does NOT implement production pairing, and is NOT production
-code. The desktop `proto-client` here is a test tool; the real Android client
-is built separately under `android-client/` on the same integration branch.
+It has two halves, built on separate ticket branches and merged here:
+
+- **server/** — Rust test server + desktop test client bins + integration
+  tests (this branch: `ticket/01-transport-server`).
+- **android-client/** — standalone gradle project (app/ Kotlin + native/ Rust
+  cdylib) (branch `ticket/01-transport-android`, see
+  [`android-client/BUILD.md`](android-client/BUILD.md)).
+
+It does NOT freeze the v2 wire layout, does NOT implement production pairing,
+and is NOT production code.
 
 ## Layout
 
 ```
-server/
-  Cargo.toml          cargo workspace
-  proto-core/         shared: frame codec, synthetic PCM, SPKI helpers
-  proto-server/       server core library + `proto-server` bin
-  proto-client/       client core library + `proto-client` bin
-  e2e/                integration tests (in-process, ephemeral ports)
-scripts/
-  run-e2e.sh          binary-level smoke run; appends to evidence/
-  impairment.sh       idempotent tc netem / veth helper (needs sudo)
-evidence/
-  desktop-e2e.log     captured runs (header records date, command, versions)
+prototype/wire-protocol-v2-transport/
+  README.md          # this file
+  server/            # cargo workspace: proto-core, proto-server, proto-client, e2e tests
+  android-client/    # standalone gradle project (app/ Kotlin + native/ Rust cdylib)
+  scripts/           # run-e2e.sh (desktop smoke run), impairment.sh (tc netem helper)
+  evidence/          # committed run logs with command/version headers
 ```
 
-## Recorded versions
+## Prototype protocol conventions (binding for both halves)
+
+From `.scratch/wire-protocol-v2/prototype-brief.md`:
+
+- Control plane: one QUIC bidirectional stream, `u32 BE frame_len | u8 type |
+  payload`, `frame_len = 1 + payload.len()`, cap 64 KiB; types 0x01–0x07
+  (AUTH, AUTH_OK, AUTH_ERR, SUBSCRIBE, MEDIA_START, UNSUBSCRIBE, CLOSE).
+- Media plane: QUIC DATAGRAM, fixed 20-byte BE header
+  `u32 stream_instance_id | u32 config_generation | u32 sequence | u64 timestamp`,
+  payload raw f32le interleaved, frame-aligned.
+- **Deterministic content convention:** the sample value at absolute
+  sample-frame position `p` is `sin(2π·440·p/48000) as f32` computed in f64,
+  and **every channel of frame p carries that same value** (`p` is the frame
+  position carried by the header `timestamp`, not a per-channel sample
+  index). Server and Android client use the identical formula and convention;
+  a mismatch would show up as uniform byte_errors — diagnosable evidence, not
+  a transport failure.
+- ALPN exactly `audio-share/v2`; TLS 1.3 only; 0-RTT never configured.
+- SPKI pinning: server self-signed ECDSA P-256 cert; clients verify
+  sha256(cert SPKI DER) against the operator-supplied 64-hex pin; no CA, no
+  name/expiry checking — the pin IS the identity check for the prototype.
+- Default test credential: `test-credential-do-not-use`.
+- A capture restart bumps `stream_instance_id`; sequence accounting resets
+  per instance.
+
+## Server half (server/)
+
+### Recorded versions
 
 | component | version | source |
 |---|---|---|
@@ -39,12 +67,15 @@ evidence/
 | rcgen | 0.13.2 | `server/Cargo.lock` |
 | tokio | 1.54.1 | `server/Cargo.lock` |
 
-## Build and run
+Android-side versions (NDK, AGP, Kotlin, target SDK) are recorded in
+[`android-client/BUILD.md`](android-client/BUILD.md).
+
+### Build and run
 
 ```bash
 cd server
 cargo build --release          # bins in target/release/
-cargo test --workspace         # 46 tests (units + 21 e2e cases)
+cargo test --workspace         # 46 tests (24 proto-core units + 21 e2e + config assertion)
 ```
 
 Start a server (defaults: bind 127.0.0.1:**65531** — never the v1 port 65530 —
@@ -77,46 +108,38 @@ server-stop case), `no-auth-subscribe`, `bad-msg-type`. Every run prints one
 `RESULT ...` line with counters and exits 0 when the intended flow completed
 (intended negative outcomes included).
 
-Scripted smoke run (all 8 cases, PASS/FAIL each, appends to
+Scripted smoke run (8 cases, PASS/FAIL each, appends to
 `evidence/desktop-e2e.log`):
 
 ```bash
 scripts/run-e2e.sh
 ```
 
-## Protocol shape (throwaway; NOT the v2 normative layout)
+### Server state machine and close semantics
 
-- Control plane: one bidirectional QUIC stream (opened by the client),
-  `u32 BE frame_len | u8 msg_type | payload`, `frame_len = 1 + payload.len()`,
-  cap 64 KiB. Frame types 0x01–0x07 per the brief's table.
-- State machine: `CONNECTING → AUTHENTICATING → READY → PLAYING → CLOSING/CLOSED`.
+- `CONNECTING → AUTHENTICATING → READY → PLAYING → CLOSING/CLOSED`.
   AUTH required first; SUBSCRIBE only in READY; UNSUBSCRIBE only in PLAYING;
   violations → explicit `CLOSE(PROTOCOL_ERROR)` (with an
   `AUTH_ERR(NOT_AUTHENTICATED)` prelude pre-auth), never a silent ignore.
-- Media: QUIC DATAGRAMs, 20-byte BE header
-  (`stream_instance_id | config_generation | sequence | timestamp`), payload
-  raw f32le interleaved PCM; sample at absolute position `p` is
-  `sin(2π·440·p/48000) as f32` — one shared function, bit-exact both ends.
-  New SUBSCRIBE (after UNSUBSCRIBE) bumps `stream_instance_id` from 1.
 - Close reasons ride both the CLOSE frame and the QUIC application error code
   (`Normal=0 ServerStop=1 ProtocolError=2 AuthFailed=3 IdleTimeout=4
   InternalError=5`) plus an ASCII reason string on the transport close.
 - A client `CLOSE(NORMAL)` is acknowledged with the server's own
   `CLOSE(NORMAL)` before the transport closes (prototype-simple goodbye).
 
-## Security and version assertions
+### Security and version assertions
 
 | assertion | where | result |
 |---|---|---|
-| correct pin handshakes, rogue SPKI fails | `e2e/tests/security.rs`, client pin verifier | PASS |
-| `audio-share/v2` succeeds, incompatible ALPN fails before app data | `e2e/tests/security.rs` (server accepts 0 sessions) | PASS |
-| valid credential succeeds; wrong/empty credential → `AUTH_ERR(BAD_CREDENTIAL)` + `CLOSE(AUTH_FAILED)` | `e2e/tests/security.rs` | PASS |
-| SUBSCRIBE without AUTH → `AUTH_ERR(NOT_AUTHENTICATED)` + `CLOSE(PROTOCOL_ERROR)` | `e2e/tests/protocol.rs` | PASS |
-| unknown msg_type / oversized length / bad payload length / unknown close reason → `CLOSE(PROTOCOL_ERROR)` | `e2e/tests/protocol.rs` | PASS |
-| non-UTF-8 AUTH → `AUTH_ERR(MALFORMED)` + `CLOSE(AUTH_FAILED)` | `e2e/tests/protocol.rs` | PASS |
+| correct pin handshakes, rogue SPKI fails | `server/e2e/tests/security.rs`, client pin verifier | PASS |
+| `audio-share/v2` succeeds, incompatible ALPN fails before app data | `server/e2e/tests/security.rs` (server accepts 0 sessions) | PASS |
+| valid credential succeeds; wrong/empty credential → `AUTH_ERR(BAD_CREDENTIAL)` + `CLOSE(AUTH_FAILED)` | `server/e2e/tests/security.rs` | PASS |
+| SUBSCRIBE without AUTH → `AUTH_ERR(NOT_AUTHENTICATED)` + `CLOSE(PROTOCOL_ERROR)` | `server/e2e/tests/protocol.rs` | PASS |
+| unknown msg_type / oversized length / bad payload length / unknown close reason → `CLOSE(PROTOCOL_ERROR)` | `server/e2e/tests/protocol.rs` | PASS |
+| non-UTF-8 AUTH → `AUTH_ERR(MALFORMED)` + `CLOSE(AUTH_FAILED)` | `server/e2e/tests/protocol.rs` | PASS |
 | no secrets in logs/errors | logging audit: credential and keys never traced | by construction |
 
-### 0-RTT evidence path (honest limits)
+#### 0-RTT evidence path (honest limits)
 
 quinn 0.11 offers **no runtime API to observe the negotiated 0-RTT state**, so
 the strongest available evidence is configuration-level:
@@ -128,19 +151,18 @@ the strongest available evidence is configuration-level:
 2. quinn additionally requires opt-in at two more places —
    `ServerConfig::enable_0rtt()` (transport setup) and
    `Incoming::accept_0rtt()` (per connection). Neither appears anywhere under
-   `server/` (grep-verifiable: `rg 'accept_0rtt|enable_0rtt' server/`).
-   The application also only reads the control stream after `connect()`
-   completes, so no frame can be processed before the handshake.
-3. Client side: quinn 0.11 has no client-side 0-RTT API at all (early data can
-   only be produced by a rustls client session explicitly configured for
-   resumption with early data, which this client never builds), and the
+   `server/` (grep-verifiable: `rg 'accept_0rtt|enable_0rtt'
+   prototype/wire-protocol-v2-transport/server/`). The application also only
+   reads the control stream after `connect()` completes, so no frame can be
+   processed before the handshake.
+3. Client side: quinn 0.11 has no client-side 0-RTT API at all, and the
    client's control stream is opened after the handshake returns.
 
 Consequence: 0-RTT is disabled by construction and audit, not by a runtime
 probe. This is recorded as evidence-grade configuration, not a transport-level
 runtime assertion.
 
-## Datagram sizing (dynamic; no fixed 1464)
+### Datagram sizing (dynamic; no fixed 1464)
 
 The server re-queries `connection.max_datagram_size()` every 5 ms tick and
 sizes datagrams as `min(max_datagram_size() - 20, chosen_chunk)` floored to
@@ -152,7 +174,7 @@ fails for any server that assumed the v1 fixed 1464-byte path. The later
 reduced-MTU runs should start both bins with `--mtud` so sizing reacts to
 path-limit changes.
 
-## Bounded sends and slow clients
+### Bounded sends and slow clients
 
 Per session: a producer task paces 5 ms media batches into a **bounded queue**
 (capacity 256) with non-waiting `try_send`; on overflow the **newest** datagram
@@ -163,7 +185,7 @@ outbound path (test-only `forwarder_delay` hook) drives counted drop-newest
 while the session stays responsive; one slow client does not degrade another;
 UNSUBSCRIBE detaches the pump without stalling the control loop.
 
-## Library defaults observed (evidence, not adopted decisions)
+### Library defaults observed (evidence, not adopted decisions)
 
 All read from `quinn-proto 0.11.19` `TransportConfig::new()` / source unless
 noted; each row states what the prototype did about it.
@@ -198,21 +220,49 @@ noted; each row states what the prototype did about it.
   pin is the identity, mirroring post-pairing Android behavior); handshake
   signature verification still uses rustls' standard algorithms.
 
-## Prototype decisions worth recording
+### Server prototype decisions worth recording
 
 - AUTH uses a plain comparison of a throwaway LAN token — not a hardened
   constant-time primitive; production needs a real credential model.
 - `AUTH_ERR(MALFORMED)` is used for non-UTF-8 AUTH payloads; `RATE_LIMITED`
   exists in the code registry but is not triggered (no rate limiting yet).
 - Idle timeout applies in CONNECTING/READY only; PLAYING counts as alive.
-- Media `timestamp` restarts at 0 per `stream_instance_id`; `sequence` likewise.
+- Media `timestamp` and `sequence` restart at 0 per `stream_instance_id`;
+  a SUBSCRIBE after UNSUBSCRIBE bumps the instance id (monotonic from 1).
 - `MEDIA_START` always carries the default transfer format
   (48000 Hz, 2 channels, f32le, `config_generation = 1`); no negotiation.
 
-## What this directory does NOT cover
+## Android client half (android-client/)
 
-NOT RUN here, handled by other agents/gates on the same integration branch:
-the Android client and all real-device gates, IPv4/IPv6 path matrix, actual
-impairment runs (the commands in `scripts/impairment.sh` were verified against
-a live veth pair on this host, but no impairment measurement was executed),
-reduced-MTU sizing measurements, migration/rebinding, release-size budget.
+- Build + size evidence: [`android-client/BUILD.md`](android-client/BUILD.md)
+- `cargo test` (host, in `android-client/native/`): **54 tests green** —
+  frame codec, client control state machine, gap/dup/reorder accounting,
+  deterministic byte verification, SPKI-pinned verifier (rcgen certs), ring
+  buffer, stats JSON contract.
+- Measured sizes (arm64-v8a): raw `.so` 8,761,880 B → stripped 2,303,408 B
+  (2.20 MiB); release APK 2,337,519 B vs empty baseline 33,429 B —
+  **native increment 2.20 MiB, within the ~5 MiB gate**.
+- minSdk 26 gate holds; zero external Android dependencies; R8 rule required:
+  `-keep class dev.prototype.wireproto.ProtoNative { *; }`.
+- JNI surface: 9 low-frequency functions (createSession/connect/subscribe/
+  unsubscribe/stop/destroy/getState/getStats/attachBuffer). Media crosses JNI
+  exactly once, as one attached direct ByteBuffer; no per-datagram calls.
+- Client buffer: 4 MiB overwrite-oldest ring (~10.9 s of stereo f32 @48 kHz),
+  9,600 B (50 ms) prefetch target before playback starts.
+- Gap counters are arrival-time evidence (late fill-ins count as `reordered`
+  and do not decrement `gaps`).
+
+## What this prototype does NOT cover
+
+NOT RUN, handled by later gates:
+
+- real-device Android runs (handshake, subscribe, consume, counters, clean
+  stop), foreground-service lifecycle, screen-off/process death,
+  Wi-Fi↔cellular migration (scaffolded; no device attached on this host);
+- ALPN/0-RTT on-wire assertions from the Android side;
+- IPv4/IPv6 path matrix and actual impairment measurements
+  (`scripts/impairment.sh` commands were verified against a live veth pair on
+  this host, but no impairment measurement was executed);
+- reduced-MTU sizing measurements (enable `--mtud` on both ends first);
+- the GO/NO-GO verdict — that is the ticket reporter's job once device runs
+  exist.

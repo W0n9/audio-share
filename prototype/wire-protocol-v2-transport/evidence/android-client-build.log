@@ -1,0 +1,35 @@
+# android-client build evidence — ticket 01 (implementer B)
+date: 2026-11-11
+host: Linux x86_64, kernel 6.8, Rust 1.98.1, Java 17
+command: ANDROID_HOME=/home/w0n9/Android/Sdk rustup target add aarch64-linux-android
+result: ok (target installed)
+
+command: cd prototype/wire-protocol-v2-transport/android-client/native && cargo test
+result: ok — 54 passed; 0 failed; 0 ignored (54 host tests)
+modules: codec(10) control(10) media(13) ring(7) verify(7) stats(5)
+
+command: cargo build --release --target aarch64-linux-android
+result: ok — Finished release profile in 22.51s
+output: target/aarch64-linux-android/release/libaudio_share_proto_native.so
+raw size: 8761880 bytes (8556 KiB, ELF aarch64, not stripped, with debug_info)
+
+command: llvm-strip (NDK 27.2.12479018) -o libaudio_share_proto_native.stripped.so
+result: ok
+stripped size: 2303408 bytes (2249 KiB, ELF aarch64, stripped)
+JNI symbols: 9 (Java_dev_prototype_wireproto_ProtoNative_{attachBuffer,connect,createSession,destroy,getState,getStats,stop,subscribe,unsubscribe})
+
+command: ANDROID_HOME=/home/w0n9/Android/Sdk ./gradlew assembleRelease --no-daemon
+result: BUILD SUCCESSFUL
+apk: app/build/outputs/apk/release/app-release.apk = 2337519 bytes (debug-signed release, R8 minified)
+contents: lib/arm64-v8a/libaudio_share_proto_native.so (2303408 bytes)
+
+command: ANDROID_HOME=/home/w0n9/Android/Sdk ./gradlew clean assembleRelease -PnoNative --no-daemon
+result: BUILD SUCCESSFUL
+apk baseline: 33429 bytes (no lib/* entry — verified via unzip -l | grep lib/arm64 -> 0)
+
+command: ANDROID_HOME=/home/w0n9/Android/Sdk ./gradlew assembleDebug / assembleDebug -PnoNative
+result: BUILD SUCCESSFUL
+apk debug with native: 3144200 bytes; debug baseline: 830765 bytes
+
+derived: native contribution to release APK = 2304090 bytes = 2.20 MiB (~5 MiB gate: PASS)
+minSdk: 26 gate holds (no dependency-imposed bump; app has zero external Android dependencies)
