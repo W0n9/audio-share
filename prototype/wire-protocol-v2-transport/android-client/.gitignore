@@ -1,0 +1,13 @@
+# Gradle
+.gradle/
+build/
+app/build/
+local.properties
+
+# Rust
+native/target/
+
+# Native build artifacts — sources + BUILD.md numbers are committed, binaries are not
+app/src/main/jniLibs/**/*.so
+*.apk
+*.aab
