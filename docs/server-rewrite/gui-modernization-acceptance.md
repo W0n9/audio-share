@@ -1,10 +1,12 @@
 # Server GUI modernization acceptance (Variant C)
 
-Status for the Server GUI modernization (tickets 01-04): **partial — all
-automated checks, headless Linux Xvfb evidence, and a Windows 11 background
-pass recorded on 2026-11-11; the remaining real-desktop, tray, restart,
-reduced-motion, and phone items remain release gates and are marked `[ ]`.
-This file extends, and must be read together with, the v0.4.0
+Status for the Server GUI modernization (tickets 01-05): **complete on Windows
+11 and Android as of 2026-11-11 — automated checks, headless Linux Xvfb
+evidence, a Windows 11 background pass, the maintainer's real-desktop pass,
+the Android v0.3.4 re-check, and the ticket-05 host-address regression fix are
+recorded below. Windows 10 is explicitly accepted as untested; no Windows 10
+host was available.** This file extends, and must be read together with, the
+v0.4.0
 baseline in [`gui-acceptance-checklist.md`](gui-acceptance-checklist.md): the
 baseline remains authoritative for every native behavior the modernization
 did not touch.
@@ -42,10 +44,13 @@ Hosts/evidence for this file:
   transitions, start-failure alert, `420×640` and `380×560` in both themes,
   grouped Settings, About, Update group, and the Windows-only System rows
   (rendering; Sound Panel invoked, Repair Firewall not clicked).
-  Not executed on Windows yet: restart persistence / language restart,
-  live OS theme switch, tray interaction, reduced motion, a full keyboard
-  pass, UAC-guarded Repair Firewall, real update check, Windows 10, and the
-  phone regression. Those rows remain `[ ]` below.
+  Not executed in the background pass: restart persistence / language
+  restart, live OS theme switch, tray interaction, reduced motion, a full
+  keyboard pass, UAC-guarded Repair Firewall, and the real update check. The
+  maintainer then completed those real-desktop items on the same Windows 11
+  machine, plus the Android v0.3.4 phone re-check; Windows 10 is accepted as
+  untested (no host available). A Host-address regression found during the
+  pass was fixed in ticket 05 and verified on the debug build.
 
 Automated results (this ticket branch, all green):
 
@@ -94,7 +99,9 @@ Automated results (this ticket branch, all green):
 - [x] Network configuration is a native disclosure, collapsed by default, and
   expands to Host and Port only. (agent, headless:
   `img/gui-mod-04-main-light.png` collapsed,
-  `img/gui-mod-04-main-network-expanded.png` expanded.)
+  `img/gui-mod-04-main-network-expanded.png` expanded.) The Host field offers
+  the enumerated local IPv4 addresses as a `datalist` while remaining free
+  text (ticket 05; `img/gui-mod-05-host-addresses-zh.png`).
 - [x] Reset lives in the main view under the Server configuration and is
   worded as resetting all Server fields (Host, Port, Endpoint, Encoding)
   while application settings are kept. (agent, headless: main screenshots;
@@ -143,9 +150,10 @@ Automated results (this ticket branch, all green):
   warning for an invalid legacy encoding value, with the dismiss action —
   this also covers the user story that migration and recovery warnings stay
   visible.)
-- [ ] Update banner and manual check-for-update inside the new layout on a
+- [x] Update banner and manual check-for-update inside the new layout on a
   real desktop (ticket 10's mock-server evidence covers the update logic;
-  the banner moved into the rewritten shell — re-check visually). (human)
+  the banner moved into the rewritten shell — re-check visually). (human,
+  Windows 11: passed.)
 
 ## Settings (grouped disclosures)
 
@@ -201,7 +209,7 @@ Automated results (this ticket branch, all green):
   losslessly. (agent, automated: `config` tests — default, case-insensitive
   and quoted parsing, unknown value fallback, v0.3.4 migration writes
   `theme=system`.)
-- [~] System theme tracks the OS color scheme live. (agent, headless
+- [x] System theme tracks the OS color scheme live. (agent, headless
   limitation: with System selected on a fresh profile the window renders
   light, matching the session's absent XSETTINGS provider, and
   `matchMedia("(prefers-color-scheme: dark)")` wiring is covered by
@@ -209,11 +217,11 @@ Automated results (this ticket branch, all green):
   light→dark switch was **not** observed. (human) on GNOME/KDE via
   `gsettings set org.gnome.desktop.interface color-scheme prefer-dark`.
   Windows desktop: with System selected and the OS in dark mode, the app
-  rendered dark (`img/gui-mod-04-win-settings-system-zh.png`); a live OS
-  switch was not exercised because it would change the maintainer's
-  foreground apps.)
-- [ ] System theme switch also re-checks both themes' readability after the
-  switch (no stale surfaces). (human; depends on the row above.)
+  rendered dark (`img/gui-mod-04-win-settings-system-zh.png`); the maintainer
+  then completed the live OS light/dark switch on Windows 11.)
+- [x] System theme switch also re-checks both themes' readability after the
+  switch (no stale surfaces). (human, Windows 11: passed after the live
+  switch.)
 - [x] The native tray menu, Server Core, and Wire Protocol do not observe the
   theme (by design, spec; tray code is untouched — see scope evidence).
   (agent, code scope.)
@@ -245,11 +253,11 @@ Automated results (this ticket branch, all green):
 
 ## Keyboard focus
 
-- [~] Tab reaches the header Settings entry and main controls with a visible
+- [x] Tab reaches the header Settings entry and main controls with a visible
   focus ring; screenshots capture focus stops. (agent, headless:
-  `img/gui-mod-04-focus-tab1.png`, `img/gui-mod-04-focus-tab4.png`.) A full
+  `img/gui-mod-04-focus-tab1.png`, `img/gui-mod-04-focus-tab4.png`.) The full
   keyboard pass (quick settings, disclosure summaries, segmented control,
-  About links, dialogs) on a real keyboard is (human).
+  About links, dialogs) was completed by the maintainer on Windows 11.
 - [x] Focus indicators are token-driven and visible in both themes; the
   status live region covers only the status content, so keyboard/assistive
   users are not re-notified by unrelated updates. (agent, code:
@@ -258,22 +266,22 @@ Automated results (this ticket branch, all green):
 
 ## Reduced motion
 
-- [ ] With the system set to reduce motion, non-essential transitions and
+- [x] With the system set to reduce motion, non-essential transitions and
   animations are disabled while color/opacity feedback stays. The CSS block
   exists (`@media (prefers-reduced-motion: reduce)` in `styles.css`, which
-  sets `transition: none !important; animation: none !important`), but
-  observing it requires a desktop session setting — not available under
-  Xvfb. (human, real desktop.)
+  sets `transition: none !important; animation: none !important`).
+  (human, Windows 11: passed with the system animation setting off.)
 
 ## Tray (real desktop)
 
-- [ ] Tray icon, Show/Start/Stop/Exit menu, left-click toggle (Windows), and
+- [x] Tray icon, Show/Start/Stop/Exit menu, left-click toggle (Windows), and
   close-to-tray with the modernized build. The tray implementation was not
   touched by tickets 01-03 (frontend-only change; see scope evidence), so
   the baseline evidence (Xvfb SNI export in `linux.md`; Windows 11 panel
   interaction in the baseline checklist) still describes the same native
-  code — but the modernized build itself has not been tray-clicked on a real
-  panel. (human, Windows + Linux desktop.)
+  code. (human, Windows 11: tray icon, menu, left-click toggle, and
+  close-to-tray passed. A Linux real-panel re-run was not part of this pass;
+  the baseline evidence remains.)
 
 ## Platform maintenance entries
 
@@ -283,14 +291,13 @@ Automated results (this ticket branch, all green):
   `img/gui-mod-04-settings-system-updates.png` shows the "Linux audio"
   section with the "Windows-only features" explanation and both "Open"
   rows; URL mapping is unit-tested in `help.rs`.)
-- [~] Windows: Repair Firewall and Sound Panel rows render only on Windows
+- [x] Windows: Repair Firewall and Sound Panel rows render only on Windows
   and still work in the new System group. (human, Windows desktop — the
   platform gating code path (`server.platform === "windows"`) is shared with
   the Linux branch verified above. Windows desktop, agent: both rows render
   in the System group (`img/gui-mod-04-win-settings-system-expanded-zh.png`);
   the Sound Panel action was invoked and the UI reported "声音面板已打开。";
-  Repair Firewall was deliberately not clicked because it raises UAC on the
-  maintainer's foreground session.)
+  the maintainer then completed the UAC-guarded Repair Firewall action.)
 
 ## i18n
 
@@ -303,10 +310,10 @@ Automated results (this ticket branch, all green):
 - [x] zh-CN renders all labels in Simplified Chinese in the new layout.
   (agent, headless: `img/gui-mod-04-main-light-zh.png`,
   `img/gui-mod-04-settings-light-zh.png`.)
-- [~] zh-CN legibility of the small muted text (the 10 px address chip and
+- [x] zh-CN legibility of the small muted text (the 10 px address chip and
   quick-setting labels are the tightest cases; ticket 02 leftover). The
-  screenshots allow inspection and read acceptably at 100% zoom, but the
-  final call belongs to a (human) reviewer on a real display.
+  screenshots allow inspection and read acceptably at 100% zoom; the
+  maintainer confirmed legibility on a real Windows 11 display.
 - [x] Language=default follows the system locale. (agent, headless: the same
   build rendered zh-CN under `LANG=zh_CN.utf8` and en-US under
   `LANG=en_US.UTF-8`.)
@@ -322,9 +329,9 @@ Automated results (this ticket branch, all green):
 - [x] Homepage link opens through the opener allow-list. (agent, automated:
   `help.rs`/opener mapping unchanged and unit-tested; click-through covered
   by the baseline fake-`xdg-open` evidence.)
-- [ ] Manual/auto update check inside the new Settings layout on a real
+- [x] Manual/auto update check inside the new Settings layout on a real
   desktop (logic unchanged and unit-tested; `update.rs` untouched — see
-  scope evidence). (human)
+  scope evidence). (human, Windows 11: passed.)
 
 ## Lifecycle regression
 
@@ -337,20 +344,21 @@ Automated results (this ticket branch, all green):
 - [x] The modernized build passes the headless smoke path end to end
   (window exists, correct title/size, exits cleanly). (agent, headless:
   `--smoke-test` output above.)
-- [ ] Single-instance/tray interaction of the modernized build on a real
-  desktop session. (human; combines the two rows above.)
+- [x] Single-instance/tray interaction of the modernized build on a real
+  desktop session. (human, Windows 11: passed; combines the two rows above.)
 
 ## Windows-only
 
-- [~] Every Windows row of the baseline checklist (launch/tray/left-click,
+- [x] Every Windows row of the baseline checklist (launch/tray/left-click,
   close behaviors, WhenAppStart, autostart registry, WASAPI Start/Stop,
   firewall repair, Sound Panel, WebView2 check) re-run on Windows 11 for the
-  modernized build, plus Windows 10. (human, release gate.) Agent-backed
-  Windows 11 background pass completed: launch of the CI exe, real WASAPI
-  Start/Stop on the default endpoint, Starting/Stopping, the start-failure
-  alert, Settings groups, theme selection, and both window sizes. Still not
-  executed: tray left-click/menu, close behaviors, WhenAppStart, autostart
-  registry, UAC firewall repair, the real update check, and Windows 10.
+  modernized build, plus Windows 10. Agent-backed Windows 11 background pass:
+  launch of the CI exe, real WASAPI Start/Stop on the default endpoint,
+  Starting/Stopping, the start-failure alert, Settings groups, theme
+  selection, and both window sizes. The maintainer completed the remaining
+  Windows 11 items: tray left-click/menu, close behaviors, WhenAppStart,
+  autostart registry, UAC firewall repair, and the real update check. Windows
+  10 is **explicitly accepted as untested** (no Windows 10 host available).
 
 ## Client-facing regression (v0.3.4 APK)
 
@@ -396,11 +404,12 @@ Automated results (this ticket branch, all green):
   those two declarations (ticket 02 leftover; no layout breakage — the base
   circle background still renders). The acceptance host's WebKitGTK 2.52.6
   renders them fine.
-- zh-CN 10 px muted text legibility — see the i18n section. (human)
+- zh-CN 10 px muted text legibility — see the i18n section. (human, Windows
+  11: accepted.)
 - Starting/Stopping transitions are a new design without a pre-existing
-  visual reference (ticket 02 leftover) — confirm they feel right on a real
-  desktop. (human)
-- System-theme live switching, reduced motion, real-panel tray interaction,
-  Windows restart/language persistence, the UAC firewall repair, the real
-  update check, Windows 10, and the phone regression remain release gates as
-  marked above.
+  visual reference (ticket 02 leftover); the maintainer accepted their feel
+  on Windows 11.
+- Windows 10 is accepted as untested (no host); every other previously open
+  item is recorded as passed above. The Linux real-panel tray re-run and the
+  Linux live system-theme switch remain covered by the baseline/Xvfb
+  evidence, not by this Windows pass.

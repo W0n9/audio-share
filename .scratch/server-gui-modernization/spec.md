@@ -1,6 +1,6 @@
 # Server GUI 现代化
 
-Status: ready-for-human
+Status: resolved
 
 ## Problem Statement
 
