@@ -105,7 +105,10 @@ Automated results (this ticket branch, all green):
   `img/gui-mod-04-main-light.png` collapsed,
   `img/gui-mod-04-main-network-expanded.png` expanded.) The Host field offers
   the enumerated local IPv4 addresses as a `datalist` while remaining free
-  text (ticket 05; `img/gui-mod-05-host-addresses-zh.png`).
+  text (ticket 05; `img/gui-mod-05-host-addresses-zh.png`). The released
+  artifact (run 42988001959) was re-checked from the background through the
+  WebView2 CDP endpoint: `#host` binds `list="host-addresses"` and the
+  datalist resolves `192.168.137.1`, `100.96.123.50`, and `10.8.144.155`.
 - [x] Reset lives in the main view under the Server configuration and is
   worded as resetting all Server fields (Host, Port, Endpoint, Encoding)
   while application settings are kept. (agent, headless: main screenshots;
