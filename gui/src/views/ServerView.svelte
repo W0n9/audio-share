@@ -48,15 +48,19 @@
 
 <section class="view">
   <div class="view-scroll main-scroll">
-    <section class="hero" aria-live="polite">
-      <span
-        class="hero-dot"
-        class:is-running={running}
-        class:is-pending={transitioning}
-        aria-hidden="true"
-      ></span>
-      <h1 class="hero-title">{statusText}</h1>
-      <div class="address-chip">{address}</div>
+    <section class="hero">
+      <!-- The live region covers only the status content; the action button
+           stays outside so assistive tech is not re-notified on its state. -->
+      <div aria-live="polite">
+        <span
+          class="hero-dot"
+          class:is-running={running}
+          class:is-pending={transitioning}
+          aria-hidden="true"
+        ></span>
+        <h1 class="hero-title">{statusText}</h1>
+        <div class="address-chip">{address}</div>
+      </div>
       <button
         class="main-action"
         class:stop={showStop}
