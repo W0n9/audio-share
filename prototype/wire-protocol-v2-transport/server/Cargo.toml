@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = ["proto-core", "proto-server", "proto-client", "e2e"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+anyhow = "1"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+quinn = "0.11"
+ring = "0.17"
+rustls = { version = "0.23", default-features = false, features = [
+    "logging",
+    "ring",
+    "std",
+    "tls12",
+] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+thiserror = "2"
+rcgen = "0.13"
+
+proto-core = { path = "proto-core" }
+proto-server = { path = "proto-server" }
+proto-client = { path = "proto-client" }
+
+[profile.release]
+strip = true

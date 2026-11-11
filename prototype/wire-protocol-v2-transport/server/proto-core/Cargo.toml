@@ -1,0 +1,13 @@
+[package]
+name = "proto-core"
+version.workspace = true
+edition.workspace = true
+description = "Shared wire-protocol-v2 prototype primitives: frame codec, synthetic media, SPKI pinning"
+
+[dependencies]
+bytes.workspace = true
+ring.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rcgen.workspace = true

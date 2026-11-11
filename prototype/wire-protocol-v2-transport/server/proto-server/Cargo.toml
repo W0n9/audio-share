@@ -1,0 +1,26 @@
+[package]
+name = "proto-server"
+version.workspace = true
+edition.workspace = true
+description = "wire-protocol-v2 prototype QUIC test server (library core + bin)"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "proto-server"
+path = "src/main.rs"
+
+[dependencies]
+proto-core.workspace = true
+quinn.workspace = true
+rustls.workspace = true
+rcgen.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+clap.workspace = true
+
+[dev-dependencies]

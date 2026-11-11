@@ -1,0 +1,26 @@
+[package]
+name = "proto-client"
+version.workspace = true
+edition.workspace = true
+description = "wire-protocol-v2 prototype desktop test client (library core + bin)"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "proto-client"
+path = "src/main.rs"
+
+[dependencies]
+proto-core.workspace = true
+quinn.workspace = true
+rustls.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+clap.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
