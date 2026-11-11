@@ -224,6 +224,16 @@ class ServerStore {
     this.notices = [];
   }
 
+  /** Switch to the settings view. */
+  openSettings(): void {
+    this.view = "settings";
+  }
+
+  /** Return from the settings view to the main view. */
+  closeSettings(): void {
+    this.view = "main";
+  }
+
   /** A manual update check reports Up To Date, a new version, or an error. */
   async checkUpdate(): Promise<void> {
     if (this.updateBusy) return;
