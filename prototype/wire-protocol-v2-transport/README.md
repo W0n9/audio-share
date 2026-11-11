@@ -28,7 +28,7 @@ prototype/wire-protocol-v2-transport/
 
 ## Prototype protocol conventions (binding for both halves)
 
-From `.scratch/wire-protocol-v2/prototype-brief.md`:
+From [`BRIEF.md`](BRIEF.md) (frozen snapshot of the prototype contract):
 
 - Control plane: one QUIC bidirectional stream, `u32 BE frame_len | u8 type |
   payload`, `frame_len = 1 + payload.len()`, cap 64 KiB; types 0x01–0x07

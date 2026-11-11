@@ -2,7 +2,7 @@
 //!
 //! Throwaway code answering the ticket-01 transport question only; it does not
 //! freeze the v2 normative wire layout. Behavior contract lives in
-//! `.scratch/wire-protocol-v2/prototype-brief.md`.
+//! `prototype/wire-protocol-v2-transport/BRIEF.md`.
 //!
 //! Session state machine (prototype-simple):
 //! `CONNECTING → AUTHENTICATING → READY → PLAYING → CLOSING/CLOSED`.
