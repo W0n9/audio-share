@@ -19,8 +19,7 @@ use proto_core::media::{
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::mpsc;
 
-use crate::stats::{self, SessionStats, CLOSE_REASON_PROTOCOL_ERROR, STATE_CLOSING, STATE_CLOSED,
-    STATE_PLAYING, STATE_READY};
+use crate::stats::{self, SessionStats, STATE_CLOSING, STATE_CLOSED, STATE_PLAYING, STATE_READY};
 use crate::Shared;
 
 /// Bumped when a capture restart would occur; the prototype starts a new
@@ -60,7 +59,7 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
                 _ = shutdown_rx.wait_for(|v| *v) => SessionEvent::Shutdown,
                 res = read_frame(&mut rx) => frame_event(res),
                 res = conn.accept_bi() => match res {
-                    Ok(_) => SessionEvent::ProtocolViolation("unexpected second bidirectional stream"),
+                    Ok(_) => SessionEvent::ExtraStream,
                     Err(_) => SessionEvent::TransportDead,
                 },
             }
@@ -79,7 +78,7 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
                     }
                 } => res,
                 res = conn.accept_bi() => match res {
-                    Ok(_) => SessionEvent::ProtocolViolation("unexpected second bidirectional stream"),
+                    Ok(_) => SessionEvent::ExtraStream,
                     Err(_) => SessionEvent::TransportDead,
                 },
             }
@@ -139,9 +138,33 @@ pub(super) async fn run(conn: Connection, shared: Arc<Shared>) {
                 .await;
                 break;
             }
-            SessionEvent::ProtocolViolation(msg) => {
-                tracing::debug!(violation = %msg, "protocol violation");
-                close_protocol_error(&conn, &stats, msg).await;
+            SessionEvent::ExtraStream => {
+                tracing::debug!("unexpected second bidirectional stream");
+                break_close(
+                    &conn, &mut tx, &mut rx, &stats, CloseReason::ProtocolError, None,
+                    &mut shutdown_seen,
+                )
+                .await;
+                break;
+            }
+            SessionEvent::ProtocolViolation(err) => {
+                tracing::debug!(violation = %violation_text(&err), "protocol violation");
+                let (reason, prelude) = match err {
+                    // A non-utf-8 AUTH payload is an auth-stage malformation:
+                    // answer AUTH_ERR(MALFORMED) then CLOSE(AUTH_FAILED).
+                    ReadFrameError::Parse(frame::FrameParseError::BadUtf8) => {
+                        stats.auth_err_malformed.fetch_add(1, Ordering::Relaxed);
+                        (
+                            CloseReason::AuthFailed,
+                            Some(Frame::AuthErr(frame::AuthErrCode::Malformed)),
+                        )
+                    }
+                    _ => (CloseReason::ProtocolError, None),
+                };
+                break_close(
+                    &conn, &mut tx, &mut rx, &stats, reason, prelude, &mut shutdown_seen,
+                )
+                .await;
                 break;
             }
             SessionEvent::TransportDead => {
@@ -166,7 +189,10 @@ enum SessionEvent {
     PeerEof,
     IdleTimeout,
     Shutdown,
-    ProtocolViolation(&'static str),
+    /// A second bidirectional stream was opened: the prototype allows exactly
+    /// one control stream.
+    ExtraStream,
+    ProtocolViolation(ReadFrameError),
     TransportDead,
 }
 
@@ -175,7 +201,7 @@ fn frame_event(res: Result<Frame, ReadFrameError>) -> SessionEvent {
         Ok(frame) => SessionEvent::Frame(frame),
         Err(ReadFrameError::Eof) => SessionEvent::PeerEof,
         Err(ReadFrameError::Transport(_)) => SessionEvent::TransportDead,
-        Err(e) => SessionEvent::ProtocolViolation(violation_text(&e)),
+        Err(e) => SessionEvent::ProtocolViolation(e),
     }
 }
 
@@ -375,20 +401,6 @@ async fn read_frame(rx: &mut RecvStream) -> Result<Frame, ReadFrameError> {
     let mut payload = vec![0u8; (frame_len - 1) as usize];
     rx.read_exact(&mut payload).await?;
     frame::parse(ty_buf[0], &payload).map_err(ReadFrameError::Parse)
-}
-
-/// Sends `AUTH_ERR(code)` + `CLOSE(PROTOCOL_ERROR)` and closes the transport.
-async fn close_protocol_error(conn: &Connection, stats: &Arc<SessionStats>, _msg: &str) {
-    stats.set_state(STATE_CLOSING);
-    stats.protocol_errors_out.fetch_add(1, Ordering::Relaxed);
-    stats.mark_close_sent(CLOSE_REASON_PROTOCOL_ERROR as u8);
-    stats.close_out.fetch_add(1, Ordering::Relaxed);
-    conn.close(
-        quinn::VarInt::from_u32(CLOSE_REASON_PROTOCOL_ERROR),
-        b"protocol-error",
-    );
-    stats.set_state(STATE_CLOSED);
-    stats.closed.store(true, Ordering::Relaxed);
 }
 
 /// Full graceful close: send any prelude frame (e.g. AUTH_ERR), the CLOSE

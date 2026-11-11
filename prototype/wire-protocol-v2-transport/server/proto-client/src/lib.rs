@@ -129,8 +129,15 @@ impl ClientConn {
     pub async fn send_frame(&mut self, frame: &Frame) -> Result<(), ClientError> {
         let bytes = frame::encode(frame)
             .map_err(|e| ClientError::Protocol(format!("encode: {e}")))?;
+        self.send_raw(&bytes).await
+    }
+
+    /// Sends arbitrary pre-encoded wire bytes — the negative protocol tests
+    /// need to speak frames the codec cannot express (unknown types, bad
+    /// payload lengths, oversized lengths).
+    pub async fn send_raw(&mut self, bytes: &[u8]) -> Result<(), ClientError> {
         self.tx
-            .write_all(&bytes)
+            .write_all(bytes)
             .await
             .map_err(|e| ClientError::Transport(format!("write: {e}")))
     }
