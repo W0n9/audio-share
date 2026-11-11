@@ -1,0 +1,8 @@
+=== cell 9 contrast: mtud ON at MTU 1500 (same everything, larger path MTU) — shows DPLPMTUD adapts to the path limit, so the 1280 cap in the mtud-on run is the path, not a config ceiling
+=== date (UTC): 2026-11-11T09:03:48Z
+=== commands: same as veth-mtu1280-mtud-on.log but veth MTU 1500
+PROTO_SERVER_READY addr=10.77.0.2:65531 spki=e75b03dc161637ba21309679fe11c5b53333f42468302b9a03f32acf50f3f694
+mode=happy ok=true session_id=1 instance=1 mds=1351 mds_end=1414 datagrams=1201 frames=144174 bytes=1177412 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1412 close_reason=Normal duration_ms=3006
+--- client exit code: 0
+PROTO_SERVER_SESSION id=1 addr=10.77.0.1:53101 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:1202 sent:1202 queue_dropped:0 sendbuf_dropped:0 bytes:1177960 batches:601) close_sent=Some("Normal") close_received=Some("Normal")
+=== cell 9 contrast verdict: at veth MTU 1500 the same --mtud configuration adapts further (mds=1351 at subscribe -> mds_end=1414, max_datagram_len=1412, oversized=0) — proving the 1280-byte path itself capped adaptation in the mtud-on run, i.e. the path limit, not a config ceiling, determined the observed sizes.

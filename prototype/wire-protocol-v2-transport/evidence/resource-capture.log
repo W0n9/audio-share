@@ -1,0 +1,121 @@
+=== cell 10: resource capture on IPv4 loopback — 60 s streaming interval and 60 s idle (connected-but-unsubscribed) interval
+=== date (UTC): 2026-11-11T09:05:33Z
+=== host: Linux 6.8.0-139-generic x86_64 GNU/Linux; toolchain: rustc 1.98.1 (48a229cea 2026-09-01)
+=== bins: proto-server 0.1.0 / proto-client 0.1.0, built from git 57e9798198fdc76e968ebf9b60e914548e553869
+=== client note: idle mode added for this cell (commit 0da8d1d): auth, wait --idle-ms unsubscribed, clean CLOSE(NORMAL)
+=== CPU sampling: pidstat -u -r -h -p <server-pid> 5 (12 samples per interval); RSS from pidstat -r (kB) + VmHWM from /proc/<pid>/status at end
+--- interval 1: STREAMING (server + happy client 60 s)
+PROTO_SERVER_READY addr=127.0.0.1:65531 spki=6ac46cf1665e1c62df4a9541502f99daf0e54670544f7f999df691ebaf37768c
+--- client line (exit 0):
+mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=23993 frames=2879182 bytes=23513316 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=60006
+--- pidstat samples (CPU% and RSS kB per 5 s; %usr %system %CPU RSS):
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时05分38秒  1000    691957    2.60    2.40    0.00    0.00    5.00     3      0.60      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时05分43秒  1000    691957    3.00    2.20    0.00    0.00    5.20     3      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时05分48秒  1000    691957    2.60    2.40    0.00    0.00    5.00     3      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时05分53秒  1000    691957    3.20    2.00    0.00    0.00    5.20     3      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时05分58秒  1000    691957    2.80    2.60    0.00    0.00    5.40     3      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时06分03秒  1000    691957    2.80    2.20    0.00    0.00    5.00     3      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时06分08秒  1000    691957    2.60    1.80    0.00    0.00    4.40     3      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时06分13秒  1000    691957    2.40    1.60    0.00    0.00    4.00     3      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时06分18秒  1000    691957    2.60    1.40    0.00    0.00    4.00     3      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时06分23秒  1000    691957    2.80    1.80    0.00    0.00    4.60     3      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时06分28秒  1000    691957    2.60    1.60    0.00    0.00    4.20     3      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时06分33秒  1000    691957    2.80    1.40    0.00    0.00    4.20     3      0.00      0.00 2447760    7200   0.01  proto-server
+--- /proc/server/status at end: VmHWM:	    8576 kB
+VmRSS:	    8576 kB
+--- host-wide Udp counters before->after: udp_in=59442322 udp_out=61687371 rcvbuf_err=44939 sndbuf_err=0 inerrors=46035 -> udp_in=59466909 udp_out=61711907 rcvbuf_err=44939 sndbuf_err=0 inerrors=46035
+--- lo counters before->after (rx_bytes rx_pkts | tx_bytes tx_pkts): 45897718656 47339649 45897718656 -> 45923214700 47365048 45923214700
+PROTO_SERVER_SESSION id=1 addr=127.0.0.1:59116 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:23994 sent:23994 queue_dropped:0 sendbuf_dropped:0 bytes:23514120 batches:11997) close_sent=Some("Normal") close_received=Some("Normal")
+
+--- interval 2: IDLE (server idle-timeout 120 s so it cannot race the client; client auths and stays unsubscribed 60 s)
+PROTO_SERVER_READY addr=127.0.0.1:65531 spki=c7172558cb34e2fa3800f1c11f5373fadb3498aa78670d8b89b267603edd5721
+--- client line (exit 1):
+RESULT ok=false error=send CLOSE
+Error: send CLOSE
+--- pidstat samples (CPU% and RSS kB per 5 s):
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时06分40秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      8.60      0.00 2447760    7488   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时06分45秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      0.00      0.00 2447760    7488   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时06分50秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      0.00      0.00 2447760    7488   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时06分55秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      0.00      0.00 2447760    7488   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时07分00秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      0.00      0.00 2447760    7488   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时07分05秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      0.00      0.00 2447760    7488   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时07分10秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      0.00      0.00 2447760    7488   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时07分15秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      0.00      0.00 2447760    7488   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时07分20秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      0.00      0.00 2447760    7488   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时07分25秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      0.00      0.00 2447760    7488   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时07分30秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      0.00      0.00 2447760    7488   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时07分35秒  1000    694134    0.00    0.00    0.00    0.00    0.00    11      0.00      0.00 2447760    7488   0.01  proto-server
+--- /proc/server/status at end: VmHWM:	    8492 kB
+VmRSS:	    8492 kB
+--- host-wide Udp counters before->after: udp_in=59466917 udp_out=61711916 rcvbuf_err=44939 sndbuf_err=0 inerrors=46035 -> udp_in=59467077 udp_out=61712154 rcvbuf_err=44939 sndbuf_err=0 inerrors=46035
+PROTO_SERVER_SESSION id=1 addr=127.0.0.1:46212 state=CLOSED frames_in=(auth:1 sub:0 unsub:0 close:0) frames_out=(auth_ok:1 auth_err:0 media_start:0 close:0 protocol_err:0) media=(produced:0 sent:0 queue_dropped:0 sendbuf_dropped:0 bytes:0 batches:0) close_sent=None close_received=None
+
+=== cell 10 supplement: clean idle interval (25 s, inside the 30 s quinn transport max_idle_timeout window)
+=== date (UTC): 2026-11-11T09:09:12Z
+=== why: the 60 s unsubscribed idle above was killed at ~30 s by quinn's default transport max_idle_timeout (30 s, keep_alive_interval none) — a library-default finding. A fully-connected idle interval that fits that window is captured here for clean resource numbers.
+=== commands:
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind 127.0.0.1:65531 --spki-out <tmp>/spki3.hex --idle-timeout-secs 120
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr 127.0.0.1:65531 --pin "$(cat <tmp>/spki3.hex)" --mode idle --idle-ms 25000
+PROTO_SERVER_READY addr=127.0.0.1:65531 spki=ed573f2f6071f585d332558ea256ddbe235c4ff9da82fc5619433bcb2f11b47b
+--- client line (exit 0):
+mode=idle ok=true session_id=1 mds=1162 datagrams=0 close_reason=Normal duration_ms=25005
+--- pidstat samples:
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时09分18秒  1000    698082    0.00    0.00    0.00    0.00    0.00    16      9.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时09分23秒  1000    698082    0.00    0.00    0.00    0.00    0.00    16      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时09分28秒  1000    698082    0.00    0.00    0.00    0.00    0.00    16      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时09分33秒  1000    698082    0.00    0.00    0.00    0.00    0.00    16      0.00      0.00 2447760    7200   0.01  proto-server
+# Time        UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+17时09分38秒  1000    698082    0.00    0.00    0.00    0.00    0.00    16      0.00      0.00 2447760    7200   0.01  proto-server
+--- /proc/server/status at end: VmHWM:	    8436 kB
+VmRSS:	    8436 kB
+--- host-wide Udp counters before->after: udp_in=59467312 udp_out=61712523 rcvbuf_err=44939 sndbuf_err=0 -> udp_in=59467478 udp_out=61712711 rcvbuf_err=44939 sndbuf_err=0
+PROTO_SERVER_SESSION id=1 addr=127.0.0.1:55581 state=CLOSED frames_in=(auth:1 sub:0 unsub:0 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:0 close:1 protocol_err:0) media=(produced:0 sent:0 queue_dropped:0 sendbuf_dropped:0 bytes:0 batches:0) close_sent=Some("Normal") close_received=Some("Normal")
+
+=== cell 10 supplement: client-side CPU/RSS during a 20 s streaming interval (loopback)
+=== date (UTC): 2026-11-11T09:12:03Z
+=== commands:
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind 127.0.0.1:65531 --spki-out <tmp>/spki4.hex --idle-timeout-secs 120
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr 127.0.0.1:65531 --pin "$(cat <tmp>/spki4.hex)" --duration-ms 20000 --min-datagrams 7000
+--- client line (exit 0): mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=8001 frames=960142 bytes=7841156 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=20005
+--- pidstat both processes (%usr %system %CPU RSS kB):
+2.80 2.40 5.20 7200 proto-server
+3.60 2.60 6.20 7488 proto-client
+3.00 2.20 5.20 7200 proto-server
+3.60 2.60 6.20 7488 proto-client
+2.80 2.20 5.00 7200 proto-server
+3.40 2.80 6.20 7488 proto-client
+2.80 2.20 5.00 7200 proto-server
+--- averages:
+--- end VmHWM server: VmHWM:	    8504 kB; client: gone
+PROTO_SERVER_SESSION id=1 addr=127.0.0.1:38013 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:8002 sent:8002 queue_dropped:0 sendbuf_dropped:0 bytes:7841960 batches:4001) close_sent=Some("Normal") close_received=Some("Normal")
+=== cell 10 verdict:
+- STREAMING (60 s, loopback, 400 dg/s): client 23993 datagrams, gaps=0, close clean; server produced/sent 23994/23994, queue_dropped=0. Server CPU mean 4.68%% of one core over 12 samples (range 4.0-5.4%%), RSS stable, VmHWM 8576 kB. Both-process 20 s run: server ~5.1%% CPU / RSS 7200 kB; client ~6.2%% CPU / RSS 7488 kB (client runs per-sample sin() verification). Host-wide Udp counter deltas over the 60 s run: udp_in +24587, udp_out +24536, zero rcvbuf/sndbuf errors; lo RX +25496044 B / +25459 pkts. Observed media timing: 23993 datagrams / 60.006 s = 399.8 dg/s vs 400.0/s production (no measurable delivery lag on loopback).
+- IDLE (connected-but-unsubscribed): the specified 60 s interval is NOT RUN as specified — quinn default transport max_idle_timeout (30 s, keep_alive_interval none) closed the idle connection at ~30 s; the client wait 60 s then failed to send CLOSE ("RESULT ok=false error=send CLOSE", exit 1) — verbatim above. Extending the window requires a TransportConfig change (max_idle_timeout or keep_alive_interval) that the prototype CLIs do not expose; recorded as a library-default finding relevant to Android foreground-service idle design. Resource capture still valid: server CPU 0.00%% across all 12 samples of the full 60 s window, RSS ~7.5 MB. A clean 25 s connected-unsubscribed interval (inside the 30 s transport window) completed: client ok=true, session_id=1, datagrams=0, close_reason=Normal; server CPU 0.00%%, RSS 7200 kB.

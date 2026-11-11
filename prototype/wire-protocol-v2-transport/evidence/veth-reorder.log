@@ -1,0 +1,29 @@
+=== cell 5: reorder (netem delay 20ms reorder 25% 50% on proto-b, server->client)
+=== date (UTC): 2026-11-11T08:38:37Z
+=== host: Linux 6.8.0-139-generic x86_64 GNU/Linux; toolchain: rustc 1.98.1 (48a229cea 2026-09-01)
+=== bins: proto-server 0.1.0 / proto-client 0.1.0, built from git 57e9798198fdc76e968ebf9b60e914548e553869
+=== topology: proto-a (host, 10.77.0.1/24, MTU 1500) <-> proto-b (netns proto-ns, 10.77.0.2/24); impairment on proto-b EGRESS only (server->client: MEDIA_START, media datagrams, server CLOSE); client->server direction unimpaired
+=== commands:
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/scripts/impairment.sh delay 20ms reorder 25% 50% proto-b
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind 10.77.0.2:65531 --spki-out <tmp>/spki.hex -v
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr 10.77.0.2:65531 --pin "$(cat <tmp>/spki.hex)" --duration-ms 5000 --min-datagrams 1500
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/scripts/impairment.sh clear proto-b   (after the run)
+qdisc netem 8005: root refcnt 37 limit 1000 delay 20ms reorder 25% 50% gap 1
+PROTO_SERVER_READY addr=10.77.0.2:65531 spki=c2eb9d99b3ca1a3b0589f066c18b4a807779a09c51caefa3d1f37e8d687607e5
+--- client stdout/stderr:
+mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=2001 frames=240142 bytes=1961156 gaps=238 duplicates=238 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=5112
+--- client exit code: 0
+--- proto-a counter DELTAS per 500ms interval (rx = server->client arrivals, tx = client->server):
+t=1794386318.968623 d_rx_pkts=101 d_rx_bytes=181654 d_tx_pkts=91 rx_drop=0
+t=1794386319.482544 d_rx_pkts=136 d_rx_bytes=219727 d_tx_pkts=67 rx_drop=0
+t=1794386319.997902 d_rx_pkts=119 d_rx_bytes=212969 d_tx_pkts=59 rx_drop=0
+t=1794386320.513061 d_rx_pkts=119 d_rx_bytes=195978 d_tx_pkts=60 rx_drop=0
+t=1794386321.027746 d_rx_pkts=125 d_rx_bytes=218086 d_tx_pkts=51 rx_drop=0
+t=1794386321.543114 d_rx_pkts=136 d_rx_bytes=211640 d_tx_pkts=59 rx_drop=0
+t=1794386322.057912 d_rx_pkts=121 d_rx_bytes=202936 d_tx_pkts=33 rx_drop=0
+t=1794386322.572867 d_rx_pkts=130 d_rx_bytes=228733 d_tx_pkts=91 rx_drop=0
+t=1794386323.089097 d_rx_pkts=139 d_rx_bytes=221880 d_tx_pkts=64 rx_drop=0
+--- host-wide Udp counters before->after client run: udp_in=59413699 udp_out=61653848 rcvbuf_err=44939 sndbuf_err=0 -> udp_in=59414962 udp_out=61654552 rcvbuf_err=44939 sndbuf_err=0
+PROTO_SERVER_SESSION id=1 addr=10.77.0.1:44896 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:2010 sent:2010 queue_dropped:0 sendbuf_dropped:0 bytes:1969800 batches:1005) close_sent=Some("Normal") close_received=Some("Normal")
+root qdisc removed from proto-b (if any)
+qdisc noqueue 0: root refcnt 2 

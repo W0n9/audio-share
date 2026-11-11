@@ -1,0 +1,15 @@
+=== cell 3: LAN-address happy path (2001:da8:237:93a:b62e:99ff:fe31:780b, port 65531)
+=== date (UTC): 2026-11-11T08:28:31Z
+=== host: Linux 6.8.0-139-generic x86_64 GNU/Linux; toolchain: rustc 1.98.1 (48a229cea 2026-09-01)
+=== bins: proto-server 0.1.0 / proto-client 0.1.0, built from git 4f17ac089d8441daa4b850eabcb8598545686ffd
+=== address source: eno1             UP             192.168.123.24/24 metric 100 2001:da8:237:93a:d886:d6c8:6968:cfb5/64 2001:da8:237:93a:e931:63aa:ad36:68a3/64 2001:da8:237:93a:fb2:af93:6c72:a9ea/64 2001:da8:237:93a:9aa3:3cd:bb3:34d3/64 2001:da8:237:93a:b353:7133:9bf5:232e/64 2001:da8:237:93a:b36b:71ab:b79:c184/64 2001:da8:237:93a:b62e:99ff:fe31:780b/64 fe80::b62e:99ff:fe31:780b/64 
+=== note: traffic to the host's own global address is locally routed (local table, via lo); this cell exercises binding/connecting on the LAN address, not wire transit
+=== commands:
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind [2001:da8:237:93a:b62e:99ff:fe31:780b]:65531 --spki-out <tmp>/spki.hex
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr [2001:da8:237:93a:b62e:99ff:fe31:780b]:65531 --pin "$(cat <tmp>/spki.hex)" --duration-ms 1000 --min-datagrams 100
+PROTO_SERVER_READY addr=[2001:da8:237:93a:b62e:99ff:fe31:780b]:65531 spki=940d0eb8366fcf45cfc9aaa00459356c040c6466ee8424fd3d9ff10e9fa7674f
+--- client stdout/stderr:
+mode=happy ok=true session_id=1 instance=1 mds=1162 datagrams=401 frames=48142 bytes=393156 gaps=0 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=1006
+--- client exit code: 0
+--- server shutdown session line:
+PROTO_SERVER_SESSION id=1 addr=[2001:da8:237:93a:b62e:99ff:fe31:780b]:47067 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:402 sent:402 queue_dropped:0 sendbuf_dropped:0 bytes:393960 batches:201) close_sent=Some("Normal") close_received=Some("Normal")

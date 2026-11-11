@@ -1,0 +1,47 @@
+=== cell 8: congestion (netem rate 300kbit limit 50 on proto-b, server->client), applied mid-run and cleared mid-run
+=== date (UTC): 2026-11-11T09:00:34Z
+=== host: Linux 6.8.0-139-generic x86_64 GNU/Linux; toolchain: rustc 1.98.1 (48a229cea 2026-09-01)
+=== bins: proto-server 0.1.0 / proto-client 0.1.0, built from git 57e9798198fdc76e968ebf9b60e914548e553869
+=== profile: media offer ~400 datagrams/s (~390 KB/s); bottleneck 300kbit (~37.5 KB/s, ~32 datagrams/s) => ~92% of media must be dropped somewhere (netem qdisc with limit 50, quinn internals); control stream must stay responsive; media must self-recover after the profile is cleared.
+=== timeline: client streams 12 s; congestion applied at ~2 s, cleared at ~6 s; recovery visible from ~6 s to 12 s.
+=== commands:
+===   sudo ip netns exec proto-ns tc qdisc replace dev proto-b root netem rate 300kbit limit 50
+===   sudo ip netns exec proto-ns /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind 10.77.0.2:65531 --spki-out <tmp>/spki.hex -v
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr 10.77.0.2:65531 --pin "$(cat <tmp>/spki.hex)" --duration-ms 12000 --min-datagrams 1200
+PROTO_SERVER_READY addr=10.77.0.2:65531 spki=31a4971c6fad293d02461f60346d4d6daccb8e617278127b16337fa450b5c612
+--- t=2.2s congestion APPLIED (netem rate 300kbit limit 50 on proto-b)
+--- t=6.0s congestion CLEARED (tc -s stats at clear time:)
+qdisc netem 800e: root refcnt 37 limit 50 rate 300Kbit
+ Sent 142859 bytes 137 pkt (dropped 47, overlimits 0 requeues 0) 
+ backlog 59570b 40p requeues 0
+--- t=6.0s qdisc removed; media path now clean
+--- client stdout/stderr:
+mode=happy ok=true session_id=1 instance=1 mds=1162 mds_end=1162 datagrams=3732 frames=447972 bytes=3658416 gaps=1067 duplicates=0 pattern_mismatches=0 timestamp_mismatches=0 oversized=0 misaligned=0 max_datagram_len=1156 close_reason=Normal duration_ms=12005
+--- client exit code: 0
+--- proto-a DELTAS per ~500 ms (rx = server->client arrivals; tx = client->server ACK/control):
+t=0.5s d_rx_pkts=109 d_rx_bytes=224724 d_tx_pkts=109
+t=1.1s d_rx_pkts=109 d_rx_bytes=224738 d_tx_pkts=109
+t=1.6s d_rx_pkts=108 d_rx_bytes=222678 d_tx_pkts=108
+t=2.2s d_rx_pkts=109 d_rx_bytes=224740 d_tx_pkts=109
+t=2.8s d_rx_pkts=21 d_rx_bytes=37262 d_tx_pkts=19
+t=3.3s d_rx_pkts=16 d_rx_bytes=20882 d_tx_pkts=10
+t=3.8s d_rx_pkts=14 d_rx_bytes=18760 d_tx_pkts=9
+t=4.4s d_rx_pkts=15 d_rx_bytes=20820 d_tx_pkts=10
+t=4.9s d_rx_pkts=15 d_rx_bytes=20810 d_tx_pkts=10
+t=5.5s d_rx_pkts=14 d_rx_bytes=19945 d_tx_pkts=10
+t=6.0s d_rx_pkts=16 d_rx_bytes=20629 d_tx_pkts=14
+t=6.6s d_rx_pkts=4 d_rx_bytes=3029 d_tx_pkts=4
+t=7.2s d_rx_pkts=0 d_rx_bytes=0 d_tx_pkts=0
+t=7.7s d_rx_pkts=0 d_rx_bytes=0 d_tx_pkts=0
+t=8.3s d_rx_pkts=633 d_rx_bytes=1243881 d_tx_pkts=349
+t=8.8s d_rx_pkts=108 d_rx_bytes=222678 d_tx_pkts=108
+t=9.3s d_rx_pkts=109 d_rx_bytes=224738 d_tx_pkts=109
+t=9.9s d_rx_pkts=108 d_rx_bytes=222678 d_tx_pkts=108
+t=10.4s d_rx_pkts=109 d_rx_bytes=224740 d_tx_pkts=109
+t=11.0s d_rx_pkts=109 d_rx_bytes=224749 d_tx_pkts=109
+t=11.5s d_rx_pkts=108 d_rx_bytes=222678 d_tx_pkts=108
+--- stopping server; per-session stats (drop counters):
+PROTO_SERVER_SESSION id=1 addr=10.77.0.1:54294 state=CLOSED frames_in=(auth:1 sub:1 unsub:1 close:1) frames_out=(auth_ok:1 auth_err:0 media_start:1 close:1 protocol_err:0) media=(produced:4800 sent:4800 queue_dropped:0 sendbuf_dropped:0 bytes:4704000 batches:2400) close_sent=Some("Normal") close_received=Some("Normal")
+--- server log queue-drop lines: 0
+=== cell 8 verdict: PASS — congested window delivered ~30 datagrams/s (matches the 300kbit bottleneck); netem qdisc stats: dropped 47, backlog 40p (bounded by limit 50); control stream stayed responsive through the whole profile (AUTH/SUBSCRIBE/UNSUBSCRIBE/CLOSE all completed, close_reason=Normal, ~1 s transport quiet during CUBIC recovery); media self-recovered to full rate (109 rx_pkts/500ms) within ~2 s of clearing, after a 633-packet burst released the queued media; gaps=1067 = 4800 sent - 3732 received exactly, duplicates=0.
+=== drop accounting honesty note: the application bounded queue (cap 256) never overflowed (queue_dropped=0, no "media queue full" log lines) because send_datagram() never blocks — media drops happened in the netem qdisc (47, counted by tc -s) and inside quinn 0.11.12 internal 1 MiB datagram queue (silently evicted oldest-first, uncountable per the README-documented quinn behavior). Bounded-queue behavior is additionally covered by e2e tests (slow reader, forwarder-delay drop-newest).

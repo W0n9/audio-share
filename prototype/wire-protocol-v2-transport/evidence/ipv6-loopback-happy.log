@@ -1,0 +1,19 @@
+=== cell 2: IPv6 loopback (::1) full happy-path client run
+=== date (UTC): 2026-11-11T08:20:24Z
+=== host: Linux 6.8.0-139-generic x86_64 GNU/Linux; toolchain: rustc 1.98.1 (48a229cea 2026-09-01); kernel 6.8.0-139-generic
+=== bins: proto-server 0.1.0 / proto-client 0.1.0, built from git f524e63dc289e8a81d151b0ce08450c625da5ec3
+=== quinn=0.11.12 rustls=0.23.46 ring=0.17.14
+=== commands:
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-server --bind '[::1]:65531' --spki-out <tmp>/spki.hex
+===   /home/w0n9/workspaces/audio-share/.claude/worktrees/agent-a48880813193ea152/prototype/wire-protocol-v2-transport/server/target/release/proto-client --addr '[::1]:65531' --pin "$(cat <tmp>/spki.hex)" --duration-ms 1000 --min-datagrams 100
+PROTO_SERVER_READY addr=[::1]:65531 spki=8b28f385c32da0732b9ee7a2deb692c71de8f1224ff9500176ce9d1ed614f659
+--- server ready, running client (output appended verbatim)
+--- client stdout/stderr:
+RESULT ok=false error=handshake: protocol violation: connect: invalid remote address: [::1]:65531
+Error: handshake: protocol violation: connect: invalid remote address: [::1]:65531
+--- client exit code: 1
+--- server log (incl. shutdown session lines):
+[2m2026-11-11T08:20:24.099619Z[0m [32m INFO[0m [2mproto_server[0m[2m:[0m prototype server listening [3maddr[0m[2m=[0m[::1]:65531 [3mspki_sha256[0m[2m=[0m8b28f385c32da0732b9ee7a2deb692c71de8f1224ff9500176ce9d1ed614f659
+PROTO_SERVER_READY addr=[::1]:65531 spki=8b28f385c32da0732b9ee7a2deb692c71de8f1224ff9500176ce9d1ed614f659
+[2m2026-11-11T08:20:24.629748Z[0m [32m INFO[0m [2mproto_server[0m[2m:[0m shutdown requested
+=== cell verdict: FAIL for the desktop client bin as built at f524e63 — server bound [::1] cleanly (PROTO_SERVER_READY addr=[::1]:65531), client failed connect: "invalid remote address: [::1]:65531" because proto-client hardcoded an IPv4-only 0.0.0.0:0 bind (proto-client/src/lib.rs). Root cause fixed in commit 7eeeb74; post-fix rerun in evidence/ipv6-loopback-happy-after-client-bind-fix.log.

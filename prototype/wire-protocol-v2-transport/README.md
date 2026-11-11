@@ -101,12 +101,16 @@ Run a client (happy path, ~1 s of media):
 
 Client flags/modes: `--pin-file F`, `--credential TOKEN`, `--alpn S`
 (default `audio-share/v2`), `--wrong-alpn`, `--wrong-pin`, `--wrong-credential`
-(negative tests), `--duration-ms`, `--min-datagrams`, `--stop-reading-ms`
-(slow-reader demonstration), `--mtud`, `-v/-vv`. Modes: `happy` (default),
-`hold` (subscribe, then wait for a server-initiated close — used for the
-server-stop case), `no-auth-subscribe`, `bad-msg-type`. Every run prints one
-`RESULT ...` line with counters and exits 0 when the intended flow completed
-(intended negative outcomes included).
+(negative tests), `--duration-ms`, `--idle-ms`, `--min-datagrams`,
+`--stop-reading-ms` (slow-reader demonstration), `--mtud`, `-v/-vv`. Modes:
+`happy` (default), `hold` (subscribe, then wait for a server-initiated close —
+used for the server-stop case), `idle` (auth, stay connected-but-unsubscribed
+for `--idle-ms`, then clean CLOSE — used for the resource-capture matrix cell),
+`no-auth-subscribe`, `bad-msg-type`. Every run prints one `RESULT ...` line
+with counters and exits 0 when the intended flow completed (intended negative
+outcomes included). The client binds the wildcard address of the server
+address's family (`0.0.0.0:0` for IPv4 targets, `[::]:0` for IPv6 targets) so
+both families are reachable.
 
 Scripted smoke run (8 cases, PASS/FAIL each, appends to
 `evidence/desktop-e2e.log`):
@@ -260,9 +264,19 @@ NOT RUN, handled by later gates:
   stop), foreground-service lifecycle, screen-off/process death,
   Wi-Fi↔cellular migration (scaffolded; no device attached on this host);
 - ALPN/0-RTT on-wire assertions from the Android side;
-- IPv4/IPv6 path matrix and actual impairment measurements
-  (`scripts/impairment.sh` commands were verified against a live veth pair on
-  this host, but no impairment measurement was executed);
-- reduced-MTU sizing measurements (enable `--mtud` on both ends first);
 - the GO/NO-GO verdict — that is the ticket reporter's job once device runs
   exist.
+
+Desktop transport matrix (ticket 01 implementer C): the IPv4/IPv6 path cells
+and the impairment/reduced-MTU/resource matrix WERE executed on this host;
+evidence lives in `evidence/` (`ipv6-loopback-happy*.log`, `lan-ipv4-happy.log`,
+`lan-ipv6-happy.log`, `veth-loss2pct.log`, `veth-reorder.log`,
+`veth-duplicate5pct.log`, `veth-jitter.log`, `veth-congestion.log`,
+`veth-mtu1280-mtud-{on,off}.log`, `veth-mtu1500-mtud-on.log`,
+`resource-capture.log`). Server side ran inside the `proto-ns` netns of the
+`scripts/impairment.sh` veth pair with netem profiles on `proto-b` egress
+(server→client); profiles applied and cleared per cell via the script's
+subcommands. The 60 s unsubscribed-idle resource interval is blocked by
+quinn's default 30 s transport `max_idle_timeout` (see
+`evidence/resource-capture.log`); a 25 s connected-unsubscribed interval was
+captured instead.

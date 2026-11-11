@@ -49,13 +49,17 @@ struct Args {
     #[arg(long)]
     wrong_credential: bool,
 
-    /// Run mode: happy | hold | no-auth-subscribe | bad-msg-type.
+    /// Run mode: happy | hold | idle | no-auth-subscribe | bad-msg-type.
     #[arg(long, default_value = "happy")]
     mode: String,
 
     /// How long to receive media in happy mode (ms).
     #[arg(long, default_value_t = 1000)]
     duration_ms: u64,
+
+    /// How long an `idle`-mode session stays connected-but-unsubscribed (ms).
+    #[arg(long, default_value_t = 1000)]
+    idle_ms: u64,
 
     /// Minimum datagrams to require in happy mode.
     #[arg(long, default_value_t = 50)]
@@ -197,7 +201,14 @@ async fn run(args: Args) -> anyhow::Result<String> {
                 .await
                 {
                     Ok(Ok(dg)) => {
-                        verifier.check(&dg, mds);
+                        // Re-queried per datagram so the oversized invariant is
+                        // checked against the CURRENT limit (relevant when
+                        // DPLPMTUD adapts mid-run); falls back to the value
+                        // queried right after subscribe.
+                        let limit = conn
+                            .max_datagram_size()
+                            .unwrap_or(mds);
+                        verifier.check(&dg, limit);
                         if args.stop_reading_ms > 0 && verifier.datagrams == 10 {
                             // Slow-reader demonstration: stop consuming.
                             tokio::time::sleep(Duration::from_millis(args.stop_reading_ms)).await;
@@ -215,6 +226,7 @@ async fn run(args: Args) -> anyhow::Result<String> {
                 ));
             }
 
+            let mds_end = conn.max_datagram_size().context("datagrams lost mid-run")?;
             conn.unsubscribe().await.context("unsubscribe")?;
             conn.send_close_normal().await.context("send CLOSE")?;
             let reason = conn
@@ -227,7 +239,7 @@ async fn run(args: Args) -> anyhow::Result<String> {
             );
 
             Ok(counters(format!(
-                "session_id={session_id} instance={} mds={mds} datagrams={} frames={} bytes={} gaps={} duplicates={} \
+                "session_id={session_id} instance={} mds={mds} mds_end={mds_end:?} datagrams={} frames={} bytes={} gaps={} duplicates={} \
                  pattern_mismatches={} timestamp_mismatches={} oversized={} misaligned={} max_datagram_len={} close_reason={reason:?}",
                 media_start.stream_instance_id,
                 verifier.datagrams,
@@ -240,6 +252,27 @@ async fn run(args: Args) -> anyhow::Result<String> {
                 verifier.oversized,
                 verifier.misaligned,
                 verifier.max_datagram_len,
+            )))
+        }
+        "idle" => {
+            // Resource-capture scenario: authenticated and READY, never
+            // subscribed, then a normal client-initiated goodbye.
+            let session_id = conn.auth(&cfg.credential).await.context("auth")?;
+            let mds = conn
+                .max_datagram_size()
+                .context("datagrams unsupported by server")?;
+            tokio::time::sleep(Duration::from_millis(args.idle_ms.max(1))).await;
+            conn.send_close_normal().await.context("send CLOSE")?;
+            let reason = conn
+                .expect_close(Duration::from_secs(3))
+                .await
+                .context("expect CLOSE ack")?;
+            anyhow::ensure!(
+                reason == CloseReason::Normal,
+                "expected CLOSE(Normal), got {reason:?}"
+            );
+            Ok(counters(format!(
+                "session_id={session_id} mds={mds} datagrams=0 close_reason={reason:?}"
             )))
         }
         "hold" => {
@@ -301,7 +334,7 @@ async fn run(args: Args) -> anyhow::Result<String> {
             Ok(counters(format!("close_reason={reason:?}")))
         }
         other => Err(anyhow::anyhow!(
-            "unknown mode {other:?} (happy|hold|no-auth-subscribe|bad-msg-type)"
+            "unknown mode {other:?} (happy|hold|idle|no-auth-subscribe|bad-msg-type)"
         )),
     }
 }
