@@ -8,3 +8,9 @@ publish = false
 path = "src/lib.rs"
 
 [dev-dependencies]
+proto-core.workspace = true
+proto-server.workspace = true
+proto-client.workspace = true
+tokio.workspace = true
+rcgen.workspace = true
+tracing-subscriber.workspace = true
