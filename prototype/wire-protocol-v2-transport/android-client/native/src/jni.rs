@@ -65,6 +65,8 @@ pub extern "system" fn Java_dev_prototype_wireproto_ProtoNative_createSession(
     pinned_spki_sha256_hex: JString,
     credential: JString,
 ) -> jlong {
+    #[cfg(target_os = "android")]
+    crate::init_android_logger();
     guard(|| {
         let host: String = env
             .get_string(&host)

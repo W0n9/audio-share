@@ -12,6 +12,18 @@ pub mod session;
 pub mod stats;
 pub mod verify;
 
+/// android_logger init (device only). Called from createSession.
+#[cfg(target_os = "android")]
+pub fn init_android_logger() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        android_logger::init_once(
+            android_logger::Config::default().with_max_level(log::LevelFilter::Info),
+        );
+    });
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
