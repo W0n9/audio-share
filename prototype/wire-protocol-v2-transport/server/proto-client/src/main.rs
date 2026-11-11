@@ -49,13 +49,17 @@ struct Args {
     #[arg(long)]
     wrong_credential: bool,
 
-    /// Run mode: happy | hold | no-auth-subscribe | bad-msg-type.
+    /// Run mode: happy | hold | idle | no-auth-subscribe | bad-msg-type.
     #[arg(long, default_value = "happy")]
     mode: String,
 
     /// How long to receive media in happy mode (ms).
     #[arg(long, default_value_t = 1000)]
     duration_ms: u64,
+
+    /// How long an `idle`-mode session stays connected-but-unsubscribed (ms).
+    #[arg(long, default_value_t = 1000)]
+    idle_ms: u64,
 
     /// Minimum datagrams to require in happy mode.
     #[arg(long, default_value_t = 50)]
@@ -242,6 +246,27 @@ async fn run(args: Args) -> anyhow::Result<String> {
                 verifier.max_datagram_len,
             )))
         }
+        "idle" => {
+            // Resource-capture scenario: authenticated and READY, never
+            // subscribed, then a normal client-initiated goodbye.
+            let session_id = conn.auth(&cfg.credential).await.context("auth")?;
+            let mds = conn
+                .max_datagram_size()
+                .context("datagrams unsupported by server")?;
+            tokio::time::sleep(Duration::from_millis(args.idle_ms.max(1))).await;
+            conn.send_close_normal().await.context("send CLOSE")?;
+            let reason = conn
+                .expect_close(Duration::from_secs(3))
+                .await
+                .context("expect CLOSE ack")?;
+            anyhow::ensure!(
+                reason == CloseReason::Normal,
+                "expected CLOSE(Normal), got {reason:?}"
+            );
+            Ok(counters(format!(
+                "session_id={session_id} mds={mds} datagrams=0 close_reason={reason:?}"
+            )))
+        }
         "hold" => {
             conn.auth(&cfg.credential).await.context("auth")?;
             conn.subscribe().await.context("subscribe")?;
@@ -301,7 +326,7 @@ async fn run(args: Args) -> anyhow::Result<String> {
             Ok(counters(format!("close_reason={reason:?}")))
         }
         other => Err(anyhow::anyhow!(
-            "unknown mode {other:?} (happy|hold|no-auth-subscribe|bad-msg-type)"
+            "unknown mode {other:?} (happy|hold|idle|no-auth-subscribe|bad-msg-type)"
         )),
     }
 }
