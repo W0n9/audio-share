@@ -611,7 +611,7 @@ fn recognized_config(
         }
     }
     if let Some(value) = document.get("App", "theme") {
-        match ThemeSetting::from_name(&value) {
+        match ThemeSetting::from_name(value) {
             Some(theme) => config.theme = theme,
             None => {
                 notices.push(ConfigNotice::InvalidValue {

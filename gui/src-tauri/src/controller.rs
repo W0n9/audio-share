@@ -118,8 +118,9 @@ impl ServerController {
     ///
     /// v0.3.4 keeps autostart, launch/close behavior, update checks, and
     /// language editable while the server runs, so this deliberately does not
-    /// require the stopped state. `[App] Running` and the Server fields come
-    /// from the controller, never from the caller.
+    /// require the stopped state. The GUI theme rides along as an application
+    /// setting. `[App] Running` and the Server fields come from the
+    /// controller, never from the caller.
     pub fn save_application_settings(
         &self,
         application: ApplicationSettings,
@@ -132,6 +133,7 @@ impl ServerController {
         settings.when_close = application.when_close;
         settings.auto_update = application.auto_update;
         settings.language = application.language.trim().to_owned();
+        settings.theme = application.theme;
         self.persist(&settings)?;
         state.settings = settings.clone();
         Ok(settings)
@@ -154,6 +156,7 @@ impl ServerController {
             when_close: current.when_close,
             auto_update: current.auto_update,
             language: current.language.clone(),
+            theme: current.theme,
             running: current.running,
             ..Settings::default()
         };
@@ -317,7 +320,7 @@ mod tests {
     use audio_share_core::capture::{
         synthetic_backend, CaptureConfig, CaptureSession, Endpoint, FrameSink, SyntheticCapture,
     };
-    use audio_share_core::config::{load, EncodingSetting, LoadOptions};
+    use audio_share_core::config::{load, EncodingSetting, LoadOptions, ThemeSetting};
     use audio_share_core::protocol::{encode_command, Command};
     use audio_share_core::Error;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -507,6 +510,7 @@ mod tests {
                 when_close: audio_share_core::config::WhenClose::Exit,
                 auto_update: true,
                 language: "zh-CN".to_owned(),
+                theme: ThemeSetting::Dark,
                 running: false,
             })
             .unwrap();
@@ -526,12 +530,18 @@ mod tests {
         assert_eq!(reset.when_close, audio_share_core::config::WhenClose::Exit);
         assert!(reset.auto_update);
         assert_eq!(reset.language, "zh-CN");
+        assert_eq!(
+            reset.theme,
+            ThemeSetting::Dark,
+            "reset must preserve the theme like every application setting"
+        );
         assert_eq!(controller.settings(), reset);
 
         let on_disk = load_config(&path);
         assert_eq!(on_disk.port, 65_530);
         assert_eq!(on_disk.encoding, EncodingSetting::Default);
         assert!(on_disk.autostart);
+        assert_eq!(on_disk.theme, ThemeSetting::Dark);
     }
 
     #[tokio::test]
@@ -792,6 +802,7 @@ mod tests {
                 when_close: audio_share_core::config::WhenClose::Exit,
                 auto_update: true,
                 language: "zh-CN".to_owned(),
+                theme: ThemeSetting::Light,
             })
             .expect("application settings save while running");
 
@@ -810,6 +821,11 @@ mod tests {
         );
         assert!(updated.auto_update);
         assert_eq!(updated.language, "zh-CN");
+        assert_eq!(
+            updated.theme,
+            ThemeSetting::Light,
+            "the theme is an application setting and must save while running"
+        );
         assert_eq!(controller.status().state, ServerState::Running);
 
         let on_disk = load_config(&path);
@@ -819,6 +835,7 @@ mod tests {
             on_disk.when_close,
             audio_share_core::config::WhenClose::Exit
         );
+        assert_eq!(on_disk.theme, ThemeSetting::Light);
     }
 
     #[test]
