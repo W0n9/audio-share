@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use audio_share_core::capture::Endpoint;
 use audio_share_core::config::{
-    backup_path, load, save, Config, ConfigNotice, EncodingSetting, LoadOptions, WhenAppStart,
-    WhenClose, CONFIG_VERSION, DEFAULT_PORT,
+    backup_path, load, save, Config, ConfigNotice, EncodingSetting, LoadOptions, ThemeSetting,
+    WhenAppStart, WhenClose, CONFIG_VERSION, DEFAULT_PORT,
 };
 use audio_share_core::server::default_host;
 
@@ -79,6 +79,7 @@ fn fresh_config_uses_defaults_and_writes_version_two() {
     assert_eq!(loaded.config.when_close, WhenClose::Minimize);
     assert!(!loaded.config.auto_update);
     assert_eq!(loaded.config.language, "default");
+    assert_eq!(loaded.config.theme, ThemeSetting::System);
     assert!(!loaded.config.running);
     assert!(
         loaded.notices.is_empty(),
@@ -89,6 +90,7 @@ fn fresh_config_uses_defaults_and_writes_version_two() {
     assert!(raw.contains("configVersion=2"), "raw config was {raw:?}");
     assert!(raw.contains("port=65530"), "raw config was {raw:?}");
     assert!(raw.contains("WhenClose=1"), "raw config was {raw:?}");
+    assert!(raw.contains("theme=system"), "raw config was {raw:?}");
     assert!(
         !raw.as_bytes().starts_with(&[0xef, 0xbb, 0xbf]),
         "writes must not include a UTF-8 BOM"
@@ -116,6 +118,11 @@ fn legacy_v1_values_migrate_and_unknown_keys_survive() {
     assert_eq!(loaded.config.when_close, WhenClose::Exit);
     assert!(loaded.config.auto_update);
     assert_eq!(loaded.config.language, "zh-CN");
+    assert_eq!(
+        loaded.config.theme,
+        ThemeSetting::System,
+        "a legacy config has no theme key; the GUI default is System"
+    );
     assert!(loaded.config.running);
     assert_eq!(
         loaded.notices,
@@ -127,6 +134,10 @@ fn legacy_v1_values_migrate_and_unknown_keys_survive() {
     assert!(raw.contains("configVersion=2"), "raw config was {raw:?}");
     assert!(raw.contains("port=65000"), "raw config was {raw:?}");
     assert!(raw.contains("encoding=4"), "raw config was {raw:?}");
+    assert!(
+        raw.contains("theme=system"),
+        "migration must write the theme default: {raw:?}"
+    );
     assert!(
         raw.contains("[Unknown]\nKeep=me"),
         "unknown keys must survive migration: {raw:?}"
@@ -368,6 +379,7 @@ fn reads_are_case_insensitive_and_trim_win32_style() {
 [aPP]
 ConfigVersion=2
 LANGUAGE=\"zh-CN\"
+Theme = \"Dark\"
 
 [network]
  HOST = 10.2.3.4
@@ -384,6 +396,11 @@ WhenClose=0
     let loaded = load(&path, LoadOptions::default()).expect("case-insensitive read");
 
     assert_eq!(loaded.config.language, "zh-CN", "quotes must be stripped");
+    assert_eq!(
+        loaded.config.theme,
+        ThemeSetting::Dark,
+        "theme matching must be case-insensitive and strip quotes"
+    );
     assert_eq!(loaded.config.host, "10.2.3.4");
     assert_eq!(loaded.config.port, 62_000);
     assert_eq!(loaded.config.encoding, EncodingSetting::S24);
@@ -553,6 +570,111 @@ fn legacy_read_only_location_values_migrate_into_the_writable_target() {
         read(&legacy),
         "[App]\nconfigVersion=1\n[Network]\nhost=10.4.4.4\nport=64000\n",
         "the read-only legacy file must be left untouched"
+    );
+}
+
+#[test]
+fn theme_values_round_trip_through_the_ini_key() {
+    for (theme, name) in [
+        (ThemeSetting::System, "system"),
+        (ThemeSetting::Light, "light"),
+        (ThemeSetting::Dark, "dark"),
+    ] {
+        let dir = tempdir();
+        let path = config_path(dir.path());
+
+        save(
+            &path,
+            &Config {
+                theme,
+                ..Config::default()
+            },
+        )
+        .expect("save theme");
+
+        let raw = read(&path);
+        assert!(
+            raw.contains(&format!("theme={name}")),
+            "raw config was {raw:?}"
+        );
+        let loaded = load(&path, LoadOptions::default()).expect("reload theme");
+        assert_eq!(loaded.config.theme, theme, "theme {name} must round-trip");
+        assert!(loaded.notices.is_empty());
+    }
+
+    // Matching is Win32-style: trimmed and case-insensitive.
+    for (raw_name, expected) in [
+        ("SYSTEM", ThemeSetting::System),
+        (" Light ", ThemeSetting::Light),
+        ("\"dark\"", ThemeSetting::Dark),
+    ] {
+        let dir = tempdir();
+        let path = config_path(dir.path());
+        write(
+            &path,
+            &format!("[App]\nconfigVersion=2\ntheme={raw_name}\n"),
+        );
+        let loaded = load(&path, LoadOptions::default()).expect("theme name read");
+        assert_eq!(loaded.config.theme, expected, "value {raw_name:?}");
+    }
+    assert_eq!(ThemeSetting::from_name("purple"), None);
+    assert_eq!(ThemeSetting::from_name(""), None);
+}
+
+#[test]
+fn unknown_theme_values_fall_back_to_system_and_are_reported() {
+    let dir = tempdir();
+    let path = config_path(dir.path());
+    write(
+        &path,
+        "[App]\nconfigVersion=2\nlanguage=zh-CN\ntheme=blue\n",
+    );
+
+    let loaded = load(&path, LoadOptions::default()).expect("unknown theme");
+
+    assert_eq!(loaded.config.theme, ThemeSetting::System);
+    assert!(
+        loaded.notices.contains(&ConfigNotice::InvalidValue {
+            key: "theme".to_owned(),
+            value: "blue".to_owned(),
+        }),
+        "notices were {:?}",
+        loaded.notices
+    );
+    assert_eq!(
+        loaded.config.language, "zh-CN",
+        "an invalid theme must not disturb other fields"
+    );
+    assert!(
+        read(&path).contains("theme=system"),
+        "the corrected value is written back"
+    );
+}
+
+#[test]
+fn a_missing_theme_key_defaults_to_system_without_a_rewrite() {
+    // A v2 config written before themes existed is the 0.4.0 upgrade path.
+    let dir = tempdir();
+    let path = config_path(dir.path());
+    write(&path, "[App]\nconfigVersion=2\nlanguage=zh-CN\n");
+    let original = fs::read(&path).unwrap();
+
+    let loaded = load(&path, LoadOptions::default()).expect("theme-less v2 load");
+
+    assert_eq!(loaded.config.theme, ThemeSetting::System);
+    assert_eq!(
+        loaded.config.language, "zh-CN",
+        "existing fields must be untouched"
+    );
+    assert!(
+        loaded.notices.is_empty(),
+        "a missing theme key is not a correction: {:?}",
+        loaded.notices
+    );
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        original,
+        "a config without a theme key must not be rewritten by the load alone"
     );
 }
 

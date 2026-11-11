@@ -18,7 +18,7 @@ v0.3.4; the released **Android Client remains v0.3.4** and works without an
 update.
 
 <p>
-<img src="docs/server-rewrite/img/ticket08-main.png" width="45%" alt="Server GUI">
+<img src="docs/server-rewrite/img/gui-mod-04-main-light.png" width="30%" alt="Server GUI">
 <img src="metadata/en-US/images/phoneScreenshots/1.png" width="30%" alt="Android Client">
 </p>
 
@@ -45,17 +45,18 @@ desktop session must provide it.
 
 1. Start `AudioShareServer` (`AudioShareServer.exe` on Windows).
 2. Check the Host and Port (default port `65530`). Host defaults to the first
-   address matching v0.3.4's private-network mask. Make sure the phone can
-   reach it.
+   address matching v0.3.4's private-network mask; the field also suggests the
+   machine's local IPv4 addresses. Make sure the phone can reach it.
 3. Pick an audio Endpoint and an Encoding, then click **Start Server**.
 4. In the Android Client, enter the same host and port and press play.
 
 The window is tray-first: Show, Start/Stop, and Exit are available from the
-tray menu. Settings include autostart, launch behavior, close behavior,
-language (en-US / zh-CN), update checks, and (on Windows) Firewall Repair and
-the system Sound Panel. Linux replaces the Windows-only maintenance actions
-with documentation links; the tray menu is right-click only because Tauri does
-not deliver left-click events on Linux.
+tray menu. Settings include the appearance theme (System / Light / Dark),
+autostart, launch behavior, close behavior, language (en-US / zh-CN), update
+checks, and (on Windows) Firewall Repair and the system Sound Panel. Linux
+replaces the Windows-only maintenance actions with documentation links; the
+tray menu is right-click only because Tauri does not deliver left-click events
+on Linux.
 
 ## `as-cmd`
 

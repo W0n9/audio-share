@@ -28,6 +28,12 @@ _Avoid_: MFC app, desktop client
 The command-line entry point of Server Core.
 _Avoid_: CLI
 
+## Appearance
+
+**Theme**:
+The Server GUI appearance preference; one of System, Light, or Dark, where System follows the operating system color scheme.
+_Avoid_: color scheme, dark mode, skin
+
 ## Audio
 
 **Endpoint**:

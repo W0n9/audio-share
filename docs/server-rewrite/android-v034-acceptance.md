@@ -231,3 +231,17 @@ APK" box stays unchecked until the two-client item is recorded (the mono
 combinations require a different host/driver). The scripted matrix, server
 soak, and GUI checklist are necessary but not sufficient: only the real v0.3.4
 APK can prove the "无感播放" (seamless playback) requirement.
+
+## Modernized-build re-check (2026-11-11)
+
+The modernized Server GUI (Variant C, ticket branch) was checked against the
+same phone and the released v0.3.4 APK (`versionCode 3004`). The phone
+connected to `10.8.144.155:65530` and created a 48 kHz stereo f32 AudioTrack
+(format `0x5`, 2052 frames), displayed "已开始", and played for 30 s with no
+FATAL/underrun in logcat. Stopping the server produced the client's
+"Not enough data available … 会在2秒内重试" prompt; restarting it made the
+phone reconnect automatically and create a new AudioTrack (124 → 125) with
+playback resumed. Screenshots:
+`docs/server-rewrite/img/gui-mod-04-android-v034-{playing,retry,reconnected}.png`.
+This is the modernized-build regression only; the full 2026-11-10 matrix
+above remains the v0.3.4 baseline.

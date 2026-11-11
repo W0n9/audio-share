@@ -10,7 +10,7 @@
     type Notice,
   } from "./lib/ipc";
   import { t } from "./lib/i18n.svelte";
-  import { statusLabel } from "./lib/status";
+  import Icon from "./lib/Icon.svelte";
   import ServerView from "./views/ServerView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
 
@@ -53,8 +53,12 @@
     };
   });
 
-  function toggleView(): void {
-    server.view = server.view === "main" ? "settings" : "main";
+  function openSettings(): void {
+    server.openSettings();
+  }
+
+  function closeSettings(): void {
+    server.closeSettings();
   }
 
   function noticeText(notice: Notice): string {
@@ -72,21 +76,24 @@
 </script>
 
 <div class="app">
+  <!-- The header carries only the brand and the Settings entry; the server
+       state lives once, in the main view's status area. -->
   <header class="header">
-    <div class="brand-icon" aria-hidden="true">♪</div>
-    <div class="titles">
-      <div class="name">{t("app.name")}</div>
-      <div class="sub">
-        {server.view === "settings" ? t("settings.title") : statusLabel(server.status.state)}
+    {#if server.view === "main"}
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><Icon name="music" size={16} /></span>
+        <span class="brand-name">{t("app.name")}</span>
       </div>
-    </div>
-    <button
-      class="icon-btn"
-      aria-label={server.view === "main" ? t("action.settings") : t("action.back")}
-      onclick={toggleView}
-    >
-      {server.view === "main" ? "⚙" : "←"}
-    </button>
+      <button class="icon-btn" aria-label={t("action.settings")} onclick={openSettings}>
+        <Icon name="settings" size={18} />
+      </button>
+    {:else}
+      <button class="icon-btn" aria-label={t("action.back")} onclick={closeSettings}>
+        <Icon name="back" size={18} />
+      </button>
+      <strong class="header-title">{t("settings.title")}</strong>
+      <span class="header-spacer" aria-hidden="true"></span>
+    {/if}
   </header>
 
   {#if server.notices.length > 0}
