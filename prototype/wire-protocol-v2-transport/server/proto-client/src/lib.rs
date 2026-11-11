@@ -94,11 +94,16 @@ pub async fn connect(cfg: &ClientConfig) -> Result<ClientConn, ClientError> {
     }
     client_config.transport_config(Arc::new(transport));
 
-    let mut endpoint =
-        quinn::Endpoint::client("0.0.0.0:0".parse().map_err(|e| {
-            ClientError::Protocol(format!("client bind: {e}"))
-        })?)
-        .map_err(|e| ClientError::Protocol(format!("client endpoint: {e}")))?;
+    // Bind the wildcard address of the server's address family: an IPv4-only
+    // bind cannot send to an IPv6 remote (quinn rejects the family mismatch).
+    let bind_addr = if cfg.server_addr.is_ipv4() {
+        SocketAddr::from(([0u8, 0, 0, 0], 0))
+    } else {
+        SocketAddr::from(([0u16; 8], 0))
+    };
+    let mut endpoint = quinn::Endpoint::client(bind_addr).map_err(|e| {
+        ClientError::Protocol(format!("client endpoint: {e}"))
+    })?;
     endpoint.set_default_client_config(client_config);
     let connecting = endpoint
         .connect(cfg.server_addr, "localhost")
