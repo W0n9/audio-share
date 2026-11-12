@@ -368,7 +368,12 @@ impl StateMachine {
         }
         let request_id = frame_request_id(&frame);
         match frame.body {
-            Some(frame::Body::Close(_)) => {
+            Some(frame::Body::Close(close)) => {
+                if close.code == 0 {
+                    // §4.4 validation table: `Close` with code == 0 is
+                    // malformed (spec:264/:419), not a one-way close → 401.
+                    return self.malformed_fatal(0);
+                }
                 // Close is one-way and never echoed (§5.4 invariant 4).
                 self.close(ServerState::Closing);
                 Vec::new()
