@@ -1,0 +1,18 @@
+[versions]
+# Mirrors android-app/ (the shared toolchain) — AGP 8.7.3 / Kotlin 2.0.21 /
+# Gradle 8.9; protobuf-kotlin-lite 4.28.2 + plugin 0.9.4 per libs.versions.toml
+# there. Two ends, one .proto, one toolchain.
+agp = "8.7.3"
+kotlin = "2.0.21"
+protobufPlugin = "0.9.4"
+protobuf = "4.28.2"
+junit = "4.13.2"
+
+[libraries]
+google-protobuf-kotlin-lite = { module = "com.google.protobuf:protobuf-kotlin-lite", version.ref = "protobuf" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }
