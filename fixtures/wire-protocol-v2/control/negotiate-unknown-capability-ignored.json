@@ -1,0 +1,61 @@
+{
+  "id": "control.negotiate-unknown-capability-ignored",
+  "category": "control-happy-path",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.4 (validation table: capabilities list)",
+    "docs/wire-protocol-v2/spec.md §4.5 (unknown ids are ignored)",
+    "docs/wire-protocol-v2/pairing.md §6.3 (canonical form: count(u8) || id(u32 BE) ascending)"
+  ],
+  "description": "A well-formed but unknown capability id is IGNORED, not rejected: the canonical single-id list [7] is accepted and the honored intersection echoed back is empty.",
+  "preconditions": [
+    "Session authenticated; state NEGOTIATING (request_id 2 follows the auth exchange's 1).",
+    "v2.0 assigns no capability ids, so id 7 is unknown-but-optional; spec §4.5 rules unknown ids ignored.",
+    "The list on the wire is unique and ascending, so the canonical encoding exists: 01 00000007."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "negotiate",
+      "frame_hex": "000000103a0e0902000000000000001002220107",
+      "body_hex": "3a0e0902000000000000001002220107",
+      "length": 16,
+      "decoded": {
+        "request_id": 2,
+        "protocol_major": 2,
+        "protocol_minor": 0,
+        "capabilities": [
+          7
+        ]
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "negotiate_response",
+      "frame_hex": "0000000f420d09020000000000000012001802",
+      "body_hex": "420d09020000000000000012001802",
+      "length": 15,
+      "decoded": {
+        "request_id": 2,
+        "status": {},
+        "protocol_major": 2,
+        "protocol_minor": 0,
+        "capabilities": []
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "The Negotiate is well-formed (single id, ascending, unique) — no 401.",
+    "Id 7 is unknown in v2.0 (no ids are assigned); per spec §4.5 it is ignored and the honored intersection is empty: NegotiateResponse.capabilities = [] (not encoded).",
+    "102 (UNSUPPORTED_CAPABILITY) is reserved for a KNOWN capability the Server cannot honor — unreachable in v2.0 because no ids exist yet; only a reviewed spec revision can assign one (spec §4.5)."
+  ]
+}

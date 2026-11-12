@@ -1,0 +1,38 @@
+{
+  "id": "control.error-501-capture-failure-stream-ended",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (PLAYING: capture failed -> push StreamEnded(501, retryable=true))",
+    "docs/wire-protocol-v2/spec.md §6.2 (501 CAPTURE_FAILURE)",
+    "docs/wire-protocol-v2/spec.md §4.4 (StreamEnded carries code + detail, no Status)"
+  ],
+  "description": "Capture fails mid-stream: the Server pushes StreamEnded(501) — state PLAYING -> READY; diagnostics counters survive for finalization.",
+  "preconditions": [
+    "State PLAYING with stream instance 1, config_generation 1.",
+    "StreamEnded carries the registry code in its own code field — the retryable=true note in §5.2 is the §6.2 registry property, not a wire field of StreamEnded."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "stream_ended",
+      "frame_hex": "000000088a0305080110f503",
+      "body_hex": "8a0305080110f503",
+      "length": 8,
+      "decoded": {
+        "stream_instance_id": 1,
+        "code": 501
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "Unsolicited push (StreamEnded has no request_id field at all — spec §4.4).",
+    "State moves PLAYING -> READY; the Client finalizes per-instance statistics (spec §5.3).",
+    "Contrast control.error-502-stream-ended-capture-end (normal end, same message shape, code 502).",
+    "A capture RESTART would push StreamEnded(502) followed by StreamStarted(new instance) — see media/instance-change for that pairing."
+  ]
+}

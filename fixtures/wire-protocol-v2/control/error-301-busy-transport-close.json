@@ -1,0 +1,28 @@
+{
+  "id": "control.error-301-busy-transport-close",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (CONNECTING: capacity exceeded -> transport close carrying 301)",
+    "docs/wire-protocol-v2/spec.md §6.2 (301 BUSY: retryable=yes, re-pairing=no)",
+    "docs/wire-protocol-v2/spec.md §10 (32 established sessions, TM-2; 16 concurrent handshakes, TM-1)"
+  ],
+  "description": "Server at capacity: the connection is refused BEFORE any control frame exists — signaled ONLY by the QUIC application close code 301 (no Error frame, no Close frame).",
+  "preconditions": [
+    "State machine: CONNECTING; the Server is at its established-session limit (default 32) or handshake limit (16).",
+    "This is the transport-close-only signaling mode named by the §5.2 row — there is no control stream exchange at all."
+  ],
+  "steps": [
+    {
+      "kind": "transport-close",
+      "index": 1,
+      "code": 301,
+      "closed_by": "S",
+      "note": "No control frames are sent or expected; the QUIC application close carries code 301."
+    }
+  ],
+  "assertions": [
+    "Expected control-stream bytes: NONE. The only observable is the transport close with code 301.",
+    "Client policy (spec §6.3): 301 is retryable -> reconnect with backoff (1 s base, ×2, 30 s cap, ±20% jitter).",
+    "Contrast with error-602, which DOES send a Close frame — some failure modes signal only via the transport close code, others via frames; the §5.2 rows decide which."
+  ]
+}

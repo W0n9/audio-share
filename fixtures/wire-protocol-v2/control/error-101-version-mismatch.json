@@ -1,0 +1,79 @@
+{
+  "id": "control.error-101-version-mismatch",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.4 (validation table: protocol_major ≠ 2 -> 101)",
+    "docs/wire-protocol-v2/spec.md §6.2 (101 VERSION_MISMATCH: retryable=no, re-pairing=no)",
+    "docs/wire-protocol-v2/spec.md §6.3 (101: no automatic reconnect)"
+  ],
+  "description": "Version conflict: Negotiate with protocol_major = 1 is refused with Error(101)+Close(101).",
+  "preconditions": [
+    "Session authenticated; state NEGOTIATING; request_id counter at 2 (auth exchange used 1).",
+    "A major mismatch would normally already fail at ALPN; this vector pins the in-band defense for a major that reaches the application anyway (spec §4.4)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "negotiate",
+      "frame_hex": "0000000d3a0b0902000000000000001001",
+      "body_hex": "3a0b0902000000000000001001",
+      "length": 13,
+      "decoded": {
+        "request_id": 2,
+        "protocol_major": 1,
+        "protocol_minor": 0,
+        "capabilities": []
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "0000000f2a0d09020000000000000012020865",
+      "body_hex": "2a0d09020000000000000012020865",
+      "length": 15,
+      "decoded": {
+        "request_id": 2,
+        "status": {
+          "code": 101
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "0000000432020865",
+      "body_hex": "32020865",
+      "length": 4,
+      "decoded": {
+        "code": 101
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 101,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "Status: code 101, retryable=false, requires_repairing=false — the §6.2 registry defaults that v2.0 senders MUST equal (spec §4.2).",
+    "No detail on an in-band refusal would be allowed only pre-auth; this one still sends none, keeping the response minimal.",
+    "Client policy (spec §6.3): 101 -> no automatic reconnect; surface to user.",
+    "A minor GREATER than the Server's would also yield 101; minor <= the Server's negotiates (see control.negotiate-happy-path)."
+  ]
+}

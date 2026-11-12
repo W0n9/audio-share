@@ -1,0 +1,51 @@
+{
+  "warning": "TEST-ONLY MATERIAL. These keys and constants exist only to make the golden vectors deterministic and replayable. Never use any value from this file in a production build, and never ship a binary containing them (pairing.md §11.3: test-only bypasses live behind compile-time test features; production binaries contain no runtime path to them).",
+  "client_identity_key": {
+    "algorithm": "ECDSA P-256 with SHA-256 (pairing.md §2, PR-2)",
+    "derivation": "d = SHA-256(\"audio-share v2 TEST-ONLY client identity key (do not use in production)\") mod n",
+    "private_scalar_d_hex": "87fb33cdf19dc9ec6324570648e8f354d26d5262e4930182382220bec2fdfac7",
+    "public_key_sec1_compressed_hex": "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d",
+    "public_key_spki_der_hex": "3039301306072a8648ce3d020106082a8648ce3d03010703220003d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d"
+  },
+  "client_signing_nonce": {
+    "derivation": "k = SHA-256(\"audio-share v2 TEST-ONLY ECDSA nonce | \" + <label>) mod n",
+    "labels": {
+      "auth-happy-path": "audio-share v2 TEST-ONLY ECDSA nonce | auth-happy-path",
+      "pairing-confirm-qr": "audio-share v2 TEST-ONLY ECDSA nonce | pairing-confirm-qr",
+      "pairing-confirm-sas": "audio-share v2 TEST-ONLY ECDSA nonce | pairing-confirm-sas"
+    },
+    "note": "ECDSA k is normally per-signature randomness; the vectors pin one k per signature so the recorded 64-byte r||s is reproducible. Implementations VERIFY the recorded signatures (deterministic); they never reproduce them."
+  },
+  "server_identity_key": {
+    "algorithm": "Ed25519 (pairing.md §2, PR-1)",
+    "derivation": "seed = SHA-256(\"audio-share v2 TEST-ONLY server identity key (do not use in production)\"); PKCS#8 DER = 302e020100300506032b657004220420 || seed",
+    "seed_hex": "79312e07167e58348fc4b28109c9fb8eadc983f3a2275b47c69df14af91a14a7",
+    "public_key_raw_hex": "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c",
+    "spki_der_hex": "302a300506032b657003210011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c",
+    "spki_pin_sha256_hex": "f75d188f6cedd011bc363699ffc247b7c98c9baa3500ce48507225582b881847",
+    "note": "The pin (SHA-256 of the SPKI DER) is recorded for the fingerprint path (pairing.md §7.4); no vector verifies the Server key — CertificateVerify is inside TLS and out of vector scope."
+  },
+  "fixed_randomness": {
+    "auth_server_random_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "pairing_server_random_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+    "pairing_client_random_hex": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+    "pairing_nonce_hex": "808182838485868788898a8b8c8d8e8f",
+    "note": "CSPRNG outputs are fixture-fixed constants in the vectors; production uses a CSPRNG."
+  },
+  "fixed_exporter_outputs": {
+    "auth_exporter_32_hex": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "pairing_binding_qr_48_hex": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "pairing_binding_sas_48_hex": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+    "sas_seed_32_hex": "e0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+    "sas_display_code": "900067",
+    "note": "TLS-Exporter outputs are connection-scoped secrets (pairing.md §6.3); the vectors fix them as constants so signatures and the recorded binding_context values are verifiable without a TLS session."
+  },
+  "derivation_assumptions": [
+    "pairing.md §6.3 TLV(1, mode): encoded as the pairing.md §6.2 ASCII mode string ('qr' / 'sas'). SPEC GAP: the accepted spec does not state the mode encoding in the binding; flagged to the maintainer in ticket 05 (one-line fixture change if adjudicated otherwise).",
+    "pairing.md §6.3/§9.1 TLV(*, protocol_major): encoded as u32 big-endian, consistent with capabilities_canonical's u32 BE ids. SPEC GAP: encoding not stated; flagged.",
+    "spec.md §4.1's band table lists oneof cases 1–6 for band 1–15 while §4.4 defines Negotiate/NegotiateResponse in that band without case numbers; they are assigned 7 and 8 in protos/wire-protocol-v2/control.proto. SPEC GAP: flagged to the maintainer.",
+    "spec.md §7.5 lists 'reserved flag bits set' as malformed media while §7.1 and the §12 parked row say reserved bits are ignored (accepted with D4); vectors follow the adjudicated ignore rule. SPEC GAP: flagged.",
+    "spec.md §5.2 writes PairingResult(201, detail \"declined\") for the approval-declined row while §4.2/TM-6 forbid detail in pre-auth responses; the declined case is NOT vectorized (both readings agree on code 201 + Close) and the conflict is flagged.",
+    "spec.md §5.2's CONNECTING row says 'Error(401 or 402)' for a stray first frame; vectors use NEGOTIATING/READY states (pinned rows) for the state-violation cases."
+  ]
+}

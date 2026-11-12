@@ -1,0 +1,75 @@
+{
+  "id": "control.subscribe-before-ready-402",
+  "category": "control-negative-space",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.4 (Error/Close)",
+    "docs/wire-protocol-v2/spec.md §5.2 (NEGOTIATING: any other Frame -> Error(402)+Close(402))",
+    "docs/wire-protocol-v2/spec.md §5.4 invariant 2 (subscription cannot complete before READY)"
+  ],
+  "description": "State violation: a Subscribe arriving before READY (here: in NEGOTIATING, before Negotiate) is answered with the fatal pair Error(402)+Close(402).",
+  "preconditions": [
+    "Session authenticated; state NEGOTIATING (Negotiate not yet sent).",
+    "Isolated connection; request_id counter starts at 1."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "subscribe",
+      "frame_hex": "0000000c820209090100000000000000",
+      "body_hex": "820209090100000000000000",
+      "length": 12,
+      "decoded": {
+        "request_id": 1
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000102a0e0901000000000000001203089203",
+      "body_hex": "2a0e0901000000000000001203089203",
+      "length": 16,
+      "decoded": {
+        "request_id": 1,
+        "status": {
+          "code": 402
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "000000053203089203",
+      "body_hex": "3203089203",
+      "length": 5,
+      "decoded": {
+        "code": 402
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 402,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "The request decoded fine, so the Error echoes its request_id (1).",
+    "402 is fatal here (paired with Close): the non-fatal, connection-kept 402 exists only for a duplicate Subscribe in READY/PLAYING (spec §5.2 error classes).",
+    "Media subscription can never complete before pairing/auth/negotiation/configuration by state legality; violations produce a defined error, never a silent ignore (spec §5.4)."
+  ]
+}

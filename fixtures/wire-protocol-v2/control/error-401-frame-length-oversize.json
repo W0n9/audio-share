@@ -1,0 +1,67 @@
+{
+  "id": "control.error-401-frame-length-oversize",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §3 (framing: length > 65536 -> Error(401)+Close(401), before any allocation)",
+    "docs/wire-protocol-v2/spec.md §10 (control frame size 64 KiB hard cap)"
+  ],
+  "description": "Framing violation: a length prefix declaring 65537 bytes — one over the 64 KiB cap — is refused on the prefix alone, before any body bytes are read or allocated.",
+  "preconditions": [
+    "State machine: CONNECTING."
+  ],
+  "steps": [
+    {
+      "kind": "raw-stream",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "bytes_hex": "00010001",
+      "length": 4,
+      "note": "Declares 65537 body bytes; no body is sent at all — the receiver must reject on the prefix."
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000072a051203089103",
+      "body_hex": "2a051203089103",
+      "length": 7,
+      "decoded": {
+        "request_id": 0,
+        "status": {
+          "code": 401
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "000000053203089103",
+      "body_hex": "3203089103",
+      "length": 5,
+      "decoded": {
+        "code": 401
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 401,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "65536 is the hard cap and only a length STRICTLY greater is a violation — see limits/frame-cap-65536-accepted for the accepted boundary.",
+    "The rejection must happen before allocation (spec §3): a receiver that buffers first and checks later violates the spec.",
+    "Error is unsolicited (request_id 0, not encoded)."
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "id": "control.error-602-datagram-unsupported",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §7.3 (unsupported datagram path -> Close(602))",
+    "docs/wire-protocol-v2/spec.md §6.2 (602 DATAGRAM_UNSUPPORTED: retryable=yes)",
+    "docs/wire-protocol-v2/spec.md §11.2 (path MTU profile)"
+  ],
+  "description": "The transport cannot carry media: no QUIC DATAGRAM support, or the datagram limit is below header + one frame — the Server sends Close(602).",
+  "preconditions": [
+    "Connection established, control stream open (the failure is discovered before/at media setup).",
+    "The §7.3 row names Close(602) alone — no paired Error frame."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "00000005320308da04",
+      "body_hex": "320308da04",
+      "length": 5,
+      "decoded": {
+        "code": 602
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 2,
+      "code": 602,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "retryable=true per §6.2: reconnect with backoff (the condition may be path-dependent).",
+    "The interop floor (§7.3): every implementation must accept media payloads up to 1176 B (1200 − 24) — smaller limits than that make the path unsupported; see media/interop-floor-1176.",
+    "Unlike 301/601, this row sends a Close FRAME — the §5.2/§7.3 rows decide per case."
+  ]
+}

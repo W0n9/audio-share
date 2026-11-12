@@ -1,0 +1,131 @@
+{
+  "id": "media.config-change-mid-stream",
+  "category": "media-plane",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (PLAYING: decode-affecting config change -> generation +1, push ConfigurationPublished)",
+    "docs/wire-protocol-v2/spec.md §7.1 (flags: CONFIG_CHANGE on the first datagram of a greater generation)",
+    "docs/wire-protocol-v2/spec.md §7.5 (superseded generation: drop, count unknown_config_drops)",
+    "docs/wire-protocol-v2/spec.md §7.6 (unknown configuration: bounded hold, then drop)"
+  ],
+  "description": "Decode-affecting change mid-stream (48 kHz -> 96 kHz): generation increments 1 -> 2 inside the SAME instance, the reliable ConfigurationPublished push announces it, and media switches generation — including a stale gen-1 datagram that must be dropped, never decoded with either config.",
+  "preconditions": [
+    "Session PLAYING; instance 1; 30 frames per datagram (240 B F32LE stereo).",
+    "The reliable control push and the unreliable datagrams have NO cross-channel ordering guarantee — that is why media carries its generation (§7.2)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "configuration_published",
+      "frame_hex": "00000013aa0210120e080210011a080880ee0510021801",
+      "body_hex": "aa0210120e080210011a080880ee0510021801",
+      "length": 19,
+      "decoded": {
+        "request_id": 0,
+        "configuration": {
+          "config_generation": 2,
+          "codec": 1,
+          "pcm": {
+            "sample_rate": 96000,
+            "channels": 2,
+            "sample_format": 1
+          }
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok",
+      "note": "Push: config_generation 2, 96 kHz. May arrive before or after the gen-2 datagrams."
+    },
+    {
+      "kind": "datagram",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "00000001000000010000002900000000000004b000000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+      "length": 264,
+      "decoded": {
+        "stream_instance_id": 1,
+        "config_generation": 1,
+        "sequence": 41,
+        "timestamp": 1200,
+        "flags": "0x00000000",
+        "flags_set": [],
+        "payload_bytes": 240,
+        "payload_frames": 30,
+        "frame_bytes": 8
+      },
+      "note": "Last normal gen-1 datagram."
+    },
+    {
+      "kind": "datagram",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "00000001000000020000002a00000000000004ce00000002f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "length": 264,
+      "decoded": {
+        "stream_instance_id": 1,
+        "config_generation": 2,
+        "sequence": 42,
+        "timestamp": 1230,
+        "flags": "0x00000002",
+        "flags_set": [
+          "CONFIG_CHANGE"
+        ],
+        "payload_bytes": 240,
+        "payload_frames": 30,
+        "frame_bytes": 8
+      },
+      "note": "First gen-2 datagram: CONFIG_CHANGE set; generation field is authoritative."
+    },
+    {
+      "kind": "datagram",
+      "index": 4,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "00000001000000010000002b00000000000004ec00000000e0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+      "length": 264,
+      "decoded": {
+        "stream_instance_id": 1,
+        "config_generation": 1,
+        "sequence": 43,
+        "timestamp": 1260,
+        "flags": "0x00000000",
+        "flags_set": [],
+        "payload_bytes": 240,
+        "payload_frames": 30,
+        "frame_bytes": 8
+      },
+      "note": "Stale reorder: gen-1 datagram arriving after gen-2 — drop, count unknown_config_drops."
+    },
+    {
+      "kind": "datagram",
+      "index": 5,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "00000001000000020000002c000000000000050a00000000d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "length": 264,
+      "decoded": {
+        "stream_instance_id": 1,
+        "config_generation": 2,
+        "sequence": 44,
+        "timestamp": 1290,
+        "flags": "0x00000000",
+        "flags_set": [],
+        "payload_bytes": 240,
+        "payload_frames": 30,
+        "frame_bytes": 8
+      },
+      "note": "Normal gen-2 datagram."
+    }
+  ],
+  "assertions": [
+    "config_generation +1 per decode-affecting change (sample_rate/channels/sample_format/codec) within the instance (§7.2); identical content keeps the generation.",
+    "The stale gen-1 datagram (step 4) is dropped and counted in unknown_config_drops — never decoded with the previous generation (§7.5); it is NOT decoded under gen 1 either.",
+    "If a gen-2 datagram arrives before ConfigurationPublished, it is HELD (never decoded): <= 100 ms or <= 32 datagrams, overflow drops oldest; still unknown after 2 s -> Error(403)+Close(403) (§7.6).",
+    "CONFIG_CHANGE is a fast-path hint only; the generation field is authoritative (§7.1).",
+    "Sequence and timestamps continue across the change (per-instance counters, §7.1/§7.2)."
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "id": "control.error-201-pairing-proof-invalid",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (PairingConfirm: binding_echo mismatch or client_proof invalid -> PairingResult(201)+Close(201))",
+    "docs/wire-protocol-v2/pairing.md §6.3.1 (Server verifies client_proof BEFORE persisting)",
+    "docs/wire-protocol-v2/spec.md §6.2 (201 PAIRING_REJECTED: retryable=no, re-pairing=yes)"
+  ],
+  "description": "Pairing with a wrong client_proof: binding_echo verifies, but the 64-byte proof signature does not (one byte flipped) — nothing is persisted, PairingResult(201)+Close(201).",
+  "preconditions": [
+    "QR pairing in progress (same exchange as control.pairing-happy-path-qr); nonce valid and admission gate open; local approval granted.",
+    "State machine: AUTHENTICATING (pairing exchange)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "pairing_confirm",
+      "frame_hex": "0000008092017d0901000000000000001230909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf1a40c7ae8b6474ebb7b6d654febfce10e38d3a479b4534b5436bbb7714ae3652bfc30b0d8ffbf1582ecb2af24e25ba47876b4a35dd00af0924b57648871f95baeee0",
+      "body_hex": "92017d0901000000000000001230909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf1a40c7ae8b6474ebb7b6d654febfce10e38d3a479b4534b5436bbb7714ae3652bfc30b0d8ffbf1582ecb2af24e25ba47876b4a35dd00af0924b57648871f95baeee0",
+      "length": 128,
+      "decoded": {
+        "request_id": 1,
+        "binding_echo": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "client_proof": "c7ae8b6474ebb7b6d654febfce10e38d3a479b4534b5436bbb7714ae3652bfc30b0d8ffbf1582ecb2af24e25ba47876b4a35dd00af0924b57648871f95baeee0"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "pairing_result",
+      "frame_hex": "000000139a0110090100000000000000120508c9011801",
+      "body_hex": "9a0110090100000000000000120508c9011801",
+      "length": 19,
+      "decoded": {
+        "request_id": 1,
+        "status": {
+          "code": 201,
+          "requires_repairing": true
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "00000005320308c901",
+      "body_hex": "320308c901",
+      "length": 5,
+      "decoded": {
+        "code": 201
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 201,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "The Server verifies client_proof BEFORE persisting the identity or sending PairingResult(OK); verification failure means NOTHING is persisted (pairing.md §6.3.1).",
+    "Status: code 201, retryable=false, requires_repairing=true; no detail — pre-auth refusals carry none (spec §4.2).",
+    "A nonce is consumed by the FIRST well-formed PairingRequest regardless of outcome, so a fresh QR is required after this failure (pairing.md §5).",
+    "The identical outcome (201+Close) applies to a binding_echo mismatch (pairing.md §6.3)."
+  ]
+}

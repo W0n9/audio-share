@@ -1,0 +1,44 @@
+{
+  "id": "media.reduced-mtu-full-size",
+  "category": "media-plane",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §7.3 (payload_max = max_datagram_size() − 24, re-queried at send time, D2)",
+    "docs/wire-protocol-v2/spec.md §11.2 (path MTU 1280 profile)",
+    "docs/wire-protocol-v2/spec.md §2 D2 (prototype: mds 1192 at path MTU 1280)"
+  ],
+  "description": "Reduced path MTU (DPLPMTUD converged at mds = 1192, the value the prototype observed at path MTU 1280): payload_max = 1168 = 146 whole F32LE stereo frames — the datagram is sized to the CURRENT limit at send time.",
+  "preconditions": [
+    "Session PLAYING; instance 5, generation 1; 48 kHz stereo F32LE.",
+    "The limit is this session's CURRENT max_datagram_size() (1192) — never a fixed 1464/1500 assumption, never cached across path changes (D2)."
+  ],
+  "steps": [
+    {
+      "kind": "datagram",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "000000050000000100000000000000000000000000000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f",
+      "length": 1192,
+      "decoded": {
+        "stream_instance_id": 5,
+        "config_generation": 1,
+        "sequence": 0,
+        "timestamp": 0,
+        "flags": "0x00000001",
+        "flags_set": [
+          "STREAM_START"
+        ],
+        "payload_bytes": 1168,
+        "payload_frames": 146,
+        "frame_bytes": 8
+      },
+      "note": "payload_max = 1192 − 24 = 1168; 146 frames; STREAM_START."
+    }
+  ],
+  "assertions": [
+    "payload_max = max_datagram_size() − 24, re-queried per send (D2); receivers MUST NOT validate a sender's datagram size against their own local limit (D2).",
+    "Frame alignment holds exactly at the limit here: 1168 % 8 == 0. For a limit that does not divide evenly see media/reduced-mtu-alignment-floor.",
+    "Payload bytes are the synthetic ramp; alignment and sizing are what the vector pins.",
+    "If the path limit drops further, the next datagram is simply smaller (per-send sizing); oversized sends fail and are re-chunked or dropped (§7.3)."
+  ]
+}

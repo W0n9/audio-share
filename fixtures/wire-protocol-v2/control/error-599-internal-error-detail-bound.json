@@ -1,0 +1,78 @@
+{
+  "id": "control.error-599-internal-error-detail-bound",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (any: fatal error raised -> matching Error + Close)",
+    "docs/wire-protocol-v2/spec.md §6.2 (599 INTERNAL_ERROR, bounded detail)",
+    "docs/wire-protocol-v2/spec.md §10 (error payload <= 512 B post-auth; detail <= 256 B, TM-7)",
+    "docs/wire-protocol-v2/spec.md §4.2 (detail rules: no secrets, paths, or stack traces)"
+  ],
+  "description": "Internal Server error while processing a request, shown at the maximum detail size (256 bytes): Error(599) + Close(599), with the post-auth payload bound asserted.",
+  "preconditions": [
+    "Session authenticated and negotiated (post-auth: the 512 B payload bound applies).",
+    "The Server hits an unexpected internal failure while processing RequestConfiguration(request_id 7)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "request_configuration",
+      "frame_hex": "0000000ca20209090700000000000000",
+      "body_hex": "a20209090700000000000000",
+      "length": 12,
+      "decoded": {
+        "request_id": 7
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000001152a920209070000000000000012860208d70422800278787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878",
+      "body_hex": "2a920209070000000000000012860208d70422800278787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878",
+      "length": 277,
+      "decoded": {
+        "request_id": 7,
+        "status": {
+          "code": 599,
+          "detail": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "00000005320308d704",
+      "body_hex": "320308d704",
+      "length": 5,
+      "decoded": {
+        "code": 599
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 599,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "The Error carries detail at its 256-byte maximum (256 'x' characters — content is placeholder, no secrets/paths/stack traces per §4.2).",
+    "Total framed Error size must stay <= 512 B (asserted via size_bounds).",
+    "Fatal: Error+Close with the same code; the connection is torn down.",
+    "Client policy (§6.3): 599 -> no automatic reconnect; surface to user."
+  ]
+}
