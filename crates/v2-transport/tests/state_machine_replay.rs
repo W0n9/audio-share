@@ -692,3 +692,35 @@ fn ready() -> (std::sync::Arc<AuthorizationStore>, StateMachine) {
     machine_negotiate(&mut machine);
     (store, machine)
 }
+
+#[test]
+fn pairing_capability_list_401s_replay_byte_identically() {
+    // §4.4 decidability: a malformed capability list is 401 BEFORE pairing
+    // admission semantics are consulted. Both fixture cases pin that order
+    // (their own assertions say the lists are malformed, never declined).
+    let fixtures = fixture_set();
+    let cases = fixtures.control_cases().expect("cases parse");
+    for id in [
+        "control.error-401-pairing-capabilities-over-255",
+        "control.error-401-pairing-duplicate-capabilities",
+    ] {
+        let (_, case) = cases
+            .iter()
+            .find(|(_, case)| case.id == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("{id} present"));
+        let (_store, mut machine) = fresh();
+        let request = case
+            .steps
+            .iter()
+            .find(|step| step.message.as_deref() == Some("pairing_request"))
+            .and_then(|step| step.body_hex.clone())
+            .unwrap_or_else(|| panic!("{id}: pairing_request step"));
+        let events = vec![Event::Frame {
+            frame: Box::new(feed(&request)),
+            source: unhex(CLIENT_PUB),
+        }];
+        assert_steps_match(&case, &mut machine, &events);
+        assert_eq!(machine.state(), ServerState::Closing, "{id}");
+    }
+}
