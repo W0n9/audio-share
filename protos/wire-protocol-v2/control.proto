@@ -1,0 +1,368 @@
+/*
+   Wire Protocol v2 — control-plane schema.
+
+   Normative source: docs/wire-protocol-v2/spec.md §4–§5, §9 (accepted 2026-11-12,
+   maintainer adjudication) and docs/wire-protocol-v2/pairing.md §6.2 (accepted
+   2026-11-12). This file is a transcription of the spec's tables: every field
+   number, width, and type below is frozen by the spec; the schema adds no fields
+   and renumbers nothing. Unknown proto3 fields are ignored on the wire (spec §4.4
+   validation table).
+
+   Spec §4.1 names this file `audio_share_v2.proto`; the repository places it at
+   `protos/wire-protocol-v2/control.proto`. The file name is not wire-visible;
+   `package audio.share.v2` is the wire-relevant identity.
+
+   Framing (spec §3): the control stream carries `u32 BE length | Frame`, where
+   `length` is the exact byte length of the serialized `Frame` message.
+   `length == 0` or `length > 65536` → Error(401)+Close(401), before any allocation.
+
+   The v2.0 media plane (spec §7) carries no protobuf: media rides QUIC DATAGRAMs
+   behind a fixed 24-byte header (HEADER_SIZE = 24, D4). It is NOT RTP
+   wire-compatible; its bit-exact layout, for reference next to this schema:
+
+     offset  width  field                byte order  rule
+     0       4      stream_instance_id   BE u32      ∈ [1, 2^32−1]; 0 invalid
+     4       4      config_generation    BE u32      ∈ [1, 2^32−1]; +1 per
+                                                     decode-affecting change
+     8       4      sequence             BE u32      per instance: starts 0,
+                                                     +1 per datagram, mod 2^32
+     12      8      timestamp            BE u64      capture-clock sample-frame
+                                                     position of the first payload
+                                                     frame; per instance starts 0
+     20      4      flags                BE u32      bit0 (0x1) STREAM_START ·
+                                                     bit1 (0x2) CONFIG_CHANGE ·
+                                                     bit2 (0x4) SPARE, send 0 ·
+                                                     bits 3–31 reserved, send 0
+     24      …      payload              —           PCM sample frames in the
+                                                     Transfer Format (little-endian
+                                                     sample bytes)
+
+   Note (ticket 05, flagged for the maintainer): spec §4.1's band table lists
+   oneof cases 1–6 for band 1–15, while §4.4's "Connection lifecycle (band 1–15)"
+   block also defines Negotiate and NegotiateResponse in that band without
+   assigning their case numbers. They are assigned the next free numbers in the
+   band here (7 and 8).
+*/
+
+syntax = "proto3";
+
+package audio.share.v2;
+
+// Envelope for every control-stream message (spec §4.1). The oneof case is the
+// message type — behavior never depends on enum ordinals, struct layout, or the
+// position of a four-byte command. A Frame with no `body` set is malformed (401).
+message Frame
+{
+    oneof body
+    {
+        // Band 1–15: connection lifecycle (auth, negotiation, errors, close).
+        AuthInit auth_init = 1;
+        AuthChallenge auth_challenge = 2;
+        AuthProof auth_proof = 3;
+        AuthResult auth_result = 4;
+        Error error = 5;
+        Close close = 6;
+        // See the header note: case numbers 7/8 assigned by ticket 05; the spec
+        // band table omits Negotiate/NegotiateResponse (spec gap, flagged).
+        Negotiate negotiate = 7;
+        NegotiateResponse negotiate_response = 8;
+
+        // Band 16–31: pairing (sequence and crypto semantics: pairing.md §6).
+        PairingRequest pairing_request = 16;
+        PairingResponse pairing_response = 17;
+        PairingConfirm pairing_confirm = 18;
+        PairingResult pairing_result = 19;
+
+        // Band 32–47: subscription and configuration publication.
+        Subscribe subscribe = 32;
+        SubscribeResponse subscribe_response = 33;
+        Unsubscribe unsubscribe = 34;
+        UnsubscribeResponse unsubscribe_response = 35;
+        RequestConfiguration request_configuration = 36;
+        ConfigurationPublished configuration_published = 37;
+
+        // Band 48–63: stream-instance lifecycle.
+        StreamStarted stream_started = 48;
+        StreamEnded stream_ended = 49;
+
+        // Band 64–79: diagnostics (spec §9).
+        PlaybackDiagnostics playback_diagnostics = 64;
+    }
+
+    // Unassigned fields inside the bands and the whole 80+ range are reserved
+    // (spec §4.1); new messages append inside a band, assigned only by a
+    // reviewed spec revision.
+    reserved 9 to 15, 20 to 31, 38 to 47, 50 to 63, 65 to 79, 80 to max;
+}
+
+// Conventions (spec §4.1, D5): field 1 of every request and response is
+// `fixed64 request_id`; field 2 of every response is `Status`; payload data
+// occupies fields ≥ 3. `request_id` is sender-assigned, unique per sender per
+// connection, monotonically increasing from 1; the receiver echoes it verbatim
+// and never interprets it. `0` = "not a response" (pushes); a fixed64 0 is the
+// proto3 default and is therefore not encoded on the wire.
+message Status
+{
+    uint32 code = 1;             // 0 = success; otherwise a §6 registry code
+    bool retryable = 2;          // meaningful when code != 0; MUST equal the §6.2 registry default in v2.0
+    bool requires_repairing = 3; // meaningful when code != 0; MUST equal the §6.2 registry default in v2.0
+    string detail = 4;           // ≤ 256 bytes UTF-8; no secrets, paths, or stack traces;
+                                 // responses sent before authentication completes carry no detail (§4.2)
+}
+
+// ---------------------------------------------------------------------------
+// Connection lifecycle (band 1–15). Authorization is a signed challenge against
+// the Client identity key, never a bearer token (pairing.md §9.1, PR-9). One
+// exchange shares the request_id the Client assigned in AuthInit; every message
+// of the exchange echoes it.
+// ---------------------------------------------------------------------------
+
+message AuthInit
+{
+    fixed64 request_id = 1;
+    bytes client_public_key = 2; // ECDSA P-256, SEC1 compressed, 33 bytes (pairing.md §2, §9.1)
+}
+
+message AuthChallenge
+{
+    fixed64 request_id = 1;
+    bytes server_random = 2;     // 32 bytes, CSPRNG (pairing.md §9.1)
+}
+
+message AuthProof
+{
+    fixed64 request_id = 1;
+    bytes signature = 2;         // ECDSA-P256-SHA256 r||s, fixed 64 bytes (IEEE P1363), over the RAW
+                                 // auth_context bytes — exactly one hash; never pre-hash and pass the
+                                 // digest to a SHA256withECDSA API (pairing.md §9.1)
+}
+
+message AuthResult
+{
+    fixed64 request_id = 1;
+    Status status = 2;
+    fixed64 session_id = 3;      // Server-assigned (counter from 1); log/diagnostic correlation; set iff success
+}
+
+message Negotiate
+{
+    fixed64 request_id = 1;
+    uint32 protocol_major = 2;   // MUST be 2
+    uint32 protocol_minor = 3;   // 0 for v2.0
+    repeated uint32 capabilities = 4; // optional-feature ids, ascending, unique
+}
+
+message NegotiateResponse
+{
+    fixed64 request_id = 1;
+    Status status = 2;
+    uint32 protocol_major = 3;   // accepted major
+    uint32 protocol_minor = 4;   // Server's minor within major 2
+    repeated uint32 capabilities = 5; // intersection honored for this session
+}
+
+message Error
+{
+    fixed64 request_id = 1;      // echo of the failed request; 0 = unsolicited
+    Status status = 2;           // status.code MUST be != 0
+}
+
+message Close
+{
+    uint32 code = 1;             // §6 registry code; MUST be != 0
+    string detail = 2;           // ≤ 256 bytes UTF-8
+}
+
+// ---------------------------------------------------------------------------
+// Pairing (band 16–31) — the four-message sequence (pairing.md §6.2). Identity
+// keys: Server Ed25519 (32-byte raw public key), Client ECDSA P-256 (33-byte
+// SEC1 compressed) — pairing.md §2 (PR-1/PR-2). `capabilities` carries the
+// Client's *offered* optional-feature set (empty in v2.0) as an input to the
+// pairing binding; PairingResponse echoes that set unchanged for transcript
+// binding; the authoritative negotiated intersection is the Negotiate exchange
+// (spec §4.5, adjudication 2026-11-12). PairingConfirm additionally carries the
+// 64-byte client_proof (adjudication 2026-11-12): the Client signs the pairing
+// proof input — a pairing-specific domain label + binding — with the claimed
+// identity key (pairing.md §6.3.1), and the Server verifies it BEFORE persisting
+// the identity or sending PairingResult(OK).
+// ---------------------------------------------------------------------------
+
+enum PairingMode
+{
+    PAIRING_MODE_UNSPECIFIED = 0;
+    PAIRING_MODE_QR = 1;         // QR payload presented; pairing_nonce required
+    PAIRING_MODE_SAS = 2;        // no camera; SAS comparison on both screens
+}
+
+message PairingRequest
+{
+    fixed64 request_id = 1;
+    PairingMode pairing_mode = 2;
+    bytes pairing_nonce = 3;     // 16 bytes; QR mode only (pairing.md §4–§5)
+    bytes client_random = 4;     // 32 bytes, CSPRNG
+    bytes client_public_key = 5; // ECDSA P-256, SEC1 compressed, 33 bytes
+    uint32 protocol_major = 6;   // MUST equal the ALPN major (2)
+    repeated uint32 capabilities = 7; // Client's offered set; input to the binding
+    string client_name = 8;      // ≤ 63 bytes UTF-8 display name
+}
+
+message PairingResponse
+{
+    fixed64 request_id = 1;
+    Status status = 2;
+    PairingMode pairing_mode = 3;     // echo
+    bytes pairing_nonce = 4;          // echo, QR mode only
+    bytes client_random = 5;          // echo
+    bytes server_random = 6;          // 32 bytes, CSPRNG
+    bytes server_public_key = 7;      // 32 bytes raw Ed25519 identity public key
+    uint32 protocol_major = 8;        // echo
+    repeated uint32 capabilities = 9; // echo of the offered set
+    bytes binding = 10;               // 48 bytes, TLS-Exporter bound to the transcript (pairing.md §6.3)
+    bytes client_id = 11;             // 8 raw bytes = first 8 of SHA-256(client_public_key) (pairing.md §8.1)
+    string display_name = 12;         // accepted display name, ≤ 63 bytes UTF-8
+}
+
+message PairingConfirm
+{
+    fixed64 request_id = 1;
+    bytes binding_echo = 2;      // 48 bytes; the Client's own exporter derivation (pairing.md §6.3)
+    bytes client_proof = 3;      // 64 bytes; one ECDSA-P256-SHA256 r||s signature by the claimed
+                                 // identity key over the pairing proof input (pairing.md §6.3.1);
+                                 // Server verifies BEFORE persisting the identity or PairingResult(OK)
+}
+
+message PairingResult
+{
+    fixed64 request_id = 1;
+    Status status = 2;           // OK: pairing persisted; else a §6 code
+}
+
+// ---------------------------------------------------------------------------
+// Subscription and configuration (band 32–47). Idempotency (spec §5.2):
+// Unsubscribe is idempotent (OK when already unsubscribed); a duplicate
+// Subscribe in READY/PLAYING is answered with a non-fatal Error(402,
+// retryable=false) — the connection is maintained, no state change.
+// ---------------------------------------------------------------------------
+
+message Subscribe
+{
+    fixed64 request_id = 1;
+}
+
+message SubscribeResponse
+{
+    fixed64 request_id = 1;
+    Status status = 2;
+    Configuration configuration = 3;   // set iff success
+}
+
+message Unsubscribe
+{
+    fixed64 request_id = 1;
+}
+
+message UnsubscribeResponse
+{
+    fixed64 request_id = 1;
+    Status status = 2;
+}
+
+message RequestConfiguration
+{
+    fixed64 request_id = 1;
+}
+
+message ConfigurationPublished
+{
+    fixed64 request_id = 1;      // 0 = unsolicited push; > 0 = response to RequestConfiguration
+    Configuration configuration = 2;
+}
+
+message Configuration
+{
+    uint32 config_generation = 1;    // ∈ [1, 2^32−1]; +1 per decode-affecting change within an instance
+    Codec codec = 2;                 // CODEC_PCM in v2.0
+    PcmParameters pcm = 3;           // set iff codec == CODEC_PCM
+}
+
+enum Codec
+{
+    CODEC_UNSPECIFIED = 0;
+    CODEC_PCM = 1;                   // required first codec
+    // CODEC_OPUS = future; assignable only with a negotiated capability
+    // (baseline §Media-Plane §Encoding; never assigned by this schema).
+}
+
+enum SampleFormat
+{
+    SAMPLE_FORMAT_UNSPECIFIED = 0;
+    SAMPLE_FORMAT_F32LE = 1;        // IEEE-754 binary32 little-endian
+    SAMPLE_FORMAT_U8 = 2;
+    SAMPLE_FORMAT_S16LE = 3;
+    SAMPLE_FORMAT_S24LE = 4;        // packed 3-byte little-endian
+    SAMPLE_FORMAT_S32LE = 5;
+}
+// SampleFormat numbers mirror v1 AudioFormat.Encoding (docs/protocol.md §3).
+
+message PcmParameters
+{
+    uint32 sample_rate = 1;         // Hz, > 0
+    uint32 channels = 2;            // > 0
+    SampleFormat sample_format = 3; // MUST NOT be UNSPECIFIED
+}
+
+// ---------------------------------------------------------------------------
+// Stream-instance lifecycle (band 48–63). Only the Server pushes these
+// messages (spec §5.4 invariant 3).
+// ---------------------------------------------------------------------------
+
+message StreamStarted
+{
+    uint32 stream_instance_id = 1;
+    uint32 config_generation = 2;   // generation of the media that follows
+    fixed64 initial_timestamp = 3;  // capture-clock position of the first media frame the receiver will get
+                                    // (0 for a fresh instance; mid-stream anchor for a late Subscriber)
+}
+
+message StreamEnded
+{
+    uint32 stream_instance_id = 1;
+    uint32 code = 2;                // §6: 501 CAPTURE_FAILURE, 502 STREAM_ENDED, 503 SERVER_STOPPING, …
+    string detail = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics (band 64–79; spec §9). Client → Server push, every 5 s and
+// best-effort once when entering CLOSING; at most one send may be pending.
+// Cumulative counters reset on stream-instance change; interval counters reset
+// after each report. Signed counters use sint64 (zigzag varint on the wire).
+// ---------------------------------------------------------------------------
+
+message PlaybackDiagnostics
+{
+    uint32 stream_instance_id = 1;
+    uint32 config_generation = 2;
+    fixed64 extended_highest_sequence = 3;        // RFC 3550 A.1 cycles folded in
+    sint64 cumulative_lost = 4;                   // RFC 3550 A.3; signed — duplicates may drive it negative
+    sint64 interval_lost = 5;
+    fixed64 cumulative_received = 6;
+    fixed64 interval_received = 7;
+    fixed64 cumulative_duplicates = 8;
+    fixed64 interval_duplicates = 9;
+    fixed64 cumulative_reordered = 10;            // out-of-order arrivals
+    fixed64 interval_reordered = 11;
+    uint32 max_reorder_distance = 12;             // max observed sequence displacement, this instance
+    fixed64 cumulative_late_drops = 13;
+    fixed64 interval_late_drops = 14;
+    fixed64 cumulative_unknown_config_drops = 15; // unknown or superseded generation (§7.5/§7.6)
+    fixed64 interval_unknown_config_drops = 16;
+    fixed64 cumulative_concealments = 17;         // interventions: gap, underrun, drift, re-anchor
+    fixed64 interval_concealments = 18;
+    sint64 concealed_frames = 19;                 // frames inserted − frames deleted, this instance
+    fixed64 underruns = 20;
+    uint32 jitter_microseconds = 21;              // RFC 3550 A.8 estimate, converted at the published sample_rate
+    uint32 buffer_current_ms = 22;
+    uint32 buffer_target_ms = 23;
+    fixed64 submitted_position = 24;              // most recent frame position handed to the platform playback API,
+                                                  // on the capture clock of the active instance
+}
