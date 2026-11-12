@@ -12,6 +12,11 @@ sha2.workspace = true
 tokio.workspace = true
 tracing = "0.1"
 
+# test-support feature (golden-vector replay harness only)
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"], optional = true }
+
 # Pinned deliberately: quinn re-exports rustls/pki-types types, so rustls and
 # rustls-pki-types stay on the same minor while quinn 0.11 is in use.
 quinn = { version = "0.11", default-features = false, features = ["log", "runtime-tokio", "rustls-ring"] }
@@ -19,7 +24,6 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "logg
 rustls-pki-types = "1"
 ring = "0.17"
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
-p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
@@ -29,9 +33,13 @@ libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 tempfile = "3"
+# Integration tests exercise the golden-vector replay harness, which lives
+# behind the test-support feature; a self dev-dependency enables it for tests
+# without exposing it to production builds (pairing.md §11.3 bypass rule).
+v2-transport = { path = ".", features = ["test-support"] }
 
 [features]
 # Compile-time test-only support (golden-vector replay harness). Never enabled
 # by production binaries (pairing.md §11.3: bypasses live behind compile-time
 # test features).
-test-support = []
+test-support = ["dep:serde", "dep:serde_json", "dep:p256"]

@@ -135,7 +135,8 @@ impl Status {
 /// (`true`, `true` columns in the table order: retryable, re-pairing).
 pub(crate) const fn registry_defaults(code: u32) -> (bool, bool) {
     match code {
-        101 | 102 | 201 | 202 | 203 => (false, true),
+        101 | 102 => (false, false),
+        201 | 202 | 203 => (false, true),
         204 => (false, false),
         // 205 is a local classification, never sent as a status.
         206 => (true, false),
