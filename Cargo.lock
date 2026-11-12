@@ -5231,6 +5231,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "v2-transport",
 ]
 
 [[package]]
