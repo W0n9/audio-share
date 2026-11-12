@@ -1,0 +1,38 @@
+# cargo test -p v2-transport --test state_machine_replay --test golden_vectors
+   Compiling v2-transport v0.4.1 (/home/w0n9/workspaces/audio-share-ticket-09/crates/v2-transport)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.91s
+     Running tests/golden_vectors.rs (target/debug/deps/golden_vectors-0b486aca684d1c67)
+
+running 3 tests
+test corrupted_signature_cases_fail_verification ... ok
+test replay_covers_every_control_category ... ok
+test replay_all_control_cases_byte_exactly ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/state_machine_replay.rs (target/debug/deps/state_machine_replay-5fd697d5f2b783a6)
+
+running 19 tests
+test auth_happy_path_replays_byte_identically ... ok
+test error_101_version_mismatch_replays_byte_identically ... ok
+test error_204_denied_identity_replays_byte_identically ... ok
+test framing_level_401_fixtures_replay_byte_identically ... ok
+test pairing_capability_list_401s_replay_byte_identically ... ok
+test error_303_supersede_emits_close_303_on_the_old_session ... ok
+test unknown_oneof_case_is_a_framing_level_401 ... ok
+test error_701_client_stopping_replays_byte_identically ... ok
+test negotiate_happy_path_replays_byte_identically ... ok
+test capture_unhealthy_501_replays_byte_identically ... ok
+test unknown_field_ignored_replays_byte_identically ... ok
+test duplicate_subscribe_402_nonfatal_replays_byte_identically ... ok
+test error_203_invalid_signature_replays_byte_identically ... ok
+test error_204_revoked_active_session_replays_byte_identically ... ok
+test negotiate_unknown_capability_replays_byte_identically ... ok
+test negative_space_401_replays_byte_identically ... ok
+test error_202_unknown_identity_replays_byte_identically ... ok
+test client_reported_error_and_close_rows_replay_byte_identically ... ok
+test negative_space_402s_replay_byte_identically ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+# RESULT: exit=0

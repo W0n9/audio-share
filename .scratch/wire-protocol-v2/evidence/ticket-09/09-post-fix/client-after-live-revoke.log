@@ -1,0 +1,10 @@
+11-12 23:46:57.443 I/audio_share_client_v2..(19605): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 23:46:57.445 W/ClientSession(19605): rebind: Binding socket to network 242 failed: EPERM (Operation not permitted)
+11-12 23:46:57.445 I/audio_share_client_v2..(19605): session stopped (701 CLIENT_STOPPING)
+11-12 23:46:57.445 I/audio_share_client_v2..(19605): session stopped (701 CLIENT_STOPPING)
+11-12 23:46:57.496 I/audio_share_client_v2..(19605): QUIC established
+11-12 23:46:58.535 I/audio_share_client_v2..(19605): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 23:46:58.585 I/audio_share_client_v2..(19605): QUIC established
+11-12 23:47:26.843 I/audio_share_client_v2..(19605): session stopped (701 CLIENT_STOPPING)
+11-12 23:47:27.668 I/audio_share_client_v2..(19605): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 23:47:27.721 I/audio_share_client_v2..(19605): QUIC established

@@ -1,0 +1,4 @@
+11-12 23:52:12.823 I/audio_share_client_v2..(21792): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 23:52:12.874 I/audio_share_client_v2..(21792): QUIC established
+11-12 23:52:13.990 I/audio_share_client_v2..(21792): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 23:52:14.044 I/audio_share_client_v2..(21792): QUIC established

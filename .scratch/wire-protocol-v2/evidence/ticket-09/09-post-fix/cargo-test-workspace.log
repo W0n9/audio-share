@@ -1,0 +1,704 @@
+# cargo test --workspace
+   Compiling v2-transport v0.4.1 (/home/w0n9/workspaces/audio-share-ticket-09/crates/v2-transport)
+   Compiling as-cmd v0.4.1 (/home/w0n9/workspaces/audio-share-ticket-09/crates/as-cmd)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.46s
+     Running unittests src/main.rs (target/debug/deps/as_cmd-7119d22238d268c0)
+
+running 5 tests
+test tests::parse_bind_rejects_bad_ports_and_extra_colons ... ok
+test tests::parse_bind_uses_default_port_when_missing ... ok
+test tests::encoding_names_map_to_capture_preferences ... ok
+test tests::utc_timestamp_matches_the_legacy_shape ... ok
+test tests::bare_and_empty_host_use_the_default_address ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (target/debug/deps/cli-4f9b8226a84b2ac8)
+
+running 12 tests
+test missing_endpoint_value_exits_one ... ok
+test unknown_flag_is_a_readable_error_with_exit_code_one ... ok
+test list_encoding_prints_the_six_entries_in_order ... ok
+test empty_host_means_the_default_address ... ok
+test no_arguments_prints_help_to_stderr_and_exits_zero_like_v034 ... ok
+test options_without_bind_also_print_help_to_stderr_and_exit_zero ... ok
+test negative_channels_and_sample_rate_exit_one_instead_of_crashing ... ok
+test version_matches_the_old_layout_with_the_rewrite_version ... ok
+test unknown_encoding_is_rejected_at_parse_time_with_exit_code_one ... ok
+test help_prints_the_old_examples_flags_and_defaults ... ok
+test invalid_bind_and_port_values_exit_one_with_readable_errors ... ok
+test list_endpoints_without_a_pipewire_daemon_errors_instead_of_crashing ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/cli_pipewire.rs (target/debug/deps/cli_pipewire-ecf314459151f7f6)
+
+running 1 test
+test pipewire_list_endpoints_and_live_replay ... ignored, starts real headless PipeWire/wireplumber daemons
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/replay_fixture.rs (target/debug/deps/replay_fixture-f857122a814916e7)
+
+running 1 test
+[2026-11-12 15:57:08.513] [info] starting server: bind=127.0.0.1:44411, endpoint="default", encoding=default, channels=0, sample_rate=0
+[2026-11-12 15:57:08.514] [info] tcp listen success on 127.0.0.1:44411
+[2026-11-12 15:57:08.514] [info] udp listen success on 127.0.0.1:44411
+[2026-11-12 15:57:08.514] [info] server started
+[2026-11-12 15:57:08.514] [info] capture format: encoding=Some(PcmFloat), channels=2, sample_rate=48000
+[2026-11-12 15:57:08.515] [info] v2 identity ready: fingerprint=DF43DDB1 6BF3956A 9FC031BB AF4AD053 119458C6 9E110323 EBFDA036 D294E13A, key=/home/w0n9/workspaces/audio-share-ticket-09/target/debug/identity/server-identity.pem
+[2026-11-12 15:57:08.515] [info] v2 authorization store ready: 0 client record(s), persistent
+[2026-11-12 15:57:08.517] [info] v2 listen success on 127.0.0.1:65531, alpn=audio-share/v2
+test harness_replay_of_the_linux_v034_fixture_passes_against_as_cmd ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.08s
+
+     Running tests/server_process.rs (target/debug/deps/server_process-95cc01bebcd40b35)
+
+running 1 test
+test starts_serves_the_fixture_and_stops_gracefully_on_sigint ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.13s
+
+     Running tests/v2_server.rs (target/debug/deps/v2_server-723548fe88a4b32f)
+
+running 4 tests
+test v2_listener_starts_with_logs_and_stops_on_sigint ... ok
+test v2_is_enabled_by_default_on_65531 ... ok
+test v2_disabled_with_zero_port_is_v1_only ... ok
+test loose_permissions_refuse_v2_without_killing_v1_and_flag_overrides ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+
+     Running unittests src/lib.rs (target/debug/deps/audio_share_core-44c807a5e07989e5)
+
+running 38 tests
+test capture::linux::tests::default_selection_matches_old_server_priority_rules ... ok
+test capture::linux::tests::encoding_preferences_map_to_pipewire_formats ... ok
+test capture::linux::tests::negotiated_formats_map_back_with_protocol_block_alignment ... ok
+test capture::linux::tests::display_name_falls_back_in_old_server_order ... ok
+test capture::linux::tests::select_sink_validates_targets_against_the_registry ... ok
+test capture::tests::encoding_preference_maps_to_protocol_encodings ... ok
+test capture::windows::format::tests::a_supported_request_is_advertised_unchanged ... ok
+test capture::tests::generated_frames_are_deterministic_aligned_and_nonempty ... ok
+test capture::windows::format::tests::advertised_format_maps_encoding_and_stream_properties ... ok
+test capture::windows::format::tests::advertised_format_rejects_a_block_align_mismatch ... ok
+test capture::windows::format::tests::advertised_format_rejects_unsupported_subformats_and_float_widths ... ok
+test capture::windows::format::tests::advertised_format_rejects_zero_channels_or_sample_rate ... ok
+test capture::windows::format::tests::block_align_is_container_bytes_times_channels ... ok
+test capture::windows::format::tests::channel_mask_is_kept_only_when_the_channel_count_is_unchanged ... ok
+test capture::windows::format::tests::closest_match_replaces_the_requested_format ... ok
+test capture::windows::format::tests::default_preference_preserves_the_mix_format_exactly ... ok
+test capture::windows::format::tests::explicit_encodings_map_to_the_old_cpp_requested_layouts ... ok
+test capture::windows::format::tests::default_preference_keeps_mix_representation_when_rate_or_channels_change ... ok
+test capture::windows::format::tests::maps_ieee_float_32_to_pcm_float ... ok
+test capture::windows::format::tests::maps_integer_container_widths_to_pcm_encodings ... ok
+test capture::windows::format::tests::packed_s24_is_advertised_as_three_bytes_per_sample ... ok
+test capture::windows::format::tests::packed_s24_uses_three_bytes_per_sample ... ok
+test capture::windows::format::tests::rejects_float_container_widths_other_than_32_bits ... ok
+test capture::windows::format::tests::rejects_unknown_subtypes_and_bit_widths ... ok
+test capture::windows::format::tests::silent_packet_fill_uses_the_encoding_zero_point ... ok
+test capture::windows::format::tests::twenty_four_valid_bits_in_a_32_bit_container_are_pcm32 ... ok
+test capture::windows::format::tests::zero_channels_and_rate_mean_endpoint_defaults ... ok
+test config::tests::a_corrupt_utf16_boundary_is_rejected ... ok
+test config::tests::ini_document_is_case_insensitive_and_preserves_unknown_lines ... ok
+test config::tests::backup_name_appends_bak_to_the_full_file_name ... ok
+test config::tests::new_keys_are_appended_to_their_section_in_order ... ok
+test protocol::format::tests::every_encoding_round_trips_and_only_invalid_has_no_sample_size ... ok
+test server::tests::local_addresses_dedupes_and_puts_the_default_first ... ok
+test server::tests::local_addresses_keeps_enumeration_order_without_a_private_address ... ok
+test server::tests::local_addresses_of_a_machine_without_addresses_is_empty ... ok
+test server::tests::private_address_detection_replicates_the_v034_mask_exactly ... ok
+test server::tests::select_default_address_prefers_private_ipv4_in_enumeration_order ... ok
+test server::tests::server_config_defaults_match_v034_timing_and_port ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/capture_linux.rs (target/debug/deps/capture_linux-943a35d41cdbd8e1)
+
+running 1 test
+test linux_pipewire_capture_end_to_end ... ignored, starts real headless PipeWire/wireplumber daemons
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/capture_synthetic.rs (target/debug/deps/capture_synthetic-9955bd4f289592ef)
+
+running 5 tests
+test synthetic_backend_reports_a_default_endpoint ... ok
+test synthetic_capture_rejects_unaligned_or_empty_frames ... ok
+test synthetic_capture_generator_is_deterministic_and_block_aligned ... ok
+test stopping_or_dropping_a_session_ends_the_frame_stream ... ok
+test synthetic_capture_emits_exact_frames_in_order ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/config.rs (target/debug/deps/config-ee3fb16788a499b9)
+
+running 24 tests
+test encoding_legacy_numbers_round_trip ... ok
+test launch_behavior_enums_map_to_the_documented_decisions ... ok
+test a_missing_theme_key_defaults_to_system_without_a_rewrite ... ok
+test load_options_default_matches_a_plain_load ... ok
+test utf16le_configs_are_read ... ok
+test reads_are_case_insensitive_and_trim_win32_style ... ok
+test a_known_endpoint_is_kept_and_an_unavailable_list_skips_validation ... ok
+test save_rejects_unusable_server_values ... ok
+test when_close_defaults_to_minimize_but_an_explicit_zero_keeps_exit ... ok
+test unknown_endpoints_reset_to_default_and_are_reported ... ok
+test legacy_v1_values_migrate_and_unknown_keys_survive ... ok
+test migrating_a_utf16_file_writes_utf8_without_a_bom ... ok
+test unknown_theme_values_fall_back_to_system_and_are_reported ... ok
+test invalid_values_fall_back_to_defaults_and_are_reported ... ok
+test a_missing_version_migrates_from_zero ... ok
+test a_future_version_is_read_without_being_overwritten_and_gets_a_backup ... ok
+test legacy_read_only_location_values_migrate_into_the_writable_target ... ok
+test fresh_config_uses_defaults_and_writes_version_two ... ok
+test a_corrupt_file_is_backed_up_and_defaults_are_restored ... ok
+test zero_and_out_of_range_ports_and_encodings_use_defaults ... ok
+test atomic_replacement_does_not_truncate_a_read_only_target_in_place ... ok
+test running_state_round_trips ... ok
+test atomic_writes_replace_the_file_and_leave_no_temporary_files ... ok
+test theme_values_round_trip_through_the_ini_key ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/paths.rs (target/debug/deps/paths-bf744fd8a8f27ba0)
+
+running 8 tests
+test missing_executable_directory_falls_back_to_xdg ... ok
+test env_override_names_the_config_file_and_its_directory_holds_the_log ... ok
+test paths_reads_the_audio_share_config_override_from_the_environment ... ok
+test a_writable_executable_directory_has_no_legacy_config ... ok
+test xdg_defaults_to_the_audio_share_server_directory ... ok
+test read_only_executable_directory_falls_back_to_xdg ... ok
+test read_only_executable_directory_reports_the_legacy_config_for_migration ... ok
+test writable_executable_directory_wins_over_xdg ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/protocol_wire.rs (target/debug/deps/protocol_wire-e009f2de4400f38b)
+
+running 17 tests
+test audio_format_encodes_exact_v034_protobuf_wire_bytes ... ok
+test block_align_follows_encoding_sample_width_and_channels ... ok
+test block_align_is_zero_for_unknown_encoding_value ... ok
+test commands_encode_as_little_endian_u32 ... ok
+test audio_format_round_trips_through_protobuf ... ok
+test decode_command_reads_little_endian_u32 ... ok
+test encoding_values_match_client_proto ... ok
+test get_format_response_decode_rejects_bad_frames ... ok
+test get_format_response_has_command_size_and_protobuf_payload ... ok
+test heartbeat_is_a_bare_little_endian_command ... ok
+test invalid_block_align_produces_no_segments_instead_of_panicking ... ok
+test mtu_constants_match_v034 ... ok
+test segment_audio_keeps_short_and_empty_buffers_intact ... ok
+test segment_payload_aligns_down_to_block_align ... ok
+test start_play_response_is_command_then_id ... ok
+test udp_bind_packet_is_a_little_endian_play_id ... ok
+test segment_audio_uses_aligned_chunks_and_preserves_the_remainder ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/server_wire.rs (target/debug/deps/server_wire-324630848b927201)
+
+running 17 tests
+test duplicate_start_play_closes_without_a_second_response ... ok
+test get_format_returns_the_exact_v034_response_bytes ... ok
+test play_ids_are_process_wide_and_do_not_reset_with_a_new_server ... ok
+test server_can_be_started_and_stopped_repeatedly_on_the_same_port ... ok
+test stop_closes_playing_and_idle_sessions_and_releases_the_listener ... ok
+test play_ids_increment_across_connections_on_one_server ... ok
+test unknown_commands_close_without_a_response ... ok
+test port_zero_reports_the_os_chosen_port_for_both_transports ... ok
+test start_play_returns_an_id_and_udp_bind_delivers_aligned_pcm ... ok
+test mtu_segments_align_to_block_align_and_split_large_capture_frames ... ok
+test multiple_clients_receive_the_same_datagram_stream ... ok
+test a_client_can_reconnect_after_its_session_times_out ... ok
+test a_silent_playing_client_is_closed_by_the_timeout_checked_on_a_tick ... ok
+test heartbeats_are_sent_on_the_configured_interval_after_start_play ... ok
+test udp_bind_last_wins_and_unknown_ids_are_ignored ... ok
+test oversized_block_align_emits_no_datagrams_and_keeps_the_server_alive ... ok
+test pre_start_connections_are_not_timed_out_and_heartbeats_are_ignored ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+
+     Running unittests src/lib.rs (target/debug/deps/audio_share_server_gui-35afbab3ae999cd2)
+
+running 94 tests
+test autostart::tests::appimage_path_is_used_when_present ... ok
+test autostart::tests::linux_desktop_entry_has_the_required_fields_and_quoted_exec ... ok
+test autostart::tests::linux_exec_escapes_desktop_entry_reserved_characters ... ok
+test autostart::tests::windows_run_value_quotes_the_executable_with_spaces ... ok
+test autostart::tests::xdg_config_home_wins_and_home_is_the_default ... ok
+test autostart::tests::linux_write_errors_are_readable ... ok
+test autostart::tests::enabling_writes_the_entry_file_and_disabling_removes_it ... ok
+test help::tests::every_topic_maps_to_its_documentation_url ... ok
+test help::tests::frontend_identifiers_round_trip ... ok
+test help::tests::unknown_or_arbitrary_topics_are_rejected ... ok
+test help::tests::urls_are_https_documentation_links_without_query_strings ... ok
+test i18n::tests::default_follows_chinese_system_locales ... ok
+test i18n::tests::default_uses_english_for_everything_else_and_missing_locales ... ok
+test i18n::tests::explicit_languages_win_over_the_system_locale ... ok
+test i18n::tests::tags_round_trip ... ok
+test i18n::tests::unknown_values_follow_the_system_locale ... ok
+test logging::tests::a_failed_open_is_reported_as_an_error_not_a_startup_failure ... ok
+test maintenance::tests::active_profiles_keep_public_only_when_it_is_the_only_profile ... ok
+test maintenance::tests::an_empty_or_unknown_profile_mask_falls_back_to_all_profiles ... ok
+test logging::tests::info_and_error_append_timestamped_lines ... ok
+test maintenance::tests::netsh_exit_codes_map_to_a_failure_with_the_code ... ok
+test maintenance::tests::powershell_args_quote_a_temporary_path_with_spaces ... ok
+test logging::tests::open_creates_parent_directories_and_truncates_an_existing_file ... ok
+test maintenance::tests::script_rejects_empty_multiline_or_untrusted_input ... ok
+test maintenance::tests::script_removes_old_rules_then_adds_tcp_and_udp_rules ... ok
+test maintenance::tests::script_uses_powershell_single_quote_escaping ... ok
+test maintenance::tests::uac_cancel_maps_to_the_cancelled_error ... ok
+test controller::tests::listener_is_optional ... ok
+test controller::tests::stop_during_start_is_rejected_readably ... ok
+test controller::tests::stop_without_a_server_is_rejected_and_keeps_the_stopped_state ... ok
+test model::tests::status_json_uses_the_frontend_field_names ... ok
+test model::tests::tray_commands_follow_the_lifecycle_state ... ok
+test options::tests::no_flags_means_a_normal_visible_run ... ok
+test options::tests::parsing_does_not_confuse_prefixes ... ok
+test options::tests::recognizes_all_hide_spellings ... ok
+test controller::tests::a_second_start_while_running_is_rejected_without_stopping_the_server ... ok
+test maintenance::tests::errors_are_localized_in_both_languages ... ok
+test options::tests::recognizes_fake_capture_and_smoke_test ... ok
+test strings::tests::every_value_is_a_non_empty_string ... ok
+test strings::tests::locale_selection_affects_t ... ok
+test controller::tests::starts_stopped_with_the_configured_settings ... ok
+test controller::tests::save_settings_is_refused_while_the_server_is_not_stopped ... ok
+test model::tests::application_settings_json_uses_the_frontend_contract ... ok
+test model::tests::every_config_notice_maps_to_a_structured_code ... ok
+test strings::tests::linux_help_rows_are_localized_in_both_languages ... ok
+test model::tests::every_encoding_maps_to_the_matching_capture_preference ... ok
+test model::tests::application_settings_validate_supported_languages ... ok
+test strings::tests::tray_labels_match_the_frontend_resource ... ok
+test controller::tests::a_failed_start_publishes_a_readable_error_and_recovers ... ok
+test controller::tests::start_then_stop_publishes_running_address_and_stopped ... ok
+test strings::tests::missing_keys_fall_back_to_the_key ... ok
+test update::tests::automatic_checks_wait_one_full_interval_and_follow_the_setting ... ok
+test strings::tests::placeholders_are_interpolated ... ok
+test strings::tests::the_shipped_languages_are_key_complete ... ok
+test update::tests::compares_only_remote_greater_than_local ... ok
+test update::tests::components_are_numeric_and_leading_zeroes_are_accepted ... ok
+test controller::tests::the_running_server_answers_get_format_and_closes_on_stop ... ok
+test model::tests::settings_json_uses_the_frontend_field_names ... ok
+test update::tests::empty_components_are_ignored_like_the_old_splitter ... ok
+test update::tests::fetches_the_real_latest_release_over_https ... ignored, requires network access to api.github.com
+test update::tests::http_errors_include_status_and_github_message ... ok
+test model::tests::an_empty_notice_list_means_no_banner ... ok
+test update::tests::evaluates_newer_same_and_older_releases ... ok
+test update::tests::numeric_prefixes_are_accepted_like_std_stoi ... ok
+test update::tests::malformed_versions_are_rejected_with_readable_errors ... ok
+test model::tests::settings_map_to_capture_config_with_auto_channels_and_rate ... ok
+test update::tests::parses_the_fields_the_app_needs ... ok
+test model::tests::default_settings_match_the_043_baseline ... ok
+test model::tests::settings_map_to_server_config ... ok
+test update::tests::serializes_for_the_frontend_contract ... ok
+test update::tests::rejects_malformed_json_and_missing_fields ... ok
+test update::tests::successful_http_responses_are_evaluated ... ok
+test webview2_check::tests::empty_or_blank_versions_are_not_installed ... ok
+test webview2_check::tests::fixed_version_folder_installs_the_runtime_without_registry_entries ... ok
+test update::tests::update_agent_has_a_tls_backend_on_this_platform ... ok
+test webview2_check::tests::fixed_version_folder_wins_over_registry_entries ... ok
+test model::tests::bootstrap_carries_version_platform_locale_state_settings_and_notices ... ok
+test webview2_check::tests::fixed_version_folder_without_the_executable_falls_back_to_registry ... ok
+test webview2_check::tests::machine_key_installs_the_runtime ... ok
+test webview2_check::tests::machine_key_wins_over_user_key ... ok
+test webview2_check::tests::missing_registry_values_mean_not_installed ... ok
+test webview2_check::tests::surrounding_whitespace_is_ignored_and_trimmed ... ok
+test webview2_check::tests::user_key_installs_the_runtime_when_machine_key_is_missing ... ok
+test webview2_check::tests::zero_machine_version_falls_back_to_the_user_key ... ok
+test webview2_check::tests::zero_version_is_not_installed ... ok
+test controller::tests::application_settings_can_change_while_running_and_preserve_server_fields ... ok
+test controller::tests::a_failed_start_does_not_persist_running ... ok
+test controller::tests::save_settings_rejects_an_unknown_endpoint_when_a_list_is_available ... ok
+test controller::tests::application_settings_reject_an_unsupported_language_without_writing ... ok
+test controller::tests::save_settings_updates_the_controller_and_the_file ... ok
+test controller::tests::save_settings_rejects_unusable_values_without_touching_the_file ... ok
+test controller::tests::successful_start_and_stop_persist_the_running_flag ... ok
+test controller::tests::reset_restores_server_defaults_and_preserves_application_settings ... ok
+test controller::tests::start_uses_the_settings_saved_while_stopped ... ok
+
+test result: ok. 93 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running unittests src/main.rs (target/debug/deps/AudioShareServer-0739b679dbb46557)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/pipewire_spike-a6cb550a8bc1e55d)
+
+running 17 tests
+test tests::audio_params_accept_the_documented_values ... ok
+test tests::bytes_per_sample_matches_old_server ... ok
+test tests::block_align_is_bytes_per_sample_times_channels ... ok
+test tests::default_is_first_seen_on_priority_ties ... ok
+test tests::decode_mono_f32_extracts_channel_zero ... ok
+test tests::default_is_highest_priority ... ok
+test tests::default_picks_priority_zero_over_missing_priority ... ok
+test tests::default_requires_priority_strictly_greater_than_minus_one ... ok
+test tests::display_name_falls_back_in_old_server_order ... ok
+test tests::dominant_frequency_rejects_unusable_input ... ok
+test tests::encoding_parsing_accepts_cli_spellings ... ok
+test tests::frames_in_bytes_uses_block_align ... ok
+test tests::value_stats_summarize_vector_counts ... ok
+test tests::decode_mono_f32_handles_every_encoding ... ok
+test tests::interval_stats_summarize_spacing ... ok
+test tests::goertzel_measures_a_440_hz_tone ... ok
+test tests::dominant_frequency_finds_the_tone ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/main.rs (target/debug/deps/pipewire_spike-f738319772e10b45)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/headless_pipewire.rs (target/debug/deps/headless_pipewire-65d016dacc2e01ad)
+
+running 1 test
+test headless_pipewire_spike_end_to_end ... ignored, starts real headless PipeWire/wireplumber daemons
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/protocol_harness-90d2dd5f271c8ab6)
+
+running 11 tests
+test fake_server::tests::encoding_parser_matches_protocol_names ... ok
+test synth::tests::windows_cases_cover_the_requested_formats ... ok
+test synth::tests::synthetic_pcm_is_deterministic_for_every_encoding ... ok
+test fixture::tests::write_rejects_inconsistent_control_bytes ... ok
+test fixture::tests::decode_helpers_parse_written_control_files ... ok
+test fixture::tests::decoded_format_checks_manifest_agreement ... ok
+test fixture::tests::read_file_rejects_path_escape ... ok
+test fixture::tests::write_then_load_round_trips_manifest_and_pcm ... ok
+test synth::tests::synthesized_segments_are_aligned_and_full ... ok
+test fixture::tests::load_rejects_foreign_schema_version ... ok
+test fixture::tests::manifest_is_deterministic_and_contains_no_paths_or_timestamps ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/main.rs (target/debug/deps/protocol_harness-318f53d52b98d7f6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/harness_cli.rs (target/debug/deps/harness_cli-e02d070f7c67e903)
+
+running 2 tests
+wrote /tmp/.tmpI2QiA8/windows/f32-48k-stereo
+wrote /tmp/.tmpI2QiA8/windows/s16-44k1-stereo
+wrote /tmp/.tmpI2QiA8/windows/s16-48k-mono
+wrote /tmp/.tmpI2QiA8/windows/s24-48k-stereo
+test synthesize_then_replay_offline_validates_fixture_sets ... ok
+test record_drives_a_server_and_writes_a_replayable_fixture_set ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+
+     Running tests/harness_smoke.rs (target/debug/deps/harness_smoke-9c931bd6c2a65852)
+
+running 1 test
+wrote /tmp/.tmporUNJE/fixtures/f32-48k-stereo
+wrote /tmp/.tmporUNJE/fixtures/s16-44k1-stereo
+wrote /tmp/.tmporUNJE/fixtures/s16-48k-mono
+wrote /tmp/.tmporUNJE/fixtures/s24-48k-stereo
+test serve_fake_and_live_replay_complete_without_audio_devices ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.14s
+
+     Running tests/probe_cli.rs (target/debug/deps/probe_cli-2bf82e46ed8c60eb)
+
+running 3 tests
+test probe_observes_the_heartbeat_timeout_and_server_close ... ok
+test probe_reports_real_format_framing_and_heartbeats ... ok
+test probe_reconnects_and_gets_a_fresh_play_id ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.05s
+
+     Running tests/probe_logic.rs (target/debug/deps/probe_logic-5dea8444c798e161)
+
+running 5 tests
+test datagram_validation_enforces_the_1464_byte_mtu_and_block_alignment ... ok
+test decodes_the_first_channel_of_every_protocol_encoding ... ok
+test goertzel_measures_the_amplitude_of_an_independent_sine ... ok
+test dominant_frequency_finds_a_440_hz_sine_within_two_hertz ... ok
+test tone_analysis_reports_the_expected_tone_and_rejects_silence ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running unittests src/lib.rs (target/debug/deps/v2_transport-cee36b3e2721481f)
+
+running 64 tests
+test auth::tests::canonical_form_is_count_u8_then_ids_u32_be ... ok
+test auth::tests::capability_lists_must_be_ascending_and_unique ... ok
+test auth::tests::auth_context_matches_the_fixture_derivation ... ok
+test auth::tests::pairing_lists_cap_at_255_ids ... ok
+test auth::tests::client_id_is_first_8_sha256_bytes ... ok
+test auth::tests::protocol_major_tlv_is_fixed_four_byte_be ... ok
+test codes::tests::alpn_is_exact_byte_string ... ok
+test codes::tests::default_port_is_65531_never_v1_port ... ok
+test codes::tests::frame_cap_is_64_kib ... ok
+test codes::tests::registry_flags_match_spec_62 ... ok
+test codes::tests::registry_lookup_round_trips ... ok
+test auth::tests::sec1_keys_must_be_33_byte_compressed ... ok
+test codes::tests::unknown_code_is_none ... ok
+test framing::tests::encode_wraps_be_length_prefix ... ok
+test framing::tests::length_prefix_65536_accepts ... ok
+test framing::tests::length_prefix_65537_rejects_on_prefix_alone ... ok
+test framing::tests::length_prefix_zero_rejects ... ok
+test auth::tests::wrong_length_signatures_fail_without_panic ... ok
+test framing::tests::oversized_outbound_encoding_is_rejected ... ok
+test framing::tests::reader_accepts_decoded_fixture_frame ... ok
+test framing::tests::reader_rejects_65537_before_allocation ... ok
+test framing::tests::reader_rejects_zero_length_before_allocation ... ok
+test framing::tests::reader_splits_partial_feed ... ok
+test framing::tests::undecodable_body_is_malformed ... ok
+test framing::tests::unknown_field_alongside_known_body_is_ignored ... ok
+test framing::tests::unset_body_is_malformed ... ok
+test identity::tests::fingerprint_is_eight_groups_of_eight_uppercase_hex ... ok
+test identity::tests::hex_groups_renders_short_input_without_padding ... ok
+test identity::tests::pem_container_ends_with_armor_line ... ok
+test identity::tests::pem_rejects_foreign_text ... ok
+test identity::tests::pem_round_trips_pkcs8 ... ok
+test limits::tests::address_rate_guard_is_per_address ... ok
+test limits::tests::address_rate_guard_trips_at_twenty_in_window ... ok
+test limits::tests::address_rate_guard_window_slides ... ok
+test limits::tests::capacity_guard_admits_up_to_bounds ... ok
+test limits::tests::capacity_guard_enforces_handshake_bound ... ok
+test limits::tests::capacity_guard_session_bound_outranks_handshake_bound ... ok
+test limits::tests::defaults_match_spec_10 ... ok
+test limits::tests::outbound_size_bounds_are_enforced ... ok
+test limits::tests::outstanding_requests_trip_at_eight ... ok
+test limits::tests::payload_bounds_match_tm_rows ... ok
+test limits::tests::validate_rejects_out_of_range_sessions ... ok
+test session::tests::closing_then_closed_is_absorbing ... ok
+test session::tests::lifecycle_starts_connecting ... ok
+test session::tests::lost_without_close_classifies_601 ... ok
+test session::tests::termination_carries_registry_code ... ok
+test transport::tests::classify_close_maps_application_codes ... ok
+test transport::tests::closing_grace_is_five_seconds ... ok
+test auth::tests::fixture_signature_verifies_over_raw_context ... ok
+test auth::tests::flipped_signature_byte_fails ... ok
+test transport::tests::invalid_limits_reject_start ... ok
+test identity::tests::spki_der_matches_recorded_fixture_layout ... ok
+test identity::tests::first_open_generates_and_persists_key ... ok
+test identity::tests::truncated_key_fails_closed ... ok
+test identity::tests::corrupted_key_fails_closed_and_is_not_regenerated ... ok
+test identity::tests::loose_directory_permissions_refuse_v2 ... ok
+test identity::tests::loose_file_permissions_refuse_v2 ... ok
+test identity::tests::reload_returns_same_identity ... ok
+test identity::tests::tls_config_binds_identity_public_key ... ok
+test transport::tests::start_binds_requested_port ... ok
+test transport::tests::start_binds_default_port_when_requested ... ok
+test transport::tests::wrong_alpn_fails_before_application_data ... ok
+test transport::tests::capacity_reject_signals_busy_close_code ... ok
+test transport::tests::matching_alpn_connects_and_opens_control_stream ... ok
+
+test result: ok. 64 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/auth_primitives.rs (target/debug/deps/auth_primitives-1f1664dae901a019)
+
+running 9 tests
+test auth_context_tlv_matches_fixture_derivation ... ok
+test capabilities_must_be_ascending_and_unique ... ok
+test canonical_capabilities_is_count_u8_then_ids_u32_be ... ok
+test client_id_is_first_8_of_sha256_public_key ... ok
+test pairing_capability_lists_cap_at_255_ids ... ok
+test public_key_must_parse_as_sec1_compressed_p256 ... ok
+test malformed_proof_shapes_are_rejected_without_verification ... ok
+test corrupted_proof_fails_verification ... ok
+test valid_proof_verifies_over_raw_auth_context ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/auth_store.rs (target/debug/deps/auth_store-8a524db16be9e3c3)
+
+running 17 tests
+test active_identity_authorizes_with_record ... ok
+test revoke_unknown_key_is_a_distinct_error ... ok
+test revoked_identity_classifies_204 ... ok
+test unknown_identity_classifies_202 ... ok
+test duplicate_client_ids_are_rejected ... ok
+test client_id_must_match_the_derived_value ... ok
+test public_key_must_be_a_33_byte_compressed_point ... ok
+test corrupted_store_fails_closed ... ok
+test display_name_is_capped_at_63_bytes ... ok
+test public_key_must_decode_to_a_valid_curve_point ... ok
+test missing_store_starts_empty_and_creates_file_on_first_write ... ok
+test corrupt_reload_fails_closed_and_recovers ... ok
+test store_persists_as_clients_json_with_0600 ... ok
+test deleting_the_file_revokes_the_identity_on_reload ... ok
+test revocation_is_visible_to_new_connections_immediately ... ok
+test a_backup_generation_is_kept_on_rewrite ... ok
+test multiple_records_survive_a_round_trip ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/golden_vectors.rs (target/debug/deps/golden_vectors-8601e14083bb1f47)
+
+running 3 tests
+test corrupted_signature_cases_fail_verification ... ok
+test replay_covers_every_control_category ... ok
+test replay_all_control_cases_byte_exactly ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/redaction.rs (target/debug/deps/redaction-5557306afe9be85d)
+
+running 2 tests
+test ipv4_source_keeps_only_the_first_two_octets ... ok
+test ipv6_source_keeps_only_the_first_two_segments ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/registry.rs (target/debug/deps/registry-69e350ee3b329c41)
+
+running 2 tests
+test unknown_codes_have_no_registry_defaults ... ok
+test status_registry_projects_the_error_code_table ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/session_driver.rs (target/debug/deps/session_driver-01eabb0fca14b205)
+
+running 9 tests
+test auth_happy_path_reaches_ready_over_quic ... ok
+test per_connection_and_per_source_auth_failure_limits ... ok
+test auth_deadline_closes_with_601 ... ok
+test empty_length_prefix_is_malformed_401 ... ok
+test second_control_stream_is_invalid_state_402 ... ok
+test version_mismatch_is_101 ... ok
+test new_session_supersedes_the_old_with_303 ... ok
+test revoked_identity_is_torn_down_with_204 ... ok
+test deleting_the_record_ends_the_live_session_and_rejects_reconnects ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
+     Running tests/state_machine.rs (target/debug/deps/state_machine-d4b88e9b64bfc42f)
+
+running 30 tests
+test auth_proof_without_challenge_is_402_fatal ... ok
+test auth_init_retry_gets_a_fresh_challenge ... ok
+test connecting_malformed_frame_is_fatal_401 ... ok
+test connecting_valid_subscribe_is_fatal_402_with_echo ... ok
+test closing_rejects_everything_and_transport_lost_absorbs ... ok
+test connect_auth_negotiate_reaches_ready ... ok
+test fatal_error_class_sends_error_plus_close_and_stops_processing ... ok
+test negotiate_non_ascending_capabilities_is_401_fatal ... ok
+test negotiate_wrong_major_is_101_fatal ... ok
+test ready_capture_unhealthy_subscribe_is_501_retryable ... ok
+test negotiate_unknown_capability_is_ignored_intersection_empty ... ok
+test ready_request_configuration_echoes_request_id ... ok
+test negotiate_minor_above_servers_is_101_fatal ... ok
+test negotiating_auth_init_is_402_fatal ... ok
+test idle_timeout_closes_with_601 ... ok
+test close_with_code_zero_is_malformed_401 ... ok
+test valid_proof_unknown_identity_is_202_connection_stays ... ok
+test invalid_signature_is_203_and_counts_a_failure ... ok
+test negotiating_subscribe_is_402_fatal ... ok
+test revoked_active_session_receives_fatal_204_pair ... ok
+test unsolicited_nonfatal_error_is_advisory_only ... ok
+test valid_proof_revoked_identity_is_204 ... ok
+test ready_close_received_moves_to_closing_without_echo ... ok
+test ready_duplicate_subscribe_is_nonfatal_402_connection_maintained ... ok
+test ready_subscribe_ok_with_configuration ... ok
+test ready_unsubscribe_is_idempotent ... ok
+test supersede_closes_the_old_session_with_303_and_keeps_the_new ... ok
+test fifth_auth_failure_closes_with_203 ... ok
+test auth_failure_log_code_matches_the_reason ... ok
+test deleted_record_is_revoked_on_the_next_check ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/state_machine_replay.rs (target/debug/deps/state_machine_replay-99872d7a8351f224)
+
+running 19 tests
+test pairing_capability_list_401s_replay_byte_identically ... ok
+test negotiate_happy_path_replays_byte_identically ... ok
+test framing_level_401_fixtures_replay_byte_identically ... ok
+test unknown_oneof_case_is_a_framing_level_401 ... ok
+test error_303_supersede_emits_close_303_on_the_old_session ... ok
+test duplicate_subscribe_402_nonfatal_replays_byte_identically ... ok
+test capture_unhealthy_501_replays_byte_identically ... ok
+test error_203_invalid_signature_replays_byte_identically ... ok
+test error_204_revoked_active_session_replays_byte_identically ... ok
+test error_202_unknown_identity_replays_byte_identically ... ok
+test error_701_client_stopping_replays_byte_identically ... ok
+test error_204_denied_identity_replays_byte_identically ... ok
+test negative_space_401_replays_byte_identically ... ok
+test error_101_version_mismatch_replays_byte_identically ... ok
+test unknown_field_ignored_replays_byte_identically ... ok
+test negotiate_unknown_capability_replays_byte_identically ... ok
+test auth_happy_path_replays_byte_identically ... ok
+test negative_space_402s_replay_byte_identically ... ok
+test client_reported_error_and_close_rows_replay_byte_identically ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src/main.rs (target/debug/deps/wasapi_spike-c22f0de991880a67)
+
+running 26 tests
+test logic::tests::a_supported_request_is_advertised_unchanged ... ok
+test logic::tests::advertised_format_maps_encoding_and_block_align ... ok
+test logic::tests::advertised_format_rejects_a_container_width_mismatch ... ok
+test logic::tests::advertised_format_rejects_unsupported_subformats_and_float_widths ... ok
+test logic::tests::block_align_is_container_bytes_times_channels ... ok
+test logic::tests::closest_match_replaces_the_requested_format ... ok
+test logic::tests::channel_mask_is_kept_only_when_the_channel_count_is_unchanged ... ok
+test logic::tests::cpu_percent_is_cpu_time_over_wall_time ... ok
+test logic::tests::default_preference_keeps_mix_representation_when_rate_or_channels_change ... ok
+test logic::tests::default_preference_preserves_the_mix_format_exactly ... ok
+test logic::tests::explicit_encodings_map_to_the_old_cpp_requested_layouts ... ok
+test logic::tests::maps_ieee_float_32_to_pcm_float ... ok
+test logic::tests::packed_s24_uses_three_bytes_per_sample ... ok
+test logic::tests::maps_integer_container_widths_to_pcm_encodings ... ok
+test logic::tests::rejects_float_container_widths_other_than_32_bits ... ok
+test logic::tests::rejects_unknown_subtypes_and_bit_widths ... ok
+test logic::tests::stats_count_packets_frames_bytes_and_flags ... ok
+test logic::tests::stats_detect_forward_index_gaps_in_frames ... ok
+test logic::tests::stats_do_not_record_an_interval_for_the_first_packet ... ok
+test logic::tests::stats_expose_packet_and_poll_interval_summaries ... ok
+test logic::tests::stats_ignore_index_resets_and_overlapping_packets ... ok
+test logic::tests::stats_record_poll_intervals_and_long_polls ... ok
+test logic::tests::summarize_p99_is_the_maximum_for_small_samples ... ok
+test logic::tests::summarize_reports_min_avg_max_and_nearest_rank_p99 ... ok
+test logic::tests::summarize_returns_none_for_no_samples ... ok
+test logic::tests::zero_channels_and_rate_mean_endpoint_defaults ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests audio_share_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests audio_share_server_gui
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pipewire_spike
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests protocol_harness
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests v2_transport
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+# RESULT: exit=0

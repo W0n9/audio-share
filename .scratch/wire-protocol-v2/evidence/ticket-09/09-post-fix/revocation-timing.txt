@@ -1,0 +1,5 @@
+# live revocation timing (server log timestamps are UTC)
+deleted_at = 2026-11-12T15:51:38.694Z
+server Close(204) = 2026-11-12 15:51:39.494 (log line: v2 session ended ... code=204)
+elapsed = 0.800 s (<= 5 s)
+client UI: "session closed (close_code=204); no automatic reconnect"; state CLOSED
