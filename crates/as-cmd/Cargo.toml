@@ -16,6 +16,7 @@ clap.workspace = true
 tokio.workspace = true
 tracing = "0.1"
 tracing-subscriber = "0.3"
+v2-transport = { path = "../v2-transport" }
 
 [dev-dependencies]
 assert_cmd = "2"
