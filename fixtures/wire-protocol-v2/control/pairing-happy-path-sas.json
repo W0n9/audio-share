@@ -109,8 +109,8 @@
     "sas_display_code": "900067",
     "sas_formula": "decimal( big-endian u32 of sas_seed[0..4] mod 1_000_000 ), zero-padded to 6 digits",
     "signing_nonce_k_label_sas": "audio-share v2 TEST-ONLY ECDSA nonce | pairing-confirm-sas (see test-keys.json)",
-    "encoding_assumptions": [
-      "TLV(1, mode) encoded as 'sas' (flagged spec gap; see test-keys.json)"
+    "encoding_notes": [
+      "TLV(1, mode) = the lowercase ASCII mode string 'sas' (pairing.md §6.3)"
     ]
   }
 }

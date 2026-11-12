@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "protocol_version": "wire-protocol-v2.0",
-  "provenance": "generated-from-spec",
+  "provenance": "generated-from-spec (final phase-2 adjudication pass, 2026-11-12)",
   "source": {
     "spec": "docs/wire-protocol-v2/spec.md",
     "pairing": "docs/wire-protocol-v2/pairing.md",
     "threat_model": "docs/wire-protocol-v2/threat-model.md",
     "schema": "protos/wire-protocol-v2/control.proto",
-    "spec_commit": "63c8a5e39787ead6d2c9d977350b9afb9fc27c37",
+    "spec_commit": "11839bb94dd8648a36c7165674aa8c2e197ac7fa",
     "spec_status": "accepted (2026-11-12, maintainer adjudication)",
     "note": "Vectors are hand-derived deterministic encodings from the accepted normative documents — NOT from the prototype's throwaway BRIEF.md wire format, and not from any implementation encoder. Signature values were computed once with the fixture-fixed test keys (test-keys.json) and are replayed by verification only."
   },
@@ -20,16 +20,19 @@
   "test_keys": "test-keys.json",
   "replay_contract": "README.md (byte-level equality; no implementation-specific encoders)",
   "case_counts_by_category": {
-    "control-error-registry": 25,
+    "control-error-registry": 26,
     "control-happy-path": 6,
-    "control-negative-space": 5,
-    "media-plane": 9,
+    "control-negative-space": 6,
+    "media-plane": 10,
     "resource-limits": 3
   },
   "error_registry_coverage": {
     "101": "control.error-101-version-mismatch",
     "102": null,
-    "201": "control.error-201-pairing-proof-invalid",
+    "201": [
+      "control.error-201-pairing-proof-invalid",
+      "control.error-201-pairing-declined"
+    ],
     "202": "control.error-202-authorization-unknown",
     "203": "control.error-203-authentication-failed",
     "204": [
@@ -53,6 +56,7 @@
     "402": [
       "control.subscribe-before-ready-402",
       "control.auth-in-wrong-state-402",
+      "control.connecting-valid-subscribe-402",
       "control.error-402-duplicate-subscribe-nonfatal"
     ],
     "403": "control.error-403-unsupported-media-configuration",
@@ -73,8 +77,8 @@
   "error_registry_coverage_notes": {
     "102": "unreachable in v2.0: 102 is for a KNOWN capability the Server cannot honor, and no capability ids are assigned in v2.0 (spec §4.5); unknown ids are ignored (see control.negotiate-unknown-capability-ignored). The first reviewed spec revision that assigns an id must add its 102 vector.",
     "205": "no wire bytes exist: 205 is the Client's LOCAL classification of a TLS-handshake pin mismatch (spec §3, §6.2) — it never appears as a control frame.",
-    "206": "timing-only: PAIRING_PENDING_TIMEOUT fires after the 10-minute pairing deadline (Error(206)+Close(206)); no bytes to pin beyond the codes.",
-    "503": "no wire sequence is pinned by the accepted spec for SERVER_STOPPING (no §5.2 row); left to the maintainer rather than invented (spec gap noted in test-keys.json derivation_assumptions is not required for this one — simply unspecified)."
+    "206": "timing-only: PAIRING_PENDING_TIMEOUT fires only after the 10-minute pairing deadline (spec §3 pairing exchange deadline; §5.2 pairing-deadline row: Error(206)+Close(206)) — the codes are the only bytes the spec pins.",
+    "503": "the accepted spec pins no wire sequence for SERVER_STOPPING: no §5.2 row assigns one, and the code appears only in the §6.2 registry and in StreamEnded's code comment (spec §4.4) — a vector requires a reviewed spec revision that pins the sequence, not a fixture invention."
   },
   "cases": [
     {
@@ -187,6 +191,17 @@
       "summary": "State violation: AuthInit sent in READY (a fully set-up session) — illegal for the current state, answered with fatal Error(402)+Close(402)."
     },
     {
+      "id": "control.connecting-valid-subscribe-402",
+      "file": "control/connecting-valid-subscribe-402.json",
+      "category": "control-negative-space",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (CONNECTING: valid but state-forbidden Frame -> Error(402)+Close(402); 401/402 split by error nature)",
+        "docs/wire-protocol-v2/spec.md §6.2 (402 INVALID_STATE)",
+        "docs/wire-protocol-v2/spec.md §5.4 invariant 2 (subscription cannot complete before pairing/auth/negotiation)"
+      ],
+      "summary": "The CONNECTING nature split, valid-message side: a well-formed Subscribe in CONNECTING decodes cleanly but is state-forbidden — fatal Error(402)+Close(402), echoing its request_id; never 401 MALFORMED_MESSAGE."
+    },
+    {
       "id": "control.malformed-capability-list-negotiate-401",
       "file": "control/malformed-capability-list-negotiate-401.json",
       "category": "control-negative-space",
@@ -217,6 +232,18 @@
         "docs/wire-protocol-v2/spec.md §6.2 (201 PAIRING_REJECTED: retryable=no, re-pairing=yes)"
       ],
       "summary": "Pairing with a wrong client_proof: binding_echo verifies, but the 64-byte proof signature does not (one byte flipped) — nothing is persisted, PairingResult(201)+Close(201)."
+    },
+    {
+      "id": "control.error-201-pairing-declined",
+      "file": "control/error-201-pairing-declined.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (AUTHENTICATING: PairingConfirm verified but approval declined -> PairingResult(201)+Close(201), no detail)",
+        "docs/wire-protocol-v2/spec.md §4.2 (pre-auth responses — PairingResult included — carry no detail; TM-6)",
+        "docs/wire-protocol-v2/spec.md §6.2 (201 PAIRING_REJECTED: pairing declined locally)",
+        "docs/wire-protocol-v2/pairing.md §6.3.1 (proof verified BEFORE persistence — declined means verified-but-refused, nothing persisted)"
+      ],
+      "summary": "Approval declined with both proofs valid: the entire response is PairingResult(201) + Close(201) — Status carries NO detail (pre-auth no-detail rule), both frames <= 128 B, and nothing is persisted (a later AuthInit with the same key still gets 202)."
     },
     {
       "id": "control.error-202-authorization-unknown",
@@ -480,6 +507,16 @@
         "docs/wire-protocol-v2/spec.md §12 (parked: reserved flag bits ignored (not rejected), accepted with D4)"
       ],
       "summary": "A datagram with a reserved flag bit set (bit 2, 0x4) is processed normally — reserved bits are IGNORED, never rejected and never treated as malformed."
+    },
+    {
+      "id": "media.flags-reserved-bit31-ignored",
+      "file": "media/flags-reserved-bit31-ignored.json",
+      "category": "media-plane",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §7.1 (reserved-flag rule: sender MUST zero bits 2–31, receiver MUST ignore them)",
+        "docs/wire-protocol-v2/spec.md §7.5 (any of flag bits 2–31 set: never malformed, processed exactly as if zero)"
+      ],
+      "summary": "The highest reserved bit (bit 31, 0x80000000) set: the datagram is processed exactly as if flags were 0 — the ignore rule spans the whole bits 2–31 range, not just the low bits."
     },
     {
       "id": "media.sequence-wrap",

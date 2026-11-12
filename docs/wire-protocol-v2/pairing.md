@@ -114,7 +114,7 @@ C→S  PairingRequest {
        pairing_nonce[16]   // QR mode only; omitted in SAS mode
        client_random[32]   // CSPRNG
        client_pubkey       // ECDSA P-256, SEC1 compressed, 33 bytes
-       wire_protocol_major // 1 byte, must equal ALPN major
+       wire_protocol_major // must equal ALPN major
        capabilities        // the Client's offered capability set (§6.3); the only
                            // session-authoritative intersection is NegotiateResponse
        client_display_name // ≤ 63 bytes UTF-8; default = device model name
@@ -161,7 +161,17 @@ binding_context = SHA-256( TLV(1, mode) || TLV(2, protocol_major)
 TLV(tag, value) = tag(u8) || len(u16, big-endian) || value
 capabilities_canonical = count(u8) || for each id in ascending numeric order:
                          id(u32, big-endian)
+
+TLV value encodings:
+  mode                = the lowercase ASCII mode string "qr" or "sas"
+                        (2 bytes — never the PairingMode enum number)
+  protocol_major      = fixed 4-byte big-endian unsigned integer
+                        (v2 = 00 00 00 02 — never a varint, never 1 byte)
+  client_display_name = its UTF-8 bytes
+  every other value   = its raw byte string as carried on the wire
 ```
+
+The TLV value encodings above are normative (adjudication 2026-11-12) and **the same rule covers the pairing and the auth transcripts**: §9.1's `TLV(5, protocol_major)` is the identical fixed 4-byte big-endian integer, and every TLV there uses these value encodings.
 
 ```
 binding[48]     = TLS-Exporter("EXPORTER audio-share v2 pairing", binding_context, 48)
@@ -318,6 +328,7 @@ signature   = ECDSA-P256-SHA256(client_identity_key, auth_context),
 ```
 
 - Exactly **one** hash applies (adjudication 2026-11-12, resolving the double-hash ambiguity of earlier drafts): the SHA-256 inside ECDSA-SHA256 runs over the **raw `auth_context` bytes**. Implementations MUST NOT pre-hash `auth_context` and pass the digest to a `SHA256withECDSA`-style API — that double-hashes and breaks verification.
+- `TLV(5, protocol_major)` uses the §6.3 TLV value encodings — a fixed 4-byte big-endian unsigned integer (v2 = `00 00 00 02`); one encoding rule covers the pairing and the auth transcripts.
 - The signature's exporter component binds it to this exact TLS connection; the fresh `server_random` makes replay across connections impossible even if both randomness and transcript were recorded.
 - A Client MAY present more than one stored Server record's identity — each pairing has its own key, and the Server matches records by public key.
 - Failed attempts are rate-limited (threat-model.md §6): 5 failures close the connection; 20 failures per sliding 60 s window penalize the source address.
@@ -413,7 +424,7 @@ Signed off by maintainer adjudication 2026-11-12; see tickets 03/04 Comments.
 | PR-3 | QR payload encoding | Text URI `audioshare-pair://p1?…`, QR byte mode, ECC M (L fallback); unknown query fields rejected | §4.1 | ✅ accepted (2026-11-12) |
 | PR-4 | QR fields | `pm` (major), `addr` (host:port hint), `key` (raw 32-byte Ed25519 public key, base64url), `nonce` (16 bytes, base64url) | §4.2 | ✅ accepted (2026-11-12) |
 | PR-5 | Pairing nonce | 128-bit CSPRNG; 10 min lifetime; single-use (burned by the first well-formed PairingRequest); ≤ 8 outstanding; memory-only | §5 | ✅ accepted (2026-11-12) |
-| PR-6 | Transcript binding + Client proof of possession | SHA-256 over the TLV canonicalization of §6.3, with `capabilities_canonical` = numeric-ID-ascending, unique encoding; TLS-Exporter labels `EXPORTER audio-share v2 pairing` (48 B) and `EXPORTER audio-share v2 sas` (32 B); PairingRequest.capabilities = the Client's **offered** set, echoed by PairingResponse for transcript binding (NegotiateResponse is the only session-authoritative intersection); `client_proof` = one ECDSA-P256-SHA256 signature (64 B r\|\|s) by the claimed identity key over the pairing proof input (§6.3.1), verified by the Server before persisting the identity or sending PairingResult(OK); `binding_echo`-only possession semantics superseded | §6.2, §6.3 | ✏️ accepted as revised (2026-11-12) |
+| PR-6 | Transcript binding + Client proof of possession | SHA-256 over the TLV canonicalization of §6.3, with `capabilities_canonical` = numeric-ID-ascending, unique encoding; TLV value encodings normative — `mode` = lowercase ASCII `"qr"`/`"sas"`, `protocol_major` = fixed 4-byte big-endian (v2 = `00 00 00 02`), one rule covering the pairing and auth transcripts; TLS-Exporter labels `EXPORTER audio-share v2 pairing` (48 B) and `EXPORTER audio-share v2 sas` (32 B); PairingRequest.capabilities = the Client's **offered** set, echoed by PairingResponse for transcript binding (NegotiateResponse is the only session-authoritative intersection); `client_proof` = one ECDSA-P256-SHA256 signature (64 B r\|\|s) by the claimed identity key over the pairing proof input (§6.3.1), verified by the Server before persisting the identity or sending PairingResult(OK); `binding_echo`-only possession semantics superseded | §6.2, §6.3 | ✏️ accepted as revised (2026-11-12) |
 | PR-7 | SAS | 6 digits, `big-endian u32(sas_seed[0..4]) mod 1_000_000`, zero-padded, displayed `123 456`; explicit confirm on both ends; ≈ 19.93 bits — single-attempt random match ≈ 10⁻⁶, not 2⁻³⁰; undetected-MITM probability bounded by guess attempts under the pairing rate limits; compensating controls per §7.2; SAS-mode admission gate = the admin-enabled local pairing window (§7.3) | §7.1–§7.3 | ✏️ accepted as revised (2026-11-12) |
 | PR-8 | Fingerprint presentation | SHA-256(SPKI), 8 groups of 8 uppercase hex | §7.4 | ✅ accepted (2026-11-12) |
 | PR-9 | Auth scheme | Signed challenge (no bearer token): AuthInit/Challenge(32 B random)/Proof(one ECDSA-P256-SHA256 signature, r\|\|s 64 B, over the RAW auth_context bytes — exactly one hash, never pre-hashed-then-SHA256withECDSA — incl. exporter component)/Result | §9.1 | ✏️ accepted as revised (2026-11-12) |

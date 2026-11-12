@@ -1,0 +1,40 @@
+{
+  "id": "media.flags-reserved-bit31-ignored",
+  "category": "media-plane",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §7.1 (reserved-flag rule: sender MUST zero bits 2–31, receiver MUST ignore them)",
+    "docs/wire-protocol-v2/spec.md §7.5 (any of flag bits 2–31 set: never malformed, processed exactly as if zero)"
+  ],
+  "description": "A datagram with the highest reserved flag bit set (bit 31, 0x80000000) is processed normally — reserved bits are IGNORED, never rejected and never treated as malformed, at the top of the reserved range exactly as within it.",
+  "preconditions": [
+    "Session PLAYING; instance 1, generation 1, sequence 2.",
+    "The reserved-bit rule is normative (spec §7.1, §7.5): the sender MUST zero bits 2–31; the receiver MUST ignore them and MUST NOT treat them as malformed. This vector pins the receiver's tolerance at bit 31; it is not a license for a sender to set the bit."
+  ],
+  "steps": [
+    {
+      "kind": "datagram",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "000000010000000100000002000000000000001080000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "length": 88,
+      "decoded": {
+        "stream_instance_id": 1,
+        "config_generation": 1,
+        "sequence": 2,
+        "timestamp": 16,
+        "flags": "0x80000000",
+        "flags_set": [],
+        "payload_bytes": 64,
+        "payload_frames": 8,
+        "frame_bytes": 8
+      },
+      "note": "flags = 0x80000000: the highest reserved bit (bit 31) set; the sender MUST zero bits 2–31 and the receiver MUST ignore them — processed exactly as if flags were 0."
+    }
+  ],
+  "assertions": [
+    "The datagram is processed exactly as if flags were 0: decoded, deduped, buffered (§7.5) — bit 31 is as ignorable as bit 2 (see media.flags-reserved-ignored).",
+    "The receiver MUST NOT treat any of bits 2–31 as malformed; zeroing them is the sender's obligation (spec §7.1, §7.5).",
+    "A future revision may promote specific reserved bits to mandatory — until then receivers MUST ignore them (§7.1)."
+  ]
+}
