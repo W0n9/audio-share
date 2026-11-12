@@ -39,11 +39,6 @@ pub const MAX_OUTSTANDING_REQUESTS: u32 = 8;
 /// Per-Client media send queue in datagrams, drop-newest (spec §10, TM-8).
 pub const MEDIA_QUEUE_DATAGRAMS: usize = 256;
 
-/// Maximum bytes of one datagram payload sent through [`crate::send_queue`];
-/// media senders size datagrams from the current `max_datagram_size()` (D2)
-/// and never exceed the QUIC packet limit (spec §7.3).
-pub const MAX_DATAGRAM_BYTES: usize = 64 * 1024;
-
 /// Detail cap in bytes for `Status.detail` and `Close.detail` (spec §4.2).
 pub const MAX_DETAIL_BYTES: usize = 256;
 

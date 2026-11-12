@@ -22,7 +22,6 @@
 // carry the proto comments as trailing notes rather than doc attributes.
 #![allow(missing_docs, reason = "schema fields mirror the proto file's comments")]
 
-
 /// Authentication primitives: auth_context TLV, ECDSA-P256-SHA256 proof
 /// verification over the raw bytes (PR-9), client_id, capability-list rules.
 pub mod auth;
@@ -39,8 +38,6 @@ pub mod framing;
 pub mod identity;
 /// Resource limits (spec §10 / threat-model §6): guards and rate windows.
 pub mod limits;
-/// Non-waiting bounded send queue with honest drop accounting (spec §7.4).
-pub mod send_queue;
 /// Hand-written prost transcription of `protos/wire-protocol-v2/control.proto`.
 pub mod schema;
 /// The §5.2 Server session state machine (ticket 07) — pure domain logic.
