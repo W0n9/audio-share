@@ -1,0 +1,37 @@
+[package]
+name = "v2-transport"
+description = "Wire Protocol v2 transport for Audio Share: QUIC endpoint, server identity, framing, and resource limits"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+prost.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tracing = "0.1"
+
+# Pinned deliberately: quinn re-exports rustls/pki-types types, so rustls and
+# rustls-pki-types stay on the same minor while quinn 0.11 is in use.
+quinn = { version = "0.11", default-features = false, features = ["log", "runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+rustls-pki-types = "1"
+ring = "0.17"
+rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+base64 = "0.22"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3"
+
+[features]
+# Compile-time test-only support (golden-vector replay harness). Never enabled
+# by production binaries (pairing.md §11.3: bypasses live behind compile-time
+# test features).
+test-support = []
