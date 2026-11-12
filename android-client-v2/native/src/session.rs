@@ -146,6 +146,14 @@ impl Session {
         *self.shared.state.lock().unwrap() = s;
     }
 
+    /// Record the terminal Close code so the Kotlin reconnect policy can
+    /// classify it (§6.3). Remote Close frames used to leave `close_code`
+    /// null, which looked like transport loss and triggered a reconnect.
+    fn record_close(&self, info: CloseInfo) {
+        self.set_state(ClientState::Closed);
+        *self.shared.close_info.lock().unwrap() = Some(info);
+    }
+
     fn record_error(&self, msg: String) {
         log::warn!("session: {msg}");
         *self.shared.last_error.lock().unwrap() = msg;
@@ -364,7 +372,7 @@ impl Session {
                             crate::control::Verdict::Stop(info) => {
                                 // Close received (remote): no echo; the
                                 // transport close is the acknowledgment (§5.4.4)
-                                self.set_state(ClientState::Closed);
+                                self.record_close(info.clone());
                                 if info.remote {
                                     conn.close(quinn::VarInt::from_u64(u64::from(info.code)).unwrap(), b"");
                                 }
@@ -374,8 +382,7 @@ impl Session {
                     }
                     Err(info) => {
                         // surface path (202/203/204/101...): no reconnect per §6.3
-                        self.set_state(ClientState::Closed);
-                        *self.shared.close_info.lock().unwrap() = Some(info);
+                        self.record_close(info);
                         break 'control Ok(());
                     }
                 }
@@ -700,6 +707,17 @@ mod tests {
         assert!(json.contains("\"connected\":false"));
         assert!(json.contains("\"close_code\":null"));
         assert!(json.contains("handshake: refused"));
+    }
+
+    /// §6.3: a remote Close code (e.g. 204 revocation) must reach the Kotlin
+    /// reconnect policy instead of surfacing as a null "transport loss" code.
+    #[test]
+    fn remote_close_code_is_surfaced() {
+        let session = Session::new(test_config()).expect("session");
+        session.record_close(CloseInfo { code: 204, remote: true });
+        let json = session.stats_json();
+        assert!(json.contains("\"state\":\"CLOSED\""), "got: {json}");
+        assert!(json.contains("\"close_code\":204"), "got: {json}");
     }
 
     /// The auth exporter label is byte-exact (pairing.md §9.1).
