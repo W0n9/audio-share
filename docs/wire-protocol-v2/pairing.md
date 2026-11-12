@@ -1,12 +1,12 @@
 # Wire Protocol v2 — Pairing and Key Lifecycle Specification
 
-Status: proposed (2026-11-12)
+Status: accepted (2026-11-12, maintainer adjudication)
 
 Feature: wire-protocol-v2 · Ticket: `.scratch/wire-protocol-v2/issues/04-threat-model-pairing-spec.md` · Companion document: [threat-model.md](threat-model.md)
 
 ## 0. Status and normativity
 
-- This document is **proposed**. It becomes the pairing/key-lifecycle reference for v2.0 on maintainer acceptance (sign-off table in §12).
+- This document is **accepted** (maintainer adjudication 2026-11-12; sign-off table in §12). It is the pairing/key-lifecycle reference for v2.0.
 - Binding requirements come from the design baseline [`.scratch/wire-protocol-v2/spec.md`](../../.scratch/wire-protocol-v2/spec.md) (cited as "design baseline §…"), notably §Security and Pairing Model. The accepted transport posture is ADR-0004 ([`../adr/0004-wire-protocol-v2-transport.md`](../adr/0004-wire-protocol-v2-transport.md)).
 - Protobuf message numbering, error-code values, and field-number assignments are frozen in `docs/wire-protocol-v2/spec.md` (ticket 03). This document references that path only; the structures below are defined at the semantic level and carry no wire-field numbers.
 - The key words MUST, SHOULD, and MAY are to be interpreted as described in RFC 2119. Uncited MUST/SHOULD statements are proposals of this document with the same sign-off status as §12.
@@ -52,7 +52,7 @@ No pairing mechanism in this document may weaken or replace the transport key ex
 
 ## 4. QR pairing payload
 
-### 4.1 Encoding (decided here, proposed for sign-off)
+### 4.1 Encoding (decided here; PR-3 signed off 2026-11-12)
 
 The QR payload is **text in QR byte mode**, a URI of the form:
 
@@ -218,7 +218,7 @@ Stated explicitly, as required by the design baseline:
 - **Compensating controls** for the deliberately small code space (six digits retained by the adjudication): the verification-attempt rate limits above; the out-of-band verification paths — the always-available SPKI fingerprint comparison (§7.4) and the Server address hint displayed beside the code (§7.3); and the fact that every guess is an observable pairing failure that feeds those rate limits.
 - The SAS path therefore provides its protection **only** under the human step at trust boundary TB6 (threat-model.md §4).
 
-### 7.3 Presentation format (decided here, proposed for sign-off)
+### 7.3 Presentation format (decided here; PR-7 signed off 2026-11-12)
 
 | Property | Value |
 |---|---|
@@ -404,22 +404,24 @@ Binding rule (design baseline §Key Lifecycle and Local Administration): **test-
 
 ## 12. Decisions proposed
 
+Signed off by maintainer adjudication 2026-11-12; see tickets 03/04 Comments.
+
 | ID | Decision | Proposed value | Where | Maintainer sign-off |
 |---|---|---|---|---|
-| PR-1 | Server identity key | Ed25519, self-signed certificate; pin = SHA-256(SPKI DER) | §2, §6.1 | |
-| PR-2 | Client identity key | ECDSA P-256 + SHA-256, Android Keystore (StrongBox when available), non-exportable; software fallback marked in the record | §2, §10.1 | |
-| PR-3 | QR payload encoding | Text URI `audioshare-pair://p1?…`, QR byte mode, ECC M (L fallback); unknown query fields rejected | §4.1 | |
-| PR-4 | QR fields | `pm` (major), `addr` (host:port hint), `key` (raw 32-byte Ed25519 public key, base64url), `nonce` (16 bytes, base64url) | §4.2 | |
-| PR-5 | Pairing nonce | 128-bit CSPRNG; 10 min lifetime; single-use (burned by the first well-formed PairingRequest); ≤ 8 outstanding; memory-only | §5 | |
-| PR-6 | Transcript binding + Client proof of possession | SHA-256 over the TLV canonicalization of §6.3, with `capabilities_canonical` = numeric-ID-ascending, unique encoding; TLS-Exporter labels `EXPORTER audio-share v2 pairing` (48 B) and `EXPORTER audio-share v2 sas` (32 B); PairingRequest.capabilities = the Client's **offered** set, echoed by PairingResponse for transcript binding (NegotiateResponse is the only session-authoritative intersection); `client_proof` = one ECDSA-P256-SHA256 signature (64 B r\|\|s) by the claimed identity key over the pairing proof input (§6.3.1), verified by the Server before persisting the identity or sending PairingResult(OK); `binding_echo`-only possession semantics superseded | §6.2, §6.3 | |
-| PR-7 | SAS | 6 digits, `big-endian u32(sas_seed[0..4]) mod 1_000_000`, zero-padded, displayed `123 456`; explicit confirm on both ends; ≈ 19.93 bits — single-attempt random match ≈ 10⁻⁶, not 2⁻³⁰; undetected-MITM probability bounded by guess attempts under the pairing rate limits; compensating controls per §7.2; SAS-mode admission gate = the admin-enabled local pairing window (§7.3) | §7.1–§7.3 | |
-| PR-8 | Fingerprint presentation | SHA-256(SPKI), 8 groups of 8 uppercase hex | §7.4 | |
-| PR-9 | Auth scheme | Signed challenge (no bearer token): AuthInit/Challenge(32 B random)/Proof(one ECDSA-P256-SHA256 signature, r\|\|s 64 B, over the RAW auth_context bytes — exactly one hash, never pre-hashed-then-SHA256withECDSA — incl. exporter component)/Result | §9.1 | |
-| PR-10 | Authorization store | JSON `pairing/clients.json`, public data only; `client_id` = first 8 bytes of SHA-256(public_key); states active/revoked | §8.1 | |
-| PR-11 | Server file permissions | POSIX 0600 files / 0700 dirs; refuse v2 enablement on loose permissions with `--allow-loose-key-permissions` override; Windows: warn-only on wide ACLs | §10.2 | |
-| PR-12 | Concurrency/corruption | Core-owned state + exclusive lock for headless writes; atomic write + 1 backup generation; corruption ⇒ v2 fail-closed, never auto-regenerated | §10.3 | |
-| PR-13 | Revocation timing | New connections immediate; active sessions closed within ≤ 5 s | §9.2 | |
-| PR-14 | Test bypasses | Compile-time test feature only; no runtime bypass in production binaries | §11.3 | |
+| PR-1 | Server identity key | Ed25519, self-signed certificate; pin = SHA-256(SPKI DER) | §2, §6.1 | ✅ accepted (2026-11-12) |
+| PR-2 | Client identity key | ECDSA P-256 + SHA-256, Android Keystore (StrongBox when available), non-exportable; software fallback marked in the record | §2, §10.1 | ✅ accepted (2026-11-12) |
+| PR-3 | QR payload encoding | Text URI `audioshare-pair://p1?…`, QR byte mode, ECC M (L fallback); unknown query fields rejected | §4.1 | ✅ accepted (2026-11-12) |
+| PR-4 | QR fields | `pm` (major), `addr` (host:port hint), `key` (raw 32-byte Ed25519 public key, base64url), `nonce` (16 bytes, base64url) | §4.2 | ✅ accepted (2026-11-12) |
+| PR-5 | Pairing nonce | 128-bit CSPRNG; 10 min lifetime; single-use (burned by the first well-formed PairingRequest); ≤ 8 outstanding; memory-only | §5 | ✅ accepted (2026-11-12) |
+| PR-6 | Transcript binding + Client proof of possession | SHA-256 over the TLV canonicalization of §6.3, with `capabilities_canonical` = numeric-ID-ascending, unique encoding; TLS-Exporter labels `EXPORTER audio-share v2 pairing` (48 B) and `EXPORTER audio-share v2 sas` (32 B); PairingRequest.capabilities = the Client's **offered** set, echoed by PairingResponse for transcript binding (NegotiateResponse is the only session-authoritative intersection); `client_proof` = one ECDSA-P256-SHA256 signature (64 B r\|\|s) by the claimed identity key over the pairing proof input (§6.3.1), verified by the Server before persisting the identity or sending PairingResult(OK); `binding_echo`-only possession semantics superseded | §6.2, §6.3 | ✏️ accepted as revised (2026-11-12) |
+| PR-7 | SAS | 6 digits, `big-endian u32(sas_seed[0..4]) mod 1_000_000`, zero-padded, displayed `123 456`; explicit confirm on both ends; ≈ 19.93 bits — single-attempt random match ≈ 10⁻⁶, not 2⁻³⁰; undetected-MITM probability bounded by guess attempts under the pairing rate limits; compensating controls per §7.2; SAS-mode admission gate = the admin-enabled local pairing window (§7.3) | §7.1–§7.3 | ✏️ accepted as revised (2026-11-12) |
+| PR-8 | Fingerprint presentation | SHA-256(SPKI), 8 groups of 8 uppercase hex | §7.4 | ✅ accepted (2026-11-12) |
+| PR-9 | Auth scheme | Signed challenge (no bearer token): AuthInit/Challenge(32 B random)/Proof(one ECDSA-P256-SHA256 signature, r\|\|s 64 B, over the RAW auth_context bytes — exactly one hash, never pre-hashed-then-SHA256withECDSA — incl. exporter component)/Result | §9.1 | ✏️ accepted as revised (2026-11-12) |
+| PR-10 | Authorization store | JSON `pairing/clients.json`, public data only; `client_id` = first 8 bytes of SHA-256(public_key); states active/revoked | §8.1 | ✅ accepted (2026-11-12) |
+| PR-11 | Server file permissions | POSIX 0600 files / 0700 dirs; refuse v2 enablement on loose permissions with `--allow-loose-key-permissions` override; Windows: warn-only on wide ACLs | §10.2 | ✅ accepted (2026-11-12) |
+| PR-12 | Concurrency/corruption | Core-owned state + exclusive lock for headless writes; atomic write + 1 backup generation; corruption ⇒ v2 fail-closed, never auto-regenerated | §10.3 | ✅ accepted (2026-11-12) |
+| PR-13 | Revocation timing | New connections immediate; active sessions closed within ≤ 5 s | §9.2 | ✅ accepted (2026-11-12) |
+| PR-14 | Test bypasses | Compile-time test feature only; no runtime bypass in production binaries | §11.3 | ✅ accepted (2026-11-12) |
 
 ## 13. References
 

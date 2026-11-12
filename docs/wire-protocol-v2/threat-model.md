@@ -1,12 +1,12 @@
 # Wire Protocol v2 — Threat Model
 
-Status: proposed (2026-11-12)
+Status: accepted (2026-11-12, maintainer adjudication)
 
 Feature: wire-protocol-v2 · Ticket: `.scratch/wire-protocol-v2/issues/04-threat-model-pairing-spec.md` · Companion document: [pairing.md](pairing.md)
 
 ## 0. Status and normativity
 
-- This document is **proposed**. It becomes the security reference for v2.0 on maintainer acceptance (see the sign-off table in §10).
+- This document is **accepted** (maintainer adjudication 2026-11-12; sign-off table in §10). It is the security reference for v2.0.
 - Binding requirements are taken from the design baseline [`.scratch/wire-protocol-v2/spec.md`](../../.scratch/wire-protocol-v2/spec.md) — cited below as "design baseline §…". Every MUST there is binding here.
 - The accepted transport posture is ADR-0004 ([`../adr/0004-wire-protocol-v2-transport.md`](../adr/0004-wire-protocol-v2-transport.md)): quinn + rustls/TLS 1.3, SPKI pinning, control-stream authorization, 0-RTT disabled, no downgrade.
 - Field layouts, message numbering, and error-code values are **not** decided here; they are frozen in the normative wire specification at `docs/wire-protocol-v2/spec.md` (ticket 03). This document references that path only and does not depend on its contents.
@@ -159,9 +159,9 @@ The Server identity key, or a Client identity key, is copied or otherwise compro
 
 **Documented limit.** v2 has no out-of-band channel by which a Client could learn its Server's key was reset by someone else, or its own key was copied: detection depends on the operator or on the affected human noticing the re-pairing prompt.
 
-## 6. Resource-exhaustion limits (proposed defaults)
+## 6. Resource-exhaustion limits (defaults)
 
-All values are Server defaults, overridable by configuration within documented ranges; the normative values are frozen in `docs/wire-protocol-v2/spec.md` (ticket 03). These are proposals of this document (design baseline §Resource and Privacy Controls).
+All values are Server defaults, overridable by configuration within documented ranges; the normative values are frozen in `docs/wire-protocol-v2/spec.md` (ticket 03). These are this document's decisions, signed off in §10 (design baseline §Resource and Privacy Controls).
 
 | Limit | Proposed default | Rationale |
 |---|---|---|
@@ -217,17 +217,19 @@ Explicitly out of scope for the v2.0 threat model. They are not silently ignored
 
 ## 10. Decisions proposed
 
+Signed off by maintainer adjudication 2026-11-12; see tickets 03/04 Comments.
+
 | ID | Decision | Proposed value | Basis | Maintainer sign-off |
 |---|---|---|---|---|
-| TM-1 | Concurrent handshakes in progress | 16 | §6 | |
-| TM-2 | Total established Client sessions | 32 default, range 1–256 | §6 | |
-| TM-3 | Sessions per Client identity | 1 active; newer authenticated session replaces older, replacement counted | §6 | |
-| TM-4 | Auth failure rate limits | 5 per connection then close; 20 per sliding 60 s per source address | §6 | |
-| TM-5 | Pairing bounds | 8 concurrent pairing sessions; 8 outstanding nonces; 10 min lifetime; 5 failures per 60 s per address | §6, pairing.md §5 | |
-| TM-6 | Pre-auth response bounds | General pre-auth responses (challenges, rejections, errors — no detail) ≤ 128 B; a successful PairingResponse ≤ 320 B Frame.length; admission gates: QR pairing = a valid, unused nonce, SAS pairing = the admin-enabled local pairing window | §6, pairing.md §5/§7.3 | |
-| TM-7 | Error payload bound | ≤ 512 B, stable codes only | §6 | |
-| TM-8 | Per-Client media queue | 256 datagrams (application-level) | §6 | |
-| TM-9 | Key-compromise behavior | Rotation = reset + re-pairing; revocation of active sessions ≤ 5 s; no recovery backdoor | §8, pairing.md §8–§9 | |
+| TM-1 | Concurrent handshakes in progress | 16 | §6 | ✅ accepted (2026-11-12) |
+| TM-2 | Total established Client sessions | 32 default, range 1–256 | §6 | ✅ accepted (2026-11-12) |
+| TM-3 | Sessions per Client identity | 1 active; newer authenticated session replaces older, replacement counted | §6 | ✅ accepted (2026-11-12) |
+| TM-4 | Auth failure rate limits | 5 per connection then close; 20 per sliding 60 s per source address | §6 | ✅ accepted (2026-11-12) |
+| TM-5 | Pairing bounds | 8 concurrent pairing sessions; 8 outstanding nonces; 10 min lifetime; 5 failures per 60 s per address | §6, pairing.md §5 | ✅ accepted (2026-11-12) |
+| TM-6 | Pre-auth response bounds | General pre-auth responses (challenges, rejections, errors — no detail) ≤ 128 B; a successful PairingResponse ≤ 320 B Frame.length; admission gates: QR pairing = a valid, unused nonce, SAS pairing = the admin-enabled local pairing window | §6, pairing.md §5/§7.3 | ✏️ accepted as revised (2026-11-12) |
+| TM-7 | Error payload bound | ≤ 512 B, stable codes only | §6 | ✅ accepted (2026-11-12) |
+| TM-8 | Per-Client media queue | 256 datagrams (application-level) | §6 | ✅ accepted (2026-11-12) |
+| TM-9 | Key-compromise behavior | Rotation = reset + re-pairing; revocation of active sessions ≤ 5 s; no recovery backdoor | §8, pairing.md §8–§9 | ✅ accepted (2026-11-12) |
 
 ## 11. References
 
