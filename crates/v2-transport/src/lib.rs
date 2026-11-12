@@ -18,9 +18,6 @@
 //! the Server GUI, or `protocol-harness` needs them until it opts into v2.
 
 #![warn(missing_docs)]
-// The schema module is a transcription of the frozen proto file; its fields
-// carry the proto comments as trailing notes rather than doc attributes.
-#![allow(missing_docs, reason = "schema fields mirror the proto file's comments")]
 
 /// Authentication primitives: auth_context TLV, ECDSA-P256-SHA256 proof
 /// verification over the raw bytes (PR-9), client_id, capability-list rules.
