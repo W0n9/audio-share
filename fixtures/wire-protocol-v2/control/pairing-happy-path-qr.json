@@ -123,9 +123,9 @@
     "client_id_formula": "first 8 bytes of SHA-256(client_public_key)",
     "client_id_hex": "cf7940b474310246",
     "signing_nonce_k_label_qr": "audio-share v2 TEST-ONLY ECDSA nonce | pairing-confirm-qr (see test-keys.json)",
-    "encoding_assumptions": [
-      "TLV(1, mode) encoded as the pairing.md §6.2 ASCII mode string 'qr' (flagged spec gap; see test-keys.json)",
-      "TLV(2, protocol_major) encoded as u32 big-endian (flagged spec gap; see test-keys.json)"
+    "encoding_notes": [
+      "TLV(1, mode) = the lowercase ASCII mode string 'qr' (pairing.md §6.3)",
+      "TLV(2, protocol_major) = fixed 4-byte big-endian (v2 = 00 00 00 02) (pairing.md §6.3)"
     ]
   }
 }

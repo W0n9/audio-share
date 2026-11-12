@@ -16,9 +16,9 @@
       "dir": "C->S",
       "channel": "control-stream",
       "message": "<no body; unknown field 15 only>",
-      "frame_hex": "00000000",
-      "body_hex": "",
-      "length": 0,
+      "frame_hex": "000000027800",
+      "body_hex": "7800",
+      "length": 2,
       "decoded": {
         "unknown_field": 15,
         "wire_type": 0,
@@ -68,8 +68,8 @@
     }
   ],
   "assertions": [
-    "Unknown proto3 fields are ignored — but ignoring them leaves the body oneof unset, and that is malformed (401).",
-    "A literally empty Frame body is a length-0 frame and also 401 (see error-401-frame-length-zero); this vector isolates the unset-body rule at nonzero length.",
+    "The frame body is exactly the two bytes 78 00 — unknown field 15, wire type 0 (varint), value 0. Proto3 ignores unknown fields, but ignoring them leaves the body oneof unset, and that is malformed (401).",
+    "The frame is non-empty (length 2), so this isolates the unset-body rule from the length-0 framing violation (see error-401-frame-length-zero).",
     "Error unsolicited (0, not encoded)."
   ]
 }

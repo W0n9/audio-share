@@ -1,0 +1,77 @@
+{
+  "id": "control.connecting-valid-subscribe-402",
+  "category": "control-negative-space",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (CONNECTING: valid but state-forbidden Frame -> Error(402)+Close(402); 401/402 split by error nature)",
+    "docs/wire-protocol-v2/spec.md §6.2 (402 INVALID_STATE)",
+    "docs/wire-protocol-v2/spec.md §5.4 invariant 2 (subscription cannot complete before pairing/auth/negotiation)"
+  ],
+  "description": "CONNECTING receives a VALID Subscribe — well-formed and decodable, but state-forbidden: Error(402)+Close(402) (INVALID_STATE), never 401 MALFORMED_MESSAGE.",
+  "preconditions": [
+    "Fresh connection: transport handshake done, control stream open, no app message processed yet — state CONNECTING.",
+    "Isolated connection; request_id counter starts at 1."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "subscribe",
+      "frame_hex": "0000000c820209090100000000000000",
+      "body_hex": "820209090100000000000000",
+      "length": 12,
+      "decoded": {
+        "request_id": 1
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000102a0e0901000000000000001203089203",
+      "body_hex": "2a0e0901000000000000001203089203",
+      "length": 16,
+      "decoded": {
+        "request_id": 1,
+        "status": {
+          "code": 402
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "000000053203089203",
+      "body_hex": "3203089203",
+      "length": 5,
+      "decoded": {
+        "code": 402
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 402,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "The Subscribe is VALID — it decodes cleanly with no validation failure — so the answer is 402 INVALID_STATE, never 401: the CONNECTING code follows the error's NATURE (malformed/generic-validation -> 401, valid-but-state-forbidden -> 402; spec §5.2).",
+    "The Error echoes the request's request_id (1) — proof the request was understood (a malformed frame could not echo one).",
+    "402 is fatal here (paired with Close): the session never leaves CONNECTING; the non-fatal, connection-kept 402 exists only for a duplicate Subscribe in READY/PLAYING (spec §5.2 error classes).",
+    "Message-specific CONNECTING rows keep precedence: a PairingRequest, capacity exhaustion, or a second Client stream follows its own row, not this generic one (spec §5.2).",
+    "Media subscription can never complete before pairing/auth/negotiation/configuration by state legality; violations produce a defined error, never a silent ignore (spec §5.4)."
+  ]
+}

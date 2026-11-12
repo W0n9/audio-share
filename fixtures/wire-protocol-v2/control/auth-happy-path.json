@@ -99,8 +99,8 @@
     "auth_context_bytes": 155,
     "signature": "ECDSA-P256-SHA256(client_identity_key, auth_context), fixed 64-byte r||s (IEEE P1363)",
     "signing_nonce_k_label": "audio-share v2 TEST-ONLY ECDSA nonce | auth-happy-path (see test-keys.json)",
-    "encoding_assumptions": [
-      "TLV(5, protocol_major) encoded as u32 big-endian (flagged spec gap; see test-keys.json derivation_assumptions)"
+    "encoding_notes": [
+      "TLV(5, protocol_major) = fixed 4-byte big-endian (v2 = 00 00 00 02) — the pairing.md §6.3 value encodings cover the auth transcript as well"
     ]
   }
 }

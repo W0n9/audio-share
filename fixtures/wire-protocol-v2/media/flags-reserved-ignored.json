@@ -2,13 +2,13 @@
   "id": "media.flags-reserved-ignored",
   "category": "media-plane",
   "spec_cite": [
-    "docs/wire-protocol-v2/spec.md §7.1 (flags table: bit 2 SPARE — receiver MUST ignore)",
-    "docs/wire-protocol-v2/spec.md §12 (parked: reserved flag bits ignored (not rejected), accepted with D4)"
+    "docs/wire-protocol-v2/spec.md §7.1 (flags table: bit 2 SPARE — receiver MUST ignore; reserved-flag rule)",
+    "docs/wire-protocol-v2/spec.md §7.5 (any of flag bits 2–31 set: never malformed, processed exactly as if zero)"
   ],
   "description": "A datagram with a reserved flag bit set (bit 2, 0x4) is processed normally — reserved bits are IGNORED, never rejected and never treated as malformed.",
   "preconditions": [
     "Session PLAYING; instance 1, generation 1, sequence 2.",
-    "Note: spec §7.5's malformed-media row also lists 'reserved flag bits set', which conflicts with §7.1's MUST-ignore and with the §12 parked row ('ignored (not rejected)', accepted with D4 by the adjudication). The adjudicated intent is IGNORE; this vector pins it and the §7.5 wording is flagged for the maintainer."
+    "The reserved-bit rule is normative (spec §7.1, §7.5): the sender MUST zero bits 2–31; the receiver MUST ignore them and MUST NOT treat them as malformed. This vector pins the receiver's tolerance; it is not a license for a sender to set the bit."
   ],
   "steps": [
     {
@@ -34,7 +34,7 @@
   ],
   "assertions": [
     "The datagram is processed exactly as if flags were 0: decoded, deduped, buffered (§7.5).",
-    "A future revision may promote specific reserved bits to mandatory — until then receivers MUST ignore them (§7.1).",
-    "Flagged spec gap: §7.5's malformed-media row vs §7.1/§12 — resolved here per the §12 parked row."
+    "The receiver MUST NOT treat any of bits 2–31 as malformed; zeroing them is the sender's obligation (spec §7.1, §7.5).",
+    "A future revision may promote specific reserved bits to mandatory — until then receivers MUST ignore them (§7.1)."
   ]
 }
