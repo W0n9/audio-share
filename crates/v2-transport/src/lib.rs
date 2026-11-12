@@ -40,6 +40,8 @@ pub mod limits;
 pub mod send_queue;
 /// Hand-written prost transcription of `protos/wire-protocol-v2/control.proto`.
 pub mod schema;
+/// The §5.2 Server session state machine (ticket 07) — pure domain logic.
+pub mod state_machine;
 /// Connection lifecycle state exposed through the domain API (spec §5.1).
 pub mod session;
 /// The quinn endpoint: TLS 1.3, ALPN, 0-RTT off, accept loop, close codes.
