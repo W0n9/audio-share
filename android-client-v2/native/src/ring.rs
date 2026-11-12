@@ -95,9 +95,7 @@ impl MediaRing {
             let mut off = (start % cap as u64) as usize;
             let mut i = 0;
             while i < len {
-                let run = len.min(cap - off) - i.min(cap - off);
-                let run = run.max(0);
-                let run = run.min(len - i);
+                let run = (cap - off).min(len - i);
                 out[i..i + run]
                     .copy_from_slice(std::slice::from_raw_parts(self.base.add(off), run));
                 i += run;
