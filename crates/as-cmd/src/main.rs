@@ -13,7 +13,7 @@
 //! file sink is an intentional improvement required by the rewrite spec.
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
@@ -103,6 +103,21 @@ struct Cli {
     /// (testing aid; not present in v0.3.4).
     #[arg(long = "fake-capture")]
     fake_capture: bool,
+
+    /// The v2 (QUIC, wire-protocol v2) listen port. Default 65531, parallel
+    /// to v1's 65530 (spec D1). 0 disables the v2 transport entirely; v1 is
+    /// unaffected either way.
+    #[arg(
+        long = "v2-port",
+        value_name = "port",
+        default_value_t = v2_transport::codes::DEFAULT_V2_PORT
+    )]
+    v2_port: u16,
+
+    /// POSIX override (pairing.md §10.2): enable v2 despite loose
+    /// identity-key permissions (discouraged; logged). Windows warns only.
+    #[arg(long = "allow-loose-key-permissions")]
+    allow_loose_key_permissions: bool,
 }
 
 /// The action selected by the flags, in v0.3.4 dispatch order:
@@ -285,7 +300,7 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
 
     let handle = Server::start(
         ServerConfig {
-            host,
+            host: host.clone(),
             port,
             heartbeat_interval: HEARTBEAT_INTERVAL,
             heartbeat_timeout: SESSION_TIMEOUT,
@@ -308,16 +323,148 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
         format.sample_rate
     );
 
+    // The v2 (QUIC) transport: enabled by default on 65531, independently
+    // disableable (`--v2-port=0`). v2 failures never take down the v1 server
+    // (pairing.md §10.2: "v1 and capture are unaffected").
+    let v2 = if cli.v2_port == 0 {
+        tracing::info!("v2 transport disabled (--v2-port=0); v1 TCP/UDP unaffected");
+        None
+    } else {
+        match start_v2_transport(&cli, &host).await {
+            Ok((transport, accept_task)) => {
+                tracing::info!(
+                    "v2 listen success on {}, alpn={}",
+                    transport.local_addr(),
+                    String::from_utf8_lossy(v2_transport::codes::ALPN_PROTOCOL)
+                );
+                Some((transport, accept_task))
+            }
+            Err(reason) => {
+                tracing::error!("v2 transport not enabled: {reason}");
+                None
+            }
+        }
+    };
+
     tokio::signal::ctrl_c()
         .await
         .map_err(|error| format!("install Ctrl-C handler: {error}"))?;
     tracing::info!("stopping server");
+    if let Some((transport, accept_task)) = v2 {
+        transport.stop();
+        let _ = accept_task.await;
+        tracing::info!("v2 listener stopped");
+    }
     handle
         .stop()
         .await
         .map_err(|error| format!("cannot stop the server: {error}"))?;
     tracing::info!("server stopped");
     Ok(())
+}
+
+/// Start the v2 transport: load the Ed25519 identity key, bind the QUIC
+/// endpoint, and spawn the accept loop that enforces the §10 resource limits
+/// and logs connection lifecycles.
+///
+/// The identity key lives at `<data dir>/identity/server-identity.pem`
+/// (pairing.md §10.2), where the data dir is the resolved config directory
+/// (the directory that also holds `server.log`).
+async fn start_v2_transport(
+    cli: &Cli,
+    host: &str,
+) -> Result<
+    (
+        std::sync::Arc<v2_transport::transport::Transport>,
+        tokio::task::JoinHandle<()>,
+    ),
+    String,
+> {
+    let paths = paths::paths();
+    let data_dir = paths
+        .config
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let identity_config = v2_transport::identity::IdentityConfig {
+        data_dir,
+        allow_loose_permissions: cli.allow_loose_key_permissions,
+    };
+    let identity = v2_transport::identity::ServerIdentity::open(&identity_config)
+        .map_err(|error| error.to_string())?;
+    tracing::info!(
+        "v2 identity ready: fingerprint={}, key={}",
+        identity.fingerprint(),
+        identity.key_path().display()
+    );
+    if cli.allow_loose_key_permissions {
+        tracing::warn!(
+            "v2 identity-key permissions are loose and the override is active (--allow-loose-key-permissions); this is discouraged (pairing.md §10.2)"
+        );
+    }
+
+    let bind = resolve_bind_address(host, cli.v2_port)
+        .await
+        .map_err(|error| format!("resolve v2 bind address: {error}"))?;
+    let transport = std::sync::Arc::new(
+        v2_transport::transport::Transport::start(
+            v2_transport::transport::TransportConfig {
+                bind,
+                limits: v2_transport::limits::Limits::defaults(),
+            },
+            &identity,
+        )
+        .map_err(|error| error.to_string())?,
+    );
+
+    // The accept loop owns the capacity guards (TM-1/TM-2) and logs every
+    // connection's lifecycle outcome. Admitted connections are parked until
+    // the peer or a later ticket's session layer closes them.
+    let accept_transport = std::sync::Arc::clone(&transport);
+    let accept_task = tokio::spawn(async move {
+        let mut guard = v2_transport::limits::CapacityGuard::new(v2_transport::limits::Limits::defaults());
+        loop {
+            let accepted = accept_transport.accept_one(&mut guard).await;
+            match accepted.connection {
+                Some(connection) => {
+                    let remote = accepted.remote_address;
+                    tokio::spawn(async move {
+                        let closed = connection.closed().await;
+                        let termination = v2_transport::transport::classify_close(&closed);
+                        tracing::info!(
+                            remote = ?remote,
+                            "v2 session ended: {:?}",
+                            termination
+                        );
+                    });
+                }
+                None => {
+                    let stopped = accepted
+                        .lifecycle
+                        .termination()
+                        .is_some_and(|termination| {
+                            termination.code().code
+                                == v2_transport::codes::ErrorCode::SERVER_STOPPING.code
+                        });
+                    if stopped {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    Ok((transport, accept_task))
+}
+
+/// Resolve a bind host (name or IP) and port to a socket address, mirroring
+/// the v1 server's resolution.
+async fn resolve_bind_address(host: &str, port: u16) -> Result<std::net::SocketAddr, String> {
+    tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|error| format!("{host}:{port}: {error}"))?
+        .next()
+        .ok_or_else(|| format!("{host}:{port} resolved to no addresses"))
 }
 
 /// Parse v0.3.4 `[host][:port]` bind syntax.
