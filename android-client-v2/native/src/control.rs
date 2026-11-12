@@ -23,11 +23,11 @@
 
 use crate::proto::{frame::Body, Configuration, Frame};
 
-pub(crate) mod signing_context {
-    //! Error/Close frame builders for the §5.2 fatal class. Kept as a child
-    //! module so the wire order (Error before Close) has one home.
+pub(crate) mod frames {
+    //! The one home for Error/Close frame construction. `fatal_frames` keeps
+    //! the §5.2 fatal-class wire order (Error before Close).
 
-    use crate::proto::{frame::Body, Close, Frame};
+    use crate::proto::{frame::Body, Close, Error, Frame, Status};
 
     /// Build a Close frame (§4.4): code != 0, no detail.
     pub fn close_frame(code: u32) -> Frame {
@@ -37,6 +37,27 @@ pub(crate) mod signing_context {
                 detail: String::new(),
             })),
         }
+    }
+
+    /// Build a locally generated Error frame: request_id 0 (not a response),
+    /// no detail.
+    pub fn error_frame(code: u32) -> Frame {
+        Frame {
+            body: Some(Body::Error(Error {
+                request_id: 0,
+                status: Some(Status {
+                    code,
+                    retryable: false,
+                    requires_repairing: false,
+                    detail: String::new(),
+                }),
+            })),
+        }
+    }
+
+    /// The fatal class (§5.2): Error(code) followed by Close(code).
+    pub fn fatal_frames(code: u32) -> [Frame; 2] {
+        [error_frame(code), close_frame(code)]
     }
 }
 
@@ -134,6 +155,9 @@ pub enum Verdict {
     Ok,
     /// Send this frame on the control stream (AuthProof, Negotiate, Close(701)).
     Send(Frame),
+    /// Send an Error(code) only; the connection remains open and no state
+    /// changes (§5.3: a local refusal is non-fatal, unlike `Fatal`).
+    Reject { code: u32 },
     /// Send the Error then the Close (§5.2 fatal class), then stop with the code.
     Fatal { code: u32 },
     /// Session is torn down (Close received, exchange deadline, transport loss).
@@ -215,25 +239,65 @@ impl ClientMachine {
         self.pending.len()
     }
 
+    /// Ids of requests awaiting a response, for the per-request deadlines.
+    pub fn pending_ids(&self) -> Vec<u64> {
+        self.pending.keys().copied().collect()
+    }
+
     #[cfg(test)]
     pub(crate) fn seed_pending(&mut self, request_id: u64, kind: PendingKind) {
         self.pending.insert(request_id, kind);
     }
 
-    /// Initial send after the control stream opens (§5.3 CONNECTING row):
-    /// AuthInit with the paired identity key. The caller supplies the frame;
-    /// the machine records the pending request and the state move.
-    pub fn enter_authenticating(&mut self, auth_init: Frame) -> Verdict {
-        debug_assert!(matches!(self.state, ClientState::Idle));
-        if let Some(Body::AuthInit(init)) = &auth_init.body {
-            self.pending.insert(init.request_id, PendingKind::AuthInit);
+    /// Build the initial AuthInit frame with the next request_id (§5.3
+    /// CONNECTING row). The id comes from the machine, so client-originated
+    /// ids stay strictly increasing and are never reused (§4.2).
+    pub fn auth_init(&mut self, client_public_key: Vec<u8>) -> Frame {
+        let request_id = self.take_request_id();
+        Frame {
+            body: Some(Body::AuthInit(crate::proto::AuthInit {
+                request_id,
+                client_public_key,
+            })),
         }
+    }
+
+    /// Initial send after the control stream opens (§5.3 CONNECTING row):
+    /// AuthInit with the paired identity key. The machine records the pending
+    /// request and the state move.
+    ///
+    /// Errors are local protocol/programming errors: the wrong state
+    /// (`ClientState` not `Idle`, 402) or a frame that is not AuthInit (401).
+    pub fn enter_authenticating(
+        &mut self,
+        auth_init: Frame,
+    ) -> Result<Verdict, CloseInfo> {
+        if !matches!(self.state, ClientState::Idle) {
+            return Err(CloseInfo {
+                code: 402,
+                remote: false,
+            });
+        }
+        let Some(Body::AuthInit(init)) = &auth_init.body else {
+            self.state = ClientState::Closed;
+            self.pending.clear();
+            return Err(CloseInfo {
+                code: 401,
+                remote: false,
+            });
+        };
+        self.pending.insert(init.request_id, PendingKind::AuthInit);
         self.state = ClientState::ConnectingSent;
-        Verdict::Send(auth_init)
+        Ok(Verdict::Send(auth_init))
     }
 
     /// READY → send Subscribe (§5.3 READY row) and await SubscribeResponse.
+    /// In PLAYING this is a local non-fatal 402: answer with an Error, keep
+    /// the connection and the subscription intact.
     pub fn request_subscribe(&mut self) -> Verdict {
+        if self.state == ClientState::Playing {
+            return Verdict::Reject { code: 402 };
+        }
         if self.state != ClientState::Ready {
             return self.fatal(402);
         }
@@ -524,8 +588,9 @@ impl ClientMachine {
         Verdict::Fatal { code }
     }
 
-    /// Monotonic per-connection request_id (§4.2: unique per sender per
-    /// connection, increasing from 1).
+    /// Monotonic per-connection request_id (§4.2, spec:89): "sender-assigned,
+    /// unique per sender per connection, monotonically increasing from 1".
+    /// Client-originated ids are therefore never reused.
     fn take_request_id(&mut self) -> u64 {
         let id = self.next_request_id;
         self.next_request_id += 1;
@@ -539,7 +604,7 @@ impl ClientMachine {
             _ => {
                 self.state = ClientState::Closed;
                 self.pending.clear();
-                Verdict::Send(signing_context::close_frame(701))
+                Verdict::Send(frames::close_frame(701))
             }
         }
     }
@@ -837,6 +902,82 @@ mod tests {
         assert_eq!(m.state, ClientState::Ready);
     }
 
+    #[test]
+    fn subscribe_while_playing_is_nonfatal_402() {
+        // §5.3 PLAYING row: a Subscribe while PLAYING is a local non-fatal
+        // 402 — send an Error, keep the connection, subscription and state.
+        let mut m = machine_at_playing();
+        let pending_before = m.pending_len();
+        assert_eq!(m.request_subscribe(), Verdict::Reject { code: 402 });
+        assert_eq!(m.state, ClientState::Playing, "connection stays PLAYING");
+        assert!(m.subscribed, "the existing subscription is untouched");
+        assert_eq!(m.pending_len(), pending_before, "no request was registered");
+        // The connection is still usable for a valid request.
+        assert!(matches!(m.request_unsubscribe(), Verdict::Send(_)));
+    }
+
+    #[test]
+    fn outbound_request_ids_are_strictly_increasing_and_never_reused() {
+        // §4.2 (spec:89): sender-assigned, unique per sender per connection,
+        // monotonically increasing from 1. The machine owns every id it emits.
+        let mut m = ClientMachine::new();
+        let init = m.auth_init(vec![0x02, 0x03]);
+        let Some(Body::AuthInit(init_body)) = &init.body else {
+            panic!("expected AuthInit");
+        };
+        assert_eq!(init_body.request_id, 1);
+        m.enter_authenticating(init).expect("auth init");
+        let (v, _) = m.on_frame(&frame(Body::AuthResult(AuthResult {
+            request_id: 1,
+            status: ok_status(),
+            session_id: 1,
+        })));
+        let Ok(Verdict::Send(negotiate)) = v else {
+            panic!("expected Negotiate");
+        };
+        let Some(Body::Negotiate(neg)) = &negotiate.body else {
+            panic!("expected Negotiate body");
+        };
+        assert_eq!(neg.request_id, 2);
+        let (v, _) = m.on_frame(&frame(Body::NegotiateResponse(NegotiateResponse {
+            request_id: 2,
+            status: ok_status(),
+            protocol_major: 2,
+            protocol_minor: 0,
+            capabilities: Vec::new(),
+        })));
+        assert_eq!(v, Ok(Verdict::Ok));
+        let Verdict::Send(config) = m.request_configuration() else {
+            panic!("expected RequestConfiguration");
+        };
+        let Some(Body::RequestConfiguration(req)) = &config.body else {
+            panic!("expected RequestConfiguration body");
+        };
+        assert_eq!(req.request_id, 3, "ids only increase; earlier ids never reused");
+    }
+
+    #[test]
+    fn enter_authenticating_requires_idle_and_auth_init() {
+        // S7: no silent no-op. Wrong state and wrong body are explicit errors.
+        let mut m = machine_at_ready();
+        let init = m.auth_init(vec![0x02]);
+        assert_eq!(
+            m.enter_authenticating(init).expect_err("not Idle"),
+            CloseInfo { code: 402, remote: false }
+        );
+
+        let mut m = ClientMachine::new();
+        let not_init = frame(Body::Close(crate::proto::Close {
+            code: 701,
+            detail: String::new(),
+        }));
+        assert_eq!(
+            m.enter_authenticating(not_init).expect_err("not AuthInit"),
+            CloseInfo { code: 401, remote: false }
+        );
+        assert_eq!(m.state, ClientState::Closed);
+    }
+
     /// §5.3 normal request/response pairing: auth → negotiate → subscribe →
     /// request_configuration → unsubscribe, each reply matched by request_id.
     #[test]
@@ -847,15 +988,13 @@ mod tests {
             crate::auth::tests_const_exporter(),
             crate::auth::test_client_identity_key(),
         );
-        let init = Frame {
-            body: Some(Body::AuthInit(crate::proto::AuthInit {
-                request_id: 1,
-                client_public_key: crate::auth::sec1_compressed(
-                    &crate::auth::test_client_identity_key(),
-                ),
-            })),
-        };
-        assert!(matches!(m.enter_authenticating(init), Verdict::Send(_)));
+        let init = m.auth_init(crate::auth::sec1_compressed(
+            &crate::auth::test_client_identity_key(),
+        ));
+        assert!(matches!(
+            m.enter_authenticating(init).expect("auth init"),
+            Verdict::Send(_)
+        ));
         let (challenge, _) = m.on_frame(&frame(Body::AuthChallenge(AuthChallenge {
             request_id: 1,
             server_random: (0u8..32).collect(),

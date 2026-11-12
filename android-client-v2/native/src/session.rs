@@ -15,15 +15,13 @@
 //! SPKI pin comes from the pre-provisioned Server public key (test-keys.json
 //! pin; production pairing is phase 6).
 
+use std::collections::BTreeMap;
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::control::{ClientMachine, ClientState, CloseInfo};
 use crate::frame::{encode_frame, FrameDecoder};
-use crate::proto::Frame;
-use crate::proto::frame::Body;
-use crate::proto::AuthInit;
 use crate::verify::PinnedSpkiVerifier;
 
 /// Spec §3 / ADR-0004 D1: v2 port (never v1's 65530).
@@ -45,41 +43,42 @@ const RESPONSE_DEADLINE_SECS: u64 = 10;
 const IDLE_TIMEOUT_SECS: u64 = 30;
 const KEEP_ALIVE_SECS: u64 = 10;
 
-/// Response deadline bookkeeping. The deadline is armed once when the first
-/// request becomes pending and is NOT pushed back by unrelated reads (an
-/// absolute per-request deadline, §4.2); it disarms when nothing is pending.
+/// Per-request response deadlines (§4.2). Each pending request is armed once,
+/// from the moment it is sent, and is never extended by unrelated reads. A
+/// request's deadline is dropped when its response arrives (it leaves the
+/// pending set), not when the first of several requests completes.
 #[derive(Debug, Default)]
 struct ResponseWatch {
-    deadline: Option<tokio::time::Instant>,
+    deadlines: BTreeMap<u64, tokio::time::Instant>,
 }
 
 impl ResponseWatch {
-    fn observe(&mut self, now: tokio::time::Instant, pending: usize) {
-        if pending == 0 {
-            self.deadline = None;
-        } else if self.deadline.is_none() {
-            self.deadline =
-                Some(now + std::time::Duration::from_secs(RESPONSE_DEADLINE_SECS));
+    fn observe(&mut self, now: tokio::time::Instant, pending: &[u64]) {
+        let pending: std::collections::HashSet<u64> = pending.iter().copied().collect();
+        self.deadlines.retain(|id, _| pending.contains(id));
+        for id in pending {
+            self.deadlines.entry(id).or_insert(
+                now + std::time::Duration::from_secs(RESPONSE_DEADLINE_SECS),
+            );
         }
     }
 
-    async fn expired(&self) {
-        match self.deadline {
-            Some(deadline) => tokio::time::sleep_until(deadline).await,
-            None => std::future::pending().await,
-        }
+    fn earliest(&self) -> Option<tokio::time::Instant> {
+        self.deadlines.values().copied().min()
     }
-}
-/// §6.3 backoff: 1 s base, ×2 per attempt, 30 s cap, ±20 % jitter.
-pub const BACKOFF_BASE_MS: u64 = 1_000;
-pub const BACKOFF_MAX_MS: u64 = 30_000;
 
-/// §6.3 backoff delay for the nth attempt (0-based): 1 s × 2^n capped at
-/// 30 s; the ±20 % jitter is applied by the caller (Kotlin session or tests).
-pub fn backoff_delay_ms(attempt: u64) -> u64 {
-    BACKOFF_BASE_MS
-        .saturating_mul(1u64 << attempt.min(16))
-        .min(BACKOFF_MAX_MS)
+    /// Wait for the earliest outstanding deadline and return its request id.
+    async fn expired(&self) -> u64 {
+        let Some(deadline) = self.earliest() else {
+            return std::future::pending().await;
+        };
+        tokio::time::sleep_until(deadline).await;
+        self.deadlines
+            .iter()
+            .min_by_key(|(_, deadline)| **deadline)
+            .map(|(id, _)| *id)
+            .expect("the deadline that just fired is still tracked")
+    }
 }
 
 /// Session configuration. The pin is the test-only pre-provisioned Server
@@ -216,15 +215,15 @@ impl Session {
         Ok(())
     }
 
-    async fn run(self: Arc<Self>, bind_local_address: Option<std::net::IpAddr>) -> Result<(), String> {
+    async fn run(self: Arc<Self>, bind_local_address: Option<std::net::IpAddr>) -> Result<(), RunError> {
         let socket = self.make_client_socket(bind_local_address)?;
-        let verifier = Arc::new(
+        let pin_verifier = Arc::new(
             PinnedSpkiVerifier::new(&self.config.pinned_spki_hex)
                 .map_err(|e| format!("pin: {e}"))?,
         );
         let crypto = rustls::ClientConfig::builder()
             .dangerous()
-            .with_custom_certificate_verifier(verifier)
+            .with_custom_certificate_verifier(pin_verifier.clone())
             .with_no_client_auth();
         let mut crypto = crypto;
         crypto.alpn_protocols = vec![ALPN.to_vec()];
@@ -268,8 +267,14 @@ impl Session {
         // §3: 5 s handshake timeout → classify 601
         let conn = tokio::time::timeout(std::time::Duration::from_secs(5), connecting)
             .await
-            .map_err(|_| "handshake timeout (5 s) → 601".to_string())?
-            .map_err(|e| format!("handshake: {e}"))?;
+            .map_err(|_| RunError::Other("handshake timeout (5 s) → 601".to_string()))?
+            .map_err(|e| {
+                if pin_verifier.pin_mismatch() {
+                    RunError::PinMismatch
+                } else {
+                    RunError::Other(format!("handshake: {e}"))
+                }
+            })?;
         *self.shared.endpoint.lock().unwrap() = Some(endpoint);
         *self.shared.conn.lock().unwrap() = Some(conn.clone());
         self.shared.connected.store(true, Ordering::Release);
@@ -290,14 +295,10 @@ impl Session {
         let client_public_key = crate::auth::sec1_compressed(&key);
         let mut machine = ClientMachine::new();
         machine.set_auth_context(self.config.server_public_key.clone(), exporter, key);
-        let auth_init = Frame {
-            body: Some(Body::AuthInit(AuthInit {
-                request_id: machine.next_request_id,
-                client_public_key,
-            })),
-        };
-        machine.next_request_id += 1;
-        let v = machine.enter_authenticating(auth_init);
+        let auth_init = machine.auth_init(client_public_key);
+        let v = machine
+            .enter_authenticating(auth_init)
+            .map_err(|info| RunError::Other(format!("auth init rejected locally: {}", info.code)))?;
         send_verdict(&mut tx, &v).await?;
         self.set_state(machine.state.clone());
         *self.shared.control_stream.lock().await = Some(tx);
@@ -309,7 +310,8 @@ impl Session {
         let auth_deadline = tokio::time::Instant::now()
             + std::time::Duration::from_secs(AUTH_DEADLINE_SECS);
         let mut watch = ResponseWatch::default();
-        watch.observe(tokio::time::Instant::now(), machine.pending_len());
+        let pending = machine.pending_ids();
+        watch.observe(tokio::time::Instant::now(), &pending);
         let result: Result<(), String> = 'control: loop {
             let n = tokio::select! {
                 read = rx.read(&mut rx_buf) => {
@@ -322,8 +324,10 @@ impl Session {
                 _ = tokio::time::sleep_until(auth_deadline), if machine.state == ClientState::ConnectingSent => {
                     break 'control Err(format!("auth exchange deadline ({AUTH_DEADLINE_SECS} s) → 601"));
                 }
-                _ = watch.expired() => {
-                    break 'control Err(format!("response deadline ({RESPONSE_DEADLINE_SECS} s) → 601"));
+                expired_id = watch.expired() => {
+                    break 'control Err(format!(
+                        "response deadline ({RESPONSE_DEADLINE_SECS} s) for request_id {expired_id} → 601"
+                    ));
                 }
                 _ = self.shared.shutdown_requested() => break 'control Ok(()),
             };
@@ -336,49 +340,45 @@ impl Session {
                 // matches no pending request is dropped without state change —
                 // the machine folds everything; unsolicited requests in illegal
                 // states are answered by the machine (never silently ignored).
-                let (result, _event) = machine.on_frame(&frame);
+                let (result, event) = machine.on_frame(&frame);
                 self.set_state(machine.state.clone());
+                if let Some(event) = event {
+                    log::info!("client event: {event:?}");
+                }
                 match result {
-                    Ok(v) => {
+                    Ok(crate::control::Verdict::Ok) => {}
+                    Ok(v @ (crate::control::Verdict::Send(_)
+                    | crate::control::Verdict::Reject { .. })) => {
+                        // One lock for the one write (S4); Reject writes a
+                        // non-fatal Error and keeps the connection open (§5.3).
                         let mut tx_guard = self.shared.control_stream.lock().await;
                         if let Some(tx) = tx_guard.as_mut() {
-                            send_verdict(tx, &crate::control::Verdict::Ok).await?;
+                            send_verdict(tx, &v).await?;
+                        }
+                    }
+                    Ok(crate::control::Verdict::Fatal { code }) => {
+                        // §5.2 fatal class: Error(code) then Close(code), then
+                        // transport-close with the code.
+                        let mut tx_guard = self.shared.control_stream.lock().await;
+                        if let Some(tx) = tx_guard.as_mut() {
+                            for f in crate::control::frames::fatal_frames(code) {
+                                tx.write_all(&encode_frame(&f).map_err(|e| e.to_string())?)
+                                    .await
+                                    .map_err(|e| format!("send: {e}"))?;
+                            }
                         }
                         drop(tx_guard);
-                        match v {
-                            crate::control::Verdict::Ok => {}
-                            crate::control::Verdict::Send(f) => {
-                                let mut tx_guard = self.shared.control_stream.lock().await;
-                                if let Some(tx) = tx_guard.as_mut() {
-                                    tx.write_all(&encode_frame(&f).map_err(|e| e.to_string())?)
-                                        .await
-                                        .map_err(|e| format!("send: {e}"))?;
-                                }
-                            }
-                            crate::control::Verdict::Fatal { code } => {
-                                // §5.2 fatal class: Error(code) then Close(code),
-                                // then transport-close with the code
-                                let mut tx_guard = self.shared.control_stream.lock().await;
-                                if let Some(tx) = tx_guard.as_mut() {
-                                    let err = ctrl::error_frame_for(code);
-                                    let close = ctrl::close_frame_for(code);
-                                    let _ = tx.write_all(&encode_frame(&err).unwrap()).await;
-                                    let _ = tx.write_all(&encode_frame(&close).unwrap()).await;
-                                }
-                                drop(tx_guard);
-                                conn.close(quinn::VarInt::from_u64(u64::from(code)).unwrap(), b"");
-                                break 'control Ok(());
-                            }
-                            crate::control::Verdict::Stop(info) => {
-                                // Close received (remote): no echo; the
-                                // transport close is the acknowledgment (§5.4.4)
-                                self.record_close(info.clone());
-                                if info.remote {
-                                    conn.close(quinn::VarInt::from_u64(u64::from(info.code)).unwrap(), b"");
-                                }
-                                break 'control Ok(());
-                            }
+                        conn.close(quinn::VarInt::from_u64(u64::from(code)).unwrap(), b"");
+                        break 'control Ok(());
+                    }
+                    Ok(crate::control::Verdict::Stop(info)) => {
+                        // Close received (remote): no echo; the transport close
+                        // is the acknowledgment (§5.4.4)
+                        self.record_close(info.clone());
+                        if info.remote {
+                            conn.close(quinn::VarInt::from_u64(u64::from(info.code)).unwrap(), b"");
                         }
+                        break 'control Ok(());
                     }
                     Err(info) => {
                         // surface path (202/203/204/101...): no reconnect per §6.3
@@ -386,7 +386,8 @@ impl Session {
                         break 'control Ok(());
                     }
                 }
-                watch.observe(tokio::time::Instant::now(), machine.pending_len());
+                let pending = machine.pending_ids();
+                watch.observe(tokio::time::Instant::now(), &pending);
                 if machine.state.is_closed() {
                     break 'control Ok(());
                 }
@@ -394,7 +395,7 @@ impl Session {
         };
 
         self.shared.connected.store(false, Ordering::Release);
-        result
+        result.map_err(RunError::Other)
     }
 
     /// Clean stop: Close(701) when a control stream exists, then transport
@@ -466,51 +467,55 @@ fn session_identity_key() -> Result<p256::ecdsa::SigningKey, String> {
         .to_string())
 }
 
+/// Why a run ended locally. Typed so §6.3 classification never depends on
+/// matching an English error string (the verifier sets its mismatch flag).
+#[derive(Debug)]
+enum RunError {
+    PinMismatch,
+    Other(String),
+}
+
+impl std::fmt::Display for RunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunError::PinMismatch => write!(f, "server pinned identity mismatch"),
+            RunError::Other(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl From<String> for RunError {
+    fn from(message: String) -> Self {
+        RunError::Other(message)
+    }
+}
+
+impl From<&str> for RunError {
+    fn from(message: &str) -> Self {
+        RunError::Other(message.to_string())
+    }
+}
+
 /// §6.3 local classification of a run error: pin mismatch is 205, everything
 /// else is transport loss (601).
-fn classify_run_error(message: &str) -> u32 {
-    if message.contains("SPKI does not match pinned identity") {
-        205
-    } else {
-        601
+fn classify_run_error(error: &RunError) -> u32 {
+    match error {
+        RunError::PinMismatch => 205,
+        RunError::Other(_) => 601,
     }
 }
 
 async fn send_verdict(tx: &mut quinn::SendStream, v: &crate::control::Verdict) -> Result<(), String> {
-    if let crate::control::Verdict::Send(f) = v {
-        let bytes = encode_frame(f).map_err(|e| e.to_string())?;
+    let frame = match v {
+        crate::control::Verdict::Send(f) => Some(f.clone()),
+        crate::control::Verdict::Reject { code } => Some(crate::control::frames::error_frame(*code)),
+        _ => None,
+    };
+    if let Some(frame) = frame {
+        let bytes = encode_frame(&frame).map_err(|e| e.to_string())?;
         tx.write_all(&bytes).await.map_err(|e| format!("send: {e}"))?;
     }
     Ok(())
-}
-
-/// Minimal helpers namespace for the fatal-row frame builders (wire order:
-/// Error before Close, §5.2).
-mod ctrl {
-    use crate::proto::{frame::Body, Close, Error, Frame, Status};
-
-    pub fn error_frame_for(code: u32) -> Frame {
-        Frame {
-            body: Some(Body::Error(Error {
-                request_id: 0,
-                status: Some(Status {
-                    code,
-                    retryable: false,
-                    requires_repairing: false,
-                    detail: String::new(),
-                }),
-            })),
-        }
-    }
-
-    pub fn close_frame_for(code: u32) -> Frame {
-        Frame {
-            body: Some(Body::Close(Close {
-                code,
-                detail: String::new(),
-            })),
-        }
-    }
 }
 
 fn json_escape(s: &str) -> String {
@@ -628,22 +633,73 @@ mod tests {
         assert!(session.rebind(fd).is_err());
     }
 
-    /// §4.2: the response deadline is absolute — repeated reads (or unsolicited
-    /// pushes) while a request is pending must not push it back.
+    /// §4.2: each request's deadline is absolute and unrelated reads do not
+    /// push back any of them; a newly sent request gets its own deadline.
     #[test]
     fn response_deadline_is_absolute_and_not_pushed_back() {
         let mut watch = ResponseWatch::default();
         let start = tokio::time::Instant::now();
-        watch.observe(start, 1);
-        let armed = watch.deadline.expect("deadline armed");
+        let deadline_for = |watch: &ResponseWatch, id: u64| *watch.deadlines.get(&id).unwrap();
+        watch.observe(start, &[1]);
+        let armed = deadline_for(&watch, 1);
         assert_eq!(
             armed,
             start + std::time::Duration::from_secs(RESPONSE_DEADLINE_SECS)
         );
-        watch.observe(start + std::time::Duration::from_secs(5), 1);
-        assert_eq!(watch.deadline, Some(armed), "deadline must not move");
-        watch.observe(start + std::time::Duration::from_secs(9), 2);
-        assert_eq!(watch.deadline, Some(armed), "more pending must not move it");
+        watch.observe(start + std::time::Duration::from_secs(5), &[1]);
+        assert_eq!(deadline_for(&watch, 1), armed, "deadline must not move");
+        let later = start + std::time::Duration::from_secs(9);
+        watch.observe(later, &[1, 2]);
+        assert_eq!(deadline_for(&watch, 1), armed, "request 1 must not move");
+        assert_eq!(
+            deadline_for(&watch, 2),
+            later + std::time::Duration::from_secs(RESPONSE_DEADLINE_SECS),
+            "request 2 is armed from when it was sent"
+        );
+    }
+
+    /// Only the request whose own 10 s elapsed triggers the 601; a request
+    /// sent later keeps its full deadline (§4.2).
+    #[tokio::test(start_paused = true)]
+    async fn concurrent_request_deadlines_do_not_interfere() {
+        let mut watch = ResponseWatch::default();
+        let start = tokio::time::Instant::now();
+        watch.observe(start, &[1]);
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        watch.observe(tokio::time::Instant::now(), &[1, 2]);
+        assert_eq!(
+            *watch.deadlines.get(&1).unwrap(),
+            start + std::time::Duration::from_secs(10)
+        );
+        assert_eq!(
+            *watch.deadlines.get(&2).unwrap(),
+            start + std::time::Duration::from_secs(15)
+        );
+
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        let expired = tokio::time::timeout(std::time::Duration::from_millis(1), watch.expired())
+            .await
+            .expect("request 1 must expire at its own 10 s");
+        assert_eq!(expired, 1);
+
+        // Request 2 is unaffected: the first expiry does not shorten it.
+        watch.observe(tokio::time::Instant::now(), &[2]);
+        assert_eq!(
+            *watch.deadlines.get(&2).unwrap(),
+            start + std::time::Duration::from_secs(15)
+        );
+        tokio::time::advance(std::time::Duration::from_secs(4)).await;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(1), watch.expired())
+                .await
+                .is_err(),
+            "request 2 must not expire early"
+        );
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        let expired = tokio::time::timeout(std::time::Duration::from_millis(1), watch.expired())
+            .await
+            .expect("request 2 expires at its own 10 s");
+        assert_eq!(expired, 2);
     }
 
     /// The deadline disarms when the last pending request completes.
@@ -651,17 +707,17 @@ mod tests {
     fn response_deadline_disarms_when_nothing_is_pending() {
         let mut watch = ResponseWatch::default();
         let start = tokio::time::Instant::now();
-        watch.observe(start, 1);
-        assert!(watch.deadline.is_some());
-        watch.observe(start + std::time::Duration::from_secs(1), 0);
-        assert_eq!(watch.deadline, None);
+        watch.observe(start, &[1]);
+        assert!(!watch.deadlines.is_empty());
+        watch.observe(start + std::time::Duration::from_secs(1), &[]);
+        assert!(watch.deadlines.is_empty());
     }
 
-    /// §4.2: 10 s after arming, the deadline future completes.
+    /// §4.2: 10 s after arming, the deadline future completes with its id.
     #[tokio::test(start_paused = true)]
     async fn response_deadline_expires_after_ten_seconds() {
         let mut watch = ResponseWatch::default();
-        watch.observe(tokio::time::Instant::now(), 1);
+        watch.observe(tokio::time::Instant::now(), &[7]);
         tokio::time::sleep(std::time::Duration::from_secs(RESPONSE_DEADLINE_SECS - 1)).await;
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(1), watch.expired())
@@ -670,28 +726,18 @@ mod tests {
             "must not expire early"
         );
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        tokio::time::timeout(std::time::Duration::from_millis(1), watch.expired())
+        let expired = tokio::time::timeout(std::time::Duration::from_millis(1), watch.expired())
             .await
             .expect("deadline must expire at 10 s");
+        assert_eq!(expired, 7);
     }
 
     /// §6.3: a pin mismatch is classified 205 (no reconnect); every other
     /// run error is transport loss (601).
     #[test]
     fn run_error_classification_matches_section_6_3() {
-        assert_eq!(classify_run_error("handshake: refused"), 601);
-        assert_eq!(classify_run_error("handshake: server SPKI does not match pinned identity"), 205);
-    }
-
-    /// §6.3 backoff schedule: 1 s, 2 s, 4 s, … capped at 30 s.
-    #[test]
-    fn backoff_schedule_matches_policy() {
-        assert_eq!(backoff_delay_ms(0), 1_000);
-        assert_eq!(backoff_delay_ms(1), 2_000);
-        assert_eq!(backoff_delay_ms(2), 4_000);
-        assert_eq!(backoff_delay_ms(4), 16_000);
-        assert_eq!(backoff_delay_ms(5), 30_000, "capped");
-        assert_eq!(backoff_delay_ms(20), 30_000, "still capped");
+        assert_eq!(classify_run_error(&RunError::Other("handshake: refused".into())), 601);
+        assert_eq!(classify_run_error(&RunError::PinMismatch), 205);
     }
 
     /// The stats JSON never carries key material (red line): inject a fake
