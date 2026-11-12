@@ -88,7 +88,7 @@ An attacker terminates both TLS legs on the first connection, presenting its own
 - **QR pairing (primary).** The Android Client derives the pin from the QR payload's full Server identity public key before any key exchange; the attacker cannot present a certificate whose SPKI matches without the identity private key. The single-use nonce inside the QR additionally binds the handshake to the pairing session just displayed (pairing.md §4–§6). The prototype verified the negative case on a real device: a wrong SPKI pin is rejected at the cryptographic handshake (prototype report §1, gate 3).
 - **SAS fallback (no camera).** SAS derived from the completed ephemeral key exchange with hash commitment (pairing.md §7). Protection exists **only if the user actually compares the two displayed codes and confirms on both ends**.
 
-**Stated plainly.** An UNVERIFIED SAS comparison does not protect against an active first-connection MITM. If the user skips the comparison and only taps "confirm", the connection is trust-on-first-use with no MITM protection: a terminating MITM completes both legs and both ends confirm. The six-digit SAS gives an undetected-MITM probability of at most 2⁻³⁰ per attempt **when actually compared**; online grinding against the difference is further bounded by the handshake rate limits of §6.
+**Stated plainly.** An UNVERIFIED SAS comparison does not protect against an active first-connection MITM. If the user skips the comparison and only taps "confirm", the connection is trust-on-first-use with no MITM protection: a terminating MITM completes both legs and both ends confirm. The six-digit SAS carries ≈ 19.93 bits: a verification attempt succeeds with probability ≈ 10⁻⁶ **when actually compared** — not the 2⁻³⁰ earlier drafts claimed (adjudication 2026-11-12). The undetected-MITM probability is **bounded by guess attempts**: the pairing-failure rate limits of §6 (5 failures per sliding 60 s per source address) cap an attacker at ~50 attempts inside the 10-minute pairing window (≈ 5×10⁻⁵ per window per address); compensating controls are those rate limits, the out-of-band SPKI fingerprint path, and the address hint displayed beside the code (pairing.md §7.2).
 
 **Documented limit.** Protection at boundary TB6 is a human property: the QR must come from the Server's own screen (a QR printed by an attacker pairs the Client to the attacker's Server), and the SAS must be read on both screens. The pairing UI mitigates this by displaying the Server's endpoint/address hint next to the code so the operator can notice a mismatch (pairing.md §7.3), but v2 cannot verify what the human scanned or read.
 
@@ -104,7 +104,7 @@ An attacker runs a Server-like endpoint, or impersonates the real Server at its 
 
 An unpaired or de-paired host connects to the Server's v2 port and attempts to subscribe to audio.
 
-**Mitigation (v2.0).** Encryption and authorization are separate checks (design baseline §Security and Pairing Model — Identity and Authorization): a successful TLS handshake with a pinned Server never authorizes anything. Authorization rides the encrypted control stream as a signed challenge against the Client's persisted identity key (pairing.md §9); media subscription is refused until pairing/authentication/negotiation complete (design baseline §Control-Plane Semantics). Tests MUST reject both an unpinned Server and an unauthorized Client (design baseline §Security and Pairing Model). QUIC connection migration does not bypass this: authorization is bound to the authenticated session, not to the network address.
+**Mitigation (v2.0).** Encryption and authorization are separate checks (design baseline §Security and Pairing Model — Identity and Authorization): a successful TLS handshake with a pinned Server never authorizes anything. Authorization rides the encrypted control stream as a signed challenge against the Client's persisted identity key (pairing.md §9); media subscription is refused until pairing/authentication/negotiation complete (design baseline §Control-Plane Semantics). Tests MUST reject both an unpinned Server and an unauthorized Client (design baseline §Security and Pairing Model). Pairing itself now requires proof of possession: the Server verifies the Client's `client_proof` signature over the pairing transcript (pairing.md §6.3.1) BEFORE persisting an identity, so a public-key-submission attacker cannot mis-bind a third party's identity — the earlier `binding_echo`-only design proved only TLS-Exporter possession and is superseded. QUIC connection migration does not bypass this: authorization is bound to the authenticated session, not to the network address.
 
 **Documented limit.** Authorization is binary and pairwise, not capability-fine: every paired Client receives the same audio stream (design baseline §Client and Role Scope — one shared capture feeds independently authenticated Client sessions). A paired Client whose device was copied or stolen stays authorized until the operator revokes it (pairing.md §9).
 
@@ -129,7 +129,7 @@ Unauthenticated network peers attempt to exhaust the Server: endless handshakes,
 
 - Bounded concurrent handshakes, bounded concurrent pairing sessions, bounded sessions per Client identity, bounded total Clients.
 - Rate-limited authentication and pairing failures, per connection and per source address.
-- No small-request/large-response asymmetry: pre-authentication responses are a fixed small bound, error payloads omit secrets and stack traces, and an unauthenticated request never triggers work that is a large multiple of itself.
+- No small-request/large-response asymmetry: general pre-authentication responses are a fixed small bound (≤ 128 B; the one exception, a successful `PairingResponse`, has its own 320 B cap — §6), error payloads omit secrets and stack traces, and an unauthenticated request never triggers work that is a large multiple of itself.
 
 **Documented limit.** A network-level flood of the Server's UDP port is indistinguishable from congestion at this layer; the Server's obligations are the bounds above plus correct behavior for legitimate Clients under loss (design baseline §Live Playback and Recovery). Availability against a flood is out of scope (§9).
 
@@ -174,7 +174,8 @@ All values are Server defaults, overridable by configuration within documented r
 | Outstanding pairing nonces | 8; oldest evicted beyond that | Bounds nonce-table memory; matches at most 8 live QRs |
 | Pairing-session lifetime | 10 min | Generous human time; closes the SAS/QR window |
 | Pairing failures per source address | 5 per sliding 60 s window | Pairing is human-paced; failures signal attack or misconfiguration |
-| Pre-authentication response size | ≤ 128 B | No amplification before trust is established |
+| General pre-authentication response size | ≤ 128 B — challenges, rejections, errors; no `detail` field | No amplification before trust is established |
+| Successful PairingResponse size | ≤ 320 B `Frame.length` — the sole larger pre-auth response | Pairing admission is gated per mode, not by response size: QR pairing requires a valid, unused nonce; SAS pairing requires the administrator-enabled local pairing window (SAS has no nonce) (pairing.md §5, §7.3) |
 | Error payload size | ≤ 512 B, stable codes only (registry owned by `docs/wire-protocol-v2/spec.md`) | No large error responses; no secrets, internal paths, or stack traces |
 | Control-message maximum | 64 KiB | Design baseline §Control-Plane Semantics default |
 | Per-Client application media queue | 256 datagrams (prototype value) | Honest application-level drop accounting (prototype report §5) |
@@ -223,7 +224,7 @@ Explicitly out of scope for the v2.0 threat model. They are not silently ignored
 | TM-3 | Sessions per Client identity | 1 active; newer authenticated session replaces older, replacement counted | §6 | |
 | TM-4 | Auth failure rate limits | 5 per connection then close; 20 per sliding 60 s per source address | §6 | |
 | TM-5 | Pairing bounds | 8 concurrent pairing sessions; 8 outstanding nonces; 10 min lifetime; 5 failures per 60 s per address | §6, pairing.md §5 | |
-| TM-6 | Pre-auth response bound | ≤ 128 B | §6 | |
+| TM-6 | Pre-auth response bounds | General pre-auth responses (challenges, rejections, errors — no detail) ≤ 128 B; a successful PairingResponse ≤ 320 B Frame.length; admission gates: QR pairing = a valid, unused nonce, SAS pairing = the admin-enabled local pairing window | §6, pairing.md §5/§7.3 | |
 | TM-7 | Error payload bound | ≤ 512 B, stable codes only | §6 | |
 | TM-8 | Per-Client media queue | 256 datagrams (application-level) | §6 | |
 | TM-9 | Key-compromise behavior | Rotation = reset + re-pairing; revocation of active sessions ≤ 5 s; no recovery backdoor | §8, pairing.md §8–§9 | |
