@@ -165,6 +165,17 @@ async fn v2_listener_starts_with_logs_and_stops_on_sigint() {
     );
 
     assert_identity_layout(temp.path());
+    // Ticket 07 wires the §5.2 session driver: the authorization store opens
+    // (pairing.md §8.1) and admitted connections are driven, not parked.
+    let log = log_text(&log_path);
+    assert!(
+        log.contains("v2 authorization store ready"),
+        "the authorization store must open with the v2 listener:\n{log}"
+    );
+    assert!(
+        log.contains("persistent"),
+        "the store must be the on-disk `pairing/clients.json` (pairing.md §8.1):\n{log}"
+    );
 
     interrupt(&child);
     let status = wait_child(&mut child, Duration::from_secs(15)).unwrap_or_else(|| {
@@ -207,6 +218,10 @@ async fn v2_disabled_with_zero_port_is_v1_only() {
     assert!(
         !temp.path().join("identity").exists(),
         "the identity key must not be created when v2 is disabled"
+    );
+    assert!(
+        !temp.path().join("pairing").exists(),
+        "the authorization store must not be created when v2 is disabled"
     );
 
     interrupt(&child);

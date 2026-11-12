@@ -82,11 +82,17 @@ pub enum CapacityDecision {
 /// Tracks handshake and session counts against [`Limits`] (TM-1, TM-2).
 ///
 /// A connection enters as a handshake and becomes a session after its control
-/// handshake completes. The guards are counters only; the accept loop owns the
-/// transitions.
-#[derive(Debug)]
+/// handshake completes. The accept loop owns the transitions; the counters are
+/// shared (`Clone`able guard) so a per-connection task can release its session
+/// slot when the session ends (ticket 07).
+#[derive(Clone, Debug)]
 pub struct CapacityGuard {
     limits: Limits,
+    counters: std::sync::Arc<std::sync::Mutex<CapacityCounters>>,
+}
+
+#[derive(Debug, Default)]
+struct CapacityCounters {
     handshakes_in_progress: u32,
     established_sessions: u32,
 }
@@ -94,7 +100,14 @@ pub struct CapacityGuard {
 impl CapacityGuard {
     /// Create a guard for these limits.
     pub fn new(limits: Limits) -> Self {
-        Self { limits, handshakes_in_progress: 0, established_sessions: 0 }
+        Self {
+            limits,
+            counters: std::sync::Arc::new(std::sync::Mutex::new(CapacityCounters::default())),
+        }
+    }
+
+    fn counters(&self) -> std::sync::MutexGuard<'_, CapacityCounters> {
+        self.counters.lock().expect("capacity guard lock")
     }
 
     /// The configured limits.
@@ -104,42 +117,46 @@ impl CapacityGuard {
 
     /// Consult whether a new incoming connection may begin its handshake.
     pub fn try_begin_handshake(&mut self) -> CapacityDecision {
-        if self.established_sessions >= self.limits.max_sessions {
+        let mut counters = self.counters();
+        if counters.established_sessions >= self.limits.max_sessions {
             return CapacityDecision::SessionBound;
         }
-        if self.handshakes_in_progress >= self.limits.max_concurrent_handshakes {
+        if counters.handshakes_in_progress >= self.limits.max_concurrent_handshakes {
             return CapacityDecision::HandshakeBound;
         }
-        self.handshakes_in_progress += 1;
+        counters.handshakes_in_progress += 1;
         CapacityDecision::Admit
     }
 
     /// The handshake completed: it now counts as an established session
     /// instead of an in-progress handshake.
     pub fn handshake_completed(&mut self) {
-        debug_assert!(self.handshakes_in_progress > 0);
-        self.handshakes_in_progress = self.handshakes_in_progress.saturating_sub(1);
-        self.established_sessions = self.established_sessions.saturating_add(1);
+        let mut counters = self.counters();
+        debug_assert!(counters.handshakes_in_progress > 0);
+        counters.handshakes_in_progress = counters.handshakes_in_progress.saturating_sub(1);
+        counters.established_sessions = counters.established_sessions.saturating_add(1);
     }
 
     /// The handshake failed or was refused; release the in-progress slot.
     pub fn handshake_abandoned(&mut self) {
-        self.handshakes_in_progress = self.handshakes_in_progress.saturating_sub(1);
+        let mut counters = self.counters();
+        counters.handshakes_in_progress = counters.handshakes_in_progress.saturating_sub(1);
     }
 
     /// A session ended; release its slot.
     pub fn session_ended(&mut self) {
-        self.established_sessions = self.established_sessions.saturating_sub(1);
+        let mut counters = self.counters();
+        counters.established_sessions = counters.established_sessions.saturating_sub(1);
     }
 
     /// Current in-progress handshake count (diagnostics).
     pub fn handshakes_in_progress(&self) -> u32 {
-        self.handshakes_in_progress
+        self.counters().handshakes_in_progress
     }
 
     /// Current established-session count (diagnostics).
     pub fn established_sessions(&self) -> u32 {
-        self.established_sessions
+        self.counters().established_sessions
     }
 
     /// The §6 code a [`CapacityDecision`] rejection signals (301 for both —
