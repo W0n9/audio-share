@@ -1,0 +1,165 @@
+{
+  "id": "control.subscribe-config-diagnostics",
+  "category": "control-happy-path",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.4 (Subscribe/SubscribeResponse, Unsubscribe/UnsubscribeResponse, StreamStarted/StreamEnded)",
+    "docs/wire-protocol-v2/spec.md §5.2 (READY subscribe row; PLAYING unsubscribe row: StreamEnded first, then UnsubscribeResponse)",
+    "docs/wire-protocol-v2/spec.md §9 (PlaybackDiagnostics)"
+  ],
+  "description": "The subscribed-session happy arc: Subscribe is answered with the current Configuration, the active stream is announced (StreamStarted push), the Client reports a full PlaybackDiagnostics snapshot, and Unsubscribe in PLAYING produces StreamEnded(502, 'unsubscribed') BEFORE UnsubscribeResponse.",
+  "preconditions": [
+    "Session authenticated and negotiated; first ConfigurationPublished already received; state READY (subscribing).",
+    "A capture instance (stream_instance_id 1, config_generation 1) is active, so Subscribe triggers the StreamStarted push (spec §5.2).",
+    "The diagnostics snapshot is the first 5 s report in PLAYING (interval counters = cumulative counters on the first report).",
+    "Isolated connection; the Client's request_id counter starts at 1 (Subscribe) then 2 (Unsubscribe)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "subscribe",
+      "frame_hex": "0000000c820209090100000000000000",
+      "body_hex": "820209090100000000000000",
+      "length": 12,
+      "decoded": {
+        "request_id": 1
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "subscribe_response",
+      "frame_hex": "0000001e8a021b09010000000000000012001a0e080110011a080880f70210021801",
+      "body_hex": "8a021b09010000000000000012001a0e080110011a080880f70210021801",
+      "length": 30,
+      "decoded": {
+        "request_id": 1,
+        "status": {},
+        "configuration": {
+          "config_generation": 1,
+          "codec": 1,
+          "pcm": {
+            "sample_rate": 48000,
+            "channels": 2,
+            "sample_format": 1
+          }
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "stream_started",
+      "frame_hex": "0000000782030408011001",
+      "body_hex": "82030408011001",
+      "length": 7,
+      "decoded": {
+        "stream_instance_id": 1,
+        "config_generation": 1,
+        "initial_timestamp": 0
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 4,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "playback_diagnostics",
+      "frame_hex": "0000009382048f0108011001193f000000000000002003314200000000000000394200000000000000410200000000000000490200000000000000510400000000000000590400000000000000600369010000000000000071010000000000000089010300000000000000910103000000000000009801c016a1010100000000000000a801d209b0013db8013cc10100b0040000000000",
+      "body_hex": "82048f0108011001193f000000000000002003314200000000000000394200000000000000410200000000000000490200000000000000510400000000000000590400000000000000600369010000000000000071010000000000000089010300000000000000910103000000000000009801c016a1010100000000000000a801d209b0013db8013cc10100b0040000000000",
+      "length": 147,
+      "decoded": {
+        "stream_instance_id": 1,
+        "config_generation": 1,
+        "extended_highest_sequence": 63,
+        "cumulative_lost": -2,
+        "cumulative_received": 66,
+        "interval_received": 66,
+        "cumulative_duplicates": 2,
+        "interval_duplicates": 2,
+        "cumulative_reordered": 4,
+        "interval_reordered": 4,
+        "max_reorder_distance": 3,
+        "cumulative_late_drops": 1,
+        "interval_late_drops": 1,
+        "cumulative_concealments": 3,
+        "interval_concealments": 3,
+        "concealed_frames": 1440,
+        "underruns": 1,
+        "jitter_microseconds": 1234,
+        "buffer_current_ms": 61,
+        "buffer_target_ms": 60,
+        "submitted_position": 307200
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 5,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "unsubscribe",
+      "frame_hex": "0000000c920209090200000000000000",
+      "body_hex": "920209090200000000000000",
+      "length": 12,
+      "decoded": {
+        "request_id": 2
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 6,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "stream_ended",
+      "frame_hex": "000000168a0313080110f6031a0c756e73756273637269626564",
+      "body_hex": "8a0313080110f6031a0c756e73756273637269626564",
+      "length": 22,
+      "decoded": {
+        "stream_instance_id": 1,
+        "code": 502,
+        "detail": "unsubscribed"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 7,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "unsubscribe_response",
+      "frame_hex": "0000000e9a020b0902000000000000001200",
+      "body_hex": "9a020b0902000000000000001200",
+      "length": 14,
+      "decoded": {
+        "request_id": 2,
+        "status": {}
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "StreamStarted.initial_timestamp = 0 for a fresh instance; a late subscriber to an already-running instance would carry a nonzero mid-stream anchor (spec §4.4).",
+    "PlaybackDiagnostics exercises every field type: fixed64 counters (little-endian on the wire), sint64 signed counters via zigzag varint (cumulative_lost = -2 encodes as varint 3; concealed_frames = +1440 as varint 2880), and uint32 scalars. Zero-valued fields (interval_lost, unknown_config drops) are proto3 defaults and are not encoded.",
+    "Unsubscribe in PLAYING: the Server pushes StreamEnded(502, detail 'unsubscribed') FIRST, then UnsubscribeResponse(OK) — the spec §5.2 row fixes this order; state moves PLAYING -> READY.",
+    "Unsubscribe is idempotent in general (duplicate/late Unsubscribe also gets OK, spec §5.2).",
+    "A QUIC ACK or socket receive is not proof of decode: these Client-reported counters are the only playback evidence the Server gets (spec §9)."
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "id": "control.unknown-oneof-case-401",
+  "category": "control-negative-space",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.1 (80+ reserved)",
+    "docs/wire-protocol-v2/spec.md §4.4 (validation table: Frame without a body set -> 401)"
+  ],
+  "description": "An unknown oneof case (unknown message type) at Frame level: the Frame decodes, but the unknown field never sets body, so the Frame is 'without a body set' -> Error(401)+Close(401).",
+  "preconditions": [
+    "Session CONNECTING (any pre-auth state behaves identically; the frame never reaches a message handler).",
+    "The oneof case number 80 is inside the reserved 80+ band (spec §4.1); a future revision could assign it."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "<unknown oneof case 80>",
+      "frame_hex": "0000001682051372657365727665642d666f722d667574757265",
+      "body_hex": "82051372657365727665642d666f722d667574757265",
+      "length": 22,
+      "decoded": {
+        "unknown_field": 80,
+        "wire_type": 2,
+        "payload": "72657365727665642d666f722d667574757265"
+      },
+      "has_unknown_fields": true,
+      "expect_decode": "ok",
+      "note": "Field 80 is not a known message type in this schema."
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000072a051203089103",
+      "body_hex": "2a051203089103",
+      "length": 7,
+      "decoded": {
+        "request_id": 0,
+        "status": {
+          "code": 401
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "000000053203089103",
+      "body_hex": "3203089103",
+      "length": 5,
+      "decoded": {
+        "code": 401
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 401,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "Unknown proto3 fields are ignored (spec §4.4 validation table), but ignoring them leaves the body oneof UNSET — and a Frame with no body set is malformed (401). The evolution rule cannot rescue an unknown message type.",
+    "request_id 0 (absent): the offending frame carries no interpretable request.",
+    "Fatal Error+Close with the same code, then the transport close carries the code (spec §5.2 fatal-error class)."
+  ]
+}

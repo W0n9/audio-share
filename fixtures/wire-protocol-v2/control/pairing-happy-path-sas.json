@@ -1,0 +1,116 @@
+{
+  "id": "control.pairing-happy-path-sas",
+  "category": "control-happy-path",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.4 (PairingRequest/Response/Confirm/Result, PairingConfirm.client_proof)",
+    "docs/wire-protocol-v2/pairing.md §6.2 (message sequence)",
+    "docs/wire-protocol-v2/pairing.md §6.3 (transcript binding, capabilities_canonical)",
+    "docs/wire-protocol-v2/pairing.md §6.3.1 (client_proof)",
+    "docs/wire-protocol-v2/pairing.md §7.1–§7.3 (SAS derivation and admission window)"
+  ],
+  "description": "SAS pairing (no camera): the same 4-message flow with PAIRING_MODE_SAS, no pairing_nonce anywhere; admission is the administrator-enabled local pairing window.",
+  "preconditions": [
+    "QUIC connection with ALPN audio-share/v2; this one session connects without a pin (TOFU-with-verification, pairing.md §6.1).",
+    "Admission gate: the admin-enabled local pairing window is open (SAS has no nonce — spec §4.2, TM-6 revised).",
+    "Local approval granted. State machine: CONNECTING; request_id counter starts at 1.",
+    "SAS-mode exporter stand-ins differ from the QR ones (test-keys.json fixed_exporter_outputs)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "pairing_request",
+      "frame_hex": "0000006182015e09010000000000000010022220606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f2a2103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d3002420a546573742050686f6e65",
+      "body_hex": "82015e09010000000000000010022220606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f2a2103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d3002420a546573742050686f6e65",
+      "length": 97,
+      "decoded": {
+        "request_id": 1,
+        "pairing_mode": 2,
+        "client_random": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "client_public_key": "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d",
+        "protocol_major": 2,
+        "capabilities": [],
+        "client_name": "Test Phone"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "pairing_response",
+      "frame_hex": "000000c18a01bd01090100000000000000120018022a20606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f3220404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f3a2011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c40025230d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff5a08cf7940b474310246620a546573742050686f6e65",
+      "body_hex": "8a01bd01090100000000000000120018022a20606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f3220404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f3a2011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c40025230d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff5a08cf7940b474310246620a546573742050686f6e65",
+      "length": 193,
+      "decoded": {
+        "request_id": 1,
+        "status": {},
+        "pairing_mode": 2,
+        "client_random": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "server_random": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+        "server_public_key": "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c",
+        "protocol_major": 2,
+        "capabilities": [],
+        "binding": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+        "client_id": "cf7940b474310246",
+        "display_name": "Test Phone"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "pairing_confirm",
+      "frame_hex": "0000008092017d0901000000000000001230d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff1a4041cb672ee38b878ced50dfae60f0adeb3c4822fa615361392ce7d5ff65e55989012093a2e71125a0edfc1149cb1cb5470899f273c6ab66daf18735f2cdf44f67",
+      "body_hex": "92017d0901000000000000001230d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff1a4041cb672ee38b878ced50dfae60f0adeb3c4822fa615361392ce7d5ff65e55989012093a2e71125a0edfc1149cb1cb5470899f273c6ab66daf18735f2cdf44f67",
+      "length": 128,
+      "decoded": {
+        "request_id": 1,
+        "binding_echo": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+        "client_proof": "41cb672ee38b878ced50dfae60f0adeb3c4822fa615361392ce7d5ff65e55989012093a2e71125a0edfc1149cb1cb5470899f273c6ab66daf18735f2cdf44f67"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 4,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "pairing_result",
+      "frame_hex": "0000000e9a010b0901000000000000001200",
+      "body_hex": "9a010b0901000000000000001200",
+      "length": 14,
+      "decoded": {
+        "request_id": 1,
+        "status": {}
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "No pairing_nonce field is set in either direction (SAS mode has no nonce; field 4 of PairingRequest/Response stays absent).",
+    "The SAS displayed on both screens derives from the connection: SAS = decimal(BE u32 of sas_seed[0..4] mod 1000000), zero-padded to 6 digits — recorded below as a hand-derivation check (pairing.md §7.1).",
+    "client_proof follows §6.3.1 exactly as in the QR flow, over the SAS binding.",
+    "PairingResult(OK): pairing persisted; state NEGOTIATING."
+  ],
+  "derived": {
+    "binding_context_sas_hex": "01000373617302000400000002040020606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f050020404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f06002103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d07002011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c0800010009000a546573742050686f6e65",
+    "binding_context_sas_sha256_hex": "c49ef431c6e6fd122f984f55db2cb06003cb08e07f68a38640ef483e3ad9fadd",
+    "sas_seed_hex": "e0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+    "sas_display_code": "900067",
+    "sas_formula": "decimal( big-endian u32 of sas_seed[0..4] mod 1_000_000 ), zero-padded to 6 digits",
+    "signing_nonce_k_label_sas": "audio-share v2 TEST-ONLY ECDSA nonce | pairing-confirm-sas (see test-keys.json)",
+    "encoding_assumptions": [
+      "TLV(1, mode) encoded as 'sas' (flagged spec gap; see test-keys.json)"
+    ]
+  }
+}

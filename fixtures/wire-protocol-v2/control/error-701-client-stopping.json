@@ -1,0 +1,44 @@
+{
+  "id": "control.error-701-client-stopping",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.3 (Close: both directions; one-way, never echoed)",
+    "docs/wire-protocol-v2/spec.md §5.2 (READY/PLAYING: Close received -> no echo; CLOSING)",
+    "docs/wire-protocol-v2/spec.md §6.2 (701 CLIENT_STOPPING: normal Client stop)",
+    "docs/wire-protocol-v2/spec.md §5.3 (CLOSING: final diagnostics, then transport close)"
+  ],
+  "description": "Normal Client stop: the Client sends Close(701) and must expect NO response frames — Close is never echoed; the receiver's transport close is the acknowledgment.",
+  "preconditions": [
+    "Session PLAYING (stopping mid-stream is legal; capture continues for other Clients).",
+    "The Client may send a final best-effort PlaybackDiagnostics before the Close (spec §9); not shown here — this vector pins the Close-then-silence contract."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "00000005320308bd05",
+      "body_hex": "320308bd05",
+      "length": 5,
+      "decoded": {
+        "code": 701
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 2,
+      "code": 701,
+      "closed_by": "C",
+      "note": "The Client transport-closes after sending (CLOSING grace, ≤ 5 s); the Server releases the session without echoing."
+    }
+  ],
+  "assertions": [
+    "Expected S->C control frames: NONE — a Close MUST NOT be echoed (spec §5.4 invariant 4).",
+    "Capture and other Clients are unaffected (spec §5.4 invariant 6).",
+    "retryable=false per §6.2; §6.3: 701 -> no reconnect (user-initiated stop)."
+  ]
+}

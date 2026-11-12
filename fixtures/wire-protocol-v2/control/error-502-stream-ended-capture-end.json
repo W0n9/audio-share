@@ -1,0 +1,35 @@
+{
+  "id": "control.error-502-stream-ended-capture-end",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (PLAYING: capture ended (normal) -> push StreamEnded(502))",
+    "docs/wire-protocol-v2/spec.md §6.2 (502 STREAM_ENDED: retryable=yes, re-pairing=no)"
+  ],
+  "description": "Normal capture end: StreamEnded(502) push moves the session PLAYING -> READY.",
+  "preconditions": [
+    "State PLAYING with stream instance 1; the capture ended normally (e.g. the Endpoint closed the stream)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "stream_ended",
+      "frame_hex": "000000088a0305080110f603",
+      "body_hex": "8a0305080110f603",
+      "length": 8,
+      "decoded": {
+        "stream_instance_id": 1,
+        "code": 502
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "Unsolicited push; detail absent (the spec names a detail only for the unsubscribe variant: 'unsubscribed' — see control.subscribe-config-diagnostics).",
+    "retryable=true is the §6.2 registry property of 502 (StreamEnded has no retryable wire field).",
+    "State PLAYING -> READY; media state for the instance is finalized and released."
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "id": "control.error-601-idle-timeout-transport-close",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §3 (idle timeout 30 s -> classify 601; transport close carries the registry code)",
+    "docs/wire-protocol-v2/spec.md §5.2 (any: idle timeout -> transport close carrying 601)",
+    "docs/wire-protocol-v2/spec.md §6.2 (601 NETWORK_FAILURE: retryable=yes)",
+    "docs/wire-protocol-v2/spec.md §3 (D3: keep_alive_interval 10 s both sides)"
+  ],
+  "description": "Idle timeout (30 s of silence, keep-alives failing): NO control frames — the QUIC application close carries code 601; the Client classifies 601 and reconnects with backoff.",
+  "preconditions": [
+    "Session PLAYING; no application messages for 30 s and no media (keep-alive probes at 10 s intervals fail to elicit ACKs).",
+    "601 is also the classification for transport loss without a Close, the 10 s auth deadline, and the 10 s per-request timeout (spec §3, §5.2, §5.3)."
+  ],
+  "steps": [
+    {
+      "kind": "transport-close",
+      "index": 1,
+      "code": 601,
+      "closed_by": "S",
+      "note": "No control frames are sent or expected; the QUIC application close carries code 601."
+    }
+  ],
+  "assertions": [
+    "Expected control-stream bytes: NONE — like 301-at-capacity, this failure mode signals only via the transport close code.",
+    "The idle timeout is the fallback when a Close cannot be delivered (spec §3, D3).",
+    "Client policy (§6.3): 601 -> reconnect with backoff (1 s base, ×2, 30 s cap, ±20% jitter; reset on READY)."
+  ]
+}

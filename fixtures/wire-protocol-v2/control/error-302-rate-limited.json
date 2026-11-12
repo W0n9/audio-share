@@ -1,0 +1,42 @@
+{
+  "id": "control.error-302-rate-limited",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (source-address auth-failure rate exceeded -> Close(302); pairing failure rate -> Close(302))",
+    "docs/wire-protocol-v2/spec.md §6.2 (302 RATE_LIMITED: retryable=yes, re-pairing=no)",
+    "docs/wire-protocol-v2/spec.md §10 (20 auth failures per sliding 60 s per source; 5 pairing failures; 8 outstanding requests)"
+  ],
+  "description": "Rate limiting: once a source address exceeds the failure budget, the Server answers with Close(302) (this vector shows the final Close; the budget buildup is precondition, not wire bytes).",
+  "preconditions": [
+    "State machine: AUTHENTICATING; this source address has accumulated 20 auth failures (or 5 pairing failures) inside the sliding 60 s window.",
+    "The failure that trips the limit closes the connection."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "00000005320308ae02",
+      "body_hex": "320308ae02",
+      "length": 5,
+      "decoded": {
+        "code": 302
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 2,
+      "code": 302,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "Close(302) is sent as a frame here (unlike 301/601 — the §5.2 rows decide per case); the transport close carries the same code.",
+    "retryable=true per §6.2: the Client may reconnect with backoff, but the address stays throttled while failures continue.",
+    "No paired Error frame is specified by the §5.2 row for this path — the vector shows exactly Close(302)."
+  ]
+}

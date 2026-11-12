@@ -1,0 +1,40 @@
+{
+  "id": "media.flags-reserved-ignored",
+  "category": "media-plane",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §7.1 (flags table: bit 2 SPARE — receiver MUST ignore)",
+    "docs/wire-protocol-v2/spec.md §12 (parked: reserved flag bits ignored (not rejected), accepted with D4)"
+  ],
+  "description": "A datagram with a reserved flag bit set (bit 2, 0x4) is processed normally — reserved bits are IGNORED, never rejected and never treated as malformed.",
+  "preconditions": [
+    "Session PLAYING; instance 1, generation 1, sequence 2.",
+    "Note: spec §7.5's malformed-media row also lists 'reserved flag bits set', which conflicts with §7.1's MUST-ignore and with the §12 parked row ('ignored (not rejected)', accepted with D4 by the adjudication). The adjudicated intent is IGNORE; this vector pins it and the §7.5 wording is flagged for the maintainer."
+  ],
+  "steps": [
+    {
+      "kind": "datagram",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "000000010000000100000002000000000000001000000004000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "length": 88,
+      "decoded": {
+        "stream_instance_id": 1,
+        "config_generation": 1,
+        "sequence": 2,
+        "timestamp": 16,
+        "flags": "0x00000004",
+        "flags_set": [],
+        "payload_bytes": 64,
+        "payload_frames": 8,
+        "frame_bytes": 8
+      },
+      "note": "flags = 0x00000004: reserved/SPARE bit set; MUST be sent as 0 and ignored on receive."
+    }
+  ],
+  "assertions": [
+    "The datagram is processed exactly as if flags were 0: decoded, deduped, buffered (§7.5).",
+    "A future revision may promote specific reserved bits to mandatory — until then receivers MUST ignore them (§7.1).",
+    "Flagged spec gap: §7.5's malformed-media row vs §7.1/§12 — resolved here per the §12 parked row."
+  ]
+}

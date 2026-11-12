@@ -1,0 +1,83 @@
+{
+  "id": "control.error-403-unsupported-media-configuration",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.3 (READY: ConfigurationPublished not decodable -> Error(403)+Close(403))",
+    "docs/wire-protocol-v2/spec.md §6.2 (403 UNSUPPORTED_MEDIA_CONFIGURATION)"
+  ],
+  "description": "A VALID Configuration the receiver cannot decode: the published Transfer Format is S24LE (well-formed per spec) but this Client cannot decode 24-bit — it answers Error(403)+Close(403).",
+  "preconditions": [
+    "Session READY (authenticated, negotiated). The Client supports F32LE and S16LE only (recorded device capability).",
+    "The pushed Configuration is valid per the §4.4 validation table — that is what separates 403 from 401 (see control.error-401-invalid-configuration)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "configuration_published",
+      "frame_hex": "00000013aa0210120e080110011a080880f70210021804",
+      "body_hex": "aa0210120e080110011a080880f70210021804",
+      "length": 19,
+      "decoded": {
+        "request_id": 0,
+        "configuration": {
+          "config_generation": 1,
+          "codec": 1,
+          "pcm": {
+            "sample_rate": 48000,
+            "channels": 2,
+            "sample_format": 4
+          }
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000072a051203089303",
+      "body_hex": "2a051203089303",
+      "length": 7,
+      "decoded": {
+        "request_id": 0,
+        "status": {
+          "code": 403
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "000000053203089303",
+      "body_hex": "3203089303",
+      "length": 5,
+      "decoded": {
+        "code": 403
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 403,
+      "closed_by": "C"
+    }
+  ],
+  "assertions": [
+    "Status: code 403, retryable=false, requires_repairing=false (§6.2 defaults).",
+    "The Error is unsolicited (request_id 0 — the push's request_id is 0 and is echoed as absent).",
+    "Client behavior per §6.3: 403 -> no automatic reconnect; surface to user."
+  ]
+}

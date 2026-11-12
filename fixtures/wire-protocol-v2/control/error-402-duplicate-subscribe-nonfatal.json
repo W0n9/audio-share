@@ -1,0 +1,95 @@
+{
+  "id": "control.error-402-duplicate-subscribe-nonfatal",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (PLAYING: duplicate Subscribe -> non-fatal Error(402, retryable=false), connection maintained)",
+    "docs/wire-protocol-v2/spec.md §5.2 (error response classes: the non-fatal Error class)",
+    "docs/wire-protocol-v2/spec.md §6.2 (402 INVALID_STATE)"
+  ],
+  "description": "The non-fatal 402: a duplicate Subscribe in PLAYING gets Error(402) ONLY — no Close, connection kept, state unchanged; the next request is still served, which the follow-up RequestConfiguration proves.",
+  "preconditions": [
+    "State PLAYING: subscribed, stream instance 1 active (config_generation 1). The original Subscribe consumed request_id 1.",
+    "Isolated continuation; this duplicate arrives as request_id 2."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "subscribe",
+      "frame_hex": "0000000c820209090200000000000000",
+      "body_hex": "820209090200000000000000",
+      "length": 12,
+      "decoded": {
+        "request_id": 2
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000102a0e0902000000000000001203089203",
+      "body_hex": "2a0e0902000000000000001203089203",
+      "length": 16,
+      "decoded": {
+        "request_id": 2,
+        "status": {
+          "code": 402
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok",
+      "note": "Non-fatal: NO paired Close; the connection is maintained."
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "request_configuration",
+      "frame_hex": "0000000ca20209090300000000000000",
+      "body_hex": "a20209090300000000000000",
+      "length": 12,
+      "decoded": {
+        "request_id": 3
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 4,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "configuration_published",
+      "frame_hex": "0000001caa0219090300000000000000120e080110011a080880f70210021801",
+      "body_hex": "aa0219090300000000000000120e080110011a080880f70210021801",
+      "length": 28,
+      "decoded": {
+        "request_id": 3,
+        "configuration": {
+          "config_generation": 1,
+          "codec": 1,
+          "pcm": {
+            "sample_rate": 48000,
+            "channels": 2,
+            "sample_format": 1
+          }
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "Error(402) echoes request_id 2; Status retryable=false, requires_repairing=false (§6.2 defaults).",
+    "No Close frame and no transport close: the connection is maintained and processing continues — the defining property of the non-fatal Error class (spec §5.2).",
+    "State does not change (stays PLAYING); the same 402-only reply applies to a duplicate Subscribe in READY.",
+    "Fatality is a property of the state-machine row, never of the code alone: 402 is fatal (Error+Close) for structural violations — see control.subscribe-before-ready-402."
+  ]
+}

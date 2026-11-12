@@ -1,0 +1,62 @@
+{
+  "id": "media.malformed-drop",
+  "category": "media-plane",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §7.5 (malformed media: drop, log locally)",
+    "docs/wire-protocol-v2/spec.md §7.1 (stream_instance_id ∈ [1, 2^32−1]; 0 invalid)"
+  ],
+  "description": "Malformed media is dropped SILENTLY (no wire response exists for datagrams): an impossible instance id (0) and a payload that is not frame-aligned.",
+  "preconditions": [
+    "Session PLAYING; the receiver is in epoch instance 1, generation 1.",
+    "Datagrams are untrusted input (TB1/TB2): validation before allocation, bounded consumption (§5.5 of threat-model.md)."
+  ],
+  "steps": [
+    {
+      "kind": "datagram",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "000000000000000100000000000000000000000000000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "length": 88,
+      "decoded": {
+        "stream_instance_id": 0,
+        "config_generation": 1,
+        "sequence": 0,
+        "timestamp": 0,
+        "flags": "0x00000001",
+        "flags_set": [
+          "STREAM_START"
+        ],
+        "payload_bytes": 64,
+        "payload_frames": 8,
+        "frame_bytes": 8
+      },
+      "note": "stream_instance_id 0 is invalid (§7.1) — impossible field."
+    },
+    {
+      "kind": "datagram",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "0000000100000001000000010000000000000008000000000001020304",
+      "length": 29,
+      "decoded": {
+        "stream_instance_id": 1,
+        "config_generation": 1,
+        "sequence": 1,
+        "timestamp": 8,
+        "flags": "0x00000000",
+        "flags_set": [],
+        "payload_bytes": 5,
+        "payload_frames": 0,
+        "frame_bytes": 8
+      },
+      "note": "5-byte payload: 5 % 8 != 0 — not a whole number of F32LE stereo frames."
+    }
+  ],
+  "assertions": [
+    "Expected wire behavior: NONE — media has no response channel; both datagrams are dropped and logged locally (§7.5).",
+    "No decode, no state change, no concealment counting for malformed media; dedup/loss accounting is unaffected.",
+    "Flagged adjacent gap (not vectorized): §7.5 also lists 'reserved flag bits set' as malformed, but §7.1 and the §12 parked row say reserved bits are IGNORED — see media/flags-reserved-ignored."
+  ]
+}
