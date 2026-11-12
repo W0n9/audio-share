@@ -37,11 +37,9 @@
                                                      Transfer Format (little-endian
                                                      sample bytes)
 
-   Note (ticket 05, flagged for the maintainer): spec §4.1's band table lists
-   oneof cases 1–6 for band 1–15, while §4.4's "Connection lifecycle (band 1–15)"
-   block also defines Negotiate and NegotiateResponse in that band without
-   assigning their case numbers. They are assigned the next free numbers in the
-   band here (7 and 8).
+   Spec §4.1 registers oneof cases 1–8 for band 1–15: cases 7/8 are
+   Negotiate / NegotiateResponse (accepted 2026-11-12, maintainer
+   adjudication on ticket 05).
 */
 
 syntax = "proto3";
@@ -62,8 +60,7 @@ message Frame
         AuthResult auth_result = 4;
         Error error = 5;
         Close close = 6;
-        // See the header note: case numbers 7/8 assigned by ticket 05; the spec
-        // band table omits Negotiate/NegotiateResponse (spec gap, flagged).
+        // Case numbers 7/8 registered in spec §4.1 (2026-11-12 adjudication).
         Negotiate negotiate = 7;
         NegotiateResponse negotiate_response = 8;
 
