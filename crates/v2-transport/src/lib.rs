@@ -23,6 +23,9 @@
 #![allow(missing_docs, reason = "schema fields mirror the proto file's comments")]
 
 
+/// Authentication primitives: auth_context TLV, ECDSA-P256-SHA256 proof
+/// verification over the raw bytes (PR-9), client_id, capability-list rules.
+pub mod auth;
 /// Normative v2 constants: ports, ALPN, frame caps, §6 error registry.
 pub mod codes;
 /// Control-stream framing: `u32 BE length | Frame` with the §3 validation.
