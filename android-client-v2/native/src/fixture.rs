@@ -283,15 +283,12 @@ pub fn build_frame_from_decoded(decoded: &serde_json::Value, message: &str) -> O
 /// Build Status from decoded: present-but-empty `{}` → Some(default);
 /// missing key → None (unset field, per the encoding policy).
 fn build_status(v: Option<&serde_json::Value>) -> Option<crate::proto::Status> {
-    match v {
-        None => None,
-        Some(obj) => Some(crate::proto::Status {
+    v.map(|obj| crate::proto::Status {
             code: obj["code"].as_u64().unwrap_or(0) as u32,
             retryable: obj["retryable"].as_bool().unwrap_or(false),
             requires_repairing: obj["requires_repairing"].as_bool().unwrap_or(false),
             detail: obj["detail"].as_str().unwrap_or("").to_string(),
-        }),
-    }
+        })
 }
 
 fn build_configuration(v: &serde_json::Value) -> crate::proto::Configuration {
@@ -808,9 +805,13 @@ mod tests {
     /// challenge, Negotiate on AuthResult OK → READY (fixture sequence).
     #[test]
     fn state_direction_auth_happy_path() {
-        helpers_register_signing();
         let case = load_case("control/auth-happy-path.json");
         let mut m = ClientMachine::new();
+        m.set_auth_context(
+            crate::auth::tests_const_server_pub(),
+            crate::auth::tests_const_exporter(),
+            crate::auth::test_client_identity_key(),
+        );
         let init = Frame {
             body: Some(Body::AuthInit(crate::proto::AuthInit {
                 request_id: 1,
@@ -855,6 +856,7 @@ mod tests {
             let res = build_frame_from_decoded(decoded, "auth_result").unwrap();
             let mut m = ClientMachine::new();
             m.state = crate::control::ClientState::ConnectingSent;
+            m.seed_pending(1, crate::control::PendingKind::AuthInit);
             let (r, _) = m.on_frame(&res);
             assert_eq!(r, Err(crate::control::CloseInfo { code, remote: true }), "{rel}");
             assert_eq!(m.state, crate::control::ClientState::Closed);
@@ -868,6 +870,7 @@ mod tests {
         let case = load_case("control/negotiate-happy-path.json");
         let mut m = ClientMachine::new();
         m.state = crate::control::ClientState::Negotiating;
+        m.seed_pending(2, crate::control::PendingKind::Negotiate);
         let Step::Frame { decoded, .. } = &case.steps[1] else { panic!() };
         let resp = build_frame_from_decoded(decoded, "negotiate_response").unwrap();
         let (r, _) = m.on_frame(&resp);
@@ -902,6 +905,7 @@ mod tests {
             }),
         });
         m.next_request_id = 1;
+        m.seed_pending(2, crate::control::PendingKind::Subscribe);
         // step 1: C->S duplicate subscribe (already reflected in state)
         // step 2: S->C non-fatal Error(402)
         let Step::Frame { decoded, .. } = &case.steps[1] else { panic!() };
@@ -911,6 +915,7 @@ mod tests {
         assert_eq!(ev, Some(crate::control::Event::NonFatalError(402)));
         assert_eq!(m.state, crate::control::ClientState::Playing);
         // step 4: S->C ConfigurationPublished (response to RequestConfiguration)
+        m.seed_pending(3, crate::control::PendingKind::RequestConfiguration);
         let Step::Frame { decoded, .. } = &case.steps[3] else { panic!() };
         let pubr = build_frame_from_decoded(decoded, "configuration_published").unwrap();
         let (r, _) = m.on_frame(&pubr);
@@ -1018,19 +1023,18 @@ mod tests {
         let proof_input = crate::auth::pairing_tlv(
             b"audio-share v2 pairing confirm",
             &binding,
-        );
+        )
+        .unwrap();
         // the recorded client_proof verifies over the proof_input with the
         // fixture identity key
         let key = crate::auth::test_client_identity_key();
-        let vk = key.verifying_key().clone();
+        let vk = *key.verifying_key();
         let sig = dec_bytes(&confirm, "client_proof");
         let mut sig64 = [0u8; 64];
         sig64.copy_from_slice(&sig);
-        use p256::ecdsa::signature::hazmat::PrehashVerifier;
-        use sha2::{Digest, Sha256};
-        let digest = Sha256::digest(&proof_input);
+        use p256::ecdsa::signature::Verifier;
         let sig = p256::ecdsa::Signature::from_slice(&sig64).unwrap();
-        vk.verify_prehash(&digest, &sig)
+        vk.verify(&proof_input, &sig)
             .expect("recorded client_proof must verify over the rebuilt proof_input");
         let _ = req;
     }
@@ -1043,17 +1047,16 @@ mod tests {
         let resp = case_decoded(&case, 1);
         let confirm = case_decoded(&case, 2);
         let binding = dec_bytes(&resp, "binding");
-        let proof_input = crate::auth::pairing_tlv(b"audio-share v2 pairing confirm", &binding);
+        let proof_input =
+            crate::auth::pairing_tlv(b"audio-share v2 pairing confirm", &binding).unwrap();
         let key = crate::auth::test_client_identity_key();
-        let vk = key.verifying_key().clone();
+        let vk = *key.verifying_key();
         let sig = dec_bytes(&confirm, "client_proof");
         let mut sig64 = [0u8; 64];
         sig64.copy_from_slice(&sig);
-        use p256::ecdsa::signature::hazmat::PrehashVerifier;
-        use sha2::{Digest, Sha256};
-        let digest = Sha256::digest(&proof_input);
+        use p256::ecdsa::signature::Verifier;
         let sig = p256::ecdsa::Signature::from_slice(&sig64).unwrap();
-        vk.verify_prehash(&digest, &sig)
+        vk.verify(&proof_input, &sig)
             .expect("recorded SAS client_proof must verify");
         // SAS derivation: u32 BE of sas_seed[0..4] mod 1_000_000, zero-padded
         let seed = unhex("e0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
@@ -1095,9 +1098,5 @@ mod tests {
                 "manifest case {f} not replayed by the runner"
             );
         }
-    }
-
-    fn helpers_register_signing() {
-        crate::control::tests_public::register_test_signing_context();
     }
 }
