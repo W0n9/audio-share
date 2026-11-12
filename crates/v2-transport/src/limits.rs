@@ -167,36 +167,6 @@ impl CapacityGuard {
     }
 }
 
-/// Auth-failure accounting per connection (TM-4): 5 failures then Close(203).
-#[derive(Debug)]
-pub struct PerConnectionAuthFailures {
-    limit: u32,
-    count: u32,
-}
-
-impl PerConnectionAuthFailures {
-    /// Create with the limit from [`Limits::max_auth_failures_per_connection`].
-    pub fn new(limit: u32) -> Self {
-        Self { limit, count: 0 }
-    }
-
-    /// Record one failure; `true` when the failure exhausted the budget (the
-    /// caller answers with `Close(203)`).
-    pub fn record_failure(&mut self) -> bool {
-        self.count += 1;
-        self.count >= self.limit
-    }
-
-    /// Failures recorded so far (diagnostics).
-    pub fn count(&self) -> u32 {
-        self.count
-    }
-
-    /// Whether the connection is still below the failure bound.
-    pub fn exhausted(&self) -> bool {
-        self.count >= self.limit
-    }
-}
 
 /// Sliding-window rate accounting keyed by source address (TM-4: 20 auth
 /// failures per sliding 60 s per source → 302).
@@ -350,18 +320,6 @@ mod tests {
         // 1 established session fills the whole table: 301 regardless of the
         // handshake slots still free.
         assert_eq!(guard.try_begin_handshake(), CapacityDecision::SessionBound);
-    }
-
-    #[test]
-    fn per_connection_failures_trip_at_five() {
-        let mut failures = PerConnectionAuthFailures::new(5);
-        for attempt in 1..=4 {
-            assert!(!failures.record_failure(), "failure {attempt} must not close");
-            assert!(!failures.exhausted());
-        }
-        assert!(failures.record_failure(), "the 5th failure closes (TM-4)");
-        assert!(failures.exhausted());
-        assert_eq!(failures.count(), 5);
     }
 
     #[test]

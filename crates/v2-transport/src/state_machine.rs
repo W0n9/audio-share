@@ -75,11 +75,6 @@ pub struct ServerConfig {
     /// The driver always supplies the real per-connection output; fixture
     /// replay supplies the recorded constant.
     pub auth_exporter: Option<Vec<u8>>,
-    /// Supersede policy: with [`SUPERSEDE_KEEP_OLD`] the old session is marked
-    /// superseded (Close(303) sent by its driver) and the new one admitted;
-    /// `false` = the new session never replaces the old (unused in v2.0,
-    /// TM-3 fixed replacement).
-    pub keep_old_on_supersede: bool,
     /// The first session id this machine assigns (§3: the Server assigns
     /// ids from a registry-wide counter; the driver seeds each machine with
     /// its position). Defaults to 1 for a standalone machine; the golden-
@@ -102,9 +97,6 @@ impl ServerConfig {
         }
     }
 }
-
-/// TM-3: a new session of the same identity supersedes the old (Close(303)).
-pub const SUPERSEDE_KEEP_OLD: bool = true;
 
 /// One inbound occurrence the machine reacts to.
 #[derive(Clone, Debug)]
@@ -135,7 +127,10 @@ pub enum Event {
     /// translates its decision into this event on the OLD machine). The
     /// machine emits Close carrying the code and closes the transport with
     /// it (§5.2: Close(303) on the superseded session).
-    Superseded { code: ErrorCode },
+    Superseded {
+        /// The close code carrying the supersede reason (303).
+        code: ErrorCode,
+    },
 }
 
 /// One machine output, in order.

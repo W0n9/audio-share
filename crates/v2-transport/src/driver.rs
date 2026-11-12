@@ -208,7 +208,6 @@ impl SessionServer {
             // The driver always supplies the real per-connection exporter;
             // fixture replay supplies the recorded constant.
             auth_exporter: Some(exporter.to_vec()),
-            keep_old_on_supersede: crate::state_machine::SUPERSEDE_KEEP_OLD,
             session_id_base,
         };
         let mut machine = StateMachine::new(config, &self.store);
