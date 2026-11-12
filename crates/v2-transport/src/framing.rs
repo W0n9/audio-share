@@ -330,6 +330,6 @@ mod tests {
         frame.body = None;
         let err = encode_frame(&Frame { body: None }).unwrap_err();
         assert!(matches!(err, FrameError::UnsetBody) || matches!(err, FrameError::LengthOutOfBounds(_)));
-        assert!(hex(&[0]).len() > 0); // keep hex helper used
+        assert!(!hex(&[0]).is_empty()); // keep hex helper used
     }
 }

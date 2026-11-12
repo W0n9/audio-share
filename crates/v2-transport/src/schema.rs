@@ -136,14 +136,14 @@ impl Status {
 pub(crate) const fn registry_defaults(code: u32) -> (bool, bool) {
     match code {
         101 | 102 => (false, false),
-        201 | 202 | 203 => (false, true),
+        201..=203 => (false, true),
         204 => (false, false),
         // 205 is a local classification, never sent as a status.
         206 => (true, false),
         301 | 302 => (true, false),
         303 => (false, false),
-        401 | 402 | 403 => (false, false),
-        501 | 502 | 503 => (true, false),
+        401..=403 => (false, false),
+        501..=503 => (true, false),
         599 => (false, false),
         601 | 602 => (true, false),
         701 => (false, false),
