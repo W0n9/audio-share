@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "clients": [
+    {
+      "client_id": "cf7940b474310246",
+      "public_key": "A9ClKd50dWQawFDHkrQs_weRB8pTENp5U9JZUSFHfA9t",
+      "display_name": "Ticket 09 Phone",
+      "state": "active"
+    }
+  ]
+}

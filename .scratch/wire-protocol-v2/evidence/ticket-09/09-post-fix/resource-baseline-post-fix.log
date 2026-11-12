@@ -1,0 +1,13 @@
+# device pid=21958, server pid=3586356
+# adb shell dumpsys cpuinfo | grep audioshare
+ +0% 21958/dev.audioshare.v2: 0% user + 0% kernel
+# adb shell cat /proc/21958/status
+VmHWM:	  154932 kB
+VmRSS:	  154892 kB
+Threads:	37
+# server ps rss
+    PID   RSS ELAPSED CMD
+3586356  9960     594 ./target/release/as-cmd -b 0.0.0.0:65530 --v2-port 65531 --fake-capture -V
+# accepted/ended log lines
+13
+16

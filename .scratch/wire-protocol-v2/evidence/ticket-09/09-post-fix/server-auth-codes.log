@@ -1,0 +1,6 @@
+# server authentication-failure codes observed after A14 (real registry code, no hardcoded 203)
+# unknown identity (empty store), device:
+[2026-11-12 15:47:27.697] [info] v2 session: authentication failed source=100.117.x.x code=202
+# live revocation (record deleted while READY), device:
+[2026-11-12 15:47:27.697] [info] v2 session: authentication failed source=100.117.x.x code=202
+[2026-11-12 15:51:39.494] [debug] v2 session ended source=100.117.x.x code=204
