@@ -209,6 +209,9 @@ pub struct StateMachine {
     subscribed: bool,
     /// TM-4 per-connection failure counter.
     auth_failures: u32,
+    /// Code of the latest authentication failure, drained by the driver for
+    /// its redacted failure log (§6 registry).
+    last_auth_failure_code: Option<ErrorCode>,
     /// The pending challenge's server_random (verification context).
     pending_challenge: Option<Vec<u8>>,
     /// The request_id of the pending auth exchange.
@@ -233,6 +236,7 @@ impl StateMachine {
             identity: None,
             subscribed: false,
             auth_failures: 0,
+            last_auth_failure_code: None,
             pending_challenge: None,
             pending_request_id: None,
             pending_client_key: None,
@@ -578,6 +582,7 @@ impl StateMachine {
         // §4.4 validation: the public key must be a 33-byte compressed P-256
         // point; anything else is a generic validation failure → 401.
         if auth::parse_client_public_key(client_public_key).is_err() {
+            self.last_auth_failure_code = Some(ErrorCode::MALFORMED_MESSAGE);
             return self.malformed_fatal(request_id);
         }
         self.pending_client_key = Some(client_public_key.to_vec());
@@ -669,15 +674,25 @@ impl StateMachine {
                 // re-AuthInit with another stored pairing.
                 self.record_auth_failure(ErrorCode::AUTHORIZATION_UNKNOWN, request_id)
             }
-            Authorization::Revoked(_) => {
-                // §5.2: AuthResult(204); count failure.
+            Authorization::Revoked(_) | Authorization::Unavailable => {
+                // §5.2: AuthResult(204); count failure. `Unavailable` is a
+                // corrupt store: fail closed rather than keep serving the
+                // last known-good table (pairing.md §10.3).
                 self.record_auth_failure(ErrorCode::AUTHORIZATION_DENIED, request_id)
             }
         }
     }
 
+    /// The §6 code of the most recent authentication failure, for the
+    /// driver's failure log (202 unknown, 203 bad proof, 204 revoked, 401
+    /// malformed). Consumed once so one failure produces one log line.
+    pub fn take_auth_failure_code(&mut self) -> Option<ErrorCode> {
+        self.last_auth_failure_code.take()
+    }
+
     fn record_auth_failure(&mut self, code: ErrorCode, request_id: u64) -> Vec<Outcome> {
         self.auth_failures += 1;
+        self.last_auth_failure_code = Some(code);
         self.pending_challenge = None;
         self.pending_request_id = None;
         self.pending_client_key = None;
@@ -716,7 +731,13 @@ impl StateMachine {
         let Some(identity) = self.identity.clone() else {
             return Vec::new();
         };
-        if matches!(self.store.authorize(&identity), Authorization::Revoked(_)) {
+        // A record that disappeared (Unknown) is a revocation too, and a
+        // corrupt reload (Unavailable) fails closed: both tear the session
+        // down with the authorization-denied pair (pairing.md §9.2/§10.3).
+        if matches!(
+            self.store.authorize(&identity),
+            Authorization::Revoked(_) | Authorization::Unknown(_) | Authorization::Unavailable
+        ) {
             let outcomes = Outcome::fatal(ErrorCode::AUTHORIZATION_DENIED, 0);
             self.close(ServerState::Closing);
             outcomes

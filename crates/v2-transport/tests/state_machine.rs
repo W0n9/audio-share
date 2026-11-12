@@ -257,6 +257,62 @@ fn invalid_signature_is_203_and_counts_a_failure() {
 }
 
 #[test]
+fn auth_failure_log_code_matches_the_reason() {
+    // The driver logs the §6 code of the actual failure (ticket 09: 202/204
+    // were invisible because every line said 203).
+    let store = store_with_client();
+    let mut checked = machine(&store);
+    checked.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
+    assert_eq!(checked.take_auth_failure_code(), None, "a challenge is not a failure");
+    checked.handle(Event::Frame { frame: Box::new(auth_proof(1, INVALID_SIG)), source: unhex(CLIENT_PUB) });
+    assert_eq!(
+        checked.take_auth_failure_code().map(|c| c.code),
+        Some(203),
+        "invalid proof"
+    );
+    assert_eq!(checked.take_auth_failure_code(), None, "drained once");
+
+    let mut unknown = machine(&AuthorizationStore::in_memory());
+    unknown.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
+    unknown.handle(Event::Frame { frame: Box::new(auth_proof(1, VALID_SIG)), source: unhex(CLIENT_PUB) });
+    assert_eq!(
+        unknown.take_auth_failure_code().map(|c| c.code),
+        Some(202),
+        "unknown identity"
+    );
+
+    let revoked = AuthorizationStore::in_memory();
+    revoked.insert_for_tests(StoredClient {
+        client_id: "cf7940b474310246".to_owned(),
+        public_key: unhex(CLIENT_PUB),
+        display_name: "Test Phone".to_owned(),
+        state: ClientState::Revoked,
+    });
+    let mut denied = machine(&revoked);
+    denied.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
+    denied.handle(Event::Frame { frame: Box::new(auth_proof(1, VALID_SIG)), source: unhex(CLIENT_PUB) });
+    assert_eq!(
+        denied.take_auth_failure_code().map(|c| c.code),
+        Some(204),
+        "revoked identity"
+    );
+
+    let mut malformed = machine(&store_with_client());
+    let bad_key = Frame {
+        body: Some(frame::Body::AuthInit(v2_transport::schema::AuthInit {
+            request_id: 1,
+            client_public_key: vec![0xff; 33],
+        })),
+    };
+    malformed.handle(Event::Frame { frame: Box::new(bad_key), source: unhex(CLIENT_PUB) });
+    assert_eq!(
+        malformed.take_auth_failure_code().map(|c| c.code),
+        Some(401),
+        "malformed client key"
+    );
+}
+
+#[test]
 fn auth_init_retry_gets_a_fresh_challenge() {
     // §5.2 AUTHENTICATING AuthInit (retry): a fresh challenge, still
     // AUTHENTICATING.
@@ -629,6 +685,35 @@ fn supersede_closes_the_old_session_with_303_and_keeps_the_new() {
 // ---------------------------------------------------------------------------
 // Revocation (pairing.md §9.2, TM-9): ≤ 5 s termination of active sessions.
 // ---------------------------------------------------------------------------
+
+#[test]
+fn deleted_record_is_revoked_on_the_next_check() {
+    // pairing.md §9.2: deleting the record (not just setting state=revoked)
+    // must end the live session with the 204 pair within the poll window.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = AuthorizationStore::open(dir.path()).expect("open");
+    store
+        .upsert(StoredClient {
+            client_id: "cf7940b474310246".to_owned(),
+            public_key: unhex(CLIENT_PUB),
+            display_name: "Test Phone".to_owned(),
+            state: ClientState::Active,
+        })
+        .expect("persist");
+    let store = std::sync::Arc::new(store);
+    let mut machine = machine_on(std::sync::Arc::clone(&store));
+    authenticate(&mut machine);
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
+    assert_eq!(machine.state(), ServerState::Ready);
+
+    std::fs::remove_file(dir.path().join("pairing").join("clients.json")).expect("delete record");
+    assert!(store.reload_if_changed().expect("reload"), "deletion is a change");
+    let out = machine.handle(Event::RevocationCheck);
+    assert_eq!(machine.state(), ServerState::Closing);
+    assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
+        Some(frame::Body::Error(e)) if e.request_id == 0 && e.status.code == 204));
+    assert_eq!(out[1].close_code, Some(ErrorCode::AUTHORIZATION_DENIED));
+}
 
 #[test]
 fn revoked_active_session_receives_fatal_204_pair() {
