@@ -7,7 +7,7 @@ use v2_transport::auth_store::{AuthorizationStore, ClientState, StoredClient};
 use v2_transport::codes::ErrorCode;
 use v2_transport::schema::{frame, Frame, Status};
 use v2_transport::state_machine::{
-    Event, ServerConfig, ServerState, StateMachine, SUPERSEDE_KEEP_OLD,
+    Event, ServerConfig, ServerState, StateMachine,
 };
 
 const CLIENT_PUB: &str = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
@@ -119,7 +119,6 @@ fn machine_on(store: std::sync::Arc<AuthorizationStore>) -> StateMachine {
             auth_exporter: Some(unhex(
                 "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
             )),
-            keep_old_on_supersede: SUPERSEDE_KEEP_OLD,
             session_id_base: 1,
         },
         &store,
