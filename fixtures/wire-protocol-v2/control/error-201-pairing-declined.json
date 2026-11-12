@@ -1,0 +1,148 @@
+{
+  "id": "control.error-201-pairing-declined",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (AUTHENTICATING: PairingConfirm verified but approval declined -> PairingResult(201)+Close(201), no detail)",
+    "docs/wire-protocol-v2/spec.md §4.2 (pre-auth responses — PairingResult included — carry no detail; TM-6)",
+    "docs/wire-protocol-v2/spec.md §6.2 (201 PAIRING_REJECTED: pairing declined locally; retryable=no, re-pairing=yes)",
+    "docs/wire-protocol-v2/spec.md §10 (general pre-auth responses <= 128 B — TM-6 revised)",
+    "docs/wire-protocol-v2/pairing.md §6.3.1 (proof verified BEFORE persistence — declined means verified-but-refused, nothing persisted)"
+  ],
+  "description": "Approval declined: binding_echo and client_proof both verify, but the local admin declines — the entire response is PairingResult(201) + Close(201), with no detail anywhere and nothing persisted.",
+  "preconditions": [
+    "QUIC connection with ALPN audio-share/v2; SPKI pin derived from the QR key field verified at the handshake (pairing.md §6.1).",
+    "Admission gate: the QR nonce (test-keys.json fixed_randomness.pairing_nonce) is valid, unexpired and unused.",
+    "Local approval DECLINED (the admin refuses 'Accept device').",
+    "State machine: CONNECTING. Isolated connection; request_id counter starts at 1.",
+    "Wire constants are the pairing-happy-path-qr values: binding_echo matches and client_proof is VALID — only the local decision differs from the happy path."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "pairing_request",
+      "frame_hex": "0000007382017009010000000000000010011a10808182838485868788898a8b8c8d8e8f2220606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f2a2103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d3002420a546573742050686f6e65",
+      "body_hex": "82017009010000000000000010011a10808182838485868788898a8b8c8d8e8f2220606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f2a2103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d3002420a546573742050686f6e65",
+      "length": 115,
+      "decoded": {
+        "request_id": 1,
+        "pairing_mode": 1,
+        "pairing_nonce": "808182838485868788898a8b8c8d8e8f",
+        "client_random": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "client_public_key": "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d",
+        "protocol_major": 2,
+        "capabilities": [],
+        "client_name": "Test Phone"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "pairing_response",
+      "frame_hex": "000000d38a01cf01090100000000000000120018012210808182838485868788898a8b8c8d8e8f2a20606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f3220404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f3a2011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c40025230909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf5a08cf7940b474310246620a546573742050686f6e65",
+      "body_hex": "8a01cf01090100000000000000120018012210808182838485868788898a8b8c8d8e8f2a20606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f3220404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f3a2011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c40025230909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf5a08cf7940b474310246620a546573742050686f6e65",
+      "length": 211,
+      "decoded": {
+        "request_id": 1,
+        "status": {},
+        "pairing_mode": 1,
+        "pairing_nonce": "808182838485868788898a8b8c8d8e8f",
+        "client_random": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "server_random": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+        "server_public_key": "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c",
+        "protocol_major": 2,
+        "capabilities": [],
+        "binding": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "client_id": "cf7940b474310246",
+        "display_name": "Test Phone"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "pairing_confirm",
+      "frame_hex": "0000008092017d0901000000000000001230909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf1a40c7ae8b6474ebb7b6d654febfce10e38d3a479b4534b5436bbb7714ae3652bfc30b0d8ffbf1582ecb2af24e25ba47876b4a35dd00af0924b57648871f95baeee1",
+      "body_hex": "92017d0901000000000000001230909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf1a40c7ae8b6474ebb7b6d654febfce10e38d3a479b4534b5436bbb7714ae3652bfc30b0d8ffbf1582ecb2af24e25ba47876b4a35dd00af0924b57648871f95baeee1",
+      "length": 128,
+      "decoded": {
+        "request_id": 1,
+        "binding_echo": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "client_proof": "c7ae8b6474ebb7b6d654febfce10e38d3a479b4534b5436bbb7714ae3652bfc30b0d8ffbf1582ecb2af24e25ba47876b4a35dd00af0924b57648871f95baeee1"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 4,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "pairing_result",
+      "frame_hex": "000000119a010e0901000000000000001203089103",
+      "body_hex": "9a010e0901000000000000001203089103",
+      "length": 17,
+      "decoded": {
+        "request_id": 1,
+        "status": {
+          "code": 201
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 5,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "000000053203089103",
+      "body_hex": "3203089103",
+      "length": 5,
+      "decoded": {
+        "code": 201
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 6,
+      "code": 201,
+      "closed_by": "S"
+    }
+  ],
+  "size_bounds": [
+    {
+      "frame": "pairing_result",
+      "max_frame_bytes": 128,
+      "rule": "spec §4.2/§10 TM-6: pre-auth responses (pairing/auth refusals included) <= 128 B"
+    },
+    {
+      "frame": "close",
+      "max_frame_bytes": 128,
+      "rule": "spec §4.2/§10 TM-6: pre-auth responses <= 128 B"
+    }
+  ],
+  "assertions": [
+    "Both proofs verify (binding_echo matches the Client's exporter derivation; client_proof validates against the claimed identity key — the proof inputs are the pairing-happy-path-qr constants): the rejection is purely the declined local approval (spec §5.2), not a proof failure.",
+    "PairingResult(201)'s Status carries NO detail field: pre-auth responses never carry detail (spec §4.2/TM-6) — the pre-adjudication 'PairingResult(201, detail \"declined\")' wording is withdrawn by the 2026-11-12 adjudication.",
+    "Approval rejection is exactly PairingResult(201) + Close(201) and nothing else (spec §5.2); the transport close carries 201.",
+    "Nothing is persisted: the observable is that no subsequent accept for this identity exists — the authorization store is unchanged, so a later connection authenticating with the same key still receives AuthResult(202) AUTHORIZATION_UNKNOWN (persistence happens only after verified proofs AND approval; spec §5.2, pairing.md §6.3.1/§8).",
+    "Both refusal frames are <= 128 B (size_bounds); PairingResponse remains the sole <= 320 B pre-auth exception."
+  ],
+  "derived": {
+    "proof_inputs": "identical to control.pairing-happy-path-qr (binding_context_qr_hex, proof_input_qr_hex, client_proof); TLV value encodings per pairing.md §6.3 — mode = lowercase ASCII 'qr', protocol_major = fixed 4-byte big-endian (v2 = 00 00 00 02)",
+    "persistence_observable": "after this exchange, an AuthInit with the same client_public_key yields AuthResult(202) AUTHORIZATION_UNKNOWN — the record was never written"
+  }
+}

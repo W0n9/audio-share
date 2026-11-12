@@ -127,18 +127,18 @@ injects these constants where the exporter values would be.
 | Band | Codes vectorized | Notes |
 | --- | --- | --- |
 | 100 | 101 | 102 is unreachable in v2.0 — no capability ids are assigned; unknown ids are ignored (`control.negotiate-unknown-capability-ignored`) |
-| 200 | 201, 202, 203, 204 | incl. the 202-vs-204 contrast and `client_proof` failure; 205 has no wire bytes (local TLS classification); 206 is timing-only |
+| 200 | 201, 202, 203, 204 | incl. the 202-vs-204 contrast, `client_proof` failure, and approval declined (no-detail PairingResult(201)); 205 has no wire bytes (local TLS classification); 206 is timing-only |
 | 300 | 301, 302, 303 | 301 signals via transport close code only |
-| 400 | 401 (×7 shapes), 402 (fatal + non-fatal), 403 | |
+| 400 | 401 (×7 shapes), 402 (fatal ×3 + non-fatal), 403 | |
 | 500 | 501 (×2), 502, 599 | 503 has no pinned wire sequence in the accepted spec (flagged, not invented) |
 | 600 | 601, 602 | 601 signals via transport close code only |
 | 700 | 701 | Close never echoed |
 
 Media coverage: header/payload samples (all header fields), reserved-flag
-ignore, sequence wrap, `stream_instance_id` change (with the control-stream
-pair), `config_generation` change mid-stream (with stale-generation drop),
-reduced-MTU sizing and payload alignment, the 1176 B interop floor, and
-malformed-media drop.
+ignore (bit 2 and bit 31), sequence wrap, `stream_instance_id` change (with the
+control-stream pair), `config_generation` change mid-stream (with
+stale-generation drop), reduced-MTU sizing and payload alignment, the 1176 B
+interop floor, and malformed-media drop.
 
 ## Flagged spec gaps (for the maintainer)
 
