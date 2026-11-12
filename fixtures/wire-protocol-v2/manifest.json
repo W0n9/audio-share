@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "protocol_version": "wire-protocol-v2.0",
-  "provenance": "generated-from-spec",
+  "provenance": "generated-from-spec (final phase-2 adjudication pass, 2026-11-12)",
   "source": {
     "spec": "docs/wire-protocol-v2/spec.md",
     "pairing": "docs/wire-protocol-v2/pairing.md",
     "threat_model": "docs/wire-protocol-v2/threat-model.md",
     "schema": "protos/wire-protocol-v2/control.proto",
-    "spec_commit": "63c8a5e39787ead6d2c9d977350b9afb9fc27c37",
+    "spec_commit": "11839bb94dd8648a36c7165674aa8c2e197ac7fa",
     "spec_status": "accepted (2026-11-12, maintainer adjudication)",
     "note": "Vectors are hand-derived deterministic encodings from the accepted normative documents — NOT from the prototype's throwaway BRIEF.md wire format, and not from any implementation encoder. Signature values were computed once with the fixture-fixed test keys (test-keys.json) and are replayed by verification only."
   },
@@ -77,8 +77,8 @@
   "error_registry_coverage_notes": {
     "102": "unreachable in v2.0: 102 is for a KNOWN capability the Server cannot honor, and no capability ids are assigned in v2.0 (spec §4.5); unknown ids are ignored (see control.negotiate-unknown-capability-ignored). The first reviewed spec revision that assigns an id must add its 102 vector.",
     "205": "no wire bytes exist: 205 is the Client's LOCAL classification of a TLS-handshake pin mismatch (spec §3, §6.2) — it never appears as a control frame.",
-    "206": "timing-only: PAIRING_PENDING_TIMEOUT fires after the 10-minute pairing deadline (Error(206)+Close(206)); no bytes to pin beyond the codes.",
-    "503": "no wire sequence is pinned by the accepted spec for SERVER_STOPPING (no §5.2 row); left to the maintainer rather than invented (spec gap noted in test-keys.json derivation_assumptions is not required for this one — simply unspecified)."
+    "206": "timing-only: PAIRING_PENDING_TIMEOUT fires only after the 10-minute pairing deadline (spec §3 pairing exchange deadline; §5.2 pairing-deadline row: Error(206)+Close(206)) — the codes are the only bytes the spec pins.",
+    "503": "the accepted spec pins no wire sequence for SERVER_STOPPING: no §5.2 row assigns one, and the code appears only in the §6.2 registry and in StreamEnded's code comment (spec §4.4) — a vector requires a reviewed spec revision that pins the sequence, not a fixture invention."
   },
   "cases": [
     {
