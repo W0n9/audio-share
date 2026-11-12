@@ -539,6 +539,11 @@ impl SessionServer {
             if let Some(frame) = frame {
                 // §10/TM-6/TM-7: never emit a frame over its size bound; an
                 // oversized frame is a local bug, so fail closed (599).
+                // §4.2 (spec:91): "senders MUST cap at 256 bytes; receivers
+                // truncate for logging and MUST NOT reject a frame solely for
+                // a longer detail." This is the sender-side MUST for our own
+                // outbound Error, so an oversized one is a bug, not something
+                // to truncate here; fail closed instead.
                 if let Some(reason) = outbound_limit_violation(&frame, authenticated) {
                     tracing::error!(%reason, "v2 session: outbound frame exceeds its §10 bound");
                     connection.close(quinn::VarInt::from_u32(ErrorCode::INTERNAL_ERROR.code), b"");

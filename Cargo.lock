@@ -5232,6 +5232,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "v2-transport",
 ]
 

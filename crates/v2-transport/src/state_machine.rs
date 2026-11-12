@@ -366,6 +366,10 @@ impl StateMachine {
             return Vec::new();
         }
         let request_id = frame_request_id(&frame);
+        // §4.2 (spec:89): request_id is sender-assigned, unique per sender per
+        // connection, monotonically increasing from 1; the receiver echoes it
+        // verbatim and never interprets it (opaque). The Server therefore does
+        // not validate inbound monotonicity/uniqueness — it only echoes.
         match frame.body {
             Some(frame::Body::Close(close)) => {
                 if close.code == 0 {
@@ -377,7 +381,12 @@ impl StateMachine {
                 self.close(ServerState::Closing);
                 Vec::new()
             }
-            Some(frame::Body::Error(error)) if error.status.code != 0 => {
+            Some(frame::Body::Error(error)) if error.status.code == 0 => {
+                // §4.4 (spec:264): an Error with status.code == 0 is malformed
+                // in EVERY state (not a state error) → fatal 401.
+                self.malformed_fatal(error.request_id)
+            }
+            Some(frame::Body::Error(_)) => {
                 // §5.2 "any": non-fatal Error (no paired Close) is advisory.
                 Vec::new()
             }
@@ -525,7 +534,10 @@ impl StateMachine {
                 self.handle_subscribe(subscribe.request_id)
             }
             (ServerState::Ready, Some(frame::Body::Unsubscribe(unsubscribe))) => {
-                // §5.2: Unsubscribe → OK, idempotent (duplicate/late included).
+                // §5.2: Unsubscribe → OK, idempotent (duplicate/late included),
+                // and READY returns to the unsubscribed state so a later
+                // Subscribe is accepted rather than refused as a duplicate.
+                self.subscribed = false;
                 let response = crate::schema::UnsubscribeResponse {
                     request_id: unsubscribe.request_id,
                     status: Status::ok(),
@@ -647,7 +659,7 @@ impl StateMachine {
         // Signature valid: consult the authorization state (§9.2 — at every
         // authentication, never a cached answer).
         match self.store.authorize(&client_public_key) {
-            Authorization::Authorized(record) => {
+            Authorization::Authorized(_) => {
                 self.identity = Some(client_public_key.clone());
                 self.pending_challenge = None;
                 self.pending_request_id = None;
@@ -660,7 +672,6 @@ impl StateMachine {
                     old_session_id: session_id.saturating_sub(1),
                     code: ErrorCode::SESSION_SUPERSEDED,
                 });
-                let _ = record;
                 vec![Outcome::frame(Frame {
                     body: Some(frame::Body::AuthResult(crate::schema::AuthResult {
                         request_id,

@@ -64,10 +64,22 @@ struct StoredClientJson {
     state: String,
 }
 
+/// Canonical `client_id`: first 8 bytes of SHA-256(public_key), lowercase hex
+/// (pairing.md §8.1). This is the only spelling the store accepts or writes.
+fn canonical_client_id(public_key: &[u8]) -> String {
+    crate::auth::client_id(public_key)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 impl StoredClient {
     fn to_json(&self) -> StoredClientJson {
         StoredClientJson {
-            client_id: self.client_id.clone(),
+            // pairing.md §8.1: client_id is derived, never caller-supplied.
+            // Persist the canonical lowercase form even if a record reached
+            // the store with a noncanonical spelling.
+            client_id: canonical_client_id(&self.public_key),
             public_key: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&self.public_key),
             display_name: self.display_name.clone(),
             state: match self.state {
@@ -93,14 +105,13 @@ impl StoredClient {
             );
         }
         // client_id is derived, never allocated: first 8 bytes of
-        // SHA-256(public_key), lowercase hex (§8.1).
-        let derived: String = crate::auth::client_id(&public_key)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        if !json.client_id.eq_ignore_ascii_case(&derived) {
+        // SHA-256(public_key), lowercase hex (§8.1). Only the canonical
+        // lowercase spelling is accepted; mixed/uppercase hex would make the
+        // identity key non-canonical and is a fail-closed load error.
+        let derived = canonical_client_id(&public_key);
+        if json.client_id != derived {
             return Err(format!(
-                "client_id {:?} does not match the derived value {derived:?}",
+                "client_id {:?} is not the canonical value {derived:?}",
                 json.client_id
             ));
         }
@@ -111,7 +122,7 @@ impl StoredClient {
             ));
         }
         Ok(Self {
-            client_id: json.client_id,
+            client_id: derived,
             public_key,
             display_name: json.display_name,
             state: if json.state == "active" {
@@ -457,11 +468,12 @@ fn parse_store_text(text: &str) -> Result<Vec<StoredClient>, String> {
         .into_iter()
         .map(StoredClient::from_json)
         .collect::<Result<Vec<_>, _>>()?;
-    // client_id is the unique identity key (§8.1); two records claiming the
-    // same derived id would make authorization order-dependent.
+    // client_id is the unique identity key (§8.1) and is canonical lowercase
+    // after from_json; two records claiming the same derived id would make
+    // authorization order-dependent.
     let mut seen = std::collections::HashSet::with_capacity(clients.len());
     for client in &clients {
-        if !seen.insert(client.client_id.to_ascii_lowercase()) {
+        if !seen.insert(client.client_id.as_str()) {
             return Err(format!("duplicate client_id {:?}", client.client_id));
         }
     }
