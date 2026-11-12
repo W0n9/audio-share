@@ -88,8 +88,8 @@
       "dir": "S->C",
       "channel": "control-stream",
       "message": "pairing_result",
-      "frame_hex": "000000119a010e0901000000000000001203089103",
-      "body_hex": "9a010e0901000000000000001203089103",
+      "frame_hex": "000000119a010e090100000000000000120308c901",
+      "body_hex": "9a010e090100000000000000120308c901",
       "length": 17,
       "decoded": {
         "request_id": 1,
@@ -106,8 +106,8 @@
       "dir": "S->C",
       "channel": "control-stream",
       "message": "close",
-      "frame_hex": "000000053203089103",
-      "body_hex": "3203089103",
+      "frame_hex": "00000005320308c901",
+      "body_hex": "320308c901",
       "length": 5,
       "decoded": {
         "code": 201
