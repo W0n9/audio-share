@@ -112,7 +112,13 @@ val buildNative by tasks.registering(Exec::class) {
     onlyIf { !project.hasProperty("noNative") }
     workingDir = nativeDir
     environment("ANDROID_HOME", providers.environmentVariable("ANDROID_HOME").orElse("").get())
-    commandLine("cargo", "build", "--release", "--target", cargoTarget)
+    // TEST-ONLY E2E build: `test-support` enables the fixture client identity
+    // key in the native crate (production profiles must not enable it; the
+    // real identity comes from v2 pairing, phase 6).
+    commandLine(
+        "cargo", "build", "--release", "--target", cargoTarget,
+        "--features", "test-support",
+    )
     outputs.file(cargoOut.resolve("libaudio_share_client_v2_native.so"))
     inputs.dir(nativeDir.resolve("src"))
     inputs.file(nativeDir.resolve("Cargo.toml"))

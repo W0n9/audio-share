@@ -59,11 +59,9 @@ pub fn client_id(client_public_key: &[u8]) -> [u8; 8] {
     digest[..8].try_into().expect("sha256 is 32 bytes")
 }
 
-/// The verdict of one signature verification.
+/// The failure verdict of one signature verification; success is `Ok(())`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProofVerdict {
-    /// The signature verifies over the context with this key.
-    Valid,
     /// The key, the context, or the signature bytes are unusable — treated as
     /// an invalid proof (203 territory), never as a crash.
     Invalid,

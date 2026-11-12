@@ -167,36 +167,6 @@ impl CapacityGuard {
     }
 }
 
-/// Auth-failure accounting per connection (TM-4): 5 failures then Close(203).
-#[derive(Debug)]
-pub struct PerConnectionAuthFailures {
-    limit: u32,
-    count: u32,
-}
-
-impl PerConnectionAuthFailures {
-    /// Create with the limit from [`Limits::max_auth_failures_per_connection`].
-    pub fn new(limit: u32) -> Self {
-        Self { limit, count: 0 }
-    }
-
-    /// Record one failure; `true` when the failure exhausted the budget (the
-    /// caller answers with `Close(203)`).
-    pub fn record_failure(&mut self) -> bool {
-        self.count += 1;
-        self.count >= self.limit
-    }
-
-    /// Failures recorded so far (diagnostics).
-    pub fn count(&self) -> u32 {
-        self.count
-    }
-
-    /// Whether the connection is still below the failure bound.
-    pub fn exhausted(&self) -> bool {
-        self.count >= self.limit
-    }
-}
 
 /// Sliding-window rate accounting keyed by source address (TM-4: 20 auth
 /// failures per sliding 60 s per source → 302).
@@ -277,6 +247,94 @@ pub fn pairing_response_within_bounds(frame_length: usize) -> bool {
     frame_length <= 320
 }
 
+/// Per-session outstanding-request accounting (spec §10: 8 outstanding →
+/// 302). A request is tracked from admission until its response is sent.
+#[derive(Debug)]
+pub struct OutstandingRequests {
+    pending: std::collections::HashSet<u64>,
+    limit: usize,
+}
+
+impl OutstandingRequests {
+    /// A fresh counter with the configured bound.
+    pub fn new(limit: u32) -> Self {
+        Self { pending: std::collections::HashSet::new(), limit: limit as usize }
+    }
+
+    /// Admit a request, or return false when the bound is already reached
+    /// (or the id is already outstanding — a duplicate request id).
+    pub fn track(&mut self, request_id: u64) -> bool {
+        if self.pending.len() >= self.limit || !self.pending.insert(request_id) {
+            return false;
+        }
+        true
+    }
+
+    /// Mark a request resolved (its response was emitted or the session ended).
+    pub fn complete(&mut self, request_id: u64) {
+        self.pending.remove(&request_id);
+    }
+
+    /// Requests currently awaiting a response.
+    pub fn outstanding(&self) -> usize {
+        self.pending.len()
+    }
+}
+
+/// Classify an outbound control frame against the §10 size bounds (TM-6 /
+/// TM-7). `authenticated` means the session has completed AuthProof.
+///
+/// Returns a human-readable reason when the frame must not be sent; the
+/// driver fails closed (599) rather than emitting an oversized response.
+pub fn outbound_limit_violation(
+    frame: &crate::schema::Frame,
+    authenticated: bool,
+) -> Option<&'static str> {
+    use crate::schema::frame::Body;
+    use prost::Message as _;
+    let body = frame.body.as_ref()?;
+    let framed = crate::codes::LENGTH_PREFIX_BYTES + frame.encoded_len();
+    match body {
+        // Successful AuthResult is the boundary: it authenticates the peer.
+        Body::AuthResult(result) if result.status.code == 0 => None,
+        // TM-6 exception: a successful PairingResponse has its own cap.
+        Body::PairingResponse(response) if response.status.code == 0 => {
+            if pairing_response_within_bounds(frame.encoded_len()) {
+                None
+            } else {
+                Some("successful PairingResponse exceeds its 320 B Frame.length cap")
+            }
+        }
+        _ if !authenticated => {
+            let has_detail = match body {
+                Body::AuthResult(result) => !result.status.detail.is_empty(),
+                Body::Error(error) => !error.status.detail.is_empty(),
+                Body::PairingResponse(response) => !response.status.detail.is_empty(),
+                Body::PairingResult(result) => !result.status.detail.is_empty(),
+                Body::Close(close) => !close.detail.is_empty(),
+                _ => false,
+            };
+            if has_detail {
+                return Some("a pre-auth response must not carry detail");
+            }
+            if preauth_response_within_bounds(framed) {
+                None
+            } else {
+                Some("a pre-auth response exceeds its 128 B framed cap")
+            }
+        }
+        // TM-7: post-auth error payload ≤ 512 B, detail ≤ 256 B.
+        Body::Error(error) => {
+            if error_payload_within_bounds(frame.encoded_len(), error.status.detail.len()) {
+                None
+            } else {
+                Some("a post-auth error payload exceeds its 512 B / 256 B detail cap")
+            }
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,18 +411,6 @@ mod tests {
     }
 
     #[test]
-    fn per_connection_failures_trip_at_five() {
-        let mut failures = PerConnectionAuthFailures::new(5);
-        for attempt in 1..=4 {
-            assert!(!failures.record_failure(), "failure {attempt} must not close");
-            assert!(!failures.exhausted());
-        }
-        assert!(failures.record_failure(), "the 5th failure closes (TM-4)");
-        assert!(failures.exhausted());
-        assert_eq!(failures.count(), 5);
-    }
-
-    #[test]
     fn address_rate_guard_trips_at_twenty_in_window() {
         let mut guard = AddressRateGuard::new(Duration::from_secs(60), 20);
         let address = "192.168.1.50".parse().unwrap();
@@ -405,6 +451,75 @@ mod tests {
         assert!(guard.is_limited(a, now));
         assert!(!guard.is_limited(b, now), "another source is unaffected (TM-4)");
         assert_eq!(guard.tracked_addresses(), 1);
+    }
+
+    #[test]
+    fn outstanding_requests_trip_at_eight() {
+        let mut guard = OutstandingRequests::new(8);
+        for id in 1..=8 {
+            assert!(guard.track(id), "request {id} is within the bound");
+        }
+        assert!(!guard.track(9), "the 9th outstanding request is over the bound");
+        assert!(!guard.track(1), "a duplicate in-flight id is refused");
+        guard.complete(1);
+        assert_eq!(guard.outstanding(), 7);
+        assert!(guard.track(9), "a freed slot admits the next request");
+    }
+
+    #[test]
+    fn outbound_size_bounds_are_enforced() {
+        use crate::schema::{frame, Close, Error, Frame, PairingResponse, Status};
+
+        let error = |detail: &str| Frame {
+            body: Some(frame::Body::Error(Error {
+                request_id: 1,
+                status: Status {
+                    code: 401,
+                    retryable: false,
+                    requires_repairing: false,
+                    detail: detail.to_owned(),
+                },
+            })),
+        };
+        // Pre-auth errors are small and carry no detail.
+        assert_eq!(outbound_limit_violation(&error(""), false), None);
+        // Post-auth errors may carry detail, within TM-7.
+        assert_eq!(outbound_limit_violation(&error(&"x".repeat(256)), true), None);
+        assert!(outbound_limit_violation(&error(&"x".repeat(257)), true).is_some());
+        assert!(outbound_limit_violation(&error(&"x".repeat(600)), true).is_some());
+        // The same detail before authentication is refused outright.
+        assert!(outbound_limit_violation(&error("leak"), false).is_some());
+
+        let close = |detail: &str| Frame {
+            body: Some(frame::Body::Close(Close { code: 203, detail: detail.to_owned() })),
+        };
+        assert_eq!(outbound_limit_violation(&close(""), false), None);
+        assert!(
+            outbound_limit_violation(&close(&"x".repeat(120)), false).is_some(),
+            "a pre-auth Close must stay within 128 B framed"
+        );
+
+        let pairing = |display_name: &str| Frame {
+            body: Some(frame::Body::PairingResponse(PairingResponse {
+                request_id: 1,
+                status: Status::ok(),
+                pairing_mode: 0,
+                pairing_nonce: Vec::new(),
+                client_random: Vec::new(),
+                server_random: vec![0; 32],
+                server_public_key: vec![0; 32],
+                protocol_major: 2,
+                capabilities: Vec::new(),
+                binding: vec![0; 48],
+                client_id: vec![0; 8],
+                display_name: display_name.to_owned(),
+            })),
+        };
+        assert_eq!(outbound_limit_violation(&pairing("Test Phone"), false), None);
+        assert!(
+            outbound_limit_violation(&pairing(&"x".repeat(400)), false).is_some(),
+            "the successful PairingResponse exception is capped at 320 B"
+        );
     }
 
     #[test]

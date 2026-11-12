@@ -19,7 +19,6 @@ use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::control::signing_context as ctrl_helpers;
 use crate::control::{ClientMachine, ClientState, CloseInfo};
 use crate::frame::{encode_frame, FrameDecoder};
 use crate::proto::Frame;
@@ -28,13 +27,49 @@ use crate::proto::AuthInit;
 use crate::verify::PinnedSpkiVerifier;
 
 /// Spec §3 / ADR-0004 D1: v2 port (never v1's 65530).
+// Protocol constants duplicated from the Server crate because the Android
+// native crate is standalone (own [workspace], built outside the repo
+// workspace). The authoritative table lives in
+// crates/v2-transport/src/codes.rs and the wire spec (docs/wire-protocol-v2/);
+// keep these values in lockstep with it.
 pub const DEFAULT_PORT: u16 = 65531;
 /// ALPN: exactly `audio-share/v2` (spec §3).
 pub const ALPN: &[u8] = b"audio-share/v2";
 /// pairing.md §9.1 exporter label (32-byte output).
 pub const AUTH_EXPORTER_LABEL: &[u8] = b"EXPORTER audio-share v2 auth";
-/// §3: auth exchange deadline.
+/// §3: auth exchange deadline (absolute: AuthInit → AuthResult).
 const AUTH_DEADLINE_SECS: u64 = 10;
+/// §4.2: per-request response deadline.
+const RESPONSE_DEADLINE_SECS: u64 = 10;
+/// §3/D3: idle timeout and keep-alive, both sides.
+const IDLE_TIMEOUT_SECS: u64 = 30;
+const KEEP_ALIVE_SECS: u64 = 10;
+
+/// Response deadline bookkeeping. The deadline is armed once when the first
+/// request becomes pending and is NOT pushed back by unrelated reads (an
+/// absolute per-request deadline, §4.2); it disarms when nothing is pending.
+#[derive(Debug, Default)]
+struct ResponseWatch {
+    deadline: Option<tokio::time::Instant>,
+}
+
+impl ResponseWatch {
+    fn observe(&mut self, now: tokio::time::Instant, pending: usize) {
+        if pending == 0 {
+            self.deadline = None;
+        } else if self.deadline.is_none() {
+            self.deadline =
+                Some(now + std::time::Duration::from_secs(RESPONSE_DEADLINE_SECS));
+        }
+    }
+
+    async fn expired(&self) {
+        match self.deadline {
+            Some(deadline) => tokio::time::sleep_until(deadline).await,
+            None => std::future::pending().await,
+        }
+    }
+}
 /// §6.3 backoff: 1 s base, ×2 per attempt, 30 s cap, ±20 % jitter.
 pub const BACKOFF_BASE_MS: u64 = 1_000;
 pub const BACKOFF_MAX_MS: u64 = 30_000;
@@ -126,11 +161,13 @@ impl Session {
             .to_socket_addrs()
             .map_err(|e| format!("resolve {}:{}: {e}", self.config.host, self.config.port))?
             .into_iter()
-            .find(|a| match (a, bind) {
-                (std::net::SocketAddr::V4(_), Some(std::net::IpAddr::V4(_)))
-                | (std::net::SocketAddr::V6(_), Some(std::net::IpAddr::V6(_)))
-                | (_, None) => true,
-                _ => false,
+            .find(|a| {
+                matches!(
+                    (a, bind),
+                    (std::net::SocketAddr::V4(_), Some(std::net::IpAddr::V4(_)))
+                        | (std::net::SocketAddr::V6(_), Some(std::net::IpAddr::V6(_)))
+                        | (_, None)
+                )
             })
             .ok_or("no server address matching the bind hint family")?;
         let local: std::net::SocketAddr = match bind {
@@ -155,10 +192,16 @@ impl Session {
         self.runtime.spawn(async move {
             let runner = this.clone();
             if let Err(e) = runner.run(bind_local_address).await {
-                // transport loss or classification: record; the §6.3 policy
-                // (reconnect vs surface) is applied by the Kotlin owner from
-                // the reported close code.
+                // Transport loss is a local classification: 601 unless the
+                // pinned identity failed (205). The §6.3 policy (reconnect vs
+                // surface) is applied by the Kotlin owner from this code.
+                let code = classify_run_error(&e);
                 this.record_error(format!("session ended: {e}"));
+                *this.shared.close_info.lock().unwrap() = Some(CloseInfo {
+                    code,
+                    remote: false,
+                });
+                this.set_state(ClientState::Closed);
                 this.shared.connected.store(false, Ordering::Release);
             }
         });
@@ -178,10 +221,20 @@ impl Session {
         let mut crypto = crypto;
         crypto.alpn_protocols = vec![ALPN.to_vec()];
         // TLS 1.3 only (rustls 0.23 default); 0-RTT never configured (spec §3).
-        let client_config = quinn::ClientConfig::new(Arc::new(
+        let mut client_config = quinn::ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
                 .map_err(|e| format!("rustls->quic: {e}"))?,
         ));
+        // §3/D3: keep-alive every 10 s; declare the peer dead after 30 s idle.
+        let mut transport = quinn::TransportConfig::default();
+        transport.keep_alive_interval(Some(std::time::Duration::from_secs(
+            KEEP_ALIVE_SECS,
+        )));
+        transport.max_idle_timeout(Some(
+            quinn::IdleTimeout::try_from(std::time::Duration::from_secs(IDLE_TIMEOUT_SECS))
+                .map_err(|_| "idle timeout out of range".to_string())?,
+        ));
+        client_config.transport_config(Arc::new(transport));
 
         let mut endpoint = quinn::Endpoint::new(
             quinn::EndpointConfig::default(),
@@ -225,16 +278,14 @@ impl Session {
                 .map_err(|_| "exporter: not available".to_string())?;
             out
         };
-        ctrl_helpers::register_auth_context(self.config.server_public_key.clone(), exporter);
-
+        let key = session_identity_key()?;
+        let client_public_key = crate::auth::sec1_compressed(&key);
         let mut machine = ClientMachine::new();
-        let key = crate::auth::test_client_identity_key();
-        // test-phase identity: the pre-provisioned fixture/test key. Production
-        // keys live in Android Keystore (phase 6 pairing); signing through JNI.
+        machine.set_auth_context(self.config.server_public_key.clone(), exporter, key);
         let auth_init = Frame {
             body: Some(Body::AuthInit(AuthInit {
                 request_id: machine.next_request_id,
-                client_public_key: crate::auth::sec1_compressed(&key),
+                client_public_key,
             })),
         };
         machine.next_request_id += 1;
@@ -246,6 +297,11 @@ impl Session {
         // ---- control loop ---------------------------------------------------
         let mut decoder = FrameDecoder::new();
         let mut rx_buf = vec![0u8; 8192];
+        // Absolute auth deadline: armed once, never rebuilt by a read (§3).
+        let auth_deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(AUTH_DEADLINE_SECS);
+        let mut watch = ResponseWatch::default();
+        watch.observe(tokio::time::Instant::now(), machine.pending_len());
         let result: Result<(), String> = 'control: loop {
             let n = tokio::select! {
                 read = rx.read(&mut rx_buf) => {
@@ -255,8 +311,11 @@ impl Session {
                         Err(e) => break 'control Err(format!("control read: {e}")),
                     }
                 }
-                _ = tokio::time::sleep(std::time::Duration::from_secs(AUTH_DEADLINE_SECS)), if machine.state == ClientState::ConnectingSent => {
+                _ = tokio::time::sleep_until(auth_deadline), if machine.state == ClientState::ConnectingSent => {
                     break 'control Err(format!("auth exchange deadline ({AUTH_DEADLINE_SECS} s) → 601"));
+                }
+                _ = watch.expired() => {
+                    break 'control Err(format!("response deadline ({RESPONSE_DEADLINE_SECS} s) → 601"));
                 }
                 _ = self.shared.shutdown_requested() => break 'control Ok(()),
             };
@@ -305,6 +364,7 @@ impl Session {
                             crate::control::Verdict::Stop(info) => {
                                 // Close received (remote): no echo; the
                                 // transport close is the acknowledgment (§5.4.4)
+                                self.set_state(ClientState::Closed);
                                 if info.remote {
                                     conn.close(quinn::VarInt::from_u64(u64::from(info.code)).unwrap(), b"");
                                 }
@@ -314,10 +374,12 @@ impl Session {
                     }
                     Err(info) => {
                         // surface path (202/203/204/101...): no reconnect per §6.3
+                        self.set_state(ClientState::Closed);
                         *self.shared.close_info.lock().unwrap() = Some(info);
                         break 'control Ok(());
                     }
                 }
+                watch.observe(tokio::time::Instant::now(), machine.pending_len());
                 if machine.state.is_closed() {
                     break 'control Ok(());
                 }
@@ -381,6 +443,31 @@ impl Session {
     }
 }
 
+
+/// Client identity for the session. The fixture identity exists only behind
+/// the `test-support` feature (E2E APKs); a production build without real
+/// pairing support returns an explicit error instead of silently shipping the
+/// fixed test key.
+#[cfg(any(test, feature = "test-support"))]
+fn session_identity_key() -> Result<p256::ecdsa::SigningKey, String> {
+    Ok(crate::auth::test_client_identity_key())
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+fn session_identity_key() -> Result<p256::ecdsa::SigningKey, String> {
+    Err("no client identity: build with `test-support` for the fixture identity;          production pairing identities are provided by pairing (phase 6)"
+        .to_string())
+}
+
+/// §6.3 local classification of a run error: pin mismatch is 205, everything
+/// else is transport loss (601).
+fn classify_run_error(message: &str) -> u32 {
+    if message.contains("SPKI does not match pinned identity") {
+        205
+    } else {
+        601
+    }
+}
 
 async fn send_verdict(tx: &mut quinn::SendStream, v: &crate::control::Verdict) -> Result<(), String> {
     if let crate::control::Verdict::Send(f) = v {
@@ -532,6 +619,61 @@ mod tests {
         session.shared.stopping.store(true, Ordering::SeqCst);
         let (fd, _port) = transfer_bound_socket();
         assert!(session.rebind(fd).is_err());
+    }
+
+    /// §4.2: the response deadline is absolute — repeated reads (or unsolicited
+    /// pushes) while a request is pending must not push it back.
+    #[test]
+    fn response_deadline_is_absolute_and_not_pushed_back() {
+        let mut watch = ResponseWatch::default();
+        let start = tokio::time::Instant::now();
+        watch.observe(start, 1);
+        let armed = watch.deadline.expect("deadline armed");
+        assert_eq!(
+            armed,
+            start + std::time::Duration::from_secs(RESPONSE_DEADLINE_SECS)
+        );
+        watch.observe(start + std::time::Duration::from_secs(5), 1);
+        assert_eq!(watch.deadline, Some(armed), "deadline must not move");
+        watch.observe(start + std::time::Duration::from_secs(9), 2);
+        assert_eq!(watch.deadline, Some(armed), "more pending must not move it");
+    }
+
+    /// The deadline disarms when the last pending request completes.
+    #[test]
+    fn response_deadline_disarms_when_nothing_is_pending() {
+        let mut watch = ResponseWatch::default();
+        let start = tokio::time::Instant::now();
+        watch.observe(start, 1);
+        assert!(watch.deadline.is_some());
+        watch.observe(start + std::time::Duration::from_secs(1), 0);
+        assert_eq!(watch.deadline, None);
+    }
+
+    /// §4.2: 10 s after arming, the deadline future completes.
+    #[tokio::test(start_paused = true)]
+    async fn response_deadline_expires_after_ten_seconds() {
+        let mut watch = ResponseWatch::default();
+        watch.observe(tokio::time::Instant::now(), 1);
+        tokio::time::sleep(std::time::Duration::from_secs(RESPONSE_DEADLINE_SECS - 1)).await;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(1), watch.expired())
+                .await
+                .is_err(),
+            "must not expire early"
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::timeout(std::time::Duration::from_millis(1), watch.expired())
+            .await
+            .expect("deadline must expire at 10 s");
+    }
+
+    /// §6.3: a pin mismatch is classified 205 (no reconnect); every other
+    /// run error is transport loss (601).
+    #[test]
+    fn run_error_classification_matches_section_6_3() {
+        assert_eq!(classify_run_error("handshake: refused"), 601);
+        assert_eq!(classify_run_error("handshake: server SPKI does not match pinned identity"), 205);
     }
 
     /// §6.3 backoff schedule: 1 s, 2 s, 4 s, … capped at 30 s.

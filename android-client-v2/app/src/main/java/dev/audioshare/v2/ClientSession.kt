@@ -46,9 +46,7 @@ class ClientSession(
 
     companion object {
         private const val TAG = "ClientSession"
-        /** Backoff bounds (spec §6.3 spirit: bounded exponential). */
-        private const val BACKOFF_INITIAL_MS = 500L
-        private const val BACKOFF_MAX_MS = 30_000L
+        /** §6.3 backoff policy lives in [ReconnectPolicy]. */
         private const val STATS_POLL_MS = 250L
     }
 
@@ -145,10 +143,7 @@ class ClientSession(
         if (h != 0L) ClientNative.destroy(h)
         if (!running.get()) return
         val attempt = backoffAttempts.getAndIncrement()
-        // bounded exponential backoff with ±20% jitter (ticket requirement)
-        val base = min(BACKOFF_INITIAL_MS * (1L shl min(attempt, 20).toInt()), BACKOFF_MAX_MS)
-        val jitter = (base * 0.2 * (Random.nextDouble() * 2 - 1)).toLong()
-        val delay = (base + jitter).coerceIn(BACKOFF_INITIAL_MS, BACKOFF_MAX_MS)
+        val delay = ReconnectPolicy.backoffDelayMs(attempt, Random.nextDouble())
         listener.onLog("reconnect attempt ${attempt + 1} in ${delay}ms")
         mainHandler.postDelayed({ if (running.get()) startSession() }, delay)
     }
@@ -156,20 +151,35 @@ class ClientSession(
     private fun startStatsPolling(h: Long) {
         val poller = Thread {
             val myHandle = h
+            // §6.3: only retryable closes (and transport loss with no Close,
+            // close_code null) reconnect. Pairing/admin/security closes surface
+            // to the user and must not auto-retry.
+            var reconnectOnExit = true
             try {
                 while (running.get() && handle.get() == myHandle) {
                     val state = ClientNative.getState(myHandle) ?: ""
                     listener.onStateChange(state)
+                    if (state == "READY") {
+                        // §6.3: backoff resets to base when a session reaches READY
+                        backoffAttempts.set(0)
+                    }
                     val statsJson = ClientNative.getStats(myHandle)
                     if (statsJson.isNullOrEmpty()) continue
                     try {
                         val obj = JSONObject(statsJson)
                         listener.onStats(obj)
                         if (state == "CLOSED") {
-                            if (!running.get() || !obj.optBoolean("connected", false)) {
-                                // server closed / auth failed / error: reconnect path
-                                break
-                            }
+                            val closeCode =
+                                if (obj.isNull("close_code")) null else obj.optInt("close_code")
+                            reconnectOnExit = ReconnectPolicy.shouldReconnect(closeCode)
+                            listener.onLog(
+                                if (reconnectOnExit) {
+                                    "session closed (close_code=$closeCode); reconnecting"
+                                } else {
+                                    "session closed (close_code=$closeCode); no automatic reconnect"
+                                }
+                            )
+                            break
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "stats parse: ${e.message}")
@@ -178,7 +188,7 @@ class ClientSession(
                 }
             } catch (_: InterruptedException) {
             } finally {
-                if (running.get() && handle.get() == myHandle) {
+                if (running.get() && handle.get() == myHandle && reconnectOnExit) {
                     scheduleReconnect()
                 }
             }
@@ -295,4 +305,34 @@ class ClientSession(
             null
         }
     }
+}
+
+/**
+ * §6.3 Client reconnect policy — pure JVM-testable logic shared by the session
+ * owner. `closeCode == null` means transport loss without a Close (classified
+ * 601 by the native side) and IS retryable.
+ */
+internal object ReconnectPolicy {
+    /** 301/302 retryable; 503/601/602 reconnect; everything else surfaces. */
+    fun shouldReconnect(closeCode: Int?): Boolean = when (closeCode) {
+        null -> true
+        301, 302, 503, 601, 602 -> true
+        else -> false
+    }
+
+    /**
+     * §6.3 backoff for the nth attempt: 1 s base, ×2 per attempt, 30 s cap,
+     * ±20% uniform jitter. [random] is injected for deterministic tests.
+     */
+    fun backoffDelayMs(attempt: Long, random: Double): Long {
+        val base = min(
+            BACKOFF_INITIAL_MS * (1L shl min(attempt, 20L).toInt()),
+            BACKOFF_MAX_MS,
+        )
+        val jitter = (base * 0.2 * (random * 2 - 1)).toLong()
+        return (base + jitter).coerceIn(800L, BACKOFF_MAX_MS)
+    }
+
+    private const val BACKOFF_INITIAL_MS = 1_000L
+    private const val BACKOFF_MAX_MS = 30_000L
 }

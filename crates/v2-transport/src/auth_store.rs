@@ -15,6 +15,8 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -75,19 +77,39 @@ impl StoredClient {
         }
     }
 
-    fn from_json(json: StoredClientJson) -> Result<Self, StoreError> {
+    fn from_json(json: StoredClientJson) -> Result<Self, String> {
         if json.state != "active" && json.state != "revoked" {
-            return Err(StoreError::Corrupted {
-                path: PathBuf::new(),
-                reason: format!("unknown client state {:?}", json.state),
-            });
+            return Err(format!("unknown client state {:?}", json.state));
         }
         let public_key = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&json.public_key)
-            .map_err(|error| StoreError::Corrupted {
-                path: PathBuf::new(),
-                reason: format!("public_key is not base64url: {error}"),
-            })?;
+            .map_err(|error| format!("public_key is not base64url: {error}"))?;
+        // pairing.md §8.1: the stored key is a 33-byte SEC1-compressed P-256
+        // point. Decoding validates the point, so the store can never hold a
+        // credential that `AuthInit` could not later verify (fail closed).
+        if crate::auth::parse_client_public_key(&public_key).is_err() {
+            return Err(
+                "public_key is not a 33-byte SEC1-compressed P-256 point".to_owned()
+            );
+        }
+        // client_id is derived, never allocated: first 8 bytes of
+        // SHA-256(public_key), lowercase hex (§8.1).
+        let derived: String = crate::auth::client_id(&public_key)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        if !json.client_id.eq_ignore_ascii_case(&derived) {
+            return Err(format!(
+                "client_id {:?} does not match the derived value {derived:?}",
+                json.client_id
+            ));
+        }
+        if json.display_name.len() > 63 {
+            return Err(format!(
+                "display_name is {} bytes; the limit is 63 UTF-8 bytes",
+                json.display_name.len()
+            ));
+        }
         Ok(Self {
             client_id: json.client_id,
             public_key,
@@ -112,6 +134,10 @@ pub enum Authorization {
     Authorized(StoredClient),
     /// The identity matches a revoked record → 204 AUTHORIZATION_DENIED.
     Revoked(StoredClient),
+    /// The store could not be re-read after a change (corruption). Fail
+    /// closed: no identity is authorized and live sessions are torn down
+    /// until an operator restores the file (pairing.md §10.3).
+    Unavailable,
 }
 
 /// A store failure. Every variant fails closed (v2 auth disabled).
@@ -131,6 +157,12 @@ pub enum StoreError {
         /// The underlying error.
         source: io::Error,
     },
+    /// The caller named a public key with no record (operator mistake, not
+    /// corruption — nothing on disk is wrong).
+    UnknownClient {
+        /// The key that was not found.
+        public_key: Vec<u8>,
+    },
 }
 
 impl fmt::Display for StoreError {
@@ -142,6 +174,11 @@ impl fmt::Display for StoreError {
                 path.display()
             ),
             Self::Io { operation, source } => write!(f, "{operation}: {source}"),
+            Self::UnknownClient { public_key } => write!(
+                f,
+                "revoke of an unknown public key ({} bytes)",
+                public_key.len()
+            ),
         }
     }
 }
@@ -157,6 +194,38 @@ impl std::error::Error for StoreError {}
 pub struct AuthorizationStore {
     path: Option<PathBuf>,
     clients: std::sync::RwLock<Vec<StoredClient>>,
+    reload: Mutex<ReloadState>,
+}
+
+/// What the store last saw on disk, so the 2 s poll only re-reads on change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FileFingerprint {
+    Missing,
+    Present { len: u64, modified: Option<SystemTime> },
+}
+
+struct ReloadState {
+    fingerprint: Option<FileFingerprint>,
+    /// Set after a failed re-read; `authorize` then fails closed instead of
+    /// serving the last known-good table (pairing.md §10.3).
+    failed: bool,
+}
+
+impl ReloadState {
+    fn initial(fingerprint: Option<FileFingerprint>) -> Self {
+        Self { fingerprint, failed: false }
+    }
+}
+
+fn fingerprint(path: &Path) -> io::Result<FileFingerprint> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(FileFingerprint::Present {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(FileFingerprint::Missing),
+        Err(error) => Err(error),
+    }
 }
 
 impl fmt::Debug for AuthorizationStore {
@@ -186,7 +255,11 @@ impl AuthorizationStore {
         let pairing_dir = data_dir.join("pairing");
         let path = pairing_dir.join(CLIENTS_FILE);
         if !path.exists() {
-            return Ok(Self { path: Some(path), clients: std::sync::RwLock::new(Vec::new()) });
+            return Ok(Self {
+                path: Some(path),
+                clients: std::sync::RwLock::new(Vec::new()),
+                reload: Mutex::new(ReloadState::initial(Some(FileFingerprint::Missing))),
+            });
         }
         let text = fs::read_to_string(&path).map_err(|source| StoreError::Io {
             operation: "read authorization store",
@@ -196,17 +269,29 @@ impl AuthorizationStore {
             path: path.clone(),
             reason,
         })?;
-        Ok(Self { path: Some(path), clients: std::sync::RwLock::new(clients) })
+        let seen = fingerprint(&path).ok();
+        Ok(Self {
+            path: Some(path),
+            clients: std::sync::RwLock::new(clients),
+            reload: Mutex::new(ReloadState::initial(seen)),
+        })
     }
 
     /// A memory-only store (tests / isolated configurations).
     pub fn in_memory() -> Self {
-        Self { path: None, clients: std::sync::RwLock::new(Vec::new()) }
+        Self {
+            path: None,
+            clients: std::sync::RwLock::new(Vec::new()),
+            reload: Mutex::new(ReloadState::initial(None)),
+        }
     }
 
     /// Consult the authorization state for this public key (§9.2: at every
     /// authentication, never a cached answer).
     pub fn authorize(&self, public_key: &[u8]) -> Authorization {
+        if self.reload.lock().expect("authorization reload lock").failed {
+            return Authorization::Unavailable;
+        }
         let guard = self.clients.read().expect("authorization store lock");
         match guard.iter().find(|client| client.public_key == public_key) {
             Some(client) => match client.state {
@@ -214,6 +299,59 @@ impl AuthorizationStore {
                 ClientState::Revoked => Authorization::Revoked(client.clone()),
             },
             None => Authorization::Unknown(public_key.to_vec()),
+        }
+    }
+
+    /// Re-read `clients.json` when its metadata changed (the driver calls this
+    /// on its 2 s revocation tick and before authentication). A missing file
+    /// means every record was removed; a corrupt file fails closed and stays
+    /// failed until a later re-read succeeds (pairing.md §9.2/§10.3).
+    pub fn reload_if_changed(&self) -> Result<bool, StoreError> {
+        let Some(path) = &self.path else { return Ok(false) };
+        let current = fingerprint(path).map_err(|source| StoreError::Io {
+            operation: "stat authorization store",
+            source,
+        })?;
+        if self.reload.lock().expect("authorization reload lock").fingerprint == Some(current) {
+            return Ok(false);
+        }
+        match current {
+            FileFingerprint::Missing => {
+                self.clients.write().expect("authorization store lock").clear();
+                let mut state = self.reload.lock().expect("authorization reload lock");
+                state.fingerprint = Some(current);
+                state.failed = false;
+                Ok(true)
+            }
+            FileFingerprint::Present { .. } => {
+                let text = match fs::read_to_string(path) {
+                    Ok(text) => text,
+                    Err(source) => {
+                        let mut state = self.reload.lock().expect("authorization reload lock");
+                        state.fingerprint = Some(current);
+                        state.failed = true;
+                        return Err(StoreError::Io {
+                            operation: "read authorization store",
+                            source,
+                        });
+                    }
+                };
+                match parse_store_text(&text) {
+                    Ok(clients) => {
+                        *self.clients.write().expect("authorization store lock") = clients;
+                        let mut state = self.reload.lock().expect("authorization reload lock");
+                        state.fingerprint = Some(current);
+                        state.failed = false;
+                        Ok(true)
+                    }
+                    Err(reason) => {
+                        let mut state = self.reload.lock().expect("authorization reload lock");
+                        state.fingerprint = Some(current);
+                        state.failed = true;
+                        Err(StoreError::Corrupted { path: path.clone(), reason })
+                    }
+                }
+            }
         }
     }
 
@@ -258,10 +396,7 @@ impl AuthorizationStore {
             let found = guard
                 .iter()
                 .find(|client| client.public_key == public_key)
-                .ok_or_else(|| StoreError::Corrupted {
-                    path: self.path.clone().unwrap_or_default(),
-                    reason: "revoke of an unknown public key".to_owned(),
-                })?
+                .ok_or_else(|| StoreError::UnknownClient { public_key: public_key.to_vec() })?
                 .clone();
             let updated = StoredClient { state: ClientState::Revoked, ..found };
             if let Some(slot) = guard.iter_mut().find(|client| client.public_key == public_key) {
@@ -301,6 +436,13 @@ impl AuthorizationStore {
             operation: "persist authorization store",
             source: io::Error::other(error.to_string()),
         })?;
+        // Our own write is not an external change: remember its fingerprint so
+        // the next poll does not re-parse it.
+        if let Ok(seen) = fingerprint(path) {
+            let mut state = self.reload.lock().expect("authorization reload lock");
+            state.fingerprint = Some(seen);
+            state.failed = false;
+        }
         Ok(())
     }
 }
@@ -310,11 +452,20 @@ fn parse_store_text(text: &str) -> Result<Vec<StoredClient>, String> {
     if file.version != 1 {
         return Err(format!("unsupported store version {}", file.version));
     }
-    file.clients
+    let clients = file
+        .clients
         .into_iter()
         .map(StoredClient::from_json)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
+        .collect::<Result<Vec<_>, _>>()?;
+    // client_id is the unique identity key (§8.1); two records claiming the
+    // same derived id would make authorization order-dependent.
+    let mut seen = std::collections::HashSet::with_capacity(clients.len());
+    for client in &clients {
+        if !seen.insert(client.client_id.to_ascii_lowercase()) {
+            return Err(format!("duplicate client_id {:?}", client.client_id));
+        }
+    }
+    Ok(clients)
 }
 
 #[cfg(unix)]

@@ -21,18 +21,22 @@ use crate::proto::{frame::Body, AuthProof, Frame};
 #[cfg(test)]
 use prost::Message as _;
 use p256::ecdsa::{
-    signature::{hazmat::PrehashVerifier, Signer},
+    signature::{Signer, Verifier},
     Signature, SigningKey, VerifyingKey,
 };
-use sha2::{Digest, Sha256};
 
 /// TLV(tag, value) = tag(u8) || len(u16, big-endian) || value.
-pub fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
+///
+/// The length field is a checked `u16`: a value that cannot be represented is
+/// an error rather than a silently truncated transcript.
+pub fn tlv(tag: u8, value: &[u8]) -> Result<Vec<u8>, String> {
+    let len = u16::try_from(value.len())
+        .map_err(|_| format!("TLV value is {} bytes, max 65535", value.len()))?;
     let mut out = Vec::with_capacity(3 + value.len());
     out.push(tag);
-    out.extend_from_slice(&(value.len() as u16).to_be_bytes());
+    out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(value);
-    out
+    Ok(out)
 }
 
 /// Build the raw auth_context bytes (pairing.md §9.1).
@@ -42,16 +46,16 @@ pub fn auth_context(
     server_public_key: &[u8],
     protocol_major: u32,
     auth_exporter: &[u8],
-) -> Vec<u8> {
+) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
-    out.extend_from_slice(&tlv(1, b"auth"));
-    out.extend_from_slice(&tlv(2, server_random));
-    out.extend_from_slice(&tlv(3, client_public_key));
-    out.extend_from_slice(&tlv(4, server_public_key));
+    out.extend_from_slice(&tlv(1, b"auth")?);
+    out.extend_from_slice(&tlv(2, server_random)?);
+    out.extend_from_slice(&tlv(3, client_public_key)?);
+    out.extend_from_slice(&tlv(4, server_public_key)?);
     // TLV(5, protocol_major): fixed 4-byte BE — never a varint, never 1 byte.
-    out.extend_from_slice(&tlv(5, &protocol_major.to_be_bytes()));
-    out.extend_from_slice(&tlv(6, auth_exporter));
-    out
+    out.extend_from_slice(&tlv(5, &protocol_major.to_be_bytes())?);
+    out.extend_from_slice(&tlv(6, auth_exporter)?);
+    Ok(out)
 }
 
 /// Sign the raw auth_context bytes with the identity key: one ECDSA-P256-SHA256
@@ -75,15 +79,20 @@ pub fn verify_auth_signature(
     let mut sig = [0u8; 64];
     sig.copy_from_slice(signature);
     let sig = Signature::from_slice(&sig).map_err(|e| format!("malformed signature: {e}"))?;
+    // ECDSA-SHA256 hashes the raw context exactly once inside `verify`.
     client_public_key
-        .verify_prehash(&Sha256::digest(auth_context), &sig)
+        .verify(auth_context, &sig)
         .map_err(|_| "signature verification failed".to_string())
 }
 
-/// The test-only client identity key (fixtures test-keys.json private scalar).
-/// NEVER shipped: the key exists only to make host tests deterministic.
+/// TEST-ONLY client identity key (fixtures test-keys.json private scalar).
+///
+/// Gated behind `cfg(any(test, feature = "test-support"))`: production builds
+/// have no way to reach it. The E2E APK is built with `--features
+/// test-support`; the v2 pairing flow (phase 6) supplies the real key.
+#[cfg(any(test, feature = "test-support"))]
 pub fn test_client_identity_key() -> SigningKey {
-        // scalar from fixtures/wire-protocol-v2/test-keys.json
+    // scalar from fixtures/wire-protocol-v2/test-keys.json
     let d_hex = "87fb33cdf19dc9ec6324570648e8f354d26d5262e4930182382220bec2fdfac7";
     let mut d = [0u8; 32];
     for i in 0..32 {
@@ -125,7 +134,7 @@ pub fn build_auth_proof(
         server_public_key,
         protocol_major,
         auth_exporter,
-    );
+    )?;
     let sig = sign_auth_context(key, &ctx);
     Ok(Frame {
         body: Some(Body::AuthProof(AuthProof {
@@ -155,6 +164,33 @@ const AUTH_CONTEXT_HEX: &str = "01000461757468020020000102030405060708090a0b0c0d
 #[cfg(test)]
 const RECORDED_SIG_HEX: &str = "e77e55090b72af3cb8f42a8e6696b4797170b8c8236944ce4c17164e5d97762f8686dfcd64f4a21f5768fa6c94e6a816029a566fb849fa27cbe98385f4df060c";
 
+// ---- test-support constants (cfg(test) only; never shipped) ----------------
+
+#[cfg(test)]
+pub(crate) fn tests_const_server_pub() -> Vec<u8> {
+    unhex_const(SERVER_PUB_HEX)
+}
+
+#[cfg(test)]
+pub(crate) fn tests_const_exporter() -> Vec<u8> {
+    unhex_const(AUTH_EXPORTER_HEX)
+}
+
+#[cfg(test)]
+fn unhex_const(s: &str) -> Vec<u8> {
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+        .collect()
+}
+
+/// Pairing proof input (pairing.md §6.3.1):
+/// TLV(1, "audio-share v2 pairing confirm") || TLV(2, binding).
+pub fn pairing_tlv(domain_label: &[u8], binding: &[u8]) -> Result<Vec<u8>, String> {
+    let mut out = tlv(1, domain_label)?;
+    out.extend_from_slice(&tlv(2, binding)?);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,9 +208,16 @@ mod tests {
 
     #[test]
     fn tlv_layout_is_tag_len_value() {
-        assert_eq!(hex(&tlv(1, b"auth")), "01000461757468");
+        assert_eq!(hex(&tlv(1, b"auth").unwrap()), "01000461757468");
         // 4-byte BE protocol major (pairing.md §6.3 normative encoding)
-        assert_eq!(hex(&tlv(5, &2u32.to_be_bytes())), "05000400000002");
+        assert_eq!(hex(&tlv(5, &2u32.to_be_bytes()).unwrap()), "05000400000002");
+    }
+
+    #[test]
+    fn tlv_rejects_values_that_do_not_fit_the_length_field() {
+        let too_long = vec![0u8; 65_536];
+        let err = tlv(1, &too_long).unwrap_err();
+        assert!(err.contains("max 65535"), "got: {err}");
     }
 
     /// The rebuilt auth_context must equal the golden vector's recorded
@@ -187,7 +230,8 @@ mod tests {
             &unhex(SERVER_PUB_HEX),
             2,
             &unhex(AUTH_EXPORTER_HEX),
-        );
+        )
+        .unwrap();
         assert_eq!(hex(&ctx), AUTH_CONTEXT_HEX);
         assert_eq!(ctx.len(), 155);
     }
@@ -205,7 +249,7 @@ mod tests {
     #[test]
     fn recorded_golden_signature_verifies() {
         let key = test_client_identity_key();
-        let vk = key.verifying_key().clone();
+        let vk = *key.verifying_key();
         let ctx = unhex(AUTH_CONTEXT_HEX);
         verify_auth_signature(&vk, &ctx, &unhex(RECORDED_SIG_HEX))
             .expect("golden auth signature must verify");
@@ -215,7 +259,7 @@ mod tests {
     #[test]
     fn tampered_auth_context_fails_verification() {
         let key = test_client_identity_key();
-        let vk = key.verifying_key().clone();
+        let vk = *key.verifying_key();
         let mut ctx = unhex(AUTH_CONTEXT_HEX);
         ctx[10] ^= 0x01;
         assert!(verify_auth_signature(&vk, &ctx, &unhex(RECORDED_SIG_HEX)).is_err());
@@ -225,7 +269,7 @@ mod tests {
     #[test]
     fn short_signature_is_rejected() {
         let key = test_client_identity_key();
-        let vk = key.verifying_key().clone();
+        let vk = *key.verifying_key();
         let err = verify_auth_signature(&vk, &unhex(AUTH_CONTEXT_HEX), &[0u8; 63]).unwrap_err();
         assert!(err.contains("64-byte"), "got: {err}");
     }
@@ -255,7 +299,8 @@ mod tests {
             &unhex(SERVER_PUB_HEX),
             2,
             &unhex(AUTH_EXPORTER_HEX),
-        );
+        )
+        .unwrap();
         verify_auth_signature(key.verifying_key(), &ctx, &p.signature)
             .expect("own signature must verify");
     }
@@ -277,31 +322,4 @@ mod tests {
             "0a2c090100000000000000122103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d"
         );
     }
-}
-
-// ---- test-support constants (cfg(test) only; never shipped) ----------------
-
-#[cfg(test)]
-pub(crate) fn tests_const_server_pub() -> Vec<u8> {
-    unhex_const(SERVER_PUB_HEX)
-}
-
-#[cfg(test)]
-pub(crate) fn tests_const_exporter() -> Vec<u8> {
-    unhex_const(AUTH_EXPORTER_HEX)
-}
-
-#[cfg(test)]
-fn unhex_const(s: &str) -> Vec<u8> {
-    (0..s.len() / 2)
-        .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
-        .collect()
-}
-
-/// Pairing proof input (pairing.md §6.3.1):
-/// TLV(1, "audio-share v2 pairing confirm") || TLV(2, binding).
-pub fn pairing_tlv(domain_label: &[u8], binding: &[u8]) -> Vec<u8> {
-    let mut out = tlv(1, domain_label);
-    out.extend_from_slice(&tlv(2, binding));
-    out
 }

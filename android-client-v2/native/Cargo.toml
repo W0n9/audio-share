@@ -17,6 +17,13 @@ publish = false
 name = "audio_share_client_v2_native"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Test-only build switch. Enables the fixture client identity key so host
+# tests and the E2E APK (ticket 08/09) can drive the auth exchange without a
+# paired identity. Production builds MUST NOT enable it: the key is public
+# test material, and the non-test-support build has no code path that loads it.
+test-support = []
+
 [dependencies]
 # prost codegen of the frozen control schema (protos/wire-protocol-v2/control.proto)
 # — replaces the prototype's hand-written frame codec; workspace uses 0.13.
@@ -44,6 +51,8 @@ android_logger = "0.14"
 rcgen = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# pause/advance the runtime clock for the absolute-deadline tests
+tokio = { version = "1", features = ["test-util"] }
 
 [profile.release]
 opt-level = "z"

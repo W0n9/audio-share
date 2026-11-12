@@ -75,11 +75,6 @@ pub struct ServerConfig {
     /// The driver always supplies the real per-connection output; fixture
     /// replay supplies the recorded constant.
     pub auth_exporter: Option<Vec<u8>>,
-    /// Supersede policy: with [`SUPERSEDE_KEEP_OLD`] the old session is marked
-    /// superseded (Close(303) sent by its driver) and the new one admitted;
-    /// `false` = the new session never replaces the old (unused in v2.0,
-    /// TM-3 fixed replacement).
-    pub keep_old_on_supersede: bool,
     /// The first session id this machine assigns (§3: the Server assigns
     /// ids from a registry-wide counter; the driver seeds each machine with
     /// its position). Defaults to 1 for a standalone machine; the golden-
@@ -102,9 +97,6 @@ impl ServerConfig {
         }
     }
 }
-
-/// TM-3: a new session of the same identity supersedes the old (Close(303)).
-pub const SUPERSEDE_KEEP_OLD: bool = true;
 
 /// One inbound occurrence the machine reacts to.
 #[derive(Clone, Debug)]
@@ -135,7 +127,10 @@ pub enum Event {
     /// translates its decision into this event on the OLD machine). The
     /// machine emits Close carrying the code and closes the transport with
     /// it (§5.2: Close(303) on the superseded session).
-    Superseded { code: ErrorCode },
+    Superseded {
+        /// The close code carrying the supersede reason (303).
+        code: ErrorCode,
+    },
 }
 
 /// One machine output, in order.
@@ -214,6 +209,9 @@ pub struct StateMachine {
     subscribed: bool,
     /// TM-4 per-connection failure counter.
     auth_failures: u32,
+    /// Code of the latest authentication failure, drained by the driver for
+    /// its redacted failure log (§6 registry).
+    last_auth_failure_code: Option<ErrorCode>,
     /// The pending challenge's server_random (verification context).
     pending_challenge: Option<Vec<u8>>,
     /// The request_id of the pending auth exchange.
@@ -238,6 +236,7 @@ impl StateMachine {
             identity: None,
             subscribed: false,
             auth_failures: 0,
+            last_auth_failure_code: None,
             pending_challenge: None,
             pending_request_id: None,
             pending_client_key: None,
@@ -368,7 +367,12 @@ impl StateMachine {
         }
         let request_id = frame_request_id(&frame);
         match frame.body {
-            Some(frame::Body::Close(_)) => {
+            Some(frame::Body::Close(close)) => {
+                if close.code == 0 {
+                    // §4.4 validation table: `Close` with code == 0 is
+                    // malformed (spec:264/:419), not a one-way close → 401.
+                    return self.malformed_fatal(0);
+                }
                 // Close is one-way and never echoed (§5.4 invariant 4).
                 self.close(ServerState::Closing);
                 Vec::new()
@@ -578,6 +582,7 @@ impl StateMachine {
         // §4.4 validation: the public key must be a 33-byte compressed P-256
         // point; anything else is a generic validation failure → 401.
         if auth::parse_client_public_key(client_public_key).is_err() {
+            self.last_auth_failure_code = Some(ErrorCode::MALFORMED_MESSAGE);
             return self.malformed_fatal(request_id);
         }
         self.pending_client_key = Some(client_public_key.to_vec());
@@ -669,15 +674,25 @@ impl StateMachine {
                 // re-AuthInit with another stored pairing.
                 self.record_auth_failure(ErrorCode::AUTHORIZATION_UNKNOWN, request_id)
             }
-            Authorization::Revoked(_) => {
-                // §5.2: AuthResult(204); count failure.
+            Authorization::Revoked(_) | Authorization::Unavailable => {
+                // §5.2: AuthResult(204); count failure. `Unavailable` is a
+                // corrupt store: fail closed rather than keep serving the
+                // last known-good table (pairing.md §10.3).
                 self.record_auth_failure(ErrorCode::AUTHORIZATION_DENIED, request_id)
             }
         }
     }
 
+    /// The §6 code of the most recent authentication failure, for the
+    /// driver's failure log (202 unknown, 203 bad proof, 204 revoked, 401
+    /// malformed). Consumed once so one failure produces one log line.
+    pub fn take_auth_failure_code(&mut self) -> Option<ErrorCode> {
+        self.last_auth_failure_code.take()
+    }
+
     fn record_auth_failure(&mut self, code: ErrorCode, request_id: u64) -> Vec<Outcome> {
         self.auth_failures += 1;
+        self.last_auth_failure_code = Some(code);
         self.pending_challenge = None;
         self.pending_request_id = None;
         self.pending_client_key = None;
@@ -716,7 +731,13 @@ impl StateMachine {
         let Some(identity) = self.identity.clone() else {
             return Vec::new();
         };
-        if matches!(self.store.authorize(&identity), Authorization::Revoked(_)) {
+        // A record that disappeared (Unknown) is a revocation too, and a
+        // corrupt reload (Unavailable) fails closed: both tear the session
+        // down with the authorization-denied pair (pairing.md §9.2/§10.3).
+        if matches!(
+            self.store.authorize(&identity),
+            Authorization::Revoked(_) | Authorization::Unknown(_) | Authorization::Unavailable
+        ) {
             let outcomes = Outcome::fatal(ErrorCode::AUTHORIZATION_DENIED, 0);
             self.close(ServerState::Closing);
             outcomes
@@ -865,6 +886,13 @@ impl ServerState {
     pub const fn is_closing_state(self) -> bool {
         matches!(self, Self::Closing | Self::Closed)
     }
+}
+
+/// The request id a Client request body carries (0 = none/push). Used by the
+/// driver's outstanding-request accounting (spec §10).
+pub fn request_id_of(frame: &Frame) -> Option<u64> {
+    let id = frame_request_id(frame);
+    (id != 0).then_some(id)
 }
 
 fn frame_request_id(frame: &Frame) -> u64 {
