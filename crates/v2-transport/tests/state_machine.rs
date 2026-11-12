@@ -504,6 +504,23 @@ fn ready_close_received_moves_to_closing_without_echo() {
     assert!(out.is_empty(), "Close is one-way and never echoed (§5.4)");
 }
 
+#[test]
+fn close_with_code_zero_is_malformed_401() {
+    // §4.4 validation table + spec:264/:419: a Close whose code is 0 is
+    // malformed, not a one-way close. The Server answers with the fatal
+    // Error(401) + Close(401) pair and closes the transport with 401.
+    let store = store_with_client();
+    let mut machine = machine(&store);
+    authenticate(&mut machine);
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(close_frame(0)), source: unhex(CLIENT_PUB) });
+    assert_eq!(machine.state(), ServerState::Closing);
+    assert_eq!(out.len(), 2, "malformed input earns an Error + Close pair");
+    assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
+        Some(frame::Body::Error(e)) if e.status.code == 401));
+    assert_eq!(out[1].close_code, Some(ErrorCode::MALFORMED_MESSAGE));
+}
+
 // ---------------------------------------------------------------------------
 // §5.2 "any" rows.
 // ---------------------------------------------------------------------------
