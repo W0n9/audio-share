@@ -1,0 +1,14 @@
+# Gradle
+.gradle/
+build/
+local.properties
+
+# Kotlin
+.kotlin/
+
+# IDE
+*.iml
+.DS_Store
+
+# Rust target (native crate)
+native/target/
