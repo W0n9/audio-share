@@ -39,7 +39,7 @@ fn unhex(s: &str) -> Vec<u8> {
 }
 
 const CLIENT_PUB: &str = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
-const OTHER_PUB: &str = "021111111111111111111111111111111111111111111111111111111111111111";
+const OTHER_PUB: &str = "02dd4d011a1b03e2a9e8075b627e88b4ed87559e6c65d84f7c3978a7413bc0d5d4";
 
 #[test]
 fn unknown_identity_classifies_202() {
@@ -186,4 +186,74 @@ fn multiple_records_survive_a_round_trip() {
         store.authorize(&unhex(OTHER_PUB)),
         v2_transport::auth_store::Authorization::Authorized(_)
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Load-time validation (pairing.md §8.1 / §10.3): every malformed record is a
+// fail-closed load error, never a silently accepted credential.
+// ---------------------------------------------------------------------------
+
+/// Write one raw store file and open it. `entries` is the JSON array body.
+fn open_raw(entries: &str) -> Result<AuthorizationStore, v2_transport::auth_store::StoreError> {
+    let dir = temp_dir();
+    let pairing = dir.join("pairing");
+    std::fs::create_dir_all(&pairing).expect("mkdir");
+    std::fs::write(
+        pairing.join("clients.json"),
+        format!(r#"{{"version": 1, "clients": [{entries}]}}"#),
+    )
+    .expect("write store");
+    AuthorizationStore::open(&dir)
+}
+
+fn record_json(client_id: &str, public_key_b64: &str, display_name: &str) -> String {
+    format!(
+        r#"{{"client_id": "{client_id}", "public_key": "{public_key_b64}", "display_name": "{display_name}", "state": "active"}}"#
+    )
+}
+
+const CLIENT_PUB_B64: &str = "A9ClKd50dWQawFDHkrQs_weRB8pTENp5U9JZUSFHfA9t";
+
+fn load_error(entries: &str) -> String {
+    open_raw(entries).expect_err("malformed store must fail closed").to_string()
+}
+
+#[test]
+fn public_key_must_be_a_33_byte_compressed_point() {
+    // 32 bytes, not the §8.1 33-byte SEC1-compressed point.
+    let short = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let error = load_error(&record_json("cf7940b474310246", short, "Test Phone"));
+    assert!(error.contains("public_key"), "the refusal must name the field: {error}");
+    assert!(error.contains("33"), "the refusal should cite the compressed-point shape: {error}");
+}
+
+#[test]
+fn public_key_must_decode_to_a_valid_curve_point() {
+    // 0x02 || 32 x 0xff: correct length and prefix, but x is outside the field
+    // and no point decodes — the store must not hold an unusable credential.
+    let off_curve = "Av__________________________________________";
+    let error = load_error(&record_json("cf7940b474310246", off_curve, "Test Phone"));
+    assert!(error.contains("public_key"), "the refusal must name the field: {error}");
+}
+
+#[test]
+fn client_id_must_match_the_derived_value() {
+    // pairing.md §8.1: client_id = first 8 bytes of SHA-256(public_key), hex.
+    let error = load_error(&record_json("deadbeefdeadbeef", CLIENT_PUB_B64, "Test Phone"));
+    assert!(error.contains("client_id"), "the refusal must name the field: {error}");
+}
+
+#[test]
+fn display_name_is_capped_at_63_bytes() {
+    let name = "x".repeat(64);
+    let error = load_error(&record_json("cf7940b474310246", CLIENT_PUB_B64, &name));
+    assert!(error.contains("display_name"), "the refusal must name the field: {error}");
+}
+
+#[test]
+fn duplicate_client_ids_are_rejected() {
+    let one = record_json("cf7940b474310246", CLIENT_PUB_B64, "Test Phone");
+    let two = record_json("cf7940b474310246", CLIENT_PUB_B64, "Impostor");
+    let error = load_error(&format!("{one}, {two}"));
+    assert!(error.contains("duplicate"), "the refusal must explain the duplicate: {error}");
 }

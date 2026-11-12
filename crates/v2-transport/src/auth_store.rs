@@ -75,19 +75,39 @@ impl StoredClient {
         }
     }
 
-    fn from_json(json: StoredClientJson) -> Result<Self, StoreError> {
+    fn from_json(json: StoredClientJson) -> Result<Self, String> {
         if json.state != "active" && json.state != "revoked" {
-            return Err(StoreError::Corrupted {
-                path: PathBuf::new(),
-                reason: format!("unknown client state {:?}", json.state),
-            });
+            return Err(format!("unknown client state {:?}", json.state));
         }
         let public_key = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&json.public_key)
-            .map_err(|error| StoreError::Corrupted {
-                path: PathBuf::new(),
-                reason: format!("public_key is not base64url: {error}"),
-            })?;
+            .map_err(|error| format!("public_key is not base64url: {error}"))?;
+        // pairing.md §8.1: the stored key is a 33-byte SEC1-compressed P-256
+        // point. Decoding validates the point, so the store can never hold a
+        // credential that `AuthInit` could not later verify (fail closed).
+        if crate::auth::parse_client_public_key(&public_key).is_err() {
+            return Err(
+                "public_key is not a 33-byte SEC1-compressed P-256 point".to_owned()
+            );
+        }
+        // client_id is derived, never allocated: first 8 bytes of
+        // SHA-256(public_key), lowercase hex (§8.1).
+        let derived: String = crate::auth::client_id(&public_key)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        if !json.client_id.eq_ignore_ascii_case(&derived) {
+            return Err(format!(
+                "client_id {:?} does not match the derived value {derived:?}",
+                json.client_id
+            ));
+        }
+        if json.display_name.len() > 63 {
+            return Err(format!(
+                "display_name is {} bytes; the limit is 63 UTF-8 bytes",
+                json.display_name.len()
+            ));
+        }
         Ok(Self {
             client_id: json.client_id,
             public_key,
@@ -310,11 +330,20 @@ fn parse_store_text(text: &str) -> Result<Vec<StoredClient>, String> {
     if file.version != 1 {
         return Err(format!("unsupported store version {}", file.version));
     }
-    file.clients
+    let clients = file
+        .clients
         .into_iter()
         .map(StoredClient::from_json)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
+        .collect::<Result<Vec<_>, _>>()?;
+    // client_id is the unique identity key (§8.1); two records claiming the
+    // same derived id would make authorization order-dependent.
+    let mut seen = std::collections::HashSet::with_capacity(clients.len());
+    for client in &clients {
+        if !seen.insert(client.client_id.to_ascii_lowercase()) {
+            return Err(format!("duplicate client_id {:?}", client.client_id));
+        }
+    }
+    Ok(clients)
 }
 
 #[cfg(unix)]
