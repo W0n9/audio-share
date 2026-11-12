@@ -498,7 +498,7 @@ pub fn drive_case(case: &Case) -> ReplayOutcome {
                         // checked in the encoding direction)
                         match message.as_str() {
                             "auth_init" => {
-                                let _ = machine.enter_authenticating(frame);
+                                machine.enter_authenticating(frame).expect("auth init");
                             }
                             "auth_proof" | "pairing_confirm" => {}
                             "negotiate" => {
@@ -590,6 +590,8 @@ pub enum VerdictRecord {
     Sent(String),
     /// Error(code)+Close(code) then stop (fatal class, §5.2).
     FatalSent(u32),
+    /// A non-fatal Error(code) was sent; connection stays open (§5.3).
+    Rejected(u32),
     /// Stop with the CloseInfo code.
     Stop(crate::control::CloseInfo),
 }
@@ -600,6 +602,7 @@ impl VerdictRecord {
         match v {
             V::Ok => VerdictRecord::Ok,
             V::Send(f) => VerdictRecord::Sent(message_name(&f)),
+            V::Reject { code } => VerdictRecord::Rejected(code),
             V::Fatal { code } => VerdictRecord::FatalSent(code),
             V::Stop(info) => VerdictRecord::Stop(info),
         }
@@ -820,7 +823,7 @@ mod tests {
                 ),
             })),
         };
-        let v = m.enter_authenticating(init);
+        let v = m.enter_authenticating(init).expect("auth init");
         assert!(matches!(v, crate::control::Verdict::Send(_)));
         // step 2: AuthChallenge S->C
         let Step::Frame { decoded, .. } = &case.steps[1] else { panic!() };

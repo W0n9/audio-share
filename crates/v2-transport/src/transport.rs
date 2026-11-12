@@ -167,7 +167,7 @@ impl Transport {
                 CapacityDecision::Admit => break (CapacityDecision::Admit, incoming),
                 over => {
                     tracing::info!(
-                        remote = %incoming.remote_address(),
+                        remote = %crate::driver::masked_source(incoming.remote_address().ip()),
                         decision = ?over,
                         "v2 connection refused: capacity"
                     );
@@ -194,7 +194,10 @@ impl Transport {
         match handshake {
             Ok(connection) => {
                 guard.handshake_completed();
-                tracing::info!(remote = %connection.remote_address(), "v2 connection accepted");
+                tracing::info!(
+                    remote = %crate::driver::masked_source(connection.remote_address().ip()),
+                    "v2 connection accepted"
+                );
                 AcceptedConnection {
                     connection: Some(connection),
                     lifecycle: ConnectionLifecycle::new(),
@@ -204,7 +207,8 @@ impl Transport {
             }
             Err(error) => {
                 guard.handshake_abandoned();
-                tracing::info!(remote = ?remote_address, error = %error, "v2 handshake failed");
+                let masked = remote_address.map(|address| crate::driver::masked_source(address.ip()));
+                tracing::info!(remote = ?masked, error = %error, "v2 handshake failed");
                 AcceptedConnection {
                     connection: None,
                     lifecycle: terminated(Termination::Lost(crate::codes::ErrorCode::NETWORK_FAILURE)),

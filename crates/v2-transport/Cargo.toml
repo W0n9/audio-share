@@ -35,6 +35,9 @@ libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 tempfile = "3"
+# Capture the transport's own tracing fields in the redaction tests (the
+# library logs at INFO; a subscriber lets a test read the emitted line).
+tracing-subscriber = "0.3"
 # The live-QUIC driver tests sign the PR-9 auth_context with the fixture's
 # TEST-ONLY client scalar (fixtures/wire-protocol-v2/test-keys.json), exactly
 # as the Android client does.
