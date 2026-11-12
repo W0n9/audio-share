@@ -272,6 +272,15 @@ impl StateMachine {
         if self.state == ServerState::Closed {
             return Vec::new();
         }
+        // CLOSING emits no further frames (§5.2): repeated local events
+        // (revocation polls, supersede notices, fatals) must not duplicate the
+        // close pair the machine already emitted.
+        if self.state == ServerState::Closing {
+            if matches!(event, Event::TransportLost) {
+                self.close(ServerState::Closed);
+            }
+            return Vec::new();
+        }
         match event {
             Event::Frame { frame, source } => self.handle_frame(frame, source),
             Event::AuthDeadline => {
