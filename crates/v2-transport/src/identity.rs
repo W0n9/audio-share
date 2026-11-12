@@ -309,7 +309,12 @@ fn check_directory_permissions(path: &Path, allow_loose: bool) -> Result<(), Ide
 /// generation). Applied to every identity/pairing write.
 pub(crate) fn atomic_write_with_backup(path: &Path, contents: &str) -> Result<(), IdentityError> {
     let directory = path.parent().unwrap_or_else(|| Path::new("."));
-    let backup = path.with_extension("bak");
+    // Keep the full file name plus `.bak` (clients.json → clients.json.bak),
+    // as pairing.md §10.3 and the auth-store recovery message specify.
+    let backup = path
+        .file_name()
+        .map(|name| path.with_file_name(format!("{}.bak", name.to_string_lossy())))
+        .unwrap_or_else(|| path.with_extension("bak"));
     if path.exists() {
         fs::rename(path, &backup).map_err(|source| IdentityError::Io {
             operation: "rotate identity key backup",
