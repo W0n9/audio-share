@@ -14,6 +14,8 @@
 //! must not depend on — cross-checking against rcgen's independent
 //! serialization stays as the test evidence).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::WebPkiSupportedAlgorithms;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -182,6 +184,9 @@ fn extract_spki_der(cert_der: &[u8]) -> Result<Vec<u8>, PinError> {
 pub struct PinnedSpkiVerifier {
     pin: SpkiPin,
     algorithms: WebPkiSupportedAlgorithms,
+    /// Set once a presented certificate's SPKI differs from the pin, so the
+    /// session can classify 205 by type instead of matching an error string.
+    mismatch: AtomicBool,
 }
 
 impl PinnedSpkiVerifier {
@@ -190,11 +195,17 @@ impl PinnedSpkiVerifier {
             pin: SpkiPin::from_hex(pinned_spki_sha256_hex)?,
             algorithms: rustls::crypto::ring::default_provider()
                 .signature_verification_algorithms,
+            mismatch: AtomicBool::new(false),
         })
     }
 
     pub fn pin(&self) -> &SpkiPin {
         &self.pin
+    }
+
+    /// Whether the last observed certificate failed the SPKI pin.
+    pub fn pin_mismatch(&self) -> bool {
+        self.mismatch.load(Ordering::SeqCst)
     }
 }
 
@@ -213,8 +224,9 @@ impl ServerCertVerifier for PinnedSpkiVerifier {
             Ok(ServerCertVerified::assertion())
         } else {
             // never log pins or key material detail beyond the mismatch fact;
-            // the session layer classifies this locally as 205 (no fallback,
-            // no retry without user action)
+            // the typed flag lets the session classify this locally as 205
+            // (no fallback, no retry without user action)
+            self.mismatch.store(true, Ordering::SeqCst);
             Err(TlsError::General(
                 "server SPKI does not match pinned identity".to_string(),
             ))
@@ -324,6 +336,7 @@ mod tests {
             pin,
             algorithms: rustls::crypto::ring::default_provider()
                 .signature_verification_algorithms,
+            mismatch: AtomicBool::new(false),
         };
         let res = v.verify_server_cert(
             &CertificateDer::from(cert),
@@ -333,6 +346,7 @@ mod tests {
             UnixTime::now(),
         );
         assert!(res.is_ok(), "pinned cert must verify, got {res:?}");
+        assert!(!v.pin_mismatch());
         drop(key);
     }
 
@@ -345,6 +359,7 @@ mod tests {
             pin: pin_a,
             algorithms: rustls::crypto::ring::default_provider()
                 .signature_verification_algorithms,
+            mismatch: AtomicBool::new(false),
         };
         let (_, cert_b) = self_signed_cert();
         let res = v.verify_server_cert(
@@ -355,6 +370,7 @@ mod tests {
             UnixTime::now(),
         );
         assert!(res.is_err(), "different server key must be rejected");
+        assert!(v.pin_mismatch(), "the typed 205 marker must be set");
         let msg = res.unwrap_err().to_string();
         assert!(msg.contains("pinned identity"), "got: {msg}");
     }
@@ -367,6 +383,7 @@ mod tests {
             pin,
             algorithms: rustls::crypto::ring::default_provider()
                 .signature_verification_algorithms,
+            mismatch: AtomicBool::new(false),
         };
         let res = v.verify_server_cert(
             &CertificateDer::from(vec![0x30, 0x03, 0x02, 0x01, 0x00]),
@@ -376,5 +393,6 @@ mod tests {
             UnixTime::now(),
         );
         assert!(res.is_err());
+        assert!(!v.pin_mismatch(), "a malformed cert is not a pin mismatch");
     }
 }
