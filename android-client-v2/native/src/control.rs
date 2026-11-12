@@ -833,3 +833,15 @@ mod tests {
         assert_eq!(ClientState::Closed.name(), "CLOSED");
     }
 }
+
+/// Public test-support: register the fixture signing context so fixture
+/// replay tests can drive the auth path end-to-end.
+#[cfg(test)]
+pub mod tests_public {
+    pub fn register_test_signing_context() {
+        crate::control::helpers::register_auth_context(
+            crate::auth::tests_const_server_pub(),
+            crate::auth::tests_const_exporter(),
+        );
+    }
+}

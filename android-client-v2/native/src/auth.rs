@@ -297,3 +297,11 @@ fn unhex_const(s: &str) -> Vec<u8> {
         .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
         .collect()
 }
+
+/// Pairing proof input (pairing.md §6.3.1):
+/// TLV(1, "audio-share v2 pairing confirm") || TLV(2, binding).
+pub fn pairing_tlv(domain_label: &[u8], binding: &[u8]) -> Vec<u8> {
+    let mut out = tlv(1, domain_label);
+    out.extend_from_slice(&tlv(2, binding));
+    out
+}
