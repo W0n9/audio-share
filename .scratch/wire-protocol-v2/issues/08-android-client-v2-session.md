@@ -4,7 +4,7 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-human
+**Status:** resolved
 
 **Type:** task
 
@@ -38,3 +38,14 @@
 - **`android-app/` 不受影响**：worktree 内 `assembleDebug` + `testDebugUnitTest` 绿（唯一环境差异是 gitignored 的 keystore.properties，非本票改动）。
 - **真机冒烟：NOT RUN** —— MIUI 设备经 tailscale 不可达（ping 100% loss、`adb connect` 超时，与本票开工前一致）。release APK 已产出可安装；安装冒烟 + 与 06/07 的完整握手联调归 09（票面 Note）。
 - 错误/日志红线：错误字符串不含凭据、私钥、原始媒体（createSession/connect/rebind 失败路径与 stats JSON 均为计数与状态名）。
+
+### 2026-11-12 — device smoke test PASSED（设备恢复后补跑，resolved）
+
+设备（Xiaomi M2007J22C / Android 12 / tailscale `100.117.189.121`）恢复在线后补跑真机安装冒烟：
+
+- `adb install -r app-release.apk`（2,467,726 B，R8 + debug-signed）→ `Success`。
+- `am start -W -n dev.audioshare.v2/.MainActivity` → COLD 启动 540 ms，无 FATAL/AndroidRuntime 崩溃，`mResumedActivity` 为该 Activity。
+- screencap 确认 UI 显示 **IDLE** 状态、副标题「config missing: pass host/pinnedSpki/serverKey extras (test config)」—— 与「启动到 IDLE 即可」的票面验收一致（无 extras 时预期行为）。
+- 完整握手联调（与 06/07 Server 的真机交叉验证）按票面 Note 归 09。
+
+至此 08 的 DoD 全项完成，Status → `resolved`。冒烟所用 APK 构建于 `ticket/08-android-client-v2`（`1fb9de5`，已合入集成分支 `f727ba6`，与本条同源代码）。
