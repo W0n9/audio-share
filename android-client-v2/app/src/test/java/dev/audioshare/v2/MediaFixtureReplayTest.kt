@@ -142,6 +142,41 @@ class MediaFixtureReplayTest {
         val payload = b.size - 24
         assertEquals(0, payload % 8, "payload must be a whole F32LE stereo frame count")
     }
+
+    /** media.reduced-mtu-full-size: full 1200 B MTU datagram parses. */
+    @Test
+    fun reduced_mtu_full_size() {
+        val (hexStr, d) = datagram("media/reduced-mtu-full-size.json", 0)
+        val h = parseHeader(hexStr)
+        assertEquals(5, h.streamInstanceId)
+        assertEquals(1, h.configGeneration)
+        assertEquals(d.getLong("sequence"), h.sequence.toLong())
+        assertEquals(d.getLong("timestamp"), h.timestamp)
+        assertEquals(0x1, h.flags and 0x1, "STREAM_START")
+    }
+
+    /** media.config-change-mid-stream: generation field is authoritative. */
+    @Test
+    fun config_change_mid_stream() {
+        val steps = (1..4).map { datagram("media/config-change-mid-stream.json", it) }
+        // step 1: last normal gen-1 datagram
+        val h1 = parseHeader(steps[0].first)
+        assertEquals(1, h1.configGeneration)
+        assertEquals(0, h1.flags and 0x3)
+        // step 2: first gen-2 datagram, CONFIG_CHANGE hint set
+        val h2 = parseHeader(steps[1].first)
+        assertEquals(2, h2.configGeneration)
+        assertEquals(0x2, h2.flags and 0x3, "CONFIG_CHANGE")
+        // step 3: STALE gen-1 datagram arriving after gen-2 — the header alone
+        // still parses (the receiver drops it per §7.5 and counts it)
+        val h3 = parseHeader(steps[2].first)
+        assertEquals(1, h3.configGeneration)
+        assertEquals(43, h3.sequence)
+        // step 4: normal gen-2
+        val h4 = parseHeader(steps[3].first)
+        assertEquals(2, h4.configGeneration)
+        assertEquals(44, h4.sequence)
+    }
 }
 
 /** Plain header value holder for the Kotlin-side checks (spec §7.1 layout). */
