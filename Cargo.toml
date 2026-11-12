@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/audio-share-core",
     "crates/as-cmd",
+    "crates/v2-transport",
     "gui/src-tauri",
     "tools/pipewire-spike",
     "tools/protocol-harness",
@@ -19,7 +20,7 @@ rust-version = "1.90"
 anyhow = "1"
 audio-share-core = { path = "crates/audio-share-core" }
 clap = { version = "4", features = ["derive"] }
-prost = "0.13"
+prost = { version = "0.13", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
