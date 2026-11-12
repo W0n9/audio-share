@@ -87,7 +87,12 @@ impl Session {
     /// Build the session (no I/O yet). Called from the JNI thread.
     pub fn new(config: SessionConfig) -> Result<Self, String> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
+            // Ticket-09 temporary bypass for the known thread-local auth-context
+            // defect (control.rs signing_context): a single worker keeps the
+            // AuthInit/AuthChallenge/AuthProof task on the thread that
+            // registered the exporter + server key. The review fix branch owns
+            // the real fix; this line only unblocks the E2E evidence run.
+            .worker_threads(1)
             .enable_all()
             .build()
             .map_err(|e| format!("tokio runtime: {e}"))?;
