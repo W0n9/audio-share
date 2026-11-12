@@ -1,0 +1,29 @@
+11-12 22:45:17.246 I/audio_share_client_v2..(15649): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 22:45:17.248 W/ClientSession(15649): rebind: Binding socket to network 240 failed: EPERM (Operation not permitted)
+11-12 22:45:17.248 I/audio_share_client_v2..(15649): session stopped (701 CLIENT_STOPPING)
+11-12 22:45:17.248 I/audio_share_client_v2..(15649): session stopped (701 CLIENT_STOPPING)
+11-12 22:45:17.296 I/audio_share_client_v2..(15649): QUIC established
+11-12 22:45:17.761 I/audio_share_client_v2..(15649): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 22:45:17.816 I/audio_share_client_v2..(15649): QUIC established
+11-12 22:45:18.012 I/audio_share_client_v2..(15649): session stopped (701 CLIENT_STOPPING)
+11-12 22:45:19.043 I/audio_share_client_v2..(15649): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 22:45:19.097 I/audio_share_client_v2..(15649): QUIC established
+11-12 22:45:19.294 I/audio_share_client_v2..(15649): session stopped (701 CLIENT_STOPPING)
+11-12 22:45:21.574 I/audio_share_client_v2..(15649): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 22:45:21.627 I/audio_share_client_v2..(15649): QUIC established
+11-12 22:45:21.823 I/audio_share_client_v2..(15649): session stopped (701 CLIENT_STOPPING)
+11-12 22:45:25.451 I/audio_share_client_v2..(15649): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 22:45:25.508 I/audio_share_client_v2..(15649): QUIC established
+11-12 22:45:25.701 I/audio_share_client_v2..(15649): session stopped (701 CLIENT_STOPPING)
+11-12 22:45:32.763 I/audio_share_client_v2..(15649): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 22:45:32.821 I/audio_share_client_v2..(15649): QUIC established
+11-12 22:45:33.014 I/audio_share_client_v2..(15649): session stopped (701 CLIENT_STOPPING)
+11-12 22:45:50.467 I/audio_share_client_v2..(15649): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 22:45:50.520 I/audio_share_client_v2..(15649): QUIC established
+11-12 22:45:50.717 I/audio_share_client_v2..(15649): session stopped (701 CLIENT_STOPPING)
+11-12 22:46:14.837 I/audio_share_client_v2..(15649): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 22:46:14.901 I/audio_share_client_v2..(15649): QUIC established
+11-12 22:46:15.089 I/audio_share_client_v2..(15649): session stopped (701 CLIENT_STOPPING)
+11-12 22:46:45.098 I/audio_share_client_v2..(15649): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 22:46:45.159 I/audio_share_client_v2..(15649): QUIC established
+11-12 22:46:45.350 I/audio_share_client_v2..(15649): session stopped (701 CLIENT_STOPPING)

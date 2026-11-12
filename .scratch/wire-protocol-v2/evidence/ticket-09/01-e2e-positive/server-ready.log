@@ -1,0 +1,383 @@
+[2026-11-12 15:00:40.189] [trace] verbose logging enabled (trace level)
+[2026-11-12 15:00:40.189] [info] starting server: bind=0.0.0.0:65530, endpoint="default", encoding=default, channels=0, sample_rate=0
+[2026-11-12 15:00:40.189] [info] tcp listen success on 0.0.0.0:65530
+[2026-11-12 15:00:40.189] [info] udp listen success on 0.0.0.0:65530
+[2026-11-12 15:00:40.189] [info] server started
+[2026-11-12 15:00:40.189] [info] capture format: encoding=Some(PcmFloat), channels=2, sample_rate=48000
+[2026-11-12 15:00:40.190] [info] v2 identity ready: fingerprint=EE5BAE52 0923AB39 71B6A68D C0FD774F A9B27DC3 F1EAC5FB 576985E5 E9F79C94, key=/tmp/ticket09/data/identity/server-identity.pem
+[2026-11-12 15:00:40.190] [info] v2 authorization store ready: 1 client record(s), persistent
+[2026-11-12 15:00:40.191] [info] v2 listen success on 0.0.0.0:65531, alpn=audio-share/v2
+[2026-11-12 15:00:42.809] [trace] consumed 283 CRYPTO bytes
+[2026-11-12 15:00:42.809] [trace] we got a clienthello ClientHelloPayload { client_version: TLSv1_2, random: 9878816147806c521cff7c201572bb103c131407b8370b2847a42a99950ea3bc, session_id: , cipher_suites: [TLS13_AES_256_GCM_SHA384, TLS13_AES_128_GCM_SHA256, TLS13_CHACHA20_POLY1305_SHA256], compression_methods: [Null], extensions: ClientExtensions { certificate_status_request: Ocsp(OcspCertificateStatusRequest { responder_ids: [], extensions:  }), named_groups: [X25519, secp256r1, secp384r1], ec_point_formats: SupportedEcPointFormats { uncompressed: true }, signature_schemes: [ECDSA_NISTP384_SHA384, ECDSA_NISTP256_SHA256, ED25519, RSA_PSS_SHA512, RSA_PSS_SHA384, RSA_PSS_SHA256, RSA_PKCS1_SHA512, RSA_PKCS1_SHA384, RSA_PKCS1_SHA256], protocols: [ProtocolName(617564696f2d73686172652f7632)], extended_master_secret_request: (), supported_versions: SupportedProtocolVersions { tls13: true, tls12: false }, preshared_key_modes: PskKeyExchangeModes { psk_dhe: true, psk: false }, key_shares: [KeyShareEntry { group: X25519, payload: 0872571d6e75ae5f77030d1bdbeeaf10b6ef2da7a9f5f3baf081d31b23d9db3e }], transport_parameters: d75f32c41f10b3f009d1e0449427bfe67d2e030245c0090240640604801312d00504801312d001048000753008024064c0000000ff04de1b0243e80408ffffffffffffffff0e01056ab20020048000ffff0704801312d00f084f80e6126d4e200e, order_seed: 0, contiguous_extensions: [], .. } }
+[2026-11-12 15:00:42.810] [trace] Resolving server certificate: ClientHello {
+    server_name: None,
+    signature_schemes: [
+        ECDSA_NISTP384_SHA384,
+        ECDSA_NISTP256_SHA256,
+        ED25519,
+        RSA_PSS_SHA512,
+        RSA_PSS_SHA384,
+        RSA_PSS_SHA256,
+        RSA_PKCS1_SHA512,
+        RSA_PKCS1_SHA384,
+        RSA_PKCS1_SHA256,
+    ],
+    alpn: Some(
+        [
+            ProtocolName(
+                617564696f2d73686172652f7632,
+            ),
+        ],
+    ),
+    server_cert_types: None,
+    client_cert_types: None,
+    cipher_suites: [
+        TLS13_AES_256_GCM_SHA384,
+        TLS13_AES_128_GCM_SHA256,
+        TLS13_CHACHA20_POLY1305_SHA256,
+    ],
+    certificate_authorities: None,
+    named_groups: Some(
+        [
+            X25519,
+            secp256r1,
+            secp384r1,
+        ],
+    ),
+}
+[2026-11-12 15:00:42.810] [debug] decided upon suite TLS13_AES_256_GCM_SHA384
+[2026-11-12 15:00:42.810] [trace] sending server hello Message { version: TLSv1_2, payload: Handshake { parsed: HandshakeMessagePayload(ServerHello(ServerHelloPayload { legacy_version: TLSv1_2, random: 733d9fc0c4d2df5f90b840e47d8209313338ade3030e53800a93949e9e012cff, session_id: , cipher_suite: TLS13_AES_256_GCM_SHA384, compression_method: Null, extensions: ServerExtensions { key_share: KeyShareEntry { group: X25519, payload: 384de2fc85f356992d21ce9469a54a8fd83092986f4289bf49149a7c162a8b03 }, selected_version: TLSv1_3, unknown_extensions: {}, .. } })), encoded: 020000560303733d9fc0c4d2df5f90b840e47d8209313338ade3030e53800a93949e9e012cff00130200002e00330024001d0020384de2fc85f356992d21ce9469a54a8fd83092986f4289bf49149a7c162a8b03002b00020304 } }
+[2026-11-12 15:00:42.810] [debug] Chosen ALPN protocol ProtocolName(617564696f2d73686172652f7632)
+[2026-11-12 15:00:42.810] [trace] sending encrypted extensions HandshakeMessagePayload(EncryptedExtensions(ServerExtensions { selected_protocol: SingleProtocolName(ProtocolName(617564696f2d73686172652f7632)), transport_parameters: 0f08846b050aba2a1ead0408ffffffffffffffff0704801312d0e8861983a1e3351207eaad4398c38d310210ad7df2eeed7b6a6d36a7db92898cadf3030245c00e0105090240640104800075300504801312d00014a61d9c2866cf06d4819da859a53c1f86db3d6f0fc0000000ff04de1b0243e80802406420048000ffff0604801312d06ab200, unknown_extensions: {}, .. }))
+[2026-11-12 15:00:42.810] [trace] sending certificate HandshakeMessagePayload(CertificateTls13(CertificatePayloadTls13 { context: , entries: [CertificateEntry { cert: CertificateDer(0x3082015d3082010fa00302010202146388f7411afa5a5bf17340f46dd84a16c37454d9300506032b65703021311f301d06035504030c16726367656e2073656c66207369676e656420636572743020170d3735303130313030303030305a180f34303936303130313030303030305a3021311f301d06035504030c16726367656e2073656c66207369676e65642063657274302a300506032b657003210004a9754252f678feb693284407a03ce37edad729114cf8b4267e144aa858810aa357305530230603551d11041c301a8218617564696f2d73686172652d7365727665722e6c6f63616c301d0603551d0e04160414ee5bae520923ab3971b6a68dc0fd774fa9b27dc3300f0603551d130101ff040530030101ff300506032b657003410021c4c1125e3b2c6a8afdde852ff8b3132193ce43f315718d57e52b987889a48f41077ccecf27896e44f751a1e7869eeca8b150e726648f14331c8b4f12f63c0b), extensions: CertificateExtensions { .. } }] }))
+[2026-11-12 15:00:42.810] [trace] sending certificate-verify HandshakeMessagePayload(CertificateVerify(DigitallySignedStruct { scheme: ED25519, sig: bbf2595d7150838dc5623345a5ee140833393e682cacaf9f4bbad1b6328392eab2ed3f4669979b5fdc8993065d6032e0572bf9b1c308112a81757db29f92d60c }))
+[2026-11-12 15:00:42.810] [trace] sending finished HandshakeMessagePayload(Finished(a8929320fd6acf026db56bf0ce264f4da7db838d11ff18694ebcc503abb9422e27288764e4139a99e654364c781af2d9))
+[2026-11-12 15:00:42.810] [trace] Handshake keys ready
+[2026-11-12 15:00:42.810] [trace] wrote 90 Initial CRYPTO bytes
+[2026-11-12 15:00:42.810] [trace] Data keys ready
+[2026-11-12 15:00:42.811] [trace] wrote 656 Handshake CRYPTO bytes
+[2026-11-12 15:00:42.811] [trace] negotiated max idle timeout Some(30s)
+[2026-11-12 15:00:42.811] [trace] new connection id=0 icid=a61d9c2866cf06d4819da859a53c1f86db3d6f0f
+[2026-11-12 15:00:42.811] [trace] ACK ArrayRangeSet([0..1]), Delay = 1766us
+[2026-11-12 15:00:42.811] [trace] CRYPTO: off 0 len 90
+[2026-11-12 15:00:42.811] [trace] CRYPTO: off 0 len 656
+[2026-11-12 15:00:42.811] [trace] PADDING * 352
+[2026-11-12 15:00:42.811] [trace] sending 1200 bytes in 1 datagrams
+[2026-11-12 15:00:42.811] [trace] NEW_CONNECTION_ID sequence=1 id=ade6fac969bb93ef
+[2026-11-12 15:00:42.811] [trace] NEW_CONNECTION_ID sequence=2 id=c5b0284008eb414e
+[2026-11-12 15:00:42.811] [trace] NEW_CONNECTION_ID sequence=3 id=ee48cb60d2a00ce5
+[2026-11-12 15:00:42.811] [trace] NEW_CONNECTION_ID sequence=4 id=9f2bb6ada109200c
+[2026-11-12 15:00:42.811] [trace] sending 138 bytes in 1 datagrams
+[2026-11-12 15:00:42.860] [trace] got Initial packet (52 bytes) from 100.117.189.121:48832 using id 846b050aba2a1ead
+[2026-11-12 15:00:42.860] [trace] got Handshake packet (1148 bytes) from 100.117.189.121:48832 using id 846b050aba2a1ead
+[2026-11-12 15:00:42.860] [trace] discarding Initial keys
+[2026-11-12 15:00:42.860] [trace] consumed 52 CRYPTO bytes
+[2026-11-12 15:00:42.861] [trace] sending new ticket HandshakeMessagePayload(NewSessionTicketTls13(NewSessionTicketPayloadTls13 { lifetime: 86400, age_add: 1325591804, nonce: 174f4a44cd91bc7ffba789a787c7f727ea6d8d5a514e3144aef5b4f114451678, ticket: 6d4c9478fdbe1d16e55341980dbefb1beb60673ad0ba2bcb70a6d09065b88d38, extensions: NewSessionTicketExtensions { .. } })) (stateless: false)
+[2026-11-12 15:00:42.861] [trace] sending new ticket HandshakeMessagePayload(NewSessionTicketTls13(NewSessionTicketPayloadTls13 { lifetime: 86400, age_add: 3328573276, nonce: a0dcf1387ef15788d982eab79b2114f9c29c5510decd8a1c198f63ac9a2a46ff, ticket: bfccefb11580555e291f193ae5645dbb2a438351311961c00fc6f671c1f054e1, extensions: NewSessionTicketExtensions { .. } })) (stateless: false)
+[2026-11-12 15:00:42.861] [trace] wrote 162 Data CRYPTO bytes
+[2026-11-12 15:00:42.861] [trace] discarding Handshake keys
+[2026-11-12 15:00:42.861] [trace] established
+[2026-11-12 15:00:42.861] [trace] CRYPTO: off 0 len 162
+[2026-11-12 15:00:42.861] [trace] sending 193 bytes in 1 datagrams
+[2026-11-12 15:00:42.861] [trace] PADDING * 1298
+[2026-11-12 15:00:42.861] [trace] writing MTUD probe probe_size=1326
+[2026-11-12 15:00:42.861] [trace] sending 1326 bytes in 1 datagrams
+[2026-11-12 15:00:42.861] [info] v2 connection accepted remote=100.117.189.121:48832
+[2026-11-12 15:00:42.861] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 15:00:42.864] [debug] discarding unexpected Handshake packet (55 bytes)
+[2026-11-12 15:00:42.864] [trace] got Data packet (38 bytes) from 100.117.189.121:48832 using id 846b050aba2a1ead
+[2026-11-12 15:00:42.864] [trace] got frame Ack(Ack { largest: 0, delay: 705, ecn: Some(EcnCounts { ect0: 1, ect1: 0, ce: 0 }), ranges: "[0..=0]" })
+[2026-11-12 15:00:42.864] [trace] got frame Close(Application(ApplicationClose { error_code: 0, reason: b"" }))
+[2026-11-12 15:00:42.864] [trace] connection closed
+[2026-11-12 15:00:42.864] [trace] sending CONNECTION_CLOSE
+[2026-11-12 15:00:42.864] [trace] ACK ArrayRangeSet([1..2]), Delay = 198us
+[2026-11-12 15:00:42.864] [trace] sending 38 bytes in 1 datagrams
+[2026-11-12 15:00:42.864] [debug] v2 session: control stream unavailable source=100.117.x.x error=closed by peer: 0
+[2026-11-12 15:00:42.864] [info] v2 session ended: ClientClosed(ErrorCode { code: 601, retryable: true, requires_repairing: false }) remote=Some(100.117.189.121:48832)
+[2026-11-12 15:00:43.268] [trace] timeout timer=Close
+[2026-11-12 15:00:43.314] [trace] consumed 281 CRYPTO bytes
+[2026-11-12 15:00:43.314] [trace] we got a clienthello ClientHelloPayload { client_version: TLSv1_2, random: 4eb62338d6d91da507a876269b27e1b48b11628d1933090b5e178106c7775447, session_id: , cipher_suites: [TLS13_AES_256_GCM_SHA384, TLS13_AES_128_GCM_SHA256, TLS13_CHACHA20_POLY1305_SHA256], compression_methods: [Null], extensions: ClientExtensions { certificate_status_request: Ocsp(OcspCertificateStatusRequest { responder_ids: [], extensions:  }), named_groups: [X25519, secp256r1, secp384r1], ec_point_formats: SupportedEcPointFormats { uncompressed: true }, signature_schemes: [ECDSA_NISTP384_SHA384, ECDSA_NISTP256_SHA256, ED25519, RSA_PSS_SHA512, RSA_PSS_SHA384, RSA_PSS_SHA256, RSA_PKCS1_SHA512, RSA_PKCS1_SHA384, RSA_PKCS1_SHA256], protocols: [ProtocolName(617564696f2d73686172652f7632)], extended_master_secret_request: (), supported_versions: SupportedProtocolVersions { tls13: true, tls12: false }, preshared_key_modes: PskKeyExchangeModes { psk_dhe: true, psk: false }, key_shares: [KeyShareEntry { group: X25519, payload: 1ced2cad14e5d31a71e09f5c2fc94d54af0f42352dbac2ee95e33b1e21a38f75 }], transport_parameters: c0000000ff04de1b0243e8080240640704801312d0090240640604801312d020048000ffff0f085724fcfd10a6a82e0504801312d0dbb8ec208d6d5ad507c7ff337f8eefc9010480007530030245c00408ffffffffffffffff6ab2000e0105, order_seed: 0, contiguous_extensions: [], .. } }
+[2026-11-12 15:00:43.315] [trace] Resolving server certificate: ClientHello {
+    server_name: None,
+    signature_schemes: [
+        ECDSA_NISTP384_SHA384,
+        ECDSA_NISTP256_SHA256,
+        ED25519,
+        RSA_PSS_SHA512,
+        RSA_PSS_SHA384,
+        RSA_PSS_SHA256,
+        RSA_PKCS1_SHA512,
+        RSA_PKCS1_SHA384,
+        RSA_PKCS1_SHA256,
+    ],
+    alpn: Some(
+        [
+            ProtocolName(
+                617564696f2d73686172652f7632,
+            ),
+        ],
+    ),
+    server_cert_types: None,
+    client_cert_types: None,
+    cipher_suites: [
+        TLS13_AES_256_GCM_SHA384,
+        TLS13_AES_128_GCM_SHA256,
+        TLS13_CHACHA20_POLY1305_SHA256,
+    ],
+    certificate_authorities: None,
+    named_groups: Some(
+        [
+            X25519,
+            secp256r1,
+            secp384r1,
+        ],
+    ),
+}
+[2026-11-12 15:00:43.315] [debug] decided upon suite TLS13_AES_256_GCM_SHA384
+[2026-11-12 15:00:43.315] [trace] sending server hello Message { version: TLSv1_2, payload: Handshake { parsed: HandshakeMessagePayload(ServerHello(ServerHelloPayload { legacy_version: TLSv1_2, random: f019e41e2f761d560a8115961e854a38c39b7be3f570195ebcddc849d20ce6ed, session_id: , cipher_suite: TLS13_AES_256_GCM_SHA384, compression_method: Null, extensions: ServerExtensions { key_share: KeyShareEntry { group: X25519, payload: da614ef2395c758edb61c0e10073da3139e48858a442047774f2b5d2200f7e1c }, selected_version: TLSv1_3, unknown_extensions: {}, .. } })), encoded: 020000560303f019e41e2f761d560a8115961e854a38c39b7be3f570195ebcddc849d20ce6ed00130200002e00330024001d0020da614ef2395c758edb61c0e10073da3139e48858a442047774f2b5d2200f7e1c002b00020304 } }
+[2026-11-12 15:00:43.315] [debug] Chosen ALPN protocol ProtocolName(617564696f2d73686172652f7632)
+[2026-11-12 15:00:43.315] [trace] sending encrypted extensions HandshakeMessagePayload(EncryptedExtensions(ServerExtensions { selected_protocol: SingleProtocolName(ProtocolName(617564696f2d73686172652f7632)), transport_parameters: 0210f47b1f51833014f5673ece7db532a0d96ab2000604801312d00504801312d0090240640e0105d83127206233db3b02ab570704801312d008024064030245c001048000753000141bba403de9f4081781131ce6e0917bd6cb16b3640408ffffffffffffffff0f0894ca9576d91b1bc020048000ffffc0000000ff04de1b0243e8, unknown_extensions: {}, .. }))
+[2026-11-12 15:00:43.315] [trace] sending certificate HandshakeMessagePayload(CertificateTls13(CertificatePayloadTls13 { context: , entries: [CertificateEntry { cert: CertificateDer(0x3082015d3082010fa00302010202146388f7411afa5a5bf17340f46dd84a16c37454d9300506032b65703021311f301d06035504030c16726367656e2073656c66207369676e656420636572743020170d3735303130313030303030305a180f34303936303130313030303030305a3021311f301d06035504030c16726367656e2073656c66207369676e65642063657274302a300506032b657003210004a9754252f678feb693284407a03ce37edad729114cf8b4267e144aa858810aa357305530230603551d11041c301a8218617564696f2d73686172652d7365727665722e6c6f63616c301d0603551d0e04160414ee5bae520923ab3971b6a68dc0fd774fa9b27dc3300f0603551d130101ff040530030101ff300506032b657003410021c4c1125e3b2c6a8afdde852ff8b3132193ce43f315718d57e52b987889a48f41077ccecf27896e44f751a1e7869eeca8b150e726648f14331c8b4f12f63c0b), extensions: CertificateExtensions { .. } }] }))
+[2026-11-12 15:00:43.315] [trace] sending certificate-verify HandshakeMessagePayload(CertificateVerify(DigitallySignedStruct { scheme: ED25519, sig: 074564a8c0ddf2c70f26d2236a4aecaad347d5e2087258f12e7bd7bd7c9720ca1beaf7ae3e5307e1b4fa073070662efe9d369cc768dc14a3f1b40efd87cf1300 }))
+[2026-11-12 15:00:43.315] [trace] sending finished HandshakeMessagePayload(Finished(bd97cc2eb01411588942d9c03da9a74ae4f4ec254060ff0ceca55b9394ec6d9cb454ef3f7ced331bfe5391eb50823351))
+[2026-11-12 15:00:43.315] [trace] Handshake keys ready
+[2026-11-12 15:00:43.315] [trace] wrote 90 Initial CRYPTO bytes
+[2026-11-12 15:00:43.315] [trace] Data keys ready
+[2026-11-12 15:00:43.315] [trace] wrote 651 Handshake CRYPTO bytes
+[2026-11-12 15:00:43.315] [trace] negotiated max idle timeout Some(30s)
+[2026-11-12 15:00:43.315] [trace] new connection id=0 icid=1bba403de9f4081781131ce6e0917bd6cb16b364
+[2026-11-12 15:00:43.316] [trace] ACK ArrayRangeSet([0..1]), Delay = 1552us
+[2026-11-12 15:00:43.316] [trace] CRYPTO: off 0 len 90
+[2026-11-12 15:00:43.316] [trace] CRYPTO: off 0 len 651
+[2026-11-12 15:00:43.316] [trace] PADDING * 357
+[2026-11-12 15:00:43.316] [trace] sending 1200 bytes in 1 datagrams
+[2026-11-12 15:00:43.316] [trace] NEW_CONNECTION_ID sequence=1 id=a35779c6ad4ab4a4
+[2026-11-12 15:00:43.316] [trace] NEW_CONNECTION_ID sequence=2 id=f236e10375a969b6
+[2026-11-12 15:00:43.316] [trace] NEW_CONNECTION_ID sequence=3 id=cc39b0e706dd7c43
+[2026-11-12 15:00:43.316] [trace] NEW_CONNECTION_ID sequence=4 id=923269f2948455c2
+[2026-11-12 15:00:43.316] [trace] sending 138 bytes in 1 datagrams
+[2026-11-12 15:00:43.364] [trace] got Initial packet (52 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.364] [trace] got Handshake packet (1148 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.364] [trace] discarding Initial keys
+[2026-11-12 15:00:43.364] [trace] consumed 52 CRYPTO bytes
+[2026-11-12 15:00:43.364] [trace] sending new ticket HandshakeMessagePayload(NewSessionTicketTls13(NewSessionTicketPayloadTls13 { lifetime: 86400, age_add: 1750805655, nonce: 75dec723c052f1cc88ef656c68336fa25d68d899b5e381e7aca018e0e08f2745, ticket: 4b1260bc8158cd84fdd7cdf77717de1d173acc58b18c71d485c033a05c51243d, extensions: NewSessionTicketExtensions { .. } })) (stateless: false)
+[2026-11-12 15:00:43.364] [trace] sending new ticket HandshakeMessagePayload(NewSessionTicketTls13(NewSessionTicketPayloadTls13 { lifetime: 86400, age_add: 3411851838, nonce: 0db50641c8510dfd4b8b8981c502f590c4dd8bafabcd06c33ea63a64165d58d4, ticket: 29f6e1c6d88021b90b49d0939b36254e1e8b4819450265871617bc4ffcbb4fff, extensions: NewSessionTicketExtensions { .. } })) (stateless: false)
+[2026-11-12 15:00:43.364] [trace] wrote 162 Data CRYPTO bytes
+[2026-11-12 15:00:43.364] [trace] discarding Handshake keys
+[2026-11-12 15:00:43.364] [trace] established
+[2026-11-12 15:00:43.364] [trace] got Data packet (79 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.364] [trace] got stream frame id=client bidirectional stream 0 offset=0 len=50 fin=false
+[2026-11-12 15:00:43.364] [trace] got Data packet (138 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.364] [trace] got frame NewConnectionId(NewConnectionId { sequence: 1, retire_prior_to: 0, id: [34, 148, 25, 144, 128, 201, 44, 103], reset_token: ResetToken([9, 9, 239, 136, 205, 52, 125, 155, 25, 2, 236, 132, 106, 54, 63, 97]) })
+[2026-11-12 15:00:43.364] [trace] sequence=1 id=2294199080c92c67 retire_prior_to=0
+[2026-11-12 15:00:43.364] [trace] got frame NewConnectionId(NewConnectionId { sequence: 2, retire_prior_to: 0, id: [67, 99, 92, 172, 3, 20, 214, 209], reset_token: ResetToken([95, 133, 245, 52, 189, 206, 237, 13, 97, 112, 215, 224, 21, 194, 68, 170]) })
+[2026-11-12 15:00:43.364] [trace] sequence=2 id=43635cac0314d6d1 retire_prior_to=0
+[2026-11-12 15:00:43.364] [trace] got frame NewConnectionId(NewConnectionId { sequence: 3, retire_prior_to: 0, id: [187, 149, 176, 43, 209, 125, 78, 212], reset_token: ResetToken([221, 35, 5, 180, 132, 155, 56, 221, 86, 248, 12, 65, 100, 19, 108, 68]) })
+[2026-11-12 15:00:43.364] [trace] sequence=3 id=bb95b02bd17d4ed4 retire_prior_to=0
+[2026-11-12 15:00:43.364] [trace] got frame NewConnectionId(NewConnectionId { sequence: 4, retire_prior_to: 0, id: [7, 136, 54, 123, 111, 174, 175, 86], reset_token: ResetToken([77, 251, 12, 34, 122, 210, 116, 132, 115, 21, 232, 139, 237, 51, 63, 85]) })
+[2026-11-12 15:00:43.364] [trace] sequence=4 id=0788367b6faeaf56 retire_prior_to=0
+[2026-11-12 15:00:43.364] [trace] ACK ArrayRangeSet([1..3]), Delay = 641us
+[2026-11-12 15:00:43.364] [trace] CRYPTO: off 0 len 162
+[2026-11-12 15:00:43.364] [trace] RETIRE_CONNECTION_ID sequence=0
+[2026-11-12 15:00:43.364] [trace] sending 204 bytes in 1 datagrams
+[2026-11-12 15:00:43.364] [trace] PADDING * 1298
+[2026-11-12 15:00:43.364] [trace] writing MTUD probe probe_size=1326
+[2026-11-12 15:00:43.364] [trace] sending 1326 bytes in 1 datagrams
+[2026-11-12 15:00:43.364] [info] v2 connection accepted remote=100.117.189.121:45908
+[2026-11-12 15:00:43.364] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 15:00:43.365] [debug] v2 session: control stream open source=100.117.x.x
+[2026-11-12 15:00:43.365] [trace] wrote 49 bytes stream=client bidirectional stream 0
+[2026-11-12 15:00:43.365] [trace] STREAM id=client bidirectional stream 0 off=0 len=49 fin=false
+[2026-11-12 15:00:43.365] [trace] sending 78 bytes in 1 datagrams
+[2026-11-12 15:00:43.390] [trace] got Data packet (35 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.390] [trace] got frame Ack(Ack { largest: 0, delay: 3277, ecn: Some(EcnCounts { ect0: 1, ect1: 0, ce: 0 }), ranges: "[0..=0]" })
+[2026-11-12 15:00:43.412] [trace] got Data packet (64 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.412] [trace] got frame Ack(Ack { largest: 3, delay: 4, ecn: Some(EcnCounts { ect0: 3, ect1: 0, ce: 0 }), ranges: "[3..=3,0..=1]" })
+[2026-11-12 15:00:43.412] [trace] got frame NewConnectionId(NewConnectionId { sequence: 5, retire_prior_to: 0, id: [114, 160, 231, 218, 226, 168, 243, 236], reset_token: ResetToken([78, 45, 230, 59, 233, 112, 255, 207, 118, 51, 48, 0, 217, 156, 48, 178]) })
+[2026-11-12 15:00:43.412] [trace] sequence=5 id=72a0e7dae2a8f3ec retire_prior_to=0
+[2026-11-12 15:00:43.413] [trace] got Data packet (112 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.413] [trace] got stream frame id=client bidirectional stream 0 offset=50 len=81 fin=false
+[2026-11-12 15:00:43.414] [trace] ACK ArrayRangeSet([3..6]), Delay = 141us
+[2026-11-12 15:00:43.414] [trace] sending 34 bytes in 1 datagrams
+[2026-11-12 15:00:43.415] [trace] wrote 26 bytes stream=client bidirectional stream 0
+[2026-11-12 15:00:43.415] [trace] STREAM id=client bidirectional stream 0 off=49 len=26 fin=false
+[2026-11-12 15:00:43.415] [trace] sending 56 bytes in 1 datagrams
+[2026-11-12 15:00:43.419] [trace] timeout timer=LossDetection
+[2026-11-12 15:00:43.419] [trace] PADDING * 1298
+[2026-11-12 15:00:43.419] [trace] writing MTUD probe probe_size=1326
+[2026-11-12 15:00:43.419] [trace] sending 1326 bytes in 1 datagrams
+[2026-11-12 15:00:43.461] [trace] got Data packet (56 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.461] [trace] got stream frame id=client bidirectional stream 0 offset=131 len=17 fin=false
+[2026-11-12 15:00:43.461] [trace] got frame Ack(Ack { largest: 5, delay: 11, ecn: Some(EcnCounts { ect0: 5, ect1: 0, ce: 0 }), ranges: "[4..=5]" })
+[2026-11-12 15:00:43.461] [trace] ACK ArrayRangeSet([7..8]), Delay = 204us
+[2026-11-12 15:00:43.461] [trace] sending 34 bytes in 1 datagrams
+[2026-11-12 15:00:43.461] [trace] wrote 19 bytes stream=client bidirectional stream 0
+[2026-11-12 15:00:43.461] [trace] STREAM id=client bidirectional stream 0 off=75 len=19 fin=false
+[2026-11-12 15:00:43.461] [trace] sending 50 bytes in 1 datagrams
+[2026-11-12 15:00:43.508] [trace] got Data packet (34 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.508] [trace] got frame Ack(Ack { largest: 8, delay: 12, ecn: Some(EcnCounts { ect0: 7, ect1: 0, ce: 0 }), ranges: "[7..=8]" })
+[2026-11-12 15:00:43.508] [trace] PADDING * 1298
+[2026-11-12 15:00:43.508] [trace] writing MTUD probe probe_size=1326
+[2026-11-12 15:00:43.508] [trace] sending 1326 bytes in 1 datagrams
+[2026-11-12 15:00:43.609] [trace] timeout timer=LossDetection
+[2026-11-12 15:00:43.609] [trace] PTO fired in_flight=1326 count=0 space=Data
+[2026-11-12 15:00:43.609] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:43.609] [trace] ACK ArrayRangeSet([8..9]), Delay = 101052us
+[2026-11-12 15:00:43.609] [trace] sending 36 bytes in 1 datagrams
+[2026-11-12 15:00:43.609] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:43.609] [trace] PADDING * 3
+[2026-11-12 15:00:43.609] [trace] sending 30 bytes in 1 datagrams
+[2026-11-12 15:00:43.632] [trace] got Data packet (36 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.632] [trace] got frame ImmediateAck
+[2026-11-12 15:00:43.633] [trace] got frame Ack(Ack { largest: 8, delay: 15574, ecn: Some(EcnCounts { ect0: 7, ect1: 0, ce: 0 }), ranges: "[7..=8]" })
+[2026-11-12 15:00:43.633] [trace] ACK ArrayRangeSet([8..9, 10..11]), Delay = 165us
+[2026-11-12 15:00:43.633] [trace] sending 36 bytes in 1 datagrams
+[2026-11-12 15:00:43.633] [trace] got Data packet (30 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.633] [trace] got frame ImmediateAck
+[2026-11-12 15:00:43.633] [trace] ACK ArrayRangeSet([8..9, 10..12]), Delay = 111us
+[2026-11-12 15:00:43.633] [trace] sending 36 bytes in 1 datagrams
+[2026-11-12 15:00:43.655] [trace] got Data packet (34 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.655] [trace] got frame Ack(Ack { largest: 11, delay: 10, ecn: Some(EcnCounts { ect0: 9, ect1: 0, ce: 0 }), ranges: "[10..=11]" })
+[2026-11-12 15:00:43.655] [trace] PADDING * 1234
+[2026-11-12 15:00:43.655] [trace] writing MTUD probe probe_size=1262
+[2026-11-12 15:00:43.656] [trace] sending 1262 bytes in 1 datagrams
+[2026-11-12 15:00:43.750] [trace] timeout timer=LossDetection
+[2026-11-12 15:00:43.750] [trace] PTO fired in_flight=1262 count=0 space=Data
+[2026-11-12 15:00:43.750] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:43.750] [trace] ACK ArrayRangeSet([10..13]), Delay = 95129us
+[2026-11-12 15:00:43.750] [trace] sending 36 bytes in 1 datagrams
+[2026-11-12 15:00:43.751] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:43.751] [trace] PADDING * 3
+[2026-11-12 15:00:43.751] [trace] sending 30 bytes in 1 datagrams
+[2026-11-12 15:00:43.787] [trace] got Data packet (36 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.787] [trace] got frame ImmediateAck
+[2026-11-12 15:00:43.787] [trace] got frame Ack(Ack { largest: 13, delay: 13528, ecn: Some(EcnCounts { ect0: 11, ect1: 0, ce: 0 }), ranges: "[10..=13]" })
+[2026-11-12 15:00:43.787] [trace] got Data packet (30 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.788] [trace] got frame ImmediateAck
+[2026-11-12 15:00:43.788] [trace] ACK ArrayRangeSet([12..13, 14..16]), Delay = 218us
+[2026-11-12 15:00:43.788] [trace] sending 36 bytes in 1 datagrams
+[2026-11-12 15:00:43.798] [trace] got Data packet (36 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.798] [trace] got frame Ack(Ack { largest: 15, delay: 9, ecn: Some(EcnCounts { ect0: 12, ect1: 0, ce: 0 }), ranges: "[15..=15,12..=13]" })
+[2026-11-12 15:00:43.799] [trace] got Data packet (36 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.799] [trace] got frame Ack(Ack { largest: 16, delay: 2, ecn: Some(EcnCounts { ect0: 13, ect1: 0, ce: 0 }), ranges: "[15..=16,12..=13]" })
+[2026-11-12 15:00:43.799] [trace] PADDING * 1234
+[2026-11-12 15:00:43.799] [trace] writing MTUD probe probe_size=1262
+[2026-11-12 15:00:43.799] [trace] sending 1262 bytes in 1 datagrams
+[2026-11-12 15:00:43.885] [trace] timeout timer=LossDetection
+[2026-11-12 15:00:43.885] [trace] PTO fired in_flight=1262 count=0 space=Data
+[2026-11-12 15:00:43.885] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:43.885] [trace] ACK ArrayRangeSet([14..18]), Delay = 86962us
+[2026-11-12 15:00:43.885] [trace] sending 36 bytes in 1 datagrams
+[2026-11-12 15:00:43.885] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:43.885] [trace] PADDING * 3
+[2026-11-12 15:00:43.885] [trace] sending 30 bytes in 1 datagrams
+[2026-11-12 15:00:43.931] [trace] got Data packet (36 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.931] [trace] got frame Ack(Ack { largest: 20, delay: 10, ecn: Some(EcnCounts { ect0: 16, ect1: 0, ce: 0 }), ranges: "[19..=20,17..=17]" })
+[2026-11-12 15:00:43.931] [trace] PADDING * 1234
+[2026-11-12 15:00:43.931] [trace] writing MTUD probe probe_size=1262
+[2026-11-12 15:00:43.931] [trace] sending 1262 bytes in 1 datagrams
+[2026-11-12 15:00:43.935] [trace] got Data packet (30 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.935] [trace] key update authenticated
+[2026-11-12 15:00:43.935] [trace] executing key update
+[2026-11-12 15:00:43.935] [trace] got frame ImmediateAck
+[2026-11-12 15:00:43.935] [trace] ACK ArrayRangeSet([19..21]), Delay = 177us
+[2026-11-12 15:00:43.935] [trace] sending 34 bytes in 1 datagrams
+[2026-11-12 15:00:43.936] [trace] got Data packet (30 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:43.936] [trace] got frame ImmediateAck
+[2026-11-12 15:00:43.936] [trace] ACK ArrayRangeSet([19..22]), Delay = 124us
+[2026-11-12 15:00:43.936] [trace] sending 34 bytes in 1 datagrams
+[2026-11-12 15:00:44.017] [trace] timeout timer=LossDetection
+[2026-11-12 15:00:44.017] [trace] PTO fired in_flight=1262 count=0 space=Data
+[2026-11-12 15:00:44.017] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:44.017] [trace] ACK ArrayRangeSet([19..22]), Delay = 80974us
+[2026-11-12 15:00:44.017] [trace] sending 36 bytes in 1 datagrams
+[2026-11-12 15:00:44.017] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:44.017] [trace] PADDING * 3
+[2026-11-12 15:00:44.017] [trace] sending 30 bytes in 1 datagrams
+[2026-11-12 15:00:44.066] [trace] got Data packet (34 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.066] [trace] got frame Ack(Ack { largest: 24, delay: 16, ecn: Some(EcnCounts { ect0: 19, ect1: 0, ce: 0 }), ranges: "[22..=24]" })
+[2026-11-12 15:00:44.066] [trace] PADDING * 1202
+[2026-11-12 15:00:44.066] [trace] writing MTUD probe probe_size=1230
+[2026-11-12 15:00:44.066] [trace] sending 1230 bytes in 1 datagrams
+[2026-11-12 15:00:44.066] [trace] got Data packet (34 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.066] [trace] got frame Ack(Ack { largest: 25, delay: 6, ecn: Some(EcnCounts { ect0: 20, ect1: 0, ce: 0 }), ranges: "[22..=25]" })
+[2026-11-12 15:00:44.073] [trace] got Data packet (30 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.073] [trace] got frame ImmediateAck
+[2026-11-12 15:00:44.074] [trace] ACK ArrayRangeSet([23..26]), Delay = 115us
+[2026-11-12 15:00:44.074] [trace] sending 34 bytes in 1 datagrams
+[2026-11-12 15:00:44.074] [trace] got Data packet (30 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.074] [trace] got frame ImmediateAck
+[2026-11-12 15:00:44.074] [trace] ACK ArrayRangeSet([23..27]), Delay = 63us
+[2026-11-12 15:00:44.074] [trace] sending 34 bytes in 1 datagrams
+[2026-11-12 15:00:44.114] [trace] got Data packet (34 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.114] [trace] got frame Ack(Ack { largest: 26, delay: 25, ecn: Some(EcnCounts { ect0: 21, ect1: 0, ce: 0 }), ranges: "[22..=26]" })
+[2026-11-12 15:00:44.114] [trace] new MTU detected current_mtu=1230
+[2026-11-12 15:00:44.114] [trace] PADDING * 1233
+[2026-11-12 15:00:44.115] [trace] writing MTUD probe probe_size=1261
+[2026-11-12 15:00:44.115] [trace] sending 1261 bytes in 1 datagrams
+[2026-11-12 15:00:44.122] [trace] got Data packet (1230 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.122] [trace] got frame Ping
+[2026-11-12 15:00:44.122] [trace] got frame ImmediateAck
+[2026-11-12 15:00:44.122] [trace] ACK ArrayRangeSet([23..29]), Delay = 193us
+[2026-11-12 15:00:44.123] [trace] sending 34 bytes in 1 datagrams
+[2026-11-12 15:00:44.187] [trace] timeout timer=KeyDiscard
+[2026-11-12 15:00:44.196] [trace] timeout timer=LossDetection
+[2026-11-12 15:00:44.196] [trace] PTO fired in_flight=1261 count=0 space=Data
+[2026-11-12 15:00:44.196] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:44.196] [trace] PADDING * 3
+[2026-11-12 15:00:44.196] [trace] sending 30 bytes in 1 datagrams
+[2026-11-12 15:00:44.196] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:44.196] [trace] PADDING * 3
+[2026-11-12 15:00:44.196] [trace] sending 30 bytes in 1 datagrams
+[2026-11-12 15:00:44.246] [trace] got Data packet (36 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.246] [trace] got frame Ack(Ack { largest: 32, delay: 5, ecn: Some(EcnCounts { ect0: 26, ect1: 0, ce: 0 }), ranges: "[30..=32,27..=28]" })
+[2026-11-12 15:00:44.246] [trace] got Data packet (36 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.246] [trace] got frame Ack(Ack { largest: 31, delay: 12, ecn: Some(EcnCounts { ect0: 25, ect1: 0, ce: 0 }), ranges: "[30..=31,27..=28]" })
+[2026-11-12 15:00:44.246] [trace] PADDING * 1233
+[2026-11-12 15:00:44.246] [trace] writing MTUD probe probe_size=1261
+[2026-11-12 15:00:44.246] [trace] sending 1261 bytes in 1 datagrams
+[2026-11-12 15:00:44.252] [trace] got Data packet (30 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.252] [trace] got frame ImmediateAck
+[2026-11-12 15:00:44.252] [trace] ACK ArrayRangeSet([30..33]), Delay = 117us
+[2026-11-12 15:00:44.252] [trace] sending 34 bytes in 1 datagrams
+[2026-11-12 15:00:44.252] [trace] got Data packet (30 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.253] [trace] got frame ImmediateAck
+[2026-11-12 15:00:44.253] [trace] ACK ArrayRangeSet([30..34]), Delay = 184us
+[2026-11-12 15:00:44.253] [trace] sending 34 bytes in 1 datagrams
+[2026-11-12 15:00:44.328] [trace] timeout timer=LossDetection
+[2026-11-12 15:00:44.328] [trace] PTO fired in_flight=1261 count=0 space=Data
+[2026-11-12 15:00:44.328] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:44.328] [trace] ACK ArrayRangeSet([30..34]), Delay = 75850us
+[2026-11-12 15:00:44.328] [trace] sending 36 bytes in 1 datagrams
+[2026-11-12 15:00:44.328] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:44.328] [trace] PADDING * 3
+[2026-11-12 15:00:44.328] [trace] sending 30 bytes in 1 datagrams
+[2026-11-12 15:00:44.377] [trace] got Data packet (34 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.377] [trace] got frame Ack(Ack { largest: 37, delay: 6, ecn: Some(EcnCounts { ect0: 30, ect1: 0, ce: 0 }), ranges: "[34..=37]" })
+[2026-11-12 15:00:44.377] [trace] got Data packet (34 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.377] [trace] got frame Ack(Ack { largest: 36, delay: 13, ecn: Some(EcnCounts { ect0: 29, ect1: 0, ce: 0 }), ranges: "[34..=36]" })
+[2026-11-12 15:00:44.377] [trace] PADDING * 1233
+[2026-11-12 15:00:44.377] [trace] writing MTUD probe probe_size=1261
+[2026-11-12 15:00:44.377] [trace] sending 1261 bytes in 1 datagrams
+[2026-11-12 15:00:44.379] [trace] got Data packet (30 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.379] [trace] got frame ImmediateAck
+[2026-11-12 15:00:44.379] [trace] got Data packet (30 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.379] [trace] got frame ImmediateAck
+[2026-11-12 15:00:44.379] [trace] skipping pn 39
+[2026-11-12 15:00:44.379] [trace] ACK ArrayRangeSet([35..39]), Delay = 174us
+[2026-11-12 15:00:44.379] [trace] sending 34 bytes in 1 datagrams
+[2026-11-12 15:00:44.458] [trace] timeout timer=LossDetection
+[2026-11-12 15:00:44.458] [trace] PTO fired in_flight=1261 count=0 space=Data
+[2026-11-12 15:00:44.458] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:44.458] [trace] ACK ArrayRangeSet([35..39]), Delay = 79081us
+[2026-11-12 15:00:44.458] [trace] sending 36 bytes in 1 datagrams
+[2026-11-12 15:00:44.458] [trace] IMMEDIATE_ACK
+[2026-11-12 15:00:44.458] [trace] PADDING * 3
+[2026-11-12 15:00:44.458] [trace] sending 30 bytes in 1 datagrams
+[2026-11-12 15:00:44.505] [trace] got Data packet (35 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.506] [trace] got frame ImmediateAck
+[2026-11-12 15:00:44.506] [trace] got frame Ack(Ack { largest: 42, delay: 14, ecn: Some(EcnCounts { ect0: 33, ect1: 0, ce: 0 }), ranges: "[40..=42]" })
+[2026-11-12 15:00:44.506] [trace] got Data packet (30 bytes) from 100.117.189.121:45908 using id 94ca9576d91b1bc0
+[2026-11-12 15:00:44.506] [trace] got frame ImmediateAck
+[2026-11-12 15:00:44.506] [trace] ACK ArrayRangeSet([40..42]), Delay = 207us
+[2026-11-12 15:00:44.506] [trace] sending 34 bytes in 1 datagrams

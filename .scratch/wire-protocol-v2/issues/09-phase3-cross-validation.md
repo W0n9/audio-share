@@ -30,3 +30,15 @@
 
 - 上述每项有 PASS/FAIL/NOT RUN + 证据；无 FAIL（有 FAIL 按裁决修或升格工单）。
 - phase-3 报告落档；本 ticket resolved 即第 3 阶段（Tracer-Bullet 第 3 步）完成，第 4 步（单 Client PCM 媒体 + 统计 + 显式关闭）解锁。
+
+## Comments
+
+**2026-11-12 — phase-3 device cross-validation executed; Status stays `claimed` due to one FAIL (live revocation).**
+
+- Environment: `ticket/09-phase3-cross-validation` @ `9c706dd`; server `as-cmd --v2-port 65531` from this worktree; APK rebuilt from this worktree (sha256 `59b4b97a9e5d51ec3062569de19cd99e88e5cdf22c6136ebbadb461749b64bf6`), Xiaomi M2007J22C / Android 12 / API 31 / arm64, adb over tailscale. Full report: [`phase-3-report.md`](../phase-3-report.md); evidence: [`evidence/ticket-09/`](../evidence/ticket-09/).
+- Positive E2E PASS with the documented temporary bypass for the thread-local auth-context defect (`android-client-v2/native/src/session.rs:89-95`, 2 → 1 runtime workers; real fix owned by `review/wire-protocol-v2-fixes`). READY reached; idle >80 s PASS; lock/unlock PASS; network loss → bounded backoff → READY PASS; clean Close 701 captured on the server via Activity recreation (UI has no stop button; BACK only backgrounds under MIUI).
+- Negative: wrong SPKI pin PASS (handshake rejection, no app data); unknown identity PASS (device rejection; exact 202 proven by `state_machine.rs:213` + replay fixture `control/error-202-authorization-unknown.json` because `driver.rs:314-317` logs a hardcoded `code=203`); TM-5 per-source 20/60 s PASS on device (first 20 failures then 302/budget exhausted), per-connection 5-failure PASS on host live-QUIC; stray-frame 402 / malformed 401 PASS on host live-QUIC (NOT RUN on device — no injection surface).
+- **FAIL — live revocation ≤5 s:** READY session survived >12 s after removing the client record from `pairing/clients.json`; server never terminated it. Root cause: `AuthorizationStore` loads the file once, no reload or runtime revoke surface in `as-cmd`, and the driver's 2 s revocation poll only acts on `Revoked`, not removed/`Unknown` identities (`state_machine.rs:712`). New-connection-after-revocation 204 PASS via server restart (exact 204 covered by `session_driver.rs:454`), but the live-teardown requirement is unmet → `pairing.md` §9.2 violation.
+- v1 regression PASS: 6/6 `protocol-harness replay` suites; `cargo test --workspace` 435 passed / 0 failed / 3 ignored; live v1 replay on 65530 while v2 READY on 65531; `android-app/` zero diff and `assembleDebug` BUILD SUCCESSFUL with a temporary local debug-signing `keystore.properties` (removed afterwards). Rust replay 22 tests + Android native 83 tests PASS.
+- Adjudication needed: implement store reload/revoke handling (reload on revocation poll; treat now-unknown authenticated identity as revocation; and/or production revoke surface) and re-run the ≤5 s + 204 device checks. This is not among the six known review-branch defects, so it needs an owner; ticket cannot be resolved until it passes. Secondary: server auth-failure log should print the real registry code instead of hardcoded 203.
+

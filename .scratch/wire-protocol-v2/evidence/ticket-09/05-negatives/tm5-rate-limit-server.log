@@ -1,0 +1,30 @@
+[2026-11-12 14:52:06.635] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:08.116] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:09.365] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:10.824] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:12.084] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:13.504] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:14.852] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:16.280] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:17.048] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:17.549] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:18.936] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:20.240] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:21.643] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:23.019] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:24.448] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:25.714] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:27.134] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:28.551] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:29.923] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:31.213] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:52:31.213] [info] v2 session: source auth-failure budget reached source=100.117.x.x code=302
+[2026-11-12 14:52:32.590] [info] v2 session: source auth-failure budget exhausted source=100.117.x.x code=302
+[2026-11-12 14:52:33.929] [info] v2 session: source auth-failure budget exhausted source=100.117.x.x code=302
+[2026-11-12 14:52:35.254] [info] v2 session: source auth-failure budget exhausted source=100.117.x.x code=302
+[2026-11-12 14:52:36.715] [info] v2 session: source auth-failure budget exhausted source=100.117.x.x code=302
+[2026-11-12 14:52:38.020] [info] v2 session: source auth-failure budget exhausted source=100.117.x.x code=302
+[2026-11-12 14:52:39.105] [info] v2 session: source auth-failure budget exhausted source=100.117.x.x code=302
+[2026-11-12 14:52:41.211] [info] v2 session: source auth-failure budget exhausted source=100.117.x.x code=302
+[2026-11-12 14:52:44.773] [info] v2 session: source auth-failure budget exhausted source=100.117.x.x code=302
+[2026-11-12 14:52:53.324] [info] v2 session: source auth-failure budget exhausted source=100.117.x.x code=302
