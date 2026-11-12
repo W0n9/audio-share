@@ -203,10 +203,11 @@ impl SessionServer {
             capture_active: self.capture_active,
             capture_healthy: self.capture_healthy,
             max_auth_failures_per_connection: self.limits.max_auth_failures_per_connection,
+            #[cfg(feature = "test-support")]
             server_random_override: None,
             // The driver always supplies the real per-connection exporter;
             // fixture replay supplies the recorded constant.
-            auth_exporter_override: Some(exporter.to_vec()),
+            auth_exporter: Some(exporter.to_vec()),
             keep_old_on_supersede: crate::state_machine::SUPERSEDE_KEEP_OLD,
             session_id_base,
         };

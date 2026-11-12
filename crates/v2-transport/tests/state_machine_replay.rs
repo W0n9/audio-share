@@ -66,7 +66,7 @@ fn config(_store: &std::sync::Arc<AuthorizationStore>) -> ServerConfig {
         capture_healthy: true,
         max_auth_failures_per_connection: 5,
         server_random_override: Some(unhex(SERVER_RANDOM)),
-        auth_exporter_override: Some(unhex(AUTH_EXPORTER)),
+        auth_exporter: Some(unhex(AUTH_EXPORTER)),
         keep_old_on_supersede: v2_transport::state_machine::SUPERSEDE_KEEP_OLD,
         session_id_base: 1,
     }
