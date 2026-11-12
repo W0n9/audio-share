@@ -23,7 +23,7 @@
 
 use crate::proto::{frame::Body, Configuration, Frame};
 
-mod helpers {
+pub(crate) mod signing_context {
     //! Error/Close frame builders and the auth-proof delegation. Kept as a
     //! child module so the wire order (Error before Close, §5.2 fatal class)
     //! has one home.
@@ -67,7 +67,6 @@ mod helpers {
     }
 
     /// Register the session's auth context inputs. Called once per connection.
-    #[cfg(test)]
     pub fn register_auth_context(server_public_key: Vec<u8>, auth_exporter: Vec<u8>) {
         SERVER_PUBLIC_KEY.with(|c| *c.borrow_mut() = Some(server_public_key));
         EXPORTER.with(|c| *c.borrow_mut() = auth_exporter);
@@ -199,7 +198,7 @@ impl ClientMachine {
                 // §5.3: send AuthProof over the raw auth_context bytes. The
                 // signing key + exporter are session context (helpers::proof),
                 // not machine state.
-                match helpers::proof(c.request_id, c.server_random.as_slice()) {
+                match signing_context::proof(c.request_id, c.server_random.as_slice()) {
                     Ok(f) => (Ok(Verdict::Send(f)), None),
                     Err(_) => (Err(CloseInfo { code: 601, remote: false }), None),
                 }
@@ -382,7 +381,7 @@ impl ClientMachine {
             ClientState::Closed => Verdict::Ok,
             _ => {
                 self.state = ClientState::Closed;
-                Verdict::Send(helpers::close_frame(701))
+                Verdict::Send(signing_context::close_frame(701))
             }
         }
     }
@@ -546,7 +545,7 @@ mod tests {
     /// the raw auth_context). The signature verifies against the fixture key.
     #[test]
     fn auth_challenge_yields_verifiable_auth_proof() {
-        helpers::register_auth_context(
+        signing_context::register_auth_context(
             crate::auth::tests_const_server_pub(),
             crate::auth::tests_const_exporter(),
         );
@@ -839,7 +838,7 @@ mod tests {
 #[cfg(test)]
 pub mod tests_public {
     pub fn register_test_signing_context() {
-        crate::control::helpers::register_auth_context(
+        crate::control::signing_context::register_auth_context(
             crate::auth::tests_const_server_pub(),
             crate::auth::tests_const_exporter(),
         );
