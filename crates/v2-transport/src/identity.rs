@@ -154,7 +154,7 @@ impl ServerIdentity {
             let document = Ed25519KeyPair::generate_pkcs8(&rng)
                 .map_err(|_| IdentityError::Io {
                     operation: "generate Ed25519 identity key",
-                    source: io::Error::new(io::ErrorKind::Other, "ring key generation failed"),
+                    source: io::Error::other("ring key generation failed"),
                 })?
                 .as_ref()
                 .to_vec();
@@ -229,14 +229,14 @@ impl ServerIdentity {
         let mut params = rcgen::CertificateParams::new(vec!["audio-share-server.local".to_owned()])
             .map_err(|error| IdentityError::Io {
                 operation: "build certificate parameters",
-                source: io::Error::new(io::ErrorKind::Other, error.to_string()),
+                source: io::Error::other(error.to_string()),
             })?;
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         let certificate = params
             .self_signed(&key_pair)
             .map_err(|error| IdentityError::Io {
                 operation: "self-sign the identity certificate",
-                source: io::Error::new(io::ErrorKind::Other, error.to_string()),
+                source: io::Error::other(error.to_string()),
             })?;
 
         let provider = rustls::crypto::ring::default_provider();
@@ -395,8 +395,7 @@ mod tests {
     #[test]
     fn fingerprint_is_eight_groups_of_eight_uppercase_hex() {
         // pairing.md §7.4 example shape: "1A2B3C4D 5E6F7081 …" × 8 groups.
-        let digest: Vec<u8> = std::iter::repeat([0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81])
-            .take(4)
+        let digest: Vec<u8> = std::iter::repeat_n([0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81], 4)
             .flatten()
             .collect();
         let groups = hex_groups(&digest[..32]);

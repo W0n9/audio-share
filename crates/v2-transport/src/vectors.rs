@@ -291,7 +291,7 @@ fn replay_frame_step(
     let frame_hex = step
         .frame_hex
         .as_deref()
-        .ok_or_else(|| format!("frame step without frame_hex"))?;
+        .ok_or_else(|| "frame step without frame_hex".to_string())?;
     let body_hex = step
         .body_hex
         .as_deref()
@@ -1136,7 +1136,7 @@ fn check_size_bound(case: &FixtureCase, bound: &SizeBound) -> Result<(), String>
         let frame_hex = step
             .frame_hex
             .as_deref()
-            .ok_or_else(|| format!("size bound on a step without frame_hex"))?;
+            .ok_or_else(|| "size bound on a step without frame_hex".to_string())?;
         let framed = unhex(frame_hex);
         if framed.len() > bound.max_frame_bytes {
             return Err(format!(
