@@ -121,6 +121,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "v2-transport",
 ]
 
 [[package]]

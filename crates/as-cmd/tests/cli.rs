@@ -29,6 +29,11 @@ fn help_prints_the_old_examples_flags_and_defaults() {
             .stdout(predicate::str::contains("--channels"))
             .stdout(predicate::str::contains("--sample-rate"))
             .stdout(predicate::str::contains("65530"))
+            // v2 flags: the default v2 port and the disable value are
+            // documented in the help (spec D1; pairing.md §10.2).
+            .stdout(predicate::str::contains("--v2-port"))
+            .stdout(predicate::str::contains("65531"))
+            .stdout(predicate::str::contains("--allow-loose-key-permissions"))
             .stdout(predicate::str::contains("default"));
     }
 }
