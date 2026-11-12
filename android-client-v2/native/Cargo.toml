@@ -1,0 +1,57 @@
+# Native core of the wire-protocol-v2 Android Client (ticket 08).
+#
+# Standalone crate — deliberately NOT part of the repo root cargo workspace:
+# the root workspace owns the Server crates and must keep building/behaving
+# untouched by this ticket, and the Android build compiles this crate with the
+# NDK toolchain outside any host workspace resolution (same isolation rule the
+# prototype recorded in its BUILD.md build-failure list).
+[workspace]
+
+[package]
+name = "audio-share-client-v2-native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "audio_share_client_v2_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# prost codegen of the frozen control schema (protos/wire-protocol-v2/control.proto)
+# — replaces the prototype's hand-written frame codec; workspace uses 0.13.
+prost = { version = "0.13", features = ["std", "derive"], default-features = false }
+# generated code needs bytes for Bytes types (none used today) + derive machinery
+once_cell = "1"
+quinn = { version = "0.11", default-features = false, features = ["rustls-ring", "runtime-tokio", "log"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+rustls-pki-types = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
+jni = "0.21"
+log = "0.4"
+# Client identity key: ECDSA P-256 + SHA-256 (pairing.md §2 PR-2). On-device
+# signing normally goes through Android Keystore via JNI; this Rust-side
+# implementation covers host tests and the test-only software key path
+# (pairing.md §10.1 documents the software fallback).
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+sha2 = "0.10"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.14"
+
+[dev-dependencies]
+# host-test-only: local TLS fixtures for the verifier tests (never shipped)
+rcgen = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+# NOTE: no panic="abort" — the JNI boundary relies on catch_unwind; aborting
+# would kill the whole Android app instead of failing one call.
+strip = "none"
+
+[build-dependencies]
+prost-build = "0.13"

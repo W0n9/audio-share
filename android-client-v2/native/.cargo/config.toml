@@ -1,0 +1,13 @@
+# Direct NDK clang linker config (ticket 08 client crate) — same shape as the
+# prototype's (ticket 01): cargo-ndk was NOT used — the NDK's API-26 clang
+# wrapper is referenced directly so the cdylib links against the exact minSdk
+# bionic the build gates on. Path is machine-local (this build host);
+# ANDROID_HOME is NOT set globally on this machine.
+[target.aarch64-linux-android]
+linker = "/home/w0n9/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+
+# cc-rs (ring's asm/C build script) needs the cross C compiler + archiver too;
+# the NDK ships only API-suffixed clang wrappers, so name them explicitly.
+[env]
+CC_aarch64_linux_android = "/home/w0n9/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+AR_aarch64_linux_android = "/home/w0n9/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
