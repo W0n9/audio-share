@@ -387,7 +387,7 @@ async fn start_v2_transport(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
     let identity_config = v2_transport::identity::IdentityConfig {
-        data_dir,
+        data_dir: data_dir.clone(),
         allow_loose_permissions: cli.allow_loose_key_permissions,
     };
     let identity = v2_transport::identity::ServerIdentity::open(&identity_config)
@@ -403,6 +403,21 @@ async fn start_v2_transport(
         );
     }
 
+    // pairing.md §10.3: the authorization store fails closed. A corrupt
+    // `pairing/clients.json` refuses v2 (v1 and capture stay unaffected)
+    // instead of silently authorizing or regenerating anything.
+    let store = v2_transport::auth_store::AuthorizationStore::open(&data_dir)
+        .map_err(|error| format!("authorization store: {error}"))?;
+    let authorized = store.clients().len();
+    tracing::info!(
+        "v2 authorization store ready: {authorized} client record(s), {}",
+        if store.is_persistent() { "persistent" } else { "in-memory" }
+    );
+    let session_server = std::sync::Arc::new(v2_transport::driver::SessionServer::new(
+        &identity,
+        std::sync::Arc::new(store),
+    ));
+
     let bind = resolve_bind_address(host, cli.v2_port)
         .await
         .map_err(|error| format!("resolve v2 bind address: {error}"))?;
@@ -417,9 +432,9 @@ async fn start_v2_transport(
         .map_err(|error| error.to_string())?,
     );
 
-    // The accept loop owns the capacity guards (TM-1/TM-2) and logs every
-    // connection's lifecycle outcome. Admitted connections are parked until
-    // the peer or a later ticket's session layer closes them.
+    // The accept loop owns the capacity guards (TM-1/TM-2); each admitted
+    // connection is driven through the §5.2 session machine (ticket 07), and
+    // the per-connection task releases the session slot when it ends.
     let accept_transport = std::sync::Arc::clone(&transport);
     let accept_task = tokio::spawn(async move {
         let mut guard = v2_transport::limits::CapacityGuard::new(v2_transport::limits::Limits::defaults());
@@ -428,9 +443,11 @@ async fn start_v2_transport(
             match accepted.connection {
                 Some(connection) => {
                     let remote = accepted.remote_address;
+                    let server = std::sync::Arc::clone(&session_server);
+                    let mut session_guard = guard.clone();
                     tokio::spawn(async move {
-                        let closed = connection.closed().await;
-                        let termination = v2_transport::transport::classify_close(&closed);
+                        let termination = server.serve_connection(connection, remote).await;
+                        session_guard.session_ended();
                         tracing::info!(
                             remote = ?remote,
                             "v2 session ended: {:?}",

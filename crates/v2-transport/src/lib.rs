@@ -23,8 +23,16 @@
 #![allow(missing_docs, reason = "schema fields mirror the proto file's comments")]
 
 
+/// Authentication primitives: auth_context TLV, ECDSA-P256-SHA256 proof
+/// verification over the raw bytes (PR-9), client_id, capability-list rules.
+pub mod auth;
+/// The server-side authorization store: `pairing/clients.json` (§8.1/§10).
+pub mod auth_store;
 /// Normative v2 constants: ports, ALPN, frame caps, §6 error registry.
 pub mod codes;
+/// The per-connection driver: QUIC connection + control framing + §5.2 state
+/// machine on one live session (ticket 07).
+pub mod driver;
 /// Control-stream framing: `u32 BE length | Frame` with the §3 validation.
 pub mod framing;
 /// Server identity key lifecycle: Ed25519, PKCS#8 PEM, 0600/0700, fail-closed.
@@ -35,6 +43,8 @@ pub mod limits;
 pub mod send_queue;
 /// Hand-written prost transcription of `protos/wire-protocol-v2/control.proto`.
 pub mod schema;
+/// The §5.2 Server session state machine (ticket 07) — pure domain logic.
+pub mod state_machine;
 /// Connection lifecycle state exposed through the domain API (spec §5.1).
 pub mod session;
 /// The quinn endpoint: TLS 1.3, ALPN, 0-RTT off, accept loop, close codes.
