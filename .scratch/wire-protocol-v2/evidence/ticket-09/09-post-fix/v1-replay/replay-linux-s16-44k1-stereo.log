@@ -1,0 +1,8 @@
+# ./target/release/protocol-harness replay --fixture fixtures/protocol/v0.3.4/linux/s16-44k1-stereo
+replay: ok (offline)
+fixture: fixtures/protocol/v0.3.4/linux/s16-44k1-stereo
+provenance: recorded-v0.3.4-linux
+format: Some(Pcm16Bit) channels=2 sample_rate=44100 block_align=4
+control: start_play_id=1 heartbeats=3
+pcm: 32 datagrams, 40444 bytes, aligned payload 1464 (MTU 1492)
+# RESULT: exit=0

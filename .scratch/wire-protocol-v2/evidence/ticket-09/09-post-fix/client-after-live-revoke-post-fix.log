@@ -1,0 +1,124 @@
+11-12 23:51:29.980 I/ActivityTaskManager( 1369): START u0 {act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10000000 pkg=09 cmp=dev.audioshare.v2/.MainActivity (has extras)} from uid 2000 from pid 20955 callingPackage com.android.shell
+11-12 23:51:30.110 I/ActivityManager( 1369): Start proc 20964:dev.audioshare.v2/u0a255 for pre-top-activity {dev.audioshare.v2/dev.audioshare.v2.MainActivity} caller=others
+11-12 23:51:30.142 I/PowerHalWrapper( 1369): amsBoostNotify pid:20964,activity:dev.audioshare.v2.MainActivity, package:dev.audioshare.v2, mProcessCreatePackdev.audioshare.v2 
+11-12 23:51:30.142 I/libPowerHal(  772): [perfNotifyAppState] pack:dev.audioshare.v2, act:dev.audioshare.v2.MainActivity, state:1, pid:20964, uid:10255, fps:-1
+11-12 23:51:30.176 W/RecentsModel( 2151): getRunningTask   taskInfo=TaskInfo{userId=0 taskId=1257 displayId=0 isRunning=true baseIntent=Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10000000 pkg=09 cmp=dev.audioshare.v2/.MainActivity } baseActivity=ComponentInfo{dev.audioshare.v2/dev.audioshare.v2.MainActivity} topActivity=ComponentInfo{dev.audioshare.v2/dev.audioshare.v2.MainActivity} origActivity=null realActivity=ComponentInfo{dev.audioshare.v2/dev.audioshare.v2.MainActivity} numActivities=1 lastActiveTime=776651346 supportsSplitScreenMultiWindow=true supportsMultiWindow=true resizeMode=1 isResizeable=true token=WCT{android.window.IWindowContainerToken$Stub$Proxy@5a165a0} topActivityType=1 pictureInPictureParams=PictureInPictureParams( aspectRatio=null sourceRectHint=null hasSetActions=false isAutoPipEnabled=false isSeamlessResizeEnabled=true) displayCutoutSafeInsets=Rect(0, 99 - 0, 0) topActivityInfo=ActivityInfo{c6f3559 dev.audioshare.v2.MainActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=false isVisible=true topActivityInSizeCompat=false locusId= null windowMode=0}
+11-12 23:51:30.176 W/RecentsModel( 2151): getTaskInfoIgnoreHomeAndFreeform   taskInfo=ComponentInfo{dev.audioshare.v2/dev.audioshare.v2.MainActivity}
+11-12 23:51:30.180 E/ActivityManagerWrapper( 2151): getRecentTasks: taskId=1257   userId=0   baseIntent=Intent { act=android.intent.action.MAIN flag=268435456 cmp=ComponentInfo{dev.audioshare.v2/dev.audioshare.v2.MainActivity} }
+11-12 23:51:30.180 E/ActivityManagerWrapper( 2151): getRecentTasks: taskId=1179   userId=0   baseIntent=Intent { act=android.intent.action.MAIN flag=270532608 cmp=ComponentInfo{com.tailscale.ipn/com.tailscale.ipn.MainActivity} }
+11-12 23:51:30.180 E/ActivityManagerWrapper( 2151): getRecentTasks: taskId=1212   userId=0   baseIntent=Intent { act=android.intent.action.MAIN flag=270532608 cmp=ComponentInfo{li.songe.gkd/li.gkd.app.MainActivity} }
+11-12 23:51:30.180 E/ActivityManagerWrapper( 2151): getRecentTasks: taskId=1214   userId=0   baseIntent=Intent { act=android.intent.action.MAIN flag=271056896 cmp=ComponentInfo{com.resukisu.resukisu/com.resukisu.resukisu.ui.MainActivity} }
+11-12 23:51:30.180 E/ActivityManagerWrapper( 2151): getRecentTasks: taskId=1213   userId=0   baseIntent=Intent { act=android.intent.action.MAIN flag=270532608 cmp=ComponentInfo{me.weishu.kernelsu/me.weishu.kernelsu.ui.MainActivity} }
+11-12 23:51:30.274 W/System.err(20964): 	at dev.audioshare.v2.MainActivity.onCreate(Unknown Source:70)
+11-12 23:51:30.288 I/audio_share_client_v2..(20964): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 23:51:30.291 W/ClientSession(20964): rebind: Binding socket to network 242 failed: EPERM (Operation not permitted)
+11-12 23:51:30.291 I/audio_share_client_v2..(20964): session stopped (701 CLIENT_STOPPING)
+11-12 23:51:30.292 I/audio_share_client_v2..(20964): session stopped (701 CLIENT_STOPPING)
+11-12 23:51:30.300 D/ViewRootImpl[MainActivity](20964): hardware acceleration = true, sRendererEnabled = true, forceHwAccelerated = false
+11-12 23:51:30.301 I/ContentCatcher(20964): Interceptor : Catcher list invalid for dev.audioshare.v2@dev.audioshare.v2.MainActivity@136186518
+11-12 23:51:30.318 D/RecentsImpl( 2151): mActivityStateObserver dev.audioshare.v2.MainActivity
+11-12 23:51:30.319 W/RecentsImpl( 2151): onResumed className=dev.audioshare.v2.MainActivity   mIsInAnotherPro=false   isKeyguardLocked=false
+11-12 23:51:30.335 E/BufferQueueDebug(  860): [dev.audioshare.v2/dev.audioshare.v2.MainActivity#0](this:0xb40000710e6f7900,id:-1,api:0,p:-1,c:-1) id info cannot be read from 'dev.audioshare.v2/dev.audioshare.v2.MainActivity#0'
+11-12 23:51:30.336 I/BufferQueueDebug(  860): [dev.audioshare.v2/dev.audioshare.v2.MainActivity#0](this:0xb40000710e6f7900,id:-1,api:0,p:-1,c:-1) BufferQueue core=(860:/system/bin/surfaceflinger)
+11-12 23:51:30.340 I/audio_share_client_v2..(20964): QUIC established
+11-12 23:51:30.352 I/BLASTBufferQueue(20964): [ViewRootImpl[MainActivity]#0] constructor()
+11-12 23:51:30.375 I/BufferQueueProducer(20964): [ViewRootImpl[MainActivity]#0(BLAST Consumer)0](id:51e400000000,api:1,p:20964,c:20964) connect: api=1 producerControlledByApp=true
+11-12 23:51:30.441 I/ActivityTaskManager( 1369): Displayed dev.audioshare.v2/.MainActivity: +459ms
+11-12 23:51:30.519 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32583, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:30.619 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32584, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:30.719 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32585, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:30.823 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32586, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:30.895 D/MyLog   ( 3649): -->log(0): [T81] GamePopupListeneronForegroundAppEnter: pkg=dev.audioshare.v2 cls=dev.audioshare.v2.MainActivity
+11-12 23:51:30.898 D/MyLog   ( 3649): -->log(0): [T81] GamePopupJudgefindMatchedPlans: matched 0 plans for pkg=dev.audioshare.v2, cls=dev.audioshare.v2.MainActivity
+11-12 23:51:30.898 D/MyLog   ( 3649): -->log(0): [T81] GamePopupListeneronForegroundAppEnter: no matching plans found, pkg=dev.audioshare.v2, cls=dev.audioshare.v2.MainActivity, totalPlans=0
+11-12 23:51:30.906 D/WindowManager( 1369): setParent old=ActivityRecord{57e9735 u0 dev.audioshare.v2/.MainActivity t1257},new=null,this window=Window{570fc58 u0 Splash Screen dev.audioshare.v2},callers=com.android.server.wm.WindowContainer.removeChild:613 com.android.server.wm.ActivityRecord.removeChild:4232 com.android.server.wm.ActivityRecord.removeChild:417 com.android.server.wm.WindowContainer.removeImmediately:665 com.android.server.wm.WindowState.removeImmediately:2523 com.android.server.wm.WindowState.destroySurface:3712 
+11-12 23:51:30.924 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32587, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:31.024 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32588, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:31.468 I/audio_share_client_v2..(20964): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 23:51:31.499 I/BufferQueueProducer(  860): [dev.audioshare.v2/dev.audioshare.v2.MainActivity#0](this:0xb40000710e6f7900,id:-1,api:0,p:-1,c:860) queueBuffer: fps=0.93 dur=1073.54 max=1073.54 min=1073.54
+11-12 23:51:31.502 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32589, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:31.519 I/audio_share_client_v2..(20964): QUIC established
+11-12 23:51:31.602 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32590, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:31.749 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32591, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:31.919 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32592, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:32.020 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32593, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:32.120 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32594, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:32.245 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32595, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:32.345 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32596, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:32.445 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32597, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:32.506 I/BufferQueueProducer(  860): [dev.audioshare.v2/dev.audioshare.v2.MainActivity#0](this:0xb40000710e6f7900,id:-1,api:0,p:-1,c:860) queueBuffer: fps=4.96 dur=1007.42 max=264.12 min=16.46
+11-12 23:51:32.546 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32598, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:32.646 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32599, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:32.757 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32600, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:32.857 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32601, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:33.005 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32602, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:33.106 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32603, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:33.252 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32604, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:33.352 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32605, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:33.499 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32606, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:33.599 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32607, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:33.745 I/BufferQueueProducer(  860): [dev.audioshare.v2/dev.audioshare.v2.MainActivity#0](this:0xb40000710e6f7900,id:-1,api:0,p:-1,c:860) queueBuffer: fps=4.04 dur=1238.33 max=247.74 min=247.56
+11-12 23:51:33.747 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32608, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:33.847 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32609, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:33.994 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32610, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:34.095 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32611, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:34.259 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32612, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:34.359 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32613, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:34.507 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32614, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:34.607 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32615, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:34.752 I/BufferQueueProducer(  860): [dev.audioshare.v2/dev.audioshare.v2.MainActivity#0](this:0xb40000710e6f7900,id:-1,api:0,p:-1,c:860) queueBuffer: fps=3.97 dur=1007.31 max=264.24 min=247.64
+11-12 23:51:34.754 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32616, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:34.854 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32617, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:35.002 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32618, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:35.103 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32619, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:35.251 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32620, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:35.351 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32621, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:35.497 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32622, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:35.598 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32623, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:35.759 I/BufferQueueProducer(  860): [dev.audioshare.v2/dev.audioshare.v2.MainActivity#0](this:0xb40000710e6f7900,id:-1,api:0,p:-1,c:860) queueBuffer: fps=3.97 dur=1007.38 max=264.24 min=247.63
+11-12 23:51:35.763 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32624, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:35.864 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32625, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:36.011 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32626, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:36.111 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32627, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:36.259 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32628, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:36.359 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32629, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:36.460 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32630, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:36.561 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32631, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:36.754 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32632, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:36.854 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32633, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:36.998 I/BufferQueueProducer(  860): [dev.audioshare.v2/dev.audioshare.v2.MainActivity#0](this:0xb40000710e6f7900,id:-1,api:0,p:-1,c:860) queueBuffer: fps=4.04 dur=1238.53 max=247.82 min=247.58
+11-12 23:51:37.001 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32634, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:37.101 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32635, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:37.265 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32636, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:37.365 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32637, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:37.513 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32638, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:37.613 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32639, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:37.761 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32640, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:37.862 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32641, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:38.005 I/BufferQueueProducer(  860): [dev.audioshare.v2/dev.audioshare.v2.MainActivity#0](this:0xb40000710e6f7900,id:-1,api:0,p:-1,c:860) queueBuffer: fps=3.97 dur=1007.32 max=264.31 min=247.57
+11-12 23:51:38.009 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32642, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:38.109 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32643, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:38.225 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32644, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:38.237 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32645, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:38.341 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32646, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:38.442 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32647, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:38.542 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32648, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:38.642 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32649, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:38.743 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32650, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:38.843 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32651, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:39.013 I/BufferQueueProducer(  860): [dev.audioshare.v2/dev.audioshare.v2.MainActivity#0](this:0xb40000710e6f7900,id:-1,api:0,p:-1,c:860) queueBuffer: fps=3.97 dur=1007.35 max=264.26 min=247.58
+11-12 23:51:39.015 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32652, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:39.116 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32653, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:39.262 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32654, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:39.362 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32655, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:39.511 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32656, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:39.612 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32657, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:39.759 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32658, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:39.860 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32659, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:40.403 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32660, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:40.505 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32661, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:40.605 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32662, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:44.432 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32663, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:44.533 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32664, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:44.633 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32665, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)
+11-12 23:51:45.039 I/SurfaceFlinger(  860): operator()(), mtkRenderCntDebug 32666, screenshot (dev.audioshare.v2/dev.audioshare.v2.MainActivity#0)

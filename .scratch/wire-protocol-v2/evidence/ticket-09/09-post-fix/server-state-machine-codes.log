@@ -1,0 +1,40 @@
+# cargo test -p v2-transport --test state_machine -- --nocapture
+   Compiling v2-transport v0.4.1 (/home/w0n9/workspaces/audio-share-ticket-09/crates/v2-transport)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.12s
+     Running tests/state_machine.rs (target/debug/deps/state_machine-5c5556d795d77c42)
+
+running 30 tests
+test auth_proof_without_challenge_is_402_fatal ... ok
+test connecting_malformed_frame_is_fatal_401 ... ok
+test connecting_valid_subscribe_is_fatal_402_with_echo ... ok
+test auth_init_retry_gets_a_fresh_challenge ... ok
+test ready_subscribe_ok_with_configuration ... ok
+test fatal_error_class_sends_error_plus_close_and_stops_processing ... ok
+test invalid_signature_is_203_and_counts_a_failure ... ok
+test negotiate_unknown_capability_is_ignored_intersection_empty ... ok
+test idle_timeout_closes_with_601 ... ok
+test negotiating_subscribe_is_402_fatal ... ok
+test negotiating_auth_init_is_402_fatal ... ok
+test negotiate_wrong_major_is_101_fatal ... ok
+test negotiate_minor_above_servers_is_101_fatal ... ok
+test ready_request_configuration_echoes_request_id ... ok
+test ready_capture_unhealthy_subscribe_is_501_retryable ... ok
+test ready_close_received_moves_to_closing_without_echo ... ok
+test connect_auth_negotiate_reaches_ready ... ok
+test negotiate_non_ascending_capabilities_is_401_fatal ... ok
+test close_with_code_zero_is_malformed_401 ... ok
+test closing_rejects_everything_and_transport_lost_absorbs ... ok
+test unsolicited_nonfatal_error_is_advisory_only ... ok
+test ready_unsubscribe_is_idempotent ... ok
+test valid_proof_revoked_identity_is_204 ... ok
+test ready_duplicate_subscribe_is_nonfatal_402_connection_maintained ... ok
+test revoked_active_session_receives_fatal_204_pair ... ok
+test valid_proof_unknown_identity_is_202_connection_stays ... ok
+test supersede_closes_the_old_session_with_303_and_keeps_the_new ... ok
+test auth_failure_log_code_matches_the_reason ... ok
+test fifth_auth_failure_closes_with_203 ... ok
+test deleted_record_is_revoked_on_the_next_check ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+# RESULT: exit=0

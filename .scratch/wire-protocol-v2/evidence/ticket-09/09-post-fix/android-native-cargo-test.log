@@ -1,0 +1,112 @@
+# cd android-client-v2/native && cargo test
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/audio_share_client_v2_native-815e0f4a64342c6d)
+
+running 97 tests
+test auth::tests::auth_context_matches_golden_vector ... ok
+test auth::tests::tlv_layout_is_tag_len_value ... ok
+test control::tests::close_code_zero_is_fatal_401 ... ok
+test control::tests::auth_result_ok_sends_negotiate ... ok
+test control::tests::auth_result_error_closes_without_retry ... ok
+test control::tests::close_received_closes_with_code_in_ready_and_playing ... ok
+test control::tests::close_is_terminal_in_every_state_without_output ... ok
+test control::tests::closed_absorbs_everything ... ok
+test control::tests::configuration_published_is_stored ... ok
+test auth::tests::tlv_rejects_values_that_do_not_fit_the_length_field ... ok
+test control::tests::invalid_configuration_is_fatal_401 ... ok
+test control::tests::mismatched_pending_kind_is_fatal_401 ... ok
+test control::tests::late_response_is_dropped_after_completion ... ok
+test control::tests::nonfatal_error_keeps_connection ... ok
+test control::tests::negotiate_response_ok_moves_to_ready ... ok
+test control::tests::playing_configuration_published_applies ... ok
+test control::tests::received_diagnostics_is_fatal_402 ... ok
+test control::tests::response_without_status_is_fatal_401 ... ok
+test control::tests::state_forbidden_subscribe_is_fatal_402 ... ok
+test control::tests::state_names_match_surface_contract ... ok
+test control::tests::stream_ends_moves_back_to_ready ... ok
+test control::tests::stream_started_subscribed_moves_to_playing ... ok
+test control::tests::stream_started_unsubscribed_is_fatal_402 ... ok
+test control::tests::subscribe_response_501_is_advisory ... ok
+test control::tests::unmatched_response_id_is_dropped ... ok
+test control::tests::unset_body_is_fatal_401 ... ok
+test control::tests::unsupported_but_valid_configuration_is_fatal_403 ... ok
+test control::tests::user_stop_sends_701 ... ok
+test fixture::tests::pairing_response_within_320b ... ok
+test fixture::tests::raw_stream_violations_rejected ... ok
+test fixture::tests::state_direction_403_client_emits_error_and_close ... ok
+test fixture::tests::state_direction_701_close_bytes_match_fixture ... ok
+test fixture::tests::state_direction_negotiate_happy_path ... ok
+test frame::tests::decoder_reassembles_across_push_boundaries ... ok
+test fixture::tests::state_direction_duplicate_subscribe_nonfatal_402 ... ok
+test frame::tests::decoder_rejects_oversize_length_prefix ... ok
+test frame::tests::decoder_rejects_undecodable_body ... ok
+test fixture::tests::replay_happy_paths_both_directions ... ok
+test frame::tests::decoder_rejects_zero_length_prefix ... ok
+test frame::tests::encode_matches_fixture_close_body ... ok
+test fixture::tests::unknown_oneof_case_reads_as_unset_body_401 ... ok
+test media::tests::duplicate_drops_and_counts ... ok
+test media::tests::header_write_be_roundtrips_fixture_bytes ... ok
+test fixture::tests::manifest_case_list_in_sync ... ok
+test fixture::tests::unknown_fields_decode_without_error ... ok
+test media::tests::instance_change_resets_receiver_epoch ... ok
+test media::tests::interop_floor_1176_accepted ... ok
+test media::tests::misaligned_payload_is_malformed ... ok
+test media::tests::parses_fixture_header_happy_path ... ok
+test media::tests::parses_fixture_header_second_datagram ... ok
+test fixture::tests::state_direction_auth_failures_surface ... ok
+test media::tests::reordered_counts_and_tracks_distance ... ok
+test media::tests::reserved_bit2_is_ignored_not_malformed ... ok
+test media::tests::reserved_bit31_is_ignored_not_malformed ... ok
+test auth::tests::fixture_key_public_matches_test_keys ... ok
+test media::tests::sequence_wrap_folds_cycle ... ok
+test frame::tests::decoder_accepts_length_exactly_at_cap ... ok
+test auth::tests::auth_init_encoding_matches_golden_vector ... ok
+test media::tests::stale_generation_counts_as_unknown_config_drop ... ok
+test auth::tests::short_signature_is_rejected ... ok
+test media::tests::zero_instance_id_is_malformed ... ok
+test ring::tests::empty_write_is_noop_success ... ok
+test ring::tests::in_order_appends_are_contiguous ... ok
+test ring::tests::oversize_chunk_dropped_entirely ... ok
+test ring::tests::read_for_test_roundtrips_across_wrap ... ok
+test ring::tests::reader_detects_lapping_via_cursor_arithmetic ... ok
+test ring::tests::wraparound_writes_both_segments ... ok
+test session::tests::backoff_schedule_matches_policy ... ok
+test session::tests::exporter_label_is_exact ... ok
+test session::tests::response_deadline_disarms_when_nothing_is_pending ... ok
+test session::tests::rebind_without_stored_endpoint_fails_before_touching_the_fd ... ok
+test session::tests::rebind_on_stopped_session_fails ... ok
+test session::tests::rebind_endpoint_swaps_the_underlying_socket ... ok
+test session::tests::response_deadline_is_absolute_and_not_pushed_back ... ok
+test session::tests::run_error_classification_matches_section_6_3 ... ok
+test session::tests::remote_close_code_is_surfaced ... ok
+test verify::tests::fixture_test_key_pin_matches_recorded_value ... ok
+test verify::tests::pin_from_hex_rejects_bad_input ... ok
+test verify::tests::pin_from_hex_is_case_insensitive_and_trimmed ... ok
+test session::tests::response_deadline_expires_after_ten_seconds ... ok
+test session::tests::stats_json_shape_is_stable ... ok
+test verify::tests::pin_of_certificate_is_sha256_of_spki ... ok
+test verify::tests::verifier_accepts_pinned_server_cert ... ok
+test verify::tests::verifier_rejects_garbage_certificate ... ok
+test ring::tests::long_stream_keeps_cursor_consistent ... ok
+test verify::tests::verifier_rejects_certificate_with_wrong_key ... ok
+test control::tests::auth_context_survives_polling_on_another_thread ... ok
+test control::tests::auth_challenge_yields_verifiable_auth_proof ... ok
+test auth::tests::tampered_auth_context_fails_verification ... ok
+test auth::tests::recorded_golden_signature_verifies ... ok
+test control::tests::normal_request_response_pairing ... ok
+test fixture::tests::replay_error_registry_both_directions ... ok
+test auth::tests::build_auth_proof_round_trips ... ok
+test fixture::tests::replay_limits_both_directions ... ok
+test fixture::tests::state_direction_auth_happy_path ... ok
+test fixture::tests::pairing_qr_proof_verifies_and_binding_context_matches ... ok
+test fixture::tests::pairing_sas_proof_verifies_and_sas_code_derives ... ok
+
+test result: ok. 97 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+   Doc-tests audio_share_client_v2_native
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+# RESULT: exit=0
