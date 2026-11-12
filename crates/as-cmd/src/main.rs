@@ -448,8 +448,11 @@ async fn start_v2_transport(
                     tokio::spawn(async move {
                         let termination = server.serve_connection(connection, remote).await;
                         session_guard.session_ended();
+                        let remote = remote
+                            .map(|address| v2_transport::driver::masked_source(address.ip()))
+                            .unwrap_or_else(|| "unknown".to_owned());
                         tracing::info!(
-                            remote = ?remote,
+                            remote = %remote,
                             "v2 session ended: {:?}",
                             termination
                         );

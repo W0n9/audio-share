@@ -598,7 +598,10 @@ fn rate_limited_outcome() -> Outcome {
 }
 
 /// Log red line: authentication failures name the source only in masked form.
-fn masked_source(source: IpAddr) -> String {
+///
+/// IPv4 keeps the first two octets, IPv6 the first two segments; the host /
+/// interface part never reaches a log line (threat-model.md §TM-4 line 35).
+pub fn masked_source(source: IpAddr) -> String {
     match source {
         IpAddr::V4(v4) => {
             let octets = v4.octets();
