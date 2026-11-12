@@ -41,11 +41,11 @@
     "note": "TLS-Exporter outputs are connection-scoped secrets (pairing.md §6.3); the vectors fix them as constants so signatures and the recorded binding_context values are verifiable without a TLS session."
   },
   "derivation_assumptions": [
-    "pairing.md §6.3 TLV(1, mode): encoded as the pairing.md §6.2 ASCII mode string ('qr' / 'sas'). SPEC GAP: the accepted spec does not state the mode encoding in the binding; flagged to the maintainer in ticket 05 (one-line fixture change if adjudicated otherwise).",
-    "pairing.md §6.3/§9.1 TLV(*, protocol_major): encoded as u32 big-endian, consistent with capabilities_canonical's u32 BE ids. SPEC GAP: encoding not stated; flagged.",
-    "spec.md §4.1's band table lists oneof cases 1–6 for band 1–15 while §4.4 defines Negotiate/NegotiateResponse in that band without case numbers; they are assigned 7 and 8 in protos/wire-protocol-v2/control.proto. SPEC GAP: flagged to the maintainer.",
-    "spec.md §7.5 lists 'reserved flag bits set' as malformed media while §7.1 and the §12 parked row say reserved bits are ignored (accepted with D4); vectors follow the adjudicated ignore rule. SPEC GAP: flagged.",
-    "spec.md §5.2 writes PairingResult(201, detail \"declined\") for the approval-declined row while §4.2/TM-6 forbid detail in pre-auth responses; the declined case is NOT vectorized (both readings agree on code 201 + Close) and the conflict is flagged.",
-    "spec.md §5.2's CONNECTING row says 'Error(401 or 402)' for a stray first frame; vectors use NEGOTIATING/READY states (pinned rows) for the state-violation cases."
+    "pairing.md §6.3 TLV(1, mode): the lowercase ASCII mode string 'qr' / 'sas' (2 bytes — never the PairingMode enum number) — normative per pairing.md §6.3.",
+    "pairing.md §6.3/§9.1 TLV(*, protocol_major): a fixed 4-byte big-endian unsigned integer (v2 = 00 00 00 02 — never a varint, never 1 byte) — normative per pairing.md §6.3; one rule covers the pairing and auth transcripts.",
+    "spec.md §4.1 registers Negotiate = oneof 7 and NegotiateResponse = oneof 8 in band 1–15; protos/wire-protocol-v2/control.proto matches.",
+    "spec.md §7.1/§7.5: the sender MUST zero flag bits 2–31; the receiver MUST ignore them and MUST NOT treat them as malformed — the vectors follow the normative ignore rule (media.flags-reserved-ignored, media.flags-reserved-bit31-ignored).",
+    "spec.md §4.2/§5.2: PairingResult(201) carries no detail (pre-auth no-detail rule, §4.2/TM-6); approval rejection is PairingResult(201) + Close(201) only — vectorized in control.error-201-pairing-declined.",
+    "spec.md §5.2: CONNECTING splits by error nature — malformed message / generic validation failure -> 401 MALFORMED_MESSAGE, valid message but state-forbidden -> 402 INVALID_STATE — vectorized in control.connecting-valid-subscribe-402."
   ]
 }
