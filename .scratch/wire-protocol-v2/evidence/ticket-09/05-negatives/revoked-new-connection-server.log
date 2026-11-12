@@ -1,0 +1,28 @@
+[2026-11-12 14:49:19.133] [info] v2 connection accepted remote=100.117.189.121:55951
+[2026-11-12 14:49:19.133] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:49:19.133] [debug] v2 session: control stream unavailable source=100.117.x.x error=closed by peer: 0
+[2026-11-12 14:49:19.133] [info] v2 session ended: ClientClosed(ErrorCode { code: 601, retryable: true, requires_repairing: false }) remote=Some(100.117.189.121:55951)
+[2026-11-12 14:49:19.641] [info] v2 connection accepted remote=100.117.189.121:41321
+[2026-11-12 14:49:19.641] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:49:19.701] [debug] v2 session: control stream open source=100.117.x.x
+[2026-11-12 14:49:19.752] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:49:20.874] [info] v2 connection accepted remote=100.117.189.121:47091
+[2026-11-12 14:49:20.874] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:49:20.875] [debug] v2 session: control stream open source=100.117.x.x
+[2026-11-12 14:49:20.928] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:49:23.161] [info] v2 connection accepted remote=100.117.189.121:46266
+[2026-11-12 14:49:23.161] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:49:23.161] [debug] v2 session: control stream open source=100.117.x.x
+[2026-11-12 14:49:23.213] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:49:27.313] [info] v2 connection accepted remote=100.117.189.121:60725
+[2026-11-12 14:49:27.313] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:49:27.314] [debug] v2 session: control stream open source=100.117.x.x
+[2026-11-12 14:49:27.365] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:49:29.702] [info] v2 session ended: ServerClosed(ErrorCode { code: 601, retryable: true, requires_repairing: false }) remote=Some(100.117.189.121:41321)
+[2026-11-12 14:49:30.877] [info] v2 session ended: ServerClosed(ErrorCode { code: 601, retryable: true, requires_repairing: false }) remote=Some(100.117.189.121:47091)
+[2026-11-12 14:49:33.163] [info] v2 session ended: ServerClosed(ErrorCode { code: 601, retryable: true, requires_repairing: false }) remote=Some(100.117.189.121:46266)
+[2026-11-12 14:49:36.037] [info] v2 connection accepted remote=100.117.189.121:34063
+[2026-11-12 14:49:36.037] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:49:36.037] [debug] v2 session: control stream open source=100.117.x.x
+[2026-11-12 14:49:36.089] [info] v2 session: authentication failed source=100.117.x.x code=203
+[2026-11-12 14:49:37.315] [info] v2 session ended: ServerClosed(ErrorCode { code: 601, retryable: true, requires_repairing: false }) remote=Some(100.117.189.121:60725)

@@ -1,0 +1,11 @@
+[2026-11-12 14:49:48.164] [info] v2 connection accepted remote=100.117.189.121:42551
+[2026-11-12 14:49:48.164] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:49:48.167] [debug] v2 session: control stream unavailable source=100.117.x.x error=closed by peer: 0
+[2026-11-12 14:49:48.167] [info] v2 session ended: ClientClosed(ErrorCode { code: 601, retryable: true, requires_repairing: false }) remote=Some(100.117.189.121:42551)
+[2026-11-12 14:49:48.712] [info] v2 connection accepted remote=100.117.189.121:37081
+[2026-11-12 14:49:48.712] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:49:48.712] [debug] v2 session: control stream open source=100.117.x.x
+[2026-11-12 14:50:42.316] [info] v2 connection accepted remote=100.117.189.121:59735
+[2026-11-12 14:50:42.316] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:50:42.319] [debug] v2 session: control stream open source=100.117.x.x
+[2026-11-12 14:50:47.374] [info] v2 session ended: ServerClosed(ErrorCode { code: 303, retryable: false, requires_repairing: false }) remote=Some(100.117.189.121:37081)
