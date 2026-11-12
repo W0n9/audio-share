@@ -253,6 +253,51 @@ fn client_id_must_match_the_derived_value() {
 }
 
 #[test]
+fn client_id_case_is_canonical_lowercase() {
+    // pairing.md §8.1: only the canonical lowercase hex spelling is valid.
+    // Mixed/uppercase hex names the same bytes but is not the canonical id,
+    // so loading it must fail closed rather than silently normalize.
+    let canonical = hex8(CLIENT_PUB);
+    let mixed = format!("{}{}", canonical[..2].to_ascii_uppercase(), &canonical[2..]);
+    assert_ne!(mixed, canonical);
+    let error = load_error(&record_json(&mixed, CLIENT_PUB_B64, "Test Phone"));
+    assert!(error.contains("client_id"), "the refusal must name the field: {error}");
+    assert!(
+        error.contains("canonical"),
+        "the refusal should explain the canonical requirement: {error}"
+    );
+}
+
+#[test]
+fn persisted_client_id_is_always_canonical() {
+    // A record may reach the store through an admin/import path with a
+    // noncanonical in-memory id; persistence must still write the derived
+    // lowercase value, and a reload must see that canonical id.
+    let dir = temp_dir();
+    let store = AuthorizationStore::open(&dir).expect("open");
+    let mut record = client(CLIENT_PUB, "Test Phone");
+    record.client_id = record.client_id.to_ascii_uppercase();
+    store.upsert(record).expect("upsert");
+
+    let path = dir.join("pairing").join("clients.json");
+    let text = std::fs::read_to_string(&path).expect("read clients.json");
+    assert!(text.contains(&hex8(CLIENT_PUB)), "canonical id must be persisted: {text}");
+    assert!(
+        !text.contains(&hex8(CLIENT_PUB).to_ascii_uppercase()),
+        "noncanonical uppercase id must never be persisted: {text}"
+    );
+
+    drop(store);
+    let store = AuthorizationStore::open(&dir).expect("reopen");
+    match store.authorize(&unhex(CLIENT_PUB)) {
+        v2_transport::auth_store::Authorization::Authorized(record) => {
+            assert_eq!(record.client_id, hex8(CLIENT_PUB));
+        }
+        other => panic!("expected Authorized, got {other:?}"),
+    }
+}
+
+#[test]
 fn display_name_is_capped_at_63_bytes() {
     let name = "x".repeat(64);
     let error = load_error(&record_json("cf7940b474310246", CLIENT_PUB_B64, &name));
