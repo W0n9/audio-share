@@ -1,0 +1,8 @@
+# ./target/release/protocol-harness replay --fixture fixtures/protocol/v0.3.4/linux/f32-48k-stereo --connect 127.0.0.1:65530
+replay: ok (live)
+target: 127.0.0.1:65530
+format_bytes_match=true
+start_play_id: 1
+heartbeats: 1
+pcm: 1770 datagrams, 2416640 bytes, 1475 full-size (aligned payload 1464)
+# RESULT: exit=0

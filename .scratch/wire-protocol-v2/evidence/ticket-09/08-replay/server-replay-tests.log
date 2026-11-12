@@ -1,0 +1,71 @@
+# cargo test -p v2-transport --test state_machine_replay --test golden_vectors
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling log v0.4.35
+   Compiling tracing-core v0.1.36
+   Compiling serde_core v1.0.229
+   Compiling deranged v0.5.9
+   Compiling serde v1.0.229
+   Compiling rustix v1.1.6
+   Compiling anyhow v1.0.104
+   Compiling serde_json v1.0.154
+   Compiling linux-raw-sys v0.12.1
+   Compiling memchr v2.8.3
+   Compiling bitflags v2.13.2
+   Compiling rustls v0.23.46
+   Compiling syn v3.0.10
+   Compiling syn v2.0.119
+   Compiling time v0.3.55
+   Compiling yasna v0.5.2
+   Compiling tempfile v3.27.0
+   Compiling rcgen v0.13.2
+   Compiling thiserror-impl v2.0.21
+   Compiling tokio-macros v2.7.2
+   Compiling serde_derive v1.0.229
+   Compiling tokio v1.54.1
+   Compiling tracing-attributes v0.1.31
+   Compiling prost-derive v0.13.5
+   Compiling thiserror v2.0.21
+   Compiling tracing v0.1.44
+   Compiling quinn-udp v0.5.16
+   Compiling quinn-proto v0.11.19
+   Compiling prost v0.13.5
+   Compiling quinn v0.11.12
+   Compiling v2-transport v0.4.1 (/home/w0n9/workspaces/audio-share-ticket-09/crates/v2-transport)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.52s
+     Running tests/golden_vectors.rs (target/debug/deps/golden_vectors-0b486aca684d1c67)
+
+running 3 tests
+test corrupted_signature_cases_fail_verification ... ok
+test replay_all_control_cases_byte_exactly ... ok
+test replay_covers_every_control_category ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/state_machine_replay.rs (target/debug/deps/state_machine_replay-5fd697d5f2b783a6)
+
+running 19 tests
+test capture_unhealthy_501_replays_byte_identically ... ok
+test error_202_unknown_identity_replays_byte_identically ... ok
+test framing_level_401_fixtures_replay_byte_identically ... ok
+test pairing_capability_list_401s_replay_byte_identically ... ok
+test error_203_invalid_signature_replays_byte_identically ... ok
+test unknown_oneof_case_is_a_framing_level_401 ... ok
+test error_303_supersede_emits_close_303_on_the_old_session ... ok
+test auth_happy_path_replays_byte_identically ... ok
+test duplicate_subscribe_402_nonfatal_replays_byte_identically ... ok
+test error_101_version_mismatch_replays_byte_identically ... ok
+test error_204_denied_identity_replays_byte_identically ... ok
+test negotiate_unknown_capability_replays_byte_identically ... ok
+test negotiate_happy_path_replays_byte_identically ... ok
+test error_204_revoked_active_session_replays_byte_identically ... ok
+test unknown_field_ignored_replays_byte_identically ... ok
+test negative_space_401_replays_byte_identically ... ok
+test client_reported_error_and_close_rows_replay_byte_identically ... ok
+test error_701_client_stopping_replays_byte_identically ... ok
+test negative_space_402s_replay_byte_identically ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+# RESULT: exit=0

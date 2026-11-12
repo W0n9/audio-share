@@ -1,0 +1,17 @@
+# adb shell settings put system font_scale 1.15  (config change -> Activity.onDestroy -> session.stop() -> Close 701)
+[2026-11-12 14:59:35.066] [info] v2 connection accepted remote=100.117.189.121:51991
+[2026-11-12 14:59:35.066] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:59:35.066] [debug] v2 session: control stream unavailable source=100.117.x.x error=closed by peer: 0
+[2026-11-12 14:59:35.066] [info] v2 session ended: ClientClosed(ErrorCode { code: 601, retryable: true, requires_repairing: false }) remote=Some(100.117.189.121:51991)
+[2026-11-12 14:59:35.572] [info] v2 connection accepted remote=100.117.189.121:51840
+[2026-11-12 14:59:35.572] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:59:35.572] [debug] v2 session: control stream open source=100.117.x.x
+[2026-11-12 14:59:42.807] [debug] v2 session ended source=100.117.x.x code=701
+[2026-11-12 14:59:42.807] [info] v2 session ended: ClientClosed(ErrorCode { code: 701, retryable: false, requires_repairing: false }) remote=Some(100.117.189.121:51840)
+[2026-11-12 14:59:42.932] [info] v2 connection accepted remote=100.117.189.121:40896
+[2026-11-12 14:59:42.933] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:59:42.933] [debug] v2 session: control stream unavailable source=100.117.x.x error=closed by peer: 0
+[2026-11-12 14:59:42.933] [info] v2 session ended: ClientClosed(ErrorCode { code: 601, retryable: true, requires_repairing: false }) remote=Some(100.117.189.121:40896)
+[2026-11-12 14:59:43.473] [info] v2 connection accepted remote=100.117.189.121:56355
+[2026-11-12 14:59:43.473] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:59:43.473] [debug] v2 session: control stream open source=100.117.x.x

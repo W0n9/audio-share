@@ -1,0 +1,18 @@
+# cargo test -p v2-transport --test session_driver -- --nocapture
+   Compiling v2-transport v0.4.1 (/home/w0n9/workspaces/audio-share-ticket-09/crates/v2-transport)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.97s
+     Running tests/session_driver.rs (target/debug/deps/session_driver-98c4c701a59ceade)
+
+running 8 tests
+test auth_happy_path_reaches_ready_over_quic ... ok
+test per_connection_and_per_source_auth_failure_limits ... ok
+test auth_deadline_closes_with_601 ... ok
+test empty_length_prefix_is_malformed_401 ... ok
+test version_mismatch_is_101 ... ok
+test second_control_stream_is_invalid_state_402 ... ok
+test new_session_supersedes_the_old_with_303 ... ok
+test revoked_identity_is_torn_down_with_204 ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+# RESULT: exit=0
