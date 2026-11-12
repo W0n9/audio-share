@@ -64,15 +64,17 @@ pub struct ServerConfig {
     pub capture_healthy: bool,
     /// Auth failures per connection (TM-4; default 5, `Limits`).
     pub max_auth_failures_per_connection: u32,
-    /// Test-only override of the challenge randomness (spec §4.4: 32 bytes,
-    /// CSPRNG in production): the golden vectors pin fixed "randomness"
-    /// constants; replay injects them here. Production leaves None.
+    /// Test-support only: fixed challenge randomness (spec §4.4 says 32
+    /// CSPRNG bytes; the golden vectors pin constants, and pairing.md §11.3
+    /// requires such bypasses behind a compile-time feature). Production
+    /// builds draw fresh randomness on every `AuthInit`.
+    #[cfg(feature = "test-support")]
     pub server_random_override: Option<Vec<u8>>,
-    /// Test-only override of the TLS-Exporter auth component (pairing.md
-    /// §9.1 TLV(6), connection-scoped secret): fixtures inject the recorded
-    /// constant. Production leaves None and the driver passes the real
-    /// exporter output per event.
-    pub auth_exporter_override: Option<Vec<u8>>,
+    /// The TLS-Exporter auth component (pairing.md §9.1 TLV(6)): a
+    /// connection-scoped secret both peers derive from the same TLS session.
+    /// The driver always supplies the real per-connection output; fixture
+    /// replay supplies the recorded constant.
+    pub auth_exporter: Option<Vec<u8>>,
     /// Supersede policy: with [`SUPERSEDE_KEEP_OLD`] the old session is marked
     /// superseded (Close(303) sent by its driver) and the new one admitted;
     /// `false` = the new session never replaces the old (unused in v2.0,
@@ -83,6 +85,22 @@ pub struct ServerConfig {
     /// its position). Defaults to 1 for a standalone machine; the golden-
     /// vector replay uses it to reproduce the registry's numbering.
     pub session_id_base: u64,
+}
+
+impl ServerConfig {
+    /// Test-support builds may pin the challenge randomness (golden-vector
+    /// replay); production always returns `None` here (compile-time gated,
+    /// pairing.md §11.3).
+    fn fixed_server_random(&self) -> Option<Vec<u8>> {
+        #[cfg(feature = "test-support")]
+        {
+            self.server_random_override.clone()
+        }
+        #[cfg(not(feature = "test-support"))]
+        {
+            None
+        }
+    }
 }
 
 /// TM-3: a new session of the same identity supersedes the old (Close(303)).
@@ -568,7 +586,7 @@ impl StateMachine {
         // (The per-connection failure counter is the first line; the source
         // guard is owned by the accept loop, which consults the same
         // AddressRateGuard; the machine records this connection's failures.)
-        let server_random = self.config.server_random_override.clone().unwrap_or_else(|| {
+        let server_random = self.config.fixed_server_random().unwrap_or_else(|| {
             let mut bytes = vec![0u8; 32];
             getrandom(&mut bytes);
             bytes
@@ -608,7 +626,7 @@ impl StateMachine {
             &server_random,
             &client_public_key,
             &self.config.server_public_key,
-            self.config.auth_exporter_override.as_deref().unwrap_or(&[]),
+            self.config.auth_exporter.as_deref().unwrap_or(&[]),
         );
 
         // PR-9: one ECDSA-P256-SHA256 over the RAW context bytes.

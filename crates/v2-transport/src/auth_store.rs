@@ -242,9 +242,10 @@ impl AuthorizationStore {
         self.persist()
     }
 
-    /// Insert into the store and persist. Test-only credential preload
-    /// (ticket 07's test configuration) also routes through here so the
-    /// persisted file and the in-memory view stay identical.
+    /// Insert into the store and persist. Test-support credential preload
+    /// (ticket 07's test configuration) routes through here so the persisted
+    /// file and the in-memory view stay identical; gated per pairing.md §11.3.
+    #[cfg(feature = "test-support")]
     pub fn insert_for_tests(&self, client: StoredClient) {
         self.upsert(client).expect("persist test credential");
     }

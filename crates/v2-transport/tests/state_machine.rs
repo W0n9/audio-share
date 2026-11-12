@@ -116,7 +116,7 @@ fn machine_on(store: std::sync::Arc<AuthorizationStore>) -> StateMachine {
             server_random_override: Some(unhex(
                 "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
             )),
-            auth_exporter_override: Some(unhex(
+            auth_exporter: Some(unhex(
                 "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
             )),
             keep_old_on_supersede: SUPERSEDE_KEEP_OLD,
