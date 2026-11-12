@@ -133,22 +133,13 @@ impl Status {
 
 /// The §6.2 registry defaults for `retryable` and `requires_repairing`
 /// (`true`, `true` columns in the table order: retryable, re-pairing).
-pub(crate) const fn registry_defaults(code: u32) -> (bool, bool) {
-    match code {
-        101 | 102 => (false, false),
-        201..=203 => (false, true),
-        204 => (false, false),
-        // 205 is a local classification, never sent as a status.
-        206 => (true, false),
-        301 | 302 => (true, false),
-        303 => (false, false),
-        401..=403 => (false, false),
-        501..=503 => (true, false),
-        599 => (false, false),
-        601 | 602 => (true, false),
-        701 => (false, false),
-        _ => (false, false),
-    }
+///
+/// Single source of truth: the code table lives in [`crate::codes::ErrorCode`];
+/// adding or changing a code must not touch a second copy here.
+pub(crate) fn registry_defaults(code: u32) -> (bool, bool) {
+    crate::codes::ErrorCode::from_code(code)
+        .map(|entry| (entry.retryable, entry.requires_repairing))
+        .unwrap_or((false, false))
 }
 
 // ---------------------------------------------------------------------------
