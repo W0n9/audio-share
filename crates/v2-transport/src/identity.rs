@@ -437,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn hex_groups_rejects_wrong_length() {
+    fn hex_groups_renders_short_input_without_padding() {
         // Only used with 32-byte digests; short input still renders groups.
         assert_eq!(hex_groups(&[0xaa, 0xbb]), "AABB");
     }
