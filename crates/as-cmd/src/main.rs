@@ -421,12 +421,12 @@ async fn start_v2_transport(
     let bind = resolve_bind_address(host, cli.v2_port)
         .await
         .map_err(|error| format!("resolve v2 bind address: {error}"))?;
+    // One limits configuration drives both admission (the capacity guard) and
+    // the transport's own bounds.
+    let limits = v2_transport::limits::Limits::defaults();
     let transport = std::sync::Arc::new(
         v2_transport::transport::Transport::start(
-            v2_transport::transport::TransportConfig {
-                bind,
-                limits: v2_transport::limits::Limits::defaults(),
-            },
+            v2_transport::transport::TransportConfig { bind, limits: limits.clone() },
             &identity,
         )
         .map_err(|error| error.to_string())?,
@@ -437,7 +437,7 @@ async fn start_v2_transport(
     // the per-connection task releases the session slot when it ends.
     let accept_transport = std::sync::Arc::clone(&transport);
     let accept_task = tokio::spawn(async move {
-        let mut guard = v2_transport::limits::CapacityGuard::new(v2_transport::limits::Limits::defaults());
+        let mut guard = v2_transport::limits::CapacityGuard::new(limits);
         loop {
             let accepted = accept_transport.accept_one(&mut guard).await;
             match accepted.connection {
