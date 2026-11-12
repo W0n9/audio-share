@@ -888,6 +888,13 @@ impl ServerState {
     }
 }
 
+/// The request id a Client request body carries (0 = none/push). Used by the
+/// driver's outstanding-request accounting (spec §10).
+pub fn request_id_of(frame: &Frame) -> Option<u64> {
+    let id = frame_request_id(frame);
+    (id != 0).then_some(id)
+}
+
 fn frame_request_id(frame: &Frame) -> u64 {
     match &frame.body {
         Some(frame::Body::AuthInit(m)) => m.request_id,
