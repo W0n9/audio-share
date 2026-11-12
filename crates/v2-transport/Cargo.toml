@@ -35,6 +35,10 @@ libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 tempfile = "3"
+# The live-QUIC driver tests sign the PR-9 auth_context with the fixture's
+# TEST-ONLY client scalar (fixtures/wire-protocol-v2/test-keys.json), exactly
+# as the Android client does.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 # Integration tests exercise the golden-vector replay harness, which lives
 # behind the test-support feature; a self dev-dependency enables it for tests
 # without exposing it to production builds (pairing.md §11.3 bypass rule).

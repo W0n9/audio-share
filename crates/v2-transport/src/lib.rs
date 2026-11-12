@@ -30,6 +30,9 @@ pub mod auth;
 pub mod auth_store;
 /// Normative v2 constants: ports, ALPN, frame caps, §6 error registry.
 pub mod codes;
+/// The per-connection driver: QUIC connection + control framing + §5.2 state
+/// machine on one live session (ticket 07).
+pub mod driver;
 /// Control-stream framing: `u32 BE length | Frame` with the §3 validation.
 pub mod framing;
 /// Server identity key lifecycle: Ed25519, PKCS#8 PEM, 0600/0700, fail-closed.
