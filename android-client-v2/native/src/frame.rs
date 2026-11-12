@@ -91,16 +91,8 @@ impl FrameDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::{frame::Body, Close};
-
-    fn close_frame(code: u32) -> Frame {
-        Frame {
-            body: Some(Body::Close(Close {
-                code,
-                detail: String::new(),
-            })),
-        }
-    }
+    use crate::control::frames::close_frame;
+    use crate::proto::frame::Body;
 
     /// Golden vector control.error-701-client-stopping, body_hex — the
     /// expected encoding is the fixtures' hand-derived bytes, not ours.

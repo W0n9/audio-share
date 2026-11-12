@@ -249,6 +249,13 @@ pub fn pairing_response_within_bounds(frame_length: usize) -> bool {
 
 /// Per-session outstanding-request accounting (spec §10: 8 outstanding →
 /// 302). A request is tracked from admission until its response is sent.
+///
+/// The current driver processes one inbound request at a time through a
+/// synchronous `StateMachine::handle`, so production never has more than one
+/// outstanding request. The counter, its limit, and the 8-request branch are
+/// retained for the §10 conformance surface and for a future asynchronous /
+/// pipelined driver; the limit branch is therefore not reachable through the
+/// present driver by construction.
 #[derive(Debug)]
 pub struct OutstandingRequests {
     pending: std::collections::HashSet<u64>,

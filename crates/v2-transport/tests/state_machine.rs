@@ -73,6 +73,16 @@ fn close_frame(code: u32) -> Frame {
     Frame { body: Some(frame::Body::Close(v2_transport::schema::Close { code, detail: String::new() })) }
 }
 
+fn malformed_error(request_id: u64) -> Frame {
+    // §4.4: status.code == 0 is malformed in every state.
+    Frame {
+        body: Some(frame::Body::Error(v2_transport::schema::Error {
+            request_id,
+            status: Status::ok(),
+        })),
+    }
+}
+
 /// The recorded happy-path signature (control.auth-happy-path step 3).
 const VALID_SIG: &str = "e77e55090b72af3cb8f42a8e6696b4797170b8c8236944ce4c17164e5d97762f8686dfcd64f4a21f5768fa6c94e6a816029a566fb849fa27cbe98385f4df060c";
 /// error-203's corrupted signature (final byte flipped).
@@ -202,6 +212,47 @@ fn connecting_malformed_frame_is_fatal_401() {
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::Error(e)) if e.status.code == 401 && e.request_id == 0));
     assert_eq!(out[1].close_code, Some(ErrorCode::MALFORMED_MESSAGE));
+}
+
+fn assert_error_code_zero_is_fatal_401(mut machine: StateMachine, request_id: u64) {
+    let out = machine.handle(Event::Frame {
+        frame: Box::new(malformed_error(request_id)),
+        source: unhex(CLIENT_PUB),
+    });
+    assert_eq!(machine.state(), ServerState::Closing);
+    assert_eq!(out.len(), 2, "malformed input earns an Error + Close pair");
+    assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
+        Some(frame::Body::Error(e)) if e.status.code == 401 && e.request_id == request_id));
+    assert_eq!(out[1].close_code, Some(ErrorCode::MALFORMED_MESSAGE));
+}
+
+#[test]
+fn authenticating_error_code_zero_is_fatal_401() {
+    // §4.4: code==0 is malformed regardless of the state's request table.
+    let store = store_with_client();
+    let mut machine = machine(&store);
+    machine.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
+    assert_eq!(machine.state(), ServerState::Authenticating);
+    assert_error_code_zero_is_fatal_401(machine, 7);
+}
+
+#[test]
+fn negotiating_error_code_zero_is_fatal_401() {
+    let store = store_with_client();
+    let mut machine = machine(&store);
+    authenticate(&mut machine);
+    assert_eq!(machine.state(), ServerState::Negotiating);
+    assert_error_code_zero_is_fatal_401(machine, 8);
+}
+
+#[test]
+fn ready_error_code_zero_is_fatal_401() {
+    let store = store_with_client();
+    let mut machine = machine(&store);
+    authenticate(&mut machine);
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
+    assert_eq!(machine.state(), ServerState::Ready);
+    assert_error_code_zero_is_fatal_401(machine, 9);
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +564,30 @@ fn ready_unsubscribe_is_idempotent() {
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::UnsubscribeResponse(r)) if r.status.code == 0));
     assert_eq!(machine.state(), ServerState::Ready);
+}
+
+#[test]
+fn ready_unsubscribe_returns_to_unsubscribed_and_allows_resubscribe() {
+    // §5.2: READY Unsubscribe clears the subscription, so the next Subscribe
+    // is a fresh request rather than a duplicate (402). Regression: the flag
+    // used to stay true and the re-Subscribe was refused.
+    let store = store_with_client();
+    let mut machine = machine(&store);
+    authenticate(&mut machine);
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(subscribe(3)), source: unhex(CLIENT_PUB) });
+    assert!(machine.subscribed(), "precondition: subscribed");
+
+    let out = machine.handle(Event::Frame { frame: Box::new(unsubscribe(4)), source: unhex(CLIENT_PUB) });
+    assert_eq!(machine.state(), ServerState::Ready);
+    assert!(!machine.subscribed(), "Unsubscribe must clear READY's subscription");
+    assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
+        Some(frame::Body::UnsubscribeResponse(r)) if r.request_id == 4 && r.status.code == 0));
+
+    let out = machine.handle(Event::Frame { frame: Box::new(subscribe(5)), source: unhex(CLIENT_PUB) });
+    assert!(machine.subscribed());
+    assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
+        Some(frame::Body::SubscribeResponse(r)) if r.request_id == 5 && r.status.code == 0));
 }
 
 #[test]

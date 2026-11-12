@@ -108,17 +108,27 @@ val nativeDir = rootProject.projectDir.resolve("native")
 val cargoOut = nativeDir.resolve("target/${cargoTarget}/release")
 val jniLibsDir = projectDir.resolve("build/generated/jniLibs/arm64-v8a")
 
+// TEST-ONLY. The fixture client identity key is compiled into the native
+// library only when `-PtestSupport=true` is passed explicitly. Default
+// release builds carry no test identity/signing path (production identities
+// come from v2 pairing, phase 6). E2E builds: ./gradlew assembleRelease
+// -PtestSupport=true
+val testSupport = providers.gradleProperty("testSupport")
+    .map(String::toBoolean)
+    .getOrElse(false)
+
 val buildNative by tasks.registering(Exec::class) {
     onlyIf { !project.hasProperty("noNative") }
     workingDir = nativeDir
     environment("ANDROID_HOME", providers.environmentVariable("ANDROID_HOME").orElse("").get())
-    // TEST-ONLY E2E build: `test-support` enables the fixture client identity
-    // key in the native crate (production profiles must not enable it; the
-    // real identity comes from v2 pairing, phase 6).
-    commandLine(
+    val cargoArgs = mutableListOf(
         "cargo", "build", "--release", "--target", cargoTarget,
-        "--features", "test-support",
     )
+    if (testSupport) {
+        cargoArgs += listOf("--features", "test-support")
+    }
+    commandLine(cargoArgs)
+    inputs.property("testSupport", testSupport)
     outputs.file(cargoOut.resolve("libaudio_share_client_v2_native.so"))
     inputs.dir(nativeDir.resolve("src"))
     inputs.file(nativeDir.resolve("Cargo.toml"))
