@@ -16,6 +16,7 @@
 
 pub mod auth;
 pub mod control;
+#[cfg(test)]
 pub mod fixture;
 pub mod frame;
 pub mod jni;
