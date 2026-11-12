@@ -11,7 +11,6 @@ use v2_transport::state_machine::{
 };
 
 const CLIENT_PUB: &str = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
-const OTHER_PUB: &str = "021111111111111111111111111111111111111111111111111111111111111111";
 const SERVER_PUB: &str = "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c";
 
 fn unhex(s: &str) -> Vec<u8> {
@@ -137,10 +136,10 @@ fn clone_store(store: &AuthorizationStore) -> AuthorizationStore {
 
 /// Drive CONNECTING → NEGOTIATING with the fixture's valid signature.
 fn authenticate(machine: &mut StateMachine) {
-    let out = machine.handle(Event::Frame { frame: auth_init(1), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::AuthChallenge(_))), "challenge first, got {out:?}");
-    let out = machine.handle(Event::Frame { frame: auth_proof(1, VALID_SIG), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(auth_proof(1, VALID_SIG)), source: unhex(CLIENT_PUB) });
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::AuthResult(r)) if r.status.code == 0), "auth ok, got {out:?}");
 }
@@ -157,7 +156,7 @@ fn connect_auth_negotiate_reaches_ready() {
     authenticate(&mut machine);
     assert_eq!(machine.state(), ServerState::Negotiating);
     // control.negotiate-happy-path: request_id 2 (auth consumed 1).
-    let out = machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Ready);
     assert_eq!(out.len(), 2, "NegotiateResponse + ConfigurationPublished push");
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
@@ -178,7 +177,7 @@ fn connecting_valid_subscribe_is_fatal_402_with_echo() {
     // Error(402) echoing request_id 1 + Close(402) + transport close 402.
     let store = store_with_client();
     let mut machine = machine(&store);
-    let out = machine.handle(Event::Frame { frame: subscribe(1), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(subscribe(1)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Closing);
     assert_eq!(out.len(), 2);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
@@ -198,7 +197,7 @@ fn connecting_malformed_frame_is_fatal_401() {
             status: Status::ok(),
         })),
     };
-    let out = machine.handle(Event::Frame { frame: bad, source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(bad), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Closing);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::Error(e)) if e.status.code == 401 && e.request_id == 0));
@@ -215,9 +214,9 @@ fn valid_proof_unknown_identity_is_202_connection_stays() {
     // AuthResult(202, requires_repairing=true), NO Close, state stays.
     let store = AuthorizationStore::in_memory();
     let mut machine = machine(&store);
-    let out = machine.handle(Event::Frame { frame: auth_init(1), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()), Some(frame::Body::AuthChallenge(_))));
-    let out = machine.handle(Event::Frame { frame: auth_proof(1, VALID_SIG), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(auth_proof(1, VALID_SIG)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Authenticating);
     assert_eq!(out.len(), 1, "non-fatal: no Close rides along");
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
@@ -236,8 +235,8 @@ fn valid_proof_revoked_identity_is_204() {
         state: ClientState::Revoked,
     });
     let mut machine = machine(&store);
-    machine.handle(Event::Frame { frame: auth_init(1), source: unhex(CLIENT_PUB) });
-    let out = machine.handle(Event::Frame { frame: auth_proof(1, VALID_SIG), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(auth_proof(1, VALID_SIG)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Authenticating);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::AuthResult(r)) if r.status.code == 204 && !r.status.requires_repairing));
@@ -249,8 +248,8 @@ fn invalid_signature_is_203_and_counts_a_failure() {
     // repairing=true); the connection stays for a retry (below 5 failures).
     let store = store_with_client();
     let mut machine = machine(&store);
-    machine.handle(Event::Frame { frame: auth_init(1), source: unhex(CLIENT_PUB) });
-    let out = machine.handle(Event::Frame { frame: auth_proof(1, INVALID_SIG), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(auth_proof(1, INVALID_SIG)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Authenticating);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::AuthResult(r)) if r.status.code == 203 && r.status.requires_repairing));
@@ -263,8 +262,8 @@ fn auth_init_retry_gets_a_fresh_challenge() {
     // AUTHENTICATING.
     let store = store_with_client();
     let mut machine = machine(&store);
-    machine.handle(Event::Frame { frame: auth_init(1), source: unhex(CLIENT_PUB) });
-    let out = machine.handle(Event::Frame { frame: auth_init(2), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(auth_init(2)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Authenticating);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::AuthChallenge(c)) if c.request_id == 2));
@@ -277,12 +276,12 @@ fn fifth_auth_failure_closes_with_203() {
     let store = AuthorizationStore::in_memory();
     let mut machine = machine(&store);
     for _ in 0..4 {
-        machine.handle(Event::Frame { frame: auth_init(1), source: unhex(CLIENT_PUB) });
-        let out = machine.handle(Event::Frame { frame: auth_proof(1, INVALID_SIG), source: unhex(CLIENT_PUB) });
+        machine.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
+        let out = machine.handle(Event::Frame { frame: Box::new(auth_proof(1, INVALID_SIG)), source: unhex(CLIENT_PUB) });
         assert_eq!(out.len(), 1, "failures 1–4 are non-fatal AuthResult(203)");
     }
-    machine.handle(Event::Frame { frame: auth_init(1), source: unhex(CLIENT_PUB) });
-    let out = machine.handle(Event::Frame { frame: auth_proof(1, INVALID_SIG), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(auth_proof(1, INVALID_SIG)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Closing);
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].close_code, Some(ErrorCode::AUTHENTICATION_FAILED));
@@ -294,7 +293,7 @@ fn auth_proof_without_challenge_is_402_fatal() {
     // rows need a pending challenge; a stray AuthProof is state-forbidden.
     let store = store_with_client();
     let mut machine = machine(&store);
-    let out = machine.handle(Event::Frame { frame: auth_proof(1, VALID_SIG), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(auth_proof(1, VALID_SIG)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Closing);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::Error(e)) if e.status.code == 402 && e.request_id == 1));
@@ -319,7 +318,7 @@ fn negotiate_wrong_major_is_101_fatal() {
             capabilities: Vec::new(),
         })),
     };
-    let out = machine.handle(Event::Frame { frame: bad, source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(bad), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Closing);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::Error(e)) if e.request_id == 2 && e.status.code == 101));
@@ -339,7 +338,7 @@ fn negotiate_minor_above_servers_is_101_fatal() {
             capabilities: Vec::new(),
         })),
     };
-    let out = machine.handle(Event::Frame { frame: bad, source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(bad), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Closing);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::Error(e)) if e.status.code == 101));
@@ -352,7 +351,7 @@ fn negotiate_non_ascending_capabilities_is_401_fatal() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    let out = machine.handle(Event::Frame { frame: negotiate(2, &[2, 1]), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[2, 1])), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Closing);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::Error(e)) if e.request_id == 2 && e.status.code == 401));
@@ -366,7 +365,7 @@ fn negotiate_unknown_capability_is_ignored_intersection_empty() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    let out = machine.handle(Event::Frame { frame: negotiate(2, &[7]), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[7])), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Ready);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::NegotiateResponse(r)) if r.capabilities.is_empty() && r.status.code == 0));
@@ -379,7 +378,7 @@ fn negotiating_subscribe_is_402_fatal() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    let out = machine.handle(Event::Frame { frame: subscribe(1), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(subscribe(1)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Closing);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::Error(e)) if e.request_id == 1 && e.status.code == 402));
@@ -394,7 +393,7 @@ fn negotiating_auth_init_is_402_fatal() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    let out = machine.handle(Event::Frame { frame: auth_init(9), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(auth_init(9)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Closing);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::Error(e)) if e.status.code == 402 && e.request_id == 9));
@@ -410,8 +409,8 @@ fn ready_subscribe_ok_with_configuration() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
-    let out = machine.handle(Event::Frame { frame: subscribe(3), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(subscribe(3)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Ready);
     assert!(machine.subscribed());
     assert_eq!(out.len(), 2, "SubscribeResponse + StreamStarted push (capture active)");
@@ -428,16 +427,16 @@ fn ready_duplicate_subscribe_is_nonfatal_402_connection_maintained() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
-    machine.handle(Event::Frame { frame: subscribe(3), source: unhex(CLIENT_PUB) });
-    let out = machine.handle(Event::Frame { frame: subscribe(4), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(subscribe(3)), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(subscribe(4)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Ready, "no state change");
     assert_eq!(out.len(), 1, "non-fatal: no Close");
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::Error(e)) if e.request_id == 4 && e.status.code == 402 && !e.status.retryable));
     // The connection is maintained: RequestConfiguration is still served
     // (the fixture's follow-up proves it).
-    let out = machine.handle(Event::Frame { frame: request_configuration(5), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(request_configuration(5)), source: unhex(CLIENT_PUB) });
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::ConfigurationPublished(p)) if p.request_id == 5));
 }
@@ -448,13 +447,13 @@ fn ready_unsubscribe_is_idempotent() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
-    let out = machine.handle(Event::Frame { frame: unsubscribe(3), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(unsubscribe(3)), source: unhex(CLIENT_PUB) });
     assert_eq!(out.len(), 1);
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::UnsubscribeResponse(r)) if r.status.code == 0));
     // Duplicate/late Unsubscribe also gets OK (idempotent).
-    let out = machine.handle(Event::Frame { frame: unsubscribe(4), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(unsubscribe(4)), source: unhex(CLIENT_PUB) });
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::UnsubscribeResponse(r)) if r.status.code == 0));
     assert_eq!(machine.state(), ServerState::Ready);
@@ -465,8 +464,8 @@ fn ready_request_configuration_echoes_request_id() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
-    let out = machine.handle(Event::Frame { frame: request_configuration(3), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(request_configuration(3)), source: unhex(CLIENT_PUB) });
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::ConfigurationPublished(p)) if p.request_id == 3 && p.configuration.is_some()));
 }
@@ -484,8 +483,8 @@ fn ready_capture_unhealthy_subscribe_is_501_retryable() {
         &std::sync::Arc::new(clone_store(&store)),
     );
     authenticate(&mut machine);
-    machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
-    let out = machine.handle(Event::Frame { frame: subscribe(3), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(subscribe(3)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Ready);
     assert_eq!(out.len(), 1, "non-fatal");
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
@@ -498,8 +497,8 @@ fn ready_close_received_moves_to_closing_without_echo() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
-    let out = machine.handle(Event::Frame { frame: close_frame(701), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(close_frame(701)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Closing);
     assert!(out.is_empty(), "Close is one-way and never echoed (§5.4)");
 }
@@ -515,18 +514,18 @@ fn unsolicited_nonfatal_error_is_advisory_only() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
     let advisory = Frame {
         body: Some(frame::Body::Error(v2_transport::schema::Error {
             request_id: 0,
             status: v2_transport::schema::Status::registry(403),
         })),
     };
-    let out = machine.handle(Event::Frame { frame: advisory, source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(advisory), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Ready, "advisory only");
     assert!(out.is_empty(), "no reply to an advisory Error");
     // The session still serves requests.
-    let out = machine.handle(Event::Frame { frame: request_configuration(3), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(request_configuration(3)), source: unhex(CLIENT_PUB) });
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::ConfigurationPublished(_))));
 }
@@ -538,7 +537,7 @@ fn fatal_error_class_sends_error_plus_close_and_stops_processing() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
     let out = machine.handle(Event::Fatal(ErrorCode::INTERNAL_ERROR));
     assert_eq!(machine.state(), ServerState::Closing);
     assert_eq!(out.len(), 2);
@@ -546,7 +545,7 @@ fn fatal_error_class_sends_error_plus_close_and_stops_processing() {
         Some(frame::Body::Error(e)) if e.request_id == 0 && e.status.code == 599));
     assert_eq!(out[1].close_code, Some(ErrorCode::INTERNAL_ERROR));
     // CLOSING accepts no new requests (§5.2).
-    let out = machine.handle(Event::Frame { frame: request_configuration(4), source: unhex(CLIENT_PUB) });
+    let out = machine.handle(Event::Frame { frame: Box::new(request_configuration(4)), source: unhex(CLIENT_PUB) });
     assert!(out.is_empty());
 }
 
@@ -555,8 +554,8 @@ fn closing_rejects_everything_and_transport_lost_absorbs() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
-    machine.handle(Event::Frame { frame: close_frame(701), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(close_frame(701)), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Closing);
     machine.handle(Event::TransportLost);
     assert_eq!(machine.state(), ServerState::Closed);
@@ -571,7 +570,7 @@ fn idle_timeout_closes_with_601() {
     let store = store_with_client();
     let mut machine = machine(&store);
     authenticate(&mut machine);
-    machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
     let out = machine.handle(Event::IdleTimeout);
     assert_eq!(machine.state(), ServerState::Closed);
     assert_eq!(out[0].transport_close_code, Some(ErrorCode::NETWORK_FAILURE));
@@ -589,15 +588,15 @@ fn supersede_closes_the_old_session_with_303_and_keeps_the_new() {
     let store = store_with_client();
     let mut old = machine(&store);
     authenticate(&mut old);
-    old.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
+    old.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
     assert_eq!(old.state(), ServerState::Ready);
     assert_eq!(old.session_id(), Some(1));
 
     let mut new = machine(&store);
     // The registry callback records supersede requests for the accept loop.
-    let out = new.handle(Event::Frame { frame: auth_init(1), source: unhex(CLIENT_PUB) });
+    let out = new.handle(Event::Frame { frame: Box::new(auth_init(1)), source: unhex(CLIENT_PUB) });
     assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()), Some(frame::Body::AuthChallenge(_))));
-    let out = new.handle(Event::Frame { frame: auth_proof(1, VALID_SIG), source: unhex(CLIENT_PUB) });
+    let out = new.handle(Event::Frame { frame: Box::new(auth_proof(1, VALID_SIG)), source: unhex(CLIENT_PUB) });
     // The new session is admitted (in production the session registry assigns
     // the next id — the fixture's 2; this per-machine counter model assigns
     // from 1 and the registry's numbering is asserted at the driver level).
@@ -621,7 +620,7 @@ fn revoked_active_session_receives_fatal_204_pair() {
     let store = std::sync::Arc::new(store_with_client());
     let mut machine = machine_on(std::sync::Arc::clone(&store));
     authenticate(&mut machine);
-    machine.handle(Event::Frame { frame: negotiate(2, &[]), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame { frame: Box::new(negotiate(2, &[])), source: unhex(CLIENT_PUB) });
     assert_eq!(machine.state(), ServerState::Ready);
     // The operator revokes while the session is live; the machine shares the
     // store, so the next §9.2 check sees it (the driver polls every ≤ 5 s).

@@ -87,9 +87,11 @@ pub const SUPERSEDE_KEEP_OLD: bool = true;
 #[derive(Clone, Debug)]
 pub enum Event {
     /// A decoded control frame from the Client (framing already validated).
+    /// The frame is boxed: variants stay size-balanced (clippy
+    /// large_enum_variant) — frames are rare, heap cost is negligible.
     Frame {
         /// The decoded frame.
-        frame: Frame,
+        frame: Box<Frame>,
         /// The connection's source address (rate-limit key, TM-4).
         source: Vec<u8>,
     },
@@ -304,7 +306,7 @@ impl StateMachine {
         self.state = new_state;
     }
 
-    fn handle_frame(&mut self, frame: Frame, source: Vec<u8>) -> Vec<Outcome> {
+    fn handle_frame(&mut self, frame: Box<Frame>, source: Vec<u8>) -> Vec<Outcome> {
         // CLOSING accepts no new requests (§5.2).
         if self.state == ServerState::Closing {
             return Vec::new();
@@ -320,7 +322,7 @@ impl StateMachine {
                 // §5.2 "any": non-fatal Error (no paired Close) is advisory.
                 Vec::new()
             }
-            other => self.handle_request(other, request_id, source),
+            other => self.handle_request(other, request_id, source)
         }
     }
 
