@@ -2,62 +2,67 @@
 
 Ticket: `09-phase3-cross-validation`
 Branch: `ticket/09-phase3-cross-validation`
-Base commit: `9c706dd` (integration tip at time of work; `phase-2/wire-protocol-v2` was still at `9c706dd`)
-Date: 2026-11-12
-Result: **one FAIL (authorization revocation on a live session)**; everything else PASS or NOT RUN with a stated reason. See "Adjudication needed".
+Base commit: `8c219b0` (integration tip after merging `review/wire-protocol-v2-fixes`; work started from `9c706dd`)
+Branch head at report time: `7a42315` (plus the docs/evidence commit that contains this file)
+Date: 2026-11-12 (first round) / 2026-11-13 (post-fix rerun)
+Result: **all ticket-09 items PASS, or NOT RUN on device with host live-QUIC/state-machine coverage stated inline.** No outstanding FAIL.
 
 No media or statistics capability is claimed here. Phase 3 is the control channel only (READY steady state); media/statistics remain phase 4.
 
-## Environment / versions
+## Environment / versions (final, post-fix rerun)
 
 | Item | Value |
 |---|---|
-| Server binary | `target/release/as-cmd`, 6,593,768 bytes, sha256 `a7cbb375a0abd5d090405d9014ea2200e91d93c574d933e88d4d6c227ac4e696` |
+| Integration base | `8c219b0` (contains the review fix branch; thread-local auth context fix, store reload, real close codes) |
+| Ticket-branch fix | `7a42315 fix(v2-client): surface remote Close code to reconnect policy` |
+| Server binary | `target/release/as-cmd`, 6,637,752 bytes, sha256 `0fd79b00ca8cc53d8f08ade3ec6ebd7dd7655d56df35c043847a5d0dec6e542d` |
 | Server args | `as-cmd -b 0.0.0.0:65530 --v2-port 65531 --fake-capture -V`, config `AUDIO_SHARE_CONFIG=/tmp/ticket09/data/config.ini` |
 | Server identity | freshly generated (fixture server key is PKCS#8 v1, which ring 0.17 rejects); fingerprint `EE5BAE52 0923AB39 71B6A68D C0FD774F A9B27DC3 F1EAC5FB 576985E5 E9F79C94` |
 | Fixture client identity | client_id `cf7940b474310246`, compressed pubkey base64url `A9ClKd50dWQawFDHkrQs_weRB8pTENp5U9JZUSFHfA9t` (native key hardcoded from `fixtures/wire-protocol-v2/test-keys.json`) |
-| Client APK | `android-client-v2/app/build/outputs/apk/release/app-release.apk`, 2,467,726 bytes, sha256 `59b4b97a9e5d51ec3062569de19cd99e88e5cdf22c6136ebbadb461749b64bf6` |
-| Native `.so` | unstripped 8,883,672 bytes; in-APK arm64 stripped 2,355,888 bytes |
+| Client APK | `android-client-v2/app/build/outputs/apk/release/app-release.apk`, 2,478,374 bytes, sha256 `7f15a2fc8332c493c85ea21fc20474326b6784ecd1e26b1e6a1b8accf2aad6d6` (built with the review branch plus `7a42315`; no bypass) |
+| Native `.so` | unstripped 8,911,744 bytes; in-APK arm64 stripped 2,366,536 bytes |
 | Device | Xiaomi M2007J22C (cannon), Android 12 / API 31, arm64, MIUI, no SIM |
 | Device path | adb over tailscale, serial `100.117.189.121:5555`, host `100.94.170.124` |
-| Build | `android-client-v2`: `ANDROID_HOME=$HOME/Android/Sdk ./gradlew assembleRelease` |
-| Evidence root | `.scratch/wire-protocol-v2/evidence/ticket-09/` |
+| Build | `android-client-v2`: `ANDROID_HOME=$HOME/Android/Sdk ./gradlew assembleRelease` (gradle passes `--features test-support` to the native crate, per `app/build.gradle.kts`) |
+| Evidence root | `.scratch/wire-protocol-v2/evidence/ticket-09/`; post-fix rerun lives in `09-post-fix/` |
 
-### Temporary bypass disclosure (must be re-validated)
+## Bypass disclosure and post-fix rerun
 
-`android-client-v2/native/src/session.rs:89-95`: `.worker_threads(2)` → `.worker_threads(1)`.
+The first round (pre-fix, commits `0c503e8`/`4386046`) used a temporary one-line bypass in `android-client-v2/native/src/session.rs`: `.worker_threads(2)` → `.worker_threads(1)`, because the auth signing context was `thread_local!` and could resume on another worker. That bypass was **reverted by the integration merge** (`8c219b0`); the final APK contains the real fix and runs the normal multi-worker runtime. Do not reintroduce `worker_threads(1)`.
 
-This is a **temporary ticket-09 bypass** for a known client defect (auth signing context lives in `thread_local!`; a multi-worker runtime can resume the task on another worker, where `SERVER_PUBLIC_KEY` is `None`, producing a 601 close and a permanently AUTHENTICATING UI). The real fix is owned by `review/wire-protocol-v2-fixes`. The APK used for all device evidence contains this bypass. Positive E2E was blocked without it; no other source changes were made.
+Post-fix rerun found one remaining client bug: a remote `Close` reached the native state machine as a terminal stop but the `CloseInfo` was not stored, so Kotlin received `close_code=null` and treated 204 revocation as transport loss (one auto-reconnect). `7a42315` records `CloseInfo` on every terminal close and adds `remote_close_code_is_surfaced`; device evidence below shows `close_code=204` and `close_code=202` with no automatic reconnect.
 
-## Item-by-item results
+The pre-fix evidence in `01-e2e-positive/` … `08-replay/` is retained for traceability. Final acceptance evidence is the `09-post-fix/` set.
+
+## Item-by-item results (final)
 
 | # | Requirement | Result | Evidence / note |
 |---|---|---|---|
-| 1 | E2E positive: connect → AuthInit/Challenge/Proof/Result → Negotiate/NegotiateResponse → READY → user stop | **PASS** (with bypass) | `01-e2e-positive/ready-2026-11-12T23-01.png`, `server-ready.log` (`v2 connection accepted` + `control stream open`), `client-ready.log`; host live-QUIC `auth_happy_path_reaches_ready_over_quic` PASS |
-| 2 | User-initiated stop with normal close code | **PASS (Close 701)**, trigger caveat | No stop button in the smoke UI. Activity recreation (`adb shell settings put system font_scale 1.15` → `onDestroy` → `session.stop()`) produced server `ClientClosed(ErrorCode { code: 701 })` for session 45908 at `15:00:51.685` and client `session stopped (701 CLIENT_STOPPING)`. BACK under MIUI only backgrounded the activity (`finishing=false`); force-stop is an abrupt loss, not a clean stop. Evidence: `01-e2e-positive/server-after-stop.log`, `client-after-stop.log`, `user-stop-701-*.log` |
-| 3 | Wrong SPKI pin: handshake-level rejection, no application data | **PASS** | Client: `server SPKI does not match pinned identity`; no server `v2 connection accepted` for those attempts; UI IDLE with retry loop (known client reconnect defect). `05-negatives/wrong-spki-pin.png`, `wrong-spki-pin-client.log` |
-| 4a | Wrong signature `auth_context` | **PASS (host)** / NOT RUN on device | `crates/v2-transport/tests/state_machine.rs:247 invalid_signature_is_203_and_counts_a_failure`; cannot forge a bad signature from the smoke UI |
-| 4b | Unknown public-key identity → 202 | **PASS** | Device: server rejects (control stream open, then auth failure; client closes and reconnects). Server driver log **hardcodes `code=203`** for every auth failure (`crates/v2-transport/src/driver.rs:314-317`), so the exact 202 is proven by `state_machine.rs:213 valid_proof_unknown_identity_is_202_connection_stays` and replay fixture `control/error-202-authorization-unknown.json`, not by the device log. `05-negatives/unknown-identity-202.png`, `unknown-identity-202-client.log` |
-| 5a | Revocation of a live session: terminate ≤5 s | **FAIL** | READY at 22:48; fixture record removed from `/tmp/ticket09/data/pairing/clients.json` at 22:48:15; still READY at 22:48:29 (12 s) and the server never ended the session. Root cause: `AuthorizationStore` loads `clients.json` once (`crates/v2-transport/src/auth_store.rs`), there is no reload and no production revoke surface in `as-cmd`; the driver's 2 s revocation poll only tears down `Revoked`, not `Unknown` (deleted record). Violates `pairing.md` §9.2. Evidence: `05-negatives/revocation-live-before.png`, `revocation-live-after-12s.png` |
-| 5b | New connection after revocation → 204 | **PASS (restart path)** | Server restarted with the record `state:"revoked"`; device rejection observed in ~100 ms. Exact 204 asserted by live-QUIC `session_driver.rs:454 revoked_identity_is_torn_down_with_204`; device log again shows the hardcoded 203 message. `05-negatives/revoked-new-connection.{png,client.log,server.log}` |
-| 6 | Stray frame before READY → decidable 401/402 | **PASS (host)** / NOT RUN on device | `session_driver.rs:377 second_control_stream_is_invalid_state_402`, `state_machine.rs:292 auth_proof_without_challenge_is_402_fatal`; no injection surface in the smoke UI. `05-negatives/host-live-quic-tests.log` |
-| 7 | Malformed frame → 401 + Close | **PASS (host)** / NOT RUN on device | `session_driver.rs:428 empty_length_prefix_is_malformed_401`, `state_machine.rs:190 connecting_malformed_frame_is_fatal_401`; no injection surface on device |
-| 8 | TM-5 rate limit, per connection 5 failures | **PASS (host)** / NOT RUN on device | `session_driver.rs:557 per_connection_and_per_source_auth_failure_limits`; the smoke client closes after one 202/204, so it cannot accumulate 5 failures on one connection |
-| 9 | TM-5 rate limit, per source 20 failures / 60 s | **PASS (device)** | 24 rapid force-stop/start launches with a revoked store produced 20 auth failures in ~15 s, then `source auth-failure budget reached ... code=302` and subsequent `budget exhausted ... code=302`. `05-negatives/tm5-rate-limit-server.log`, `tm5-rate-limited.png`, `tm5-rate-limit-client.log` |
-| 10 | READY idle >60 s, no false death | **PASS** | READY 22:39:55 → 22:41:16 (>80 s), server session still open; `02-idle/ready-after-70s.png` |
-| 11 | Lock/unlock survival | **PASS** | Screen off 20 s (22:42:06–22:42:33), wake + dismiss keyguard → READY, server session alive; `03-lock/screen-off-20s.png`, `03-lock/ready-after-unlock.png` |
-| 12 | Network loss → bounded backoff reconnect | **PASS** | On-device `svc wifi disable; sleep 15; svc wifi enable` (rc 0/0, 22:50:22→22:50:37). Client lost the connection, 5 s handshake timeout → 601, retries at 548/990/1706 ms (bounded, jittered), then QUIC established → READY after Wi-Fi returned; server accepted 59735, old session ended 303 (supersede). Client base delay is 500 ms, below the spec's 1 s (known reconnect defect). `04-network/*` |
-| 13 | Resource baseline (device CPU/RSS + server session count) | **PASS** | Device PID 15201: 8.6% CPU (`dumpsys cpuinfo`; 5.9 user + 2.6 kernel), VmHWM 170,580 kB, VmRSS 166,048 kB, 38 threads. Later PID 18220: 4% CPU, VmHWM 149,172 kB, VmRSS 147,832 kB. Server RSS 9,620 kB; 6 accepted / 7 ended log lines, 1 active session inferred (no metrics endpoint). Prototype desktop baseline for comparison: server RSS 8.4 MiB / client 7.5 MiB, CPU ~4.7% / ~6.2%, but that run carried media and the desktop client was native-only. `06-resources/resource-baseline.log`, `ready-session.png` |
-| 14 | `protocol-harness replay` all green | **PASS** | Six fixture sets, exit=0 each: linux/f32-48k-stereo, linux/s16-44k1-stereo, windows/f32-48k-stereo, windows/s16-44k1-stereo, windows/s16-48k-mono, windows/s24-48k-stereo; `07-v1-regression/replay-*.log` |
-| 15 | v1 integration tests green | **PASS** | `cargo test --workspace`: 435 passed, 0 failed, 3 ignored, 37 suites. First run had one environmental failure (`bind 65531: AddrInUse`) because the live v2 server held the port; rerun after stopping the server was clean. `07-v1-regression/cargo-test-workspace.log` |
-| 16 | v0.3.4 `android-app/` build unaffected | **PASS** | Zero diff (`git diff 9c706dd -- android-app/` = 0 lines, 0 files). `sh gradlew assembleDebug` BUILD SUCCESSFUL / exit 0 after supplying a temporary local, gitignored `android-app/keystore.properties` pointing at the debug keystore (removed afterwards; not part of the change). `07-v1-regression/android-app-assembleDebug.log` |
-| 17 | Server runs v1+v2 concurrently, isolated | **PASS** | Live v1 replay via 65530 while the v2 device session was READY: `replay: ok (live)`, 1770 datagrams / 2,416,640 bytes; v2 stayed READY before/after. `07-v1-regression/live-v1-replay-while-v2-ready.log`, `v2-ready-{before,after}-v1-replay.png`, `v2-server-log-concurrent.log` |
-| 18 | Rust ↔ Android replay fixtures on real builds | **PASS** | Rust: `cargo test -p v2-transport --test state_machine_replay --test golden_vectors` → 3 + 19 = 22 passed. Android native: `cd android-client-v2/native && cargo test` → 83 passed, 0 failed (fixture replay happy/error/limits/pairing). `08-replay/server-replay-tests.log`, `08-replay/android-native-cargo-test.log` |
+| 1 | E2E positive: connect → AuthInit/Challenge/Proof/Result → Negotiate/NegotiateResponse → READY → user stop | **PASS** (multi-worker, no bypass) | `09-post-fix/ready-multithread.png`, `server-ready-post-fix.log` (`v2 connection accepted`, `control stream open`); host live-QUIC `auth_happy_path_reaches_ready_over_quic` PASS. Frame sequence is not logged by either side; READY + host/replay coverage is the evidence. |
+| 2 | User-initiated stop with normal close code | **PASS** (Close 701) | Smoke UI has no stop button. Activity recreation (`settings put system font_scale 1.15` → `onDestroy` → `session.stop()`) produced server `ClientClosed(ErrorCode { code: 701, reason: "client stopping" })` at `16:01:25.419`; `09-post-fix/server-after-stop.log`, `client-after-stop.log`, `after-user-stop.png`. BACK only backgrounds the activity under MIUI; force-stop is an abrupt loss, not a clean stop. |
+| 3 | Wrong SPKI pin: handshake-level rejection, no application data | **PASS** | 64-zero pin: `server SPKI does not match pinned identity`; no server acceptance for the pinned attempt; `09-post-fix/wrong-spki-pin-post-fix.png`, `wrong-spki-pin-client.log`. (`deadbeef` is rejected locally as "pin must be 64 hex chars" — also no application data.) |
+| 4a | Wrong signature `auth_context` → 203 | **PASS (host)** / NOT RUN on device | `09-post-fix/server-state-machine-codes.log`: `invalid_signature_is_203_and_counts_a_failure` PASS (30/30 state-machine tests). Cannot forge a bad signature from the smoke UI. |
+| 4b | Unknown public-key identity → 202 | **PASS** | Device: empty store, server logs `authentication failed ... code=202`; UI `CLOSED`, `session closed (close_code=202); no automatic reconnect`; `09-post-fix/unknown-identity-202-post-fix.png`, `server-unknown-identity-202.log`, `client-unknown-identity-202.log`. A14 (real registry code) confirmed. |
+| 5a | Revocation of a live session: terminate ≤5 s | **PASS** | Record deleted at `15:51:38.694Z`; server `Close(204)` at `15:51:39.494` → **0.800 s**. UI `CLOSED`, `close_code=204`, no reconnect. `09-post-fix/revocation-timing.txt`, `revoked-live-6s-post-fix.png`, `server-after-live-revoke-post-fix.log`, `client-after-live-revoke-post-fix.log`. |
+| 5b | New connection after revocation → 204 | **PASS** | Store record `state:"revoked"`: server logs `authentication failed ... code=204`; UI `close_code=204`, no reconnect. `09-post-fix/revoked-new-connection-post-fix.png`, `server-revoked-new-connection-post-fix.log`, `client-revoked-new-connection-post-fix.log`. Host: `deleting_the_record_ends_the_live_session_and_rejects_reconnects` + `revoked_identity_is_torn_down_with_204`. |
+| 6 | Stray frame before READY → decidable 401/402 | **PASS (host)** / NOT RUN on device | `session_driver.rs` `second_control_stream_is_invalid_state_402`; state-machine 402 tests. No frame-injection surface in the smoke UI. `09-post-fix/host-live-quic-tests.log`. |
+| 7 | Malformed frame → 401 + Close | **PASS (host)** / NOT RUN on device | `session_driver.rs` `empty_length_prefix_is_malformed_401`; state-machine 401 tests. No injection surface on device. |
+| 8 | TM-5 rate limit, per connection 5 failures | **PASS (host)** / NOT RUN on device | `session_driver.rs` `per_connection_and_per_source_auth_failure_limits`; the smoke client closes after one 202/204, so it cannot accumulate 5 failures on one connection. |
+| 9 | TM-5 rate limit, per source 20 failures / 60 s | **PASS (device)** | Pre-fix round: 24 rapid launches with a revoked store produced 20 auth failures in ~15 s, then `source auth-failure budget reached ... code=302` and `budget exhausted ... code=302`; `05-negatives/tm5-rate-limit-server.log`, `tm5-rate-limited.png`, `tm5-rate-limit-client.log`. Guard logic unchanged by the fix branch. |
+| 10 | READY idle >60 s, no false death | **PASS** | Post-fix: READY 15:53:28.9 → 15:54:33 (~64 s), active session never ended; six fixture replays ran during the idle window. `09-post-fix/idle-after-70s.png`, `idle-start.png`, `idle-end.txt`, `server-after-idle.log`, `v1-replay/*.log`. |
+| 11 | Lock/unlock survival | **PASS** | Screen off 20 s (session 40879 accepted 15:58:42); no new connection after wake, session still live, UI READY. `09-post-fix/lock-before.png`, `ready-after-unlock.png`. Note: `input keyevent 26` toggles power; swipe-up is needed to dismiss the MIUI keyguard. |
+| 12 | Network loss → bounded backoff reconnect | **PASS** | On-device `svc wifi disable; sleep 15; svc wifi enable` 15:55:09→15:55:24. Client lost the session, 5 s handshake timeouts, reconnects at 1037/2183/3471/7954 ms (bounded, jittered, 1 s base per §6.3), then QUIC + control stream → READY; old session ended 303 (supersede). `09-post-fix/network-ready-before.png`, `network-ready-after.png`, `server-after-network-loss.log`, `client-after-network-loss.log`. |
+| 13 | Resource baseline (device CPU/RSS + server session count) | **PASS** | Idle post-fix device PID 21958: 0% CPU (`dumpsys cpuinfo`), VmHWM 154,932 kB, VmRSS 154,892 kB, 37 threads. Server RSS 9,960 kB; server log 13 accepted / 16 ended lines; no metrics endpoint, active count inferred. `09-post-fix/resource-baseline-post-fix.log`. |
+| 14 | `protocol-harness replay` all green | **PASS** | Six fixture sets, exit=0 each: linux/f32-48k-stereo, linux/s16-44k1-stereo, windows/f32-48k-stereo, windows/s16-44k1-stereo, windows/s16-48k-mono, windows/s24-48k-stereo; `09-post-fix/v1-replay/replay-*.log`. |
+| 15 | v1 integration tests green | **PASS** | `cargo test --workspace` post-fix: 445 passed, 0 failed, 4 ignored, 39 suites, exit 0. `09-post-fix/cargo-test-workspace.log`. |
+| 16 | v0.3.4 `android-app/` build unaffected | **PASS** | Zero diff vs `8c219b0`. Debug build had succeeded earlier on the unchanged tree with a temporary gitignored `android-app/keystore.properties` (removed afterwards); no source change. |
+| 17 | Server runs v1+v2 concurrently, isolated | **PASS** | Live v1 replay via 65530 while the v2 device session was READY: `replay: ok (live)`, 1770 datagrams / 2,416,640 bytes, exit 0; v2 stayed READY. `09-post-fix/live-v1-replay-while-v2-ready.log`, `v2-ready-after-v1-live-replay.png`. |
+| 18 | Rust ↔ Android replay fixtures on real builds | **PASS** | Rust: `state_machine_replay` 3 + `golden_vectors` 19 = 22 passed; Android native: `cargo test` 97 passed, 0 failed (fixture replay happy/error/limits/pairing). `09-post-fix/server-replay-tests.log`, `android-native-cargo-test.log`. |
 | 19 | Phase-3 report with PASS/FAIL/NOT RUN, versions, links, leftovers | **PASS** | this file |
 
-## Host live-QUIC negative suite
+## Host live-QUIC negative suite (post-fix)
 
-`cargo test -p v2-transport --test session_driver -- --nocapture` → 8 passed, 0 failed:
+`cargo test -p v2-transport --test session_driver -- --nocapture` → 9 passed, 0 failed:
 
 - `auth_happy_path_reaches_ready_over_quic`
 - `per_connection_and_per_source_auth_failure_limits`
@@ -67,21 +72,28 @@ This is a **temporary ticket-09 bypass** for a known client defect (auth signing
 - `second_control_stream_is_invalid_state_402`
 - `new_session_supersedes_the_old_with_303`
 - `revoked_identity_is_torn_down_with_204`
+- `deleting_the_record_ends_the_live_session_and_rejects_reconnects`
 
-Log: `05-negatives/host-live-quic-tests.log`.
+Log: `09-post-fix/host-live-quic-tests.log`. State-machine suite: 30 passed, including 202/203/401/402 cases (`09-post-fix/server-state-machine-codes.log`).
 
-Device-level evidence for the auth/negotiate frame sequence is indirect: `as-cmd` and the Android client do not log individual control frames. The READY steady state, absence of auth failures on the server, and the host live-QUIC `auth_happy_path_reaches_ready_over_quic` test (plus the fixture replay suites) together cover the Connect → Auth → Negotiate → READY chain.
+## Defects found during ticket 09 and disposition
 
-## Adjudication needed (blocking resolution)
-
-1. **Live revocation ≤5 s is FAIL.** Implement an authorization-state reload/revoke path in the server (reload the persistent store on the revocation poll and treat a previously authorized but now unknown/removed identity as revoked, and/or expose a production revoke surface — the 07 ticket has no runtime revoke API, and direct `clients.json` edits cannot be seen by a running server). Then re-run the device test and confirm the READY session ends within 5 s, plus the 204 pair. Candidate touch points: `crates/v2-transport/src/auth_store.rs` (reload, IO serialization), `crates/v2-transport/src/driver.rs` (poll tick), `crates/v2-transport/src/state_machine.rs:712` (`handle_revocation_check` currently fatal only on `Revoked`). This is not one of the six known review-branch defects, so it needs an explicit owner.
-2. **Device log masks the registry code.** `crates/v2-transport/src/driver.rs:314-317` logs `code = 203u32` for every authentication failure. 202/204 device evidence therefore relies on host tests + replay fixtures. Logging the real registry code would make future device acceptance direct.
-3. **Known client defects observed but not fixed here** (owned by `review/wire-protocol-v2-fixes`): reconnect policy (§6.3: 500 ms base, 202/203/204/205/303/701 all auto-reconnect, close code unread), Close echo violation, pending request-id/Status handling, and the thread-local auth context. The positive E2E bypass (`worker_threads(1)`) must be reverted and the device E2E re-run after the fix branch merges.
-4. Ticket status stays `claimed` because of item 5a; it is not resolved.
+1. Thread-local auth context across multi-worker runtime (blocked positive E2E; temporary `worker_threads(1)` bypass used in the pre-fix round). Fixed by the review branch; bypass reverted at `8c219b0`; multi-worker E2E revalidated.
+2. Client pending request-id pairing / missing Status treated as success. Fixed by review branch.
+3. Client echoed Close frames, violating "Close is one-way and never echoed". Fixed by review branch.
+4. Client reconnect policy (500 ms base; 202/203/204/205/303/701 auto-reconnect; close code unread). Fixed by review branch; device shows 1 s base and no reconnect on 202/204.
+5. Server Close code 0 not mapped to 401; client deadline/keep-alive semantics; send-path limits. Fixed by review branch; idle/keep-alive revalidated >60 s.
+6. Test private key not compile-time gated. Fixed by review branch; APK is built with `test-support` as configured for this smoke app.
+7. Authorization store loaded once, no reload, deleted identities not treated as revoked, no production revoke surface (first-round FAIL 5a). Fixed by review branch (A13: reload every 2 s, deleted = revoked); live Close 204 now 0.800 s.
+8. Driver auth-failure log hardcoded 203 (A14). Fixed by review branch; device logs now show real 202 and 204.
+9. Remote `CloseInfo` not stored, so Kotlin saw `close_code=null` and reconnected once after 204. Found and fixed on this branch in `7a42315` with unit test `remote_close_code_is_surfaced`.
 
 ## Leftovers / NOT RUN summary
 
-- `android-app/` debug build required a temporary local `keystore.properties` (gitignored) for signing config; the file was removed after the successful build, and there is no source diff.
-- Device-level stray-frame injection, malformed-frame injection, wrong-signature auth proof, and per-connection 5-failure exhaustion: NOT RUN (smoke UI has no frame injection). Covered by host live-QUIC/state-machine tests instead.
+- Device-level stray-frame injection, malformed-frame injection, wrong-signature proof, and per-connection 5-failure exhaustion: NOT RUN (smoke UI has no injection surface). Covered by host live-QUIC/state-machine tests.
+- Per-source TM-5 evidence comes from the pre-fix round; the guard path is unchanged by the fix branch.
 - Server session count has no public metric; inferred from acceptance/termination log lines.
+- Fixture server PKCS#8 key is v1 and ring 0.17 rejects it (`VersionNotSupported`); the test run used a freshly generated server identity. Regenerate the fixture server key as PKCS#8 v2 (or load with an explicit v1-tolerant path) so the fixture identity is usable as-is.
+- `android-app/` debug build needs a local gitignored `keystore.properties`; the app tree is unchanged.
 - Media and statistics capabilities were not tested or claimed (phase 4).
+- `7a42315` lives on this ticket branch; it should be carried into the integration branch if the ticket branch is not merged as a whole.

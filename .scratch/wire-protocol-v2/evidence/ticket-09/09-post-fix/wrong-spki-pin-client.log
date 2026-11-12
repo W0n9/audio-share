@@ -1,0 +1,7 @@
+11-13 00:02:11.006 I/audio_share_client_v2..(23418): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-13 00:02:11.008 W/ClientSession(23418): rebind: Binding socket to network 243 failed: EPERM (Operation not permitted)
+11-13 00:02:11.008 I/audio_share_client_v2..(23418): session stopped (701 CLIENT_STOPPING)
+11-13 00:02:11.008 I/audio_share_client_v2..(23418): session stopped (701 CLIENT_STOPPING)
+11-13 00:02:11.056 W/audio_share_client_v2..(23418): session: session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity
+11-13 00:02:11.859 I/audio_share_client_v2..(23418): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-13 00:02:11.913 W/audio_share_client_v2..(23418): session: session ended: handshake: the cryptographic handshake failed: error 40: unexpected error: server SPKI does not match pinned identity

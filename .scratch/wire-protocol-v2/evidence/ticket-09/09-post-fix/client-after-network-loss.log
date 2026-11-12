@@ -1,0 +1,16 @@
+11-12 23:55:09.983 I/audio_share_client_v2..(21958): session stopped (701 CLIENT_STOPPING)
+11-12 23:55:09.984 I/audio_share_client_v2..(21958): session stopped (701 CLIENT_STOPPING)
+11-12 23:55:09.984 W/audio_share_client_v2..(21958): session: session ended: control read: connection lost
+11-12 23:55:11.025 I/audio_share_client_v2..(21958): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 23:55:16.029 W/audio_share_client_v2..(21958): session: session ended: handshake timeout (5 s) → 601
+11-12 23:55:16.045 I/audio_share_client_v2..(21958): session stopped (701 CLIENT_STOPPING)
+11-12 23:55:18.235 I/audio_share_client_v2..(21958): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 23:55:23.238 W/audio_share_client_v2..(21958): session: session ended: handshake timeout (5 s) → 601
+11-12 23:55:23.257 I/audio_share_client_v2..(21958): session stopped (701 CLIENT_STOPPING)
+11-12 23:55:26.739 I/audio_share_client_v2..(21958): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 23:55:27.314 W/ClientSession(21958): rebind: Binding socket to network 243 failed: EPERM (Operation not permitted)
+11-12 23:55:27.314 I/audio_share_client_v2..(21958): session stopped (701 CLIENT_STOPPING)
+11-12 23:55:27.314 I/audio_share_client_v2..(21958): session stopped (701 CLIENT_STOPPING)
+11-12 23:55:27.796 I/audio_share_client_v2..(21958): QUIC established
+11-12 23:55:35.277 I/audio_share_client_v2..(21958): connecting 100.94.170.124:65531 ALPN audio-share/v2
+11-12 23:55:35.335 I/audio_share_client_v2..(21958): QUIC established
