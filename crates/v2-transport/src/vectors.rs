@@ -41,7 +41,7 @@ pub struct CaseReport {
 }
 
 /// A fixture case file (`control/*.json`, `limits/*.json`).
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct FixtureCase {
     /// Stable case id.
     pub id: String,
@@ -56,7 +56,7 @@ pub struct FixtureCase {
 }
 
 /// One ordered step of a fixture case.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct FixtureStep {
     /// `frame` | `raw-stream` | `transport-close` | `datagram`.
     pub kind: String,
@@ -91,7 +91,7 @@ pub struct FixtureStep {
 }
 
 /// A `size_bounds` entry: the named frame must stay under the byte bound.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct SizeBound {
     /// The message name the bound applies to (e.g. `pairing_response`).
     pub frame: String,

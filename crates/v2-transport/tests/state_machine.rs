@@ -120,6 +120,7 @@ fn machine_on(store: std::sync::Arc<AuthorizationStore>) -> StateMachine {
                 "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
             )),
             keep_old_on_supersede: SUPERSEDE_KEEP_OLD,
+            session_id_base: 1,
         },
         &store,
     )
