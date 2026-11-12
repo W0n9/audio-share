@@ -15,6 +15,8 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -132,6 +134,10 @@ pub enum Authorization {
     Authorized(StoredClient),
     /// The identity matches a revoked record → 204 AUTHORIZATION_DENIED.
     Revoked(StoredClient),
+    /// The store could not be re-read after a change (corruption). Fail
+    /// closed: no identity is authorized and live sessions are torn down
+    /// until an operator restores the file (pairing.md §10.3).
+    Unavailable,
 }
 
 /// A store failure. Every variant fails closed (v2 auth disabled).
@@ -188,6 +194,38 @@ impl std::error::Error for StoreError {}
 pub struct AuthorizationStore {
     path: Option<PathBuf>,
     clients: std::sync::RwLock<Vec<StoredClient>>,
+    reload: Mutex<ReloadState>,
+}
+
+/// What the store last saw on disk, so the 2 s poll only re-reads on change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FileFingerprint {
+    Missing,
+    Present { len: u64, modified: Option<SystemTime> },
+}
+
+struct ReloadState {
+    fingerprint: Option<FileFingerprint>,
+    /// Set after a failed re-read; `authorize` then fails closed instead of
+    /// serving the last known-good table (pairing.md §10.3).
+    failed: bool,
+}
+
+impl ReloadState {
+    fn initial(fingerprint: Option<FileFingerprint>) -> Self {
+        Self { fingerprint, failed: false }
+    }
+}
+
+fn fingerprint(path: &Path) -> io::Result<FileFingerprint> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(FileFingerprint::Present {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(FileFingerprint::Missing),
+        Err(error) => Err(error),
+    }
 }
 
 impl fmt::Debug for AuthorizationStore {
@@ -217,7 +255,11 @@ impl AuthorizationStore {
         let pairing_dir = data_dir.join("pairing");
         let path = pairing_dir.join(CLIENTS_FILE);
         if !path.exists() {
-            return Ok(Self { path: Some(path), clients: std::sync::RwLock::new(Vec::new()) });
+            return Ok(Self {
+                path: Some(path),
+                clients: std::sync::RwLock::new(Vec::new()),
+                reload: Mutex::new(ReloadState::initial(Some(FileFingerprint::Missing))),
+            });
         }
         let text = fs::read_to_string(&path).map_err(|source| StoreError::Io {
             operation: "read authorization store",
@@ -227,17 +269,29 @@ impl AuthorizationStore {
             path: path.clone(),
             reason,
         })?;
-        Ok(Self { path: Some(path), clients: std::sync::RwLock::new(clients) })
+        let seen = fingerprint(&path).ok();
+        Ok(Self {
+            path: Some(path),
+            clients: std::sync::RwLock::new(clients),
+            reload: Mutex::new(ReloadState::initial(seen)),
+        })
     }
 
     /// A memory-only store (tests / isolated configurations).
     pub fn in_memory() -> Self {
-        Self { path: None, clients: std::sync::RwLock::new(Vec::new()) }
+        Self {
+            path: None,
+            clients: std::sync::RwLock::new(Vec::new()),
+            reload: Mutex::new(ReloadState::initial(None)),
+        }
     }
 
     /// Consult the authorization state for this public key (§9.2: at every
     /// authentication, never a cached answer).
     pub fn authorize(&self, public_key: &[u8]) -> Authorization {
+        if self.reload.lock().expect("authorization reload lock").failed {
+            return Authorization::Unavailable;
+        }
         let guard = self.clients.read().expect("authorization store lock");
         match guard.iter().find(|client| client.public_key == public_key) {
             Some(client) => match client.state {
@@ -245,6 +299,59 @@ impl AuthorizationStore {
                 ClientState::Revoked => Authorization::Revoked(client.clone()),
             },
             None => Authorization::Unknown(public_key.to_vec()),
+        }
+    }
+
+    /// Re-read `clients.json` when its metadata changed (the driver calls this
+    /// on its 2 s revocation tick and before authentication). A missing file
+    /// means every record was removed; a corrupt file fails closed and stays
+    /// failed until a later re-read succeeds (pairing.md §9.2/§10.3).
+    pub fn reload_if_changed(&self) -> Result<bool, StoreError> {
+        let Some(path) = &self.path else { return Ok(false) };
+        let current = fingerprint(path).map_err(|source| StoreError::Io {
+            operation: "stat authorization store",
+            source,
+        })?;
+        if self.reload.lock().expect("authorization reload lock").fingerprint == Some(current) {
+            return Ok(false);
+        }
+        match current {
+            FileFingerprint::Missing => {
+                self.clients.write().expect("authorization store lock").clear();
+                let mut state = self.reload.lock().expect("authorization reload lock");
+                state.fingerprint = Some(current);
+                state.failed = false;
+                Ok(true)
+            }
+            FileFingerprint::Present { .. } => {
+                let text = match fs::read_to_string(path) {
+                    Ok(text) => text,
+                    Err(source) => {
+                        let mut state = self.reload.lock().expect("authorization reload lock");
+                        state.fingerprint = Some(current);
+                        state.failed = true;
+                        return Err(StoreError::Io {
+                            operation: "read authorization store",
+                            source,
+                        });
+                    }
+                };
+                match parse_store_text(&text) {
+                    Ok(clients) => {
+                        *self.clients.write().expect("authorization store lock") = clients;
+                        let mut state = self.reload.lock().expect("authorization reload lock");
+                        state.fingerprint = Some(current);
+                        state.failed = false;
+                        Ok(true)
+                    }
+                    Err(reason) => {
+                        let mut state = self.reload.lock().expect("authorization reload lock");
+                        state.fingerprint = Some(current);
+                        state.failed = true;
+                        Err(StoreError::Corrupted { path: path.clone(), reason })
+                    }
+                }
+            }
         }
     }
 
@@ -329,6 +436,13 @@ impl AuthorizationStore {
             operation: "persist authorization store",
             source: io::Error::other(error.to_string()),
         })?;
+        // Our own write is not an external change: remember its fingerprint so
+        // the next poll does not re-parse it.
+        if let Ok(seen) = fingerprint(path) {
+            let mut state = self.reload.lock().expect("authorization reload lock");
+            state.fingerprint = Some(seen);
+            state.failed = false;
+        }
         Ok(())
     }
 }

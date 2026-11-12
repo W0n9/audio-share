@@ -266,3 +266,69 @@ fn duplicate_client_ids_are_rejected() {
     let error = load_error(&format!("{one}, {two}"));
     assert!(error.contains("duplicate"), "the refusal must explain the duplicate: {error}");
 }
+
+// ---------------------------------------------------------------------------
+// Runtime reload (pairing.md §9.2: revocation takes effect within ≤ 5 s).
+// The store watches `clients.json`; a deleted or corrupt file must not leave
+// stale credentials usable in memory (§10.3 fail-closed).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deleting_the_file_revokes_the_identity_on_reload() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = AuthorizationStore::open(dir.path()).expect("open");
+    store.upsert(client(CLIENT_PUB, "Test Phone")).expect("upsert");
+    let path = dir.path().join("pairing").join("clients.json");
+    let saved = std::fs::read(&path).expect("read store");
+    assert!(matches!(
+        store.authorize(&unhex(CLIENT_PUB)),
+        v2_transport::auth_store::Authorization::Authorized(_)
+    ));
+
+    std::fs::remove_file(&path).expect("delete store");
+    assert!(store.reload_if_changed().expect("reload after delete"));
+    assert!(
+        matches!(
+            store.authorize(&unhex(CLIENT_PUB)),
+            v2_transport::auth_store::Authorization::Unknown(_)
+        ),
+        "a removed record must stop authorizing"
+    );
+
+    std::fs::write(&path, &saved).expect("restore store");
+    assert!(store.reload_if_changed().expect("reload after re-add"));
+    assert!(
+        matches!(
+            store.authorize(&unhex(CLIENT_PUB)),
+            v2_transport::auth_store::Authorization::Authorized(_)
+        ),
+        "re-adding the record restores authorization"
+    );
+}
+
+#[test]
+fn corrupt_reload_fails_closed_and_recovers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = AuthorizationStore::open(dir.path()).expect("open");
+    store.upsert(client(CLIENT_PUB, "Test Phone")).expect("upsert");
+    let path = dir.path().join("pairing").join("clients.json");
+    let saved = std::fs::read(&path).expect("read store");
+
+    std::fs::write(&path, b"{not json").expect("corrupt store");
+    let error = store.reload_if_changed().expect_err("corruption must be reported");
+    assert!(matches!(error, StoreError::Corrupted { .. }), "got {error:?}");
+    assert!(
+        matches!(
+            store.authorize(&unhex(CLIENT_PUB)),
+            v2_transport::auth_store::Authorization::Unavailable
+        ),
+        "a corrupt store must not keep authorizing from memory"
+    );
+
+    std::fs::write(&path, &saved).expect("restore store");
+    store.reload_if_changed().expect("reload after repair");
+    assert!(matches!(
+        store.authorize(&unhex(CLIENT_PUB)),
+        v2_transport::auth_store::Authorization::Authorized(_)
+    ));
+}

@@ -300,25 +300,42 @@ impl SessionServer {
                                     }
                                     continue;
                                 }
+                                // Pick up operator edits (revoke/delete/replace)
+                                // before consulting authorization: new
+                                // connections see a changed store immediately
+                                // (pairing.md §9.2).
+                                if matches!(
+                                    inbound.frame.body,
+                                    Some(frame::Body::AuthInit(_) | frame::Body::AuthProof(_))
+                                ) {
+                                    if let Err(error) = self.store.reload_if_changed() {
+                                        tracing::error!(
+                                            error = %error,
+                                            "v2 session: authorization store reload failed; failing closed"
+                                        );
+                                    }
+                                }
                                 let before = machine.auth_failures();
                                 let mut outcomes = machine.handle(Event::Frame {
                                     frame: Box::new(inbound.frame),
                                     source: std::mem::take(&mut source_bytes),
                                 });
                                 let after = machine.auth_failures();
-                                if after > before {
+                                if let Some(code) = machine.take_auth_failure_code() {
                                     // Red line: log the registry code + a
                                     // masked source only — never the proof,
-                                    // the key, or the identity.
+                                    // the key, or the identity. The code is
+                                    // the actual failure (202/203/204/401),
+                                    // never a blanket 203.
                                     tracing::info!(
                                         source = %masked,
-                                        code = 203u32,
+                                        code = code.code,
                                         "v2 session: authentication failed"
                                     );
-                                    if self.note_auth_failure(source) {
-                                        tracing::info!(source = %masked, code = 302u32, "v2 session: source auth-failure budget reached");
-                                        outcomes = vec![rate_limited_outcome()];
-                                    }
+                                }
+                                if after > before && self.note_auth_failure(source) {
+                                    tracing::info!(source = %masked, code = 302u32, "v2 session: source auth-failure budget reached");
+                                    outcomes = vec![rate_limited_outcome()];
                                 }
                                 if request_is_close
                                     && machine.state() == ServerState::Closing
@@ -399,6 +416,14 @@ impl SessionServer {
                     }
                 }
                 _ = revocation.tick() => {
+                    // Reload before the check so a deleted/edited record is
+                    // visible within this ≤ 5 s window (pairing.md §9.2).
+                    if let Err(error) = self.store.reload_if_changed() {
+                        tracing::error!(
+                            error = %error,
+                            "v2 session: authorization store reload failed; failing closed"
+                        );
+                    }
                     let outcomes = machine.handle(Event::RevocationCheck);
                     if let Some(termination) = self
                         .flush(
