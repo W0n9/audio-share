@@ -1,0 +1,590 @@
+{
+  "schema_version": 1,
+  "protocol_version": "wire-protocol-v2.0",
+  "provenance": "generated-from-spec",
+  "source": {
+    "spec": "docs/wire-protocol-v2/spec.md",
+    "pairing": "docs/wire-protocol-v2/pairing.md",
+    "threat_model": "docs/wire-protocol-v2/threat-model.md",
+    "schema": "protos/wire-protocol-v2/control.proto",
+    "spec_commit": "63c8a5e39787ead6d2c9d977350b9afb9fc27c37",
+    "spec_status": "accepted (2026-11-12, maintainer adjudication)",
+    "note": "Vectors are hand-derived deterministic encodings from the accepted normative documents — NOT from the prototype's throwaway BRIEF.md wire format, and not from any implementation encoder. Signature values were computed once with the fixture-fixed test keys (test-keys.json) and are replayed by verification only."
+  },
+  "framing": {
+    "control": "u32 big-endian length | protobuf Frame (spec §3); length 0 or > 65536 -> 401",
+    "media": "24-byte big-endian header | PCM payload on QUIC DATAGRAM (spec §7.1); NOT length-prefixed",
+    "control_frame_cap_bytes": 65536,
+    "media_header_size": 24
+  },
+  "test_keys": "test-keys.json",
+  "replay_contract": "README.md (byte-level equality; no implementation-specific encoders)",
+  "case_counts_by_category": {
+    "control-error-registry": 25,
+    "control-happy-path": 6,
+    "control-negative-space": 5,
+    "media-plane": 9,
+    "resource-limits": 3
+  },
+  "error_registry_coverage": {
+    "101": "control.error-101-version-mismatch",
+    "102": null,
+    "201": "control.error-201-pairing-proof-invalid",
+    "202": "control.error-202-authorization-unknown",
+    "203": "control.error-203-authentication-failed",
+    "204": [
+      "control.error-204-authorization-denied",
+      "control.error-204-revoked-active-session"
+    ],
+    "205": null,
+    "206": null,
+    "301": "control.error-301-busy-transport-close",
+    "302": "control.error-302-rate-limited",
+    "303": "control.error-303-session-superseded",
+    "401": [
+      "control.error-401-frame-length-zero",
+      "control.error-401-frame-length-oversize",
+      "control.error-401-unset-body",
+      "control.error-401-undecodable",
+      "control.error-401-pairing-duplicate-capabilities",
+      "control.error-401-pairing-capabilities-over-255",
+      "control.error-401-invalid-configuration"
+    ],
+    "402": [
+      "control.subscribe-before-ready-402",
+      "control.auth-in-wrong-state-402",
+      "control.error-402-duplicate-subscribe-nonfatal"
+    ],
+    "403": "control.error-403-unsupported-media-configuration",
+    "501": [
+      "control.error-501-capture-unhealthy",
+      "control.error-501-capture-failure-stream-ended"
+    ],
+    "502": [
+      "control.error-502-stream-ended-capture-end",
+      "control.subscribe-config-diagnostics"
+    ],
+    "503": null,
+    "599": "control.error-599-internal-error-detail-bound",
+    "601": "control.error-601-idle-timeout-transport-close",
+    "602": "control.error-602-datagram-unsupported",
+    "701": "control.error-701-client-stopping"
+  },
+  "error_registry_coverage_notes": {
+    "102": "unreachable in v2.0: 102 is for a KNOWN capability the Server cannot honor, and no capability ids are assigned in v2.0 (spec §4.5); unknown ids are ignored (see control.negotiate-unknown-capability-ignored). The first reviewed spec revision that assigns an id must add its 102 vector.",
+    "205": "no wire bytes exist: 205 is the Client's LOCAL classification of a TLS-handshake pin mismatch (spec §3, §6.2) — it never appears as a control frame.",
+    "206": "timing-only: PAIRING_PENDING_TIMEOUT fires after the 10-minute pairing deadline (Error(206)+Close(206)); no bytes to pin beyond the codes.",
+    "503": "no wire sequence is pinned by the accepted spec for SERVER_STOPPING (no §5.2 row); left to the maintainer rather than invented (spec gap noted in test-keys.json derivation_assumptions is not required for this one — simply unspecified)."
+  },
+  "cases": [
+    {
+      "id": "control.auth-happy-path",
+      "file": "control/auth-happy-path.json",
+      "category": "control-happy-path",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §3 (framing, u32 BE length | Frame)",
+        "docs/wire-protocol-v2/spec.md §4.4 (AuthInit/AuthChallenge/AuthProof/AuthResult)",
+        "docs/wire-protocol-v2/pairing.md §9.1 (auth_context TLV, single-hash r||s)"
+      ],
+      "summary": "Paired-client authentication: the full 4-message signed-challenge exchange, ending in AuthResult(OK) with a Server-assigned session_id."
+    },
+    {
+      "id": "control.pairing-happy-path-qr",
+      "file": "control/pairing-happy-path-qr.json",
+      "category": "control-happy-path",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (PairingRequest/Response/Confirm/Result, PairingConfirm.client_proof)",
+        "docs/wire-protocol-v2/pairing.md §6.2 (message sequence)",
+        "docs/wire-protocol-v2/pairing.md §6.3 (transcript binding, capabilities_canonical)",
+        "docs/wire-protocol-v2/pairing.md §6.3.1 (client_proof)"
+      ],
+      "summary": "QR pairing, full 4-message flow including PairingConfirm.client_proof; the Server persists the identity only after verifying binding_echo and client_proof, then returns PairingResult(OK)."
+    },
+    {
+      "id": "control.pairing-happy-path-sas",
+      "file": "control/pairing-happy-path-sas.json",
+      "category": "control-happy-path",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (PairingRequest/Response/Confirm/Result, PairingConfirm.client_proof)",
+        "docs/wire-protocol-v2/pairing.md §6.2 (message sequence)",
+        "docs/wire-protocol-v2/pairing.md §6.3 (transcript binding, capabilities_canonical)",
+        "docs/wire-protocol-v2/pairing.md §6.3.1 (client_proof)",
+        "docs/wire-protocol-v2/pairing.md §7.1–§7.3 (SAS derivation and admission window)"
+      ],
+      "summary": "SAS pairing (no camera): the same 4-message flow with PAIRING_MODE_SAS, no pairing_nonce anywhere; admission is the administrator-enabled local pairing window."
+    },
+    {
+      "id": "control.negotiate-happy-path",
+      "file": "control/negotiate-happy-path.json",
+      "category": "control-happy-path",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (Negotiate/NegotiateResponse)",
+        "docs/wire-protocol-v2/spec.md §4.5 (capability rules)",
+        "docs/wire-protocol-v2/spec.md §5.2 (NEGOTIATING -> READY row)"
+      ],
+      "summary": "Version/capability negotiation with the canonical (empty) v2.0 capability sets, answered OK; the Server then pushes the current ConfigurationPublished, moving the session to READY."
+    },
+    {
+      "id": "control.negotiate-unknown-capability-ignored",
+      "file": "control/negotiate-unknown-capability-ignored.json",
+      "category": "control-happy-path",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (validation table: capabilities list)",
+        "docs/wire-protocol-v2/spec.md §4.5 (unknown ids are ignored)",
+        "docs/wire-protocol-v2/pairing.md §6.3 (canonical form: count(u8) || id(u32 BE) ascending)"
+      ],
+      "summary": "A well-formed but unknown capability id is IGNORED, not rejected: the canonical single-id list [7] is accepted and the honored intersection echoed back is empty."
+    },
+    {
+      "id": "control.subscribe-config-diagnostics",
+      "file": "control/subscribe-config-diagnostics.json",
+      "category": "control-happy-path",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (Subscribe/SubscribeResponse, Unsubscribe/UnsubscribeResponse, StreamStarted/StreamEnded)",
+        "docs/wire-protocol-v2/spec.md §5.2 (READY subscribe row; PLAYING unsubscribe row: StreamEnded first, then UnsubscribeResponse)",
+        "docs/wire-protocol-v2/spec.md §9 (PlaybackDiagnostics)"
+      ],
+      "summary": "The subscribed-session happy arc: Subscribe is answered with the current Configuration, the active stream is announced (StreamStarted push), the Client reports a full PlaybackDiagnostics snapshot, and Unsubscribe in PLAYING produces StreamEnded(502, 'unsubscribed') BEFORE UnsubscribeResponse."
+    },
+    {
+      "id": "control.unknown-oneof-case-401",
+      "file": "control/unknown-oneof-case-401.json",
+      "category": "control-negative-space",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.1 (80+ reserved)",
+        "docs/wire-protocol-v2/spec.md §4.4 (validation table: Frame without a body set -> 401)"
+      ],
+      "summary": "An unknown oneof case (unknown message type) at Frame level: the Frame decodes, but the unknown field never sets body, so the Frame is 'without a body set' -> Error(401)+Close(401)."
+    },
+    {
+      "id": "control.unknown-field-ignored",
+      "file": "control/unknown-field-ignored.json",
+      "category": "control-negative-space",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (validation table: unknown proto3 fields ignored)"
+      ],
+      "summary": "An unknown field alongside a valid body is ignored under the standard evolution rule: the Subscribe inside is processed normally."
+    },
+    {
+      "id": "control.subscribe-before-ready-402",
+      "file": "control/subscribe-before-ready-402.json",
+      "category": "control-negative-space",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (Error/Close)",
+        "docs/wire-protocol-v2/spec.md §5.2 (NEGOTIATING: any other Frame -> Error(402)+Close(402))",
+        "docs/wire-protocol-v2/spec.md §5.4 invariant 2 (subscription cannot complete before READY)"
+      ],
+      "summary": "State violation: a Subscribe arriving before READY (here: in NEGOTIATING, before Negotiate) is answered with the fatal pair Error(402)+Close(402)."
+    },
+    {
+      "id": "control.auth-in-wrong-state-402",
+      "file": "control/auth-in-wrong-state-402.json",
+      "category": "control-negative-space",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §6.2 (402 INVALID_STATE: request illegal for the current state)",
+        "docs/wire-protocol-v2/spec.md §5.4 invariant 1 (every request answered exactly once)"
+      ],
+      "summary": "State violation: AuthInit sent in READY (a fully set-up session) — illegal for the current state, answered with fatal Error(402)+Close(402)."
+    },
+    {
+      "id": "control.malformed-capability-list-negotiate-401",
+      "file": "control/malformed-capability-list-negotiate-401.json",
+      "category": "control-negative-space",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (validation table: capabilities duplicated or not ascending -> 401)",
+        "docs/wire-protocol-v2/pairing.md §6.3 (canonical form: ascending numeric order, unique)"
+      ],
+      "summary": "A Negotiate whose capabilities list is not in ascending numeric order ([2, 1]) is malformed: Error(401)+Close(401)."
+    },
+    {
+      "id": "control.error-101-version-mismatch",
+      "file": "control/error-101-version-mismatch.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (validation table: protocol_major ≠ 2 -> 101)",
+        "docs/wire-protocol-v2/spec.md §6.2 (101 VERSION_MISMATCH: retryable=no, re-pairing=no)",
+        "docs/wire-protocol-v2/spec.md §6.3 (101: no automatic reconnect)"
+      ],
+      "summary": "Version conflict: Negotiate with protocol_major = 1 is refused with Error(101)+Close(101)."
+    },
+    {
+      "id": "control.error-201-pairing-proof-invalid",
+      "file": "control/error-201-pairing-proof-invalid.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (PairingConfirm: binding_echo mismatch or client_proof invalid -> PairingResult(201)+Close(201))",
+        "docs/wire-protocol-v2/pairing.md §6.3.1 (Server verifies client_proof BEFORE persisting)",
+        "docs/wire-protocol-v2/spec.md §6.2 (201 PAIRING_REJECTED: retryable=no, re-pairing=yes)"
+      ],
+      "summary": "Pairing with a wrong client_proof: binding_echo verifies, but the 64-byte proof signature does not (one byte flipped) — nothing is persisted, PairingResult(201)+Close(201)."
+    },
+    {
+      "id": "control.error-202-authorization-unknown",
+      "file": "control/error-202-authorization-unknown.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (AuthProof valid, identity matches no record -> AuthResult(202))",
+        "docs/wire-protocol-v2/spec.md §6.2 (202 AUTHORIZATION_UNKNOWN: retryable=no, re-pairing=yes)"
+      ],
+      "summary": "Valid signature, unknown identity: the exchange completes with AuthResult(202) — pair first; the connection stays open and the Client may try another stored pairing."
+    },
+    {
+      "id": "control.error-203-authentication-failed",
+      "file": "control/error-203-authentication-failed.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (AuthProof signature invalid -> AuthResult(203); 5th failure -> Close(203))",
+        "docs/wire-protocol-v2/spec.md §6.2 (203 AUTHENTICATION_FAILED: retryable=no, re-pairing=yes)"
+      ],
+      "summary": "Invalid signature: the AuthProof is the happy-path signature with one bit flipped in s — verification fails, AuthResult(203) is sent and the failure counted."
+    },
+    {
+      "id": "control.error-204-authorization-denied",
+      "file": "control/error-204-authorization-denied.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (AuthProof valid, identity revoked/denied -> AuthResult(204))",
+        "docs/wire-protocol-v2/spec.md §6.2 (204 AUTHORIZATION_DENIED: retryable=no, re-pairing=no — admin action)"
+      ],
+      "summary": "Valid signature, revoked identity: AuthResult(204) — the denial is an admin matter, not a re-pairing matter."
+    },
+    {
+      "id": "control.error-204-revoked-active-session",
+      "file": "control/error-204-revoked-active-session.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (any: fatal error raised -> matching Error + Close)",
+        "docs/wire-protocol-v2/spec.md §6.2 (revocation-driven close of an active session uses 204 within <= 5 s)",
+        "docs/wire-protocol-v2/pairing.md §9.2 (revocation semantics; TM-9)"
+      ],
+      "summary": "Revocation of a live session: the operator revokes the Client identity while its session is PLAYING; within <= 5 s the session receives the fatal pair Error(204)+Close(204)."
+    },
+    {
+      "id": "control.error-301-busy-transport-close",
+      "file": "control/error-301-busy-transport-close.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (CONNECTING: capacity exceeded -> transport close carrying 301)",
+        "docs/wire-protocol-v2/spec.md §6.2 (301 BUSY: retryable=yes, re-pairing=no)",
+        "docs/wire-protocol-v2/spec.md §10 (32 established sessions, TM-2; 16 concurrent handshakes, TM-1)"
+      ],
+      "summary": "Server at capacity: the connection is refused BEFORE any control frame exists — signaled ONLY by the QUIC application close code 301 (no Error frame, no Close frame)."
+    },
+    {
+      "id": "control.error-302-rate-limited",
+      "file": "control/error-302-rate-limited.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (source-address auth-failure rate exceeded -> Close(302); pairing failure rate -> Close(302))",
+        "docs/wire-protocol-v2/spec.md §6.2 (302 RATE_LIMITED: retryable=yes, re-pairing=no)",
+        "docs/wire-protocol-v2/spec.md §10 (20 auth failures per sliding 60 s per source; 5 pairing failures; 8 outstanding requests)"
+      ],
+      "summary": "Rate limiting: once a source address exceeds the failure budget, the Server answers with Close(302) (this vector shows the final Close; the budget buildup is precondition, not wire bytes)."
+    },
+    {
+      "id": "control.error-303-session-superseded",
+      "file": "control/error-303-session-superseded.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (AUTHENTICATING: supersede — the older session of the same identity is closed with Close(303))",
+        "docs/wire-protocol-v2/spec.md §6.2 (303 SESSION_SUPERSEDED: retryable=no, re-pairing=no)",
+        "docs/wire-protocol-v2/spec.md §10 (one active session per Client identity, TM-3)"
+      ],
+      "summary": "Same-identity supersede: a second connection authenticates the same Client identity; the OLD connection is closed with Close(303) (Close only — the §5.2 row names no paired Error)."
+    },
+    {
+      "id": "control.error-401-frame-length-zero",
+      "file": "control/error-401-frame-length-zero.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §3 (framing: length == 0 -> Error(401)+Close(401), before any allocation)"
+      ],
+      "summary": "Framing violation: a length prefix of 0 declares a zero-length Frame — refused before allocation."
+    },
+    {
+      "id": "control.error-401-frame-length-oversize",
+      "file": "control/error-401-frame-length-oversize.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §3 (framing: length > 65536 -> Error(401)+Close(401), before any allocation)",
+        "docs/wire-protocol-v2/spec.md §10 (control frame size 64 KiB hard cap)"
+      ],
+      "summary": "Framing violation: a length prefix declaring 65537 bytes — one over the 64 KiB cap — is refused on the prefix alone, before any body bytes are read or allocated."
+    },
+    {
+      "id": "control.error-401-unset-body",
+      "file": "control/error-401-unset-body.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.1 (a Frame with no body set is malformed — 401)",
+        "docs/wire-protocol-v2/spec.md §4.4 (validation table row 1)"
+      ],
+      "summary": "A non-empty Frame that never sets the oneof: a single unknown field (field 15) is ignored, leaving body unset -> Error(401)+Close(401)."
+    },
+    {
+      "id": "control.error-401-undecodable",
+      "file": "control/error-401-undecodable.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (validation table: undecodable bytes -> 401)"
+      ],
+      "summary": "Undecodable bytes inside a correctly length-delimited frame: field 1 (AuthInit) declared with wire type 2 and length 255, but only 1 byte follows — the parse fails."
+    },
+    {
+      "id": "control.error-401-pairing-duplicate-capabilities",
+      "file": "control/error-401-pairing-duplicate-capabilities.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (validation table: PairingRequest capabilities duplicated or not ascending -> 401)",
+        "docs/wire-protocol-v2/pairing.md §6.3 (canonical form: unique, ascending numeric order)"
+      ],
+      "summary": "PairingRequest with a duplicated capability id ([3, 3]): no canonical form exists, the list is malformed -> Error(401)+Close(401), not a 201 pairing rejection."
+    },
+    {
+      "id": "control.error-401-pairing-capabilities-over-255",
+      "file": "control/error-401-pairing-capabilities-over-255.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (validation table: capabilities -> 401)",
+        "docs/wire-protocol-v2/pairing.md §6.3 (a list with more than 255 ids is malformed and fails pairing with the malformed-message code)"
+      ],
+      "summary": "PairingRequest carrying 256 ascending unique capability ids (1..256): the canonical count field is a u8, so the list has no canonical encoding -> Error(401)+Close(401)."
+    },
+    {
+      "id": "control.error-401-invalid-configuration",
+      "file": "control/error-401-invalid-configuration.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.4 (validation table: Configuration invalid -> receiving side Error(401)+Close(401))"
+      ],
+      "summary": "Invalid Configuration pushed to the Client: codec CODEC_UNSPECIFIED with otherwise-valid PcmParameters — the receiving side answers Error(401)+Close(401)."
+    },
+    {
+      "id": "control.error-402-duplicate-subscribe-nonfatal",
+      "file": "control/error-402-duplicate-subscribe-nonfatal.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (PLAYING: duplicate Subscribe -> non-fatal Error(402, retryable=false), connection maintained)",
+        "docs/wire-protocol-v2/spec.md §5.2 (error response classes: the non-fatal Error class)",
+        "docs/wire-protocol-v2/spec.md §6.2 (402 INVALID_STATE)"
+      ],
+      "summary": "The non-fatal 402: a duplicate Subscribe in PLAYING gets Error(402) ONLY — no Close, connection kept, state unchanged; the next request is still served, which the follow-up RequestConfiguration proves."
+    },
+    {
+      "id": "control.error-403-unsupported-media-configuration",
+      "file": "control/error-403-unsupported-media-configuration.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.3 (READY: ConfigurationPublished not decodable -> Error(403)+Close(403))",
+        "docs/wire-protocol-v2/spec.md §6.2 (403 UNSUPPORTED_MEDIA_CONFIGURATION)"
+      ],
+      "summary": "A VALID Configuration the receiver cannot decode: the published Transfer Format is S24LE (well-formed per spec) but this Client cannot decode 24-bit — it answers Error(403)+Close(403)."
+    },
+    {
+      "id": "control.error-501-capture-unhealthy",
+      "file": "control/error-501-capture-unhealthy.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (READY: Subscribe with unhealthy capture -> Error(501, retryable=true); no state change)",
+        "docs/wire-protocol-v2/spec.md §5.2 (error response classes: 501 is a non-fatal instance)",
+        "docs/wire-protocol-v2/spec.md §6.2 (501 CAPTURE_FAILURE: retryable=yes, re-pairing=no)"
+      ],
+      "summary": "Subscribe while the Endpoint capture is unhealthy/absent: non-fatal Error(501, retryable=true) — connection kept, state stays READY; the Client may retry after the next ConfigurationPublished."
+    },
+    {
+      "id": "control.error-501-capture-failure-stream-ended",
+      "file": "control/error-501-capture-failure-stream-ended.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (PLAYING: capture failed -> push StreamEnded(501, retryable=true))",
+        "docs/wire-protocol-v2/spec.md §6.2 (501 CAPTURE_FAILURE)",
+        "docs/wire-protocol-v2/spec.md §4.4 (StreamEnded carries code + detail, no Status)"
+      ],
+      "summary": "Capture fails mid-stream: the Server pushes StreamEnded(501) — state PLAYING -> READY; diagnostics counters survive for finalization."
+    },
+    {
+      "id": "control.error-502-stream-ended-capture-end",
+      "file": "control/error-502-stream-ended-capture-end.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (PLAYING: capture ended (normal) -> push StreamEnded(502))",
+        "docs/wire-protocol-v2/spec.md §6.2 (502 STREAM_ENDED: retryable=yes, re-pairing=no)"
+      ],
+      "summary": "Normal capture end: StreamEnded(502) push moves the session PLAYING -> READY."
+    },
+    {
+      "id": "control.error-599-internal-error-detail-bound",
+      "file": "control/error-599-internal-error-detail-bound.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (any: fatal error raised -> matching Error + Close)",
+        "docs/wire-protocol-v2/spec.md §6.2 (599 INTERNAL_ERROR, bounded detail)",
+        "docs/wire-protocol-v2/spec.md §10 (error payload <= 512 B post-auth; detail <= 256 B, TM-7)",
+        "docs/wire-protocol-v2/spec.md §4.2 (detail rules: no secrets, paths, or stack traces)"
+      ],
+      "summary": "Internal Server error while processing a request, shown at the maximum detail size (256 bytes): Error(599) + Close(599), with the post-auth payload bound asserted."
+    },
+    {
+      "id": "control.error-601-idle-timeout-transport-close",
+      "file": "control/error-601-idle-timeout-transport-close.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §3 (idle timeout 30 s -> classify 601; transport close carries the registry code)",
+        "docs/wire-protocol-v2/spec.md §5.2 (any: idle timeout -> transport close carrying 601)",
+        "docs/wire-protocol-v2/spec.md §6.2 (601 NETWORK_FAILURE: retryable=yes)",
+        "docs/wire-protocol-v2/spec.md §3 (D3: keep_alive_interval 10 s both sides)"
+      ],
+      "summary": "Idle timeout (30 s of silence, keep-alives failing): NO control frames — the QUIC application close carries code 601; the Client classifies 601 and reconnects with backoff."
+    },
+    {
+      "id": "control.error-602-datagram-unsupported",
+      "file": "control/error-602-datagram-unsupported.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §7.3 (unsupported datagram path -> Close(602))",
+        "docs/wire-protocol-v2/spec.md §6.2 (602 DATAGRAM_UNSUPPORTED: retryable=yes)",
+        "docs/wire-protocol-v2/spec.md §11.2 (path MTU profile)"
+      ],
+      "summary": "The transport cannot carry media: no QUIC DATAGRAM support, or the datagram limit is below header + one frame — the Server sends Close(602)."
+    },
+    {
+      "id": "control.error-701-client-stopping",
+      "file": "control/error-701-client-stopping.json",
+      "category": "control-error-registry",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.3 (Close: both directions; one-way, never echoed)",
+        "docs/wire-protocol-v2/spec.md §5.2 (READY/PLAYING: Close received -> no echo; CLOSING)",
+        "docs/wire-protocol-v2/spec.md §6.2 (701 CLIENT_STOPPING: normal Client stop)",
+        "docs/wire-protocol-v2/spec.md §5.3 (CLOSING: final diagnostics, then transport close)"
+      ],
+      "summary": "Normal Client stop: the Client sends Close(701) and must expect NO response frames — Close is never echoed; the receiver's transport close is the acknowledgment."
+    },
+    {
+      "id": "media.header-happy-path",
+      "file": "media/header-happy-path.json",
+      "category": "media-plane",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §7.1 (24-byte header, D4)",
+        "docs/wire-protocol-v2/spec.md §7.2 (field semantics)",
+        "docs/wire-protocol-v2/spec.md §7.3 (datagram sizing)",
+        "docs/wire-protocol-v2/spec.md §7.1 (flags: STREAM_START on the first datagram)"
+      ],
+      "summary": "Baseline media datagrams with every header field exercised: STREAM_START on sequence 0 / timestamp 0, then the next datagram with all fields advanced. Payload = 8 stereo F32LE sample frames (64 B)."
+    },
+    {
+      "id": "media.flags-reserved-ignored",
+      "file": "media/flags-reserved-ignored.json",
+      "category": "media-plane",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §7.1 (flags table: bit 2 SPARE — receiver MUST ignore)",
+        "docs/wire-protocol-v2/spec.md §12 (parked: reserved flag bits ignored (not rejected), accepted with D4)"
+      ],
+      "summary": "A datagram with a reserved flag bit set (bit 2, 0x4) is processed normally — reserved bits are IGNORED, never rejected and never treated as malformed."
+    },
+    {
+      "id": "media.sequence-wrap",
+      "file": "media/sequence-wrap.json",
+      "category": "media-plane",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §7.1 (sequence: per instance, from 0, mod 2^32)",
+        "docs/wire-protocol-v2/spec.md §7.2 (receivers maintain an RFC 3550 §A.1 extended 64-bit sequence with cycle folding)"
+      ],
+      "summary": "Sequence wrap: the last datagram of instance 3 carries sequence 0xffffffff; the next carries 0x00000000 — the receiver folds the cycle, extending the sequence to 2^32."
+    },
+    {
+      "id": "media.instance-change",
+      "file": "media/instance-change.json",
+      "category": "media-plane",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (PLAYING: capture restart -> StreamEnded(502), then StreamStarted(new instance))",
+        "docs/wire-protocol-v2/spec.md §7.2 (new instance id on every capture reset/restart; receiver epoch reset)",
+        "docs/wire-protocol-v2/spec.md §7.5 (new instance id: begin a new receiver epoch)"
+      ],
+      "summary": "Capture restart: the reliable control stream announces the end of instance 1 and the start of instance 2, then the first media datagram of instance 2 arrives with STREAM_START; the receiver resets playback and statistics state."
+    },
+    {
+      "id": "media.config-change-mid-stream",
+      "file": "media/config-change-mid-stream.json",
+      "category": "media-plane",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §5.2 (PLAYING: decode-affecting config change -> generation +1, push ConfigurationPublished)",
+        "docs/wire-protocol-v2/spec.md §7.1 (flags: CONFIG_CHANGE on the first datagram of a greater generation)",
+        "docs/wire-protocol-v2/spec.md §7.5 (superseded generation: drop, count unknown_config_drops)",
+        "docs/wire-protocol-v2/spec.md §7.6 (unknown configuration: bounded hold, then drop)"
+      ],
+      "summary": "Decode-affecting change mid-stream (48 kHz -> 96 kHz): generation increments 1 -> 2 inside the SAME instance, the reliable ConfigurationPublished push announces it, and media switches generation — including a stale gen-1 datagram that must be dropped, never decoded with either config."
+    },
+    {
+      "id": "media.reduced-mtu-full-size",
+      "file": "media/reduced-mtu-full-size.json",
+      "category": "media-plane",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §7.3 (payload_max = max_datagram_size() − 24, re-queried at send time, D2)",
+        "docs/wire-protocol-v2/spec.md §11.2 (path MTU 1280 profile)",
+        "docs/wire-protocol-v2/spec.md §2 D2 (prototype: mds 1192 at path MTU 1280)"
+      ],
+      "summary": "Reduced path MTU (DPLPMTUD converged at mds = 1192, the value the prototype observed at path MTU 1280): payload_max = 1168 = 146 whole F32LE stereo frames — the datagram is sized to the CURRENT limit at send time."
+    },
+    {
+      "id": "media.reduced-mtu-alignment-floor",
+      "file": "media/reduced-mtu-alignment-floor.json",
+      "category": "media-plane",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §7.3 (frames per datagram = floor(payload_max / frame_bytes); payload always frame-aligned)"
+      ],
+      "summary": "Payload alignment under an awkward limit: with mds = 1165, payload_max = 1141, so the sender sends floor(1141 / 8) = 142 frames = 1136 bytes — the 5-byte remainder is never sent as a partial sample frame."
+    },
+    {
+      "id": "media.interop-floor-1176",
+      "file": "media/interop-floor-1176.json",
+      "category": "media-plane",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §7.3 (interop floor: every implementation MUST accept media payloads up to 1176 bytes = 1200 − 24)"
+      ],
+      "summary": "Interop floor: a datagram with exactly 1176 payload bytes (147 F32LE stereo frames; 1200-byte datagram) must be accepted by every receiver, whatever its local maximum."
+    },
+    {
+      "id": "media.malformed-drop",
+      "file": "media/malformed-drop.json",
+      "category": "media-plane",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §7.5 (malformed media: drop, log locally)",
+        "docs/wire-protocol-v2/spec.md §7.1 (stream_instance_id ∈ [1, 2^32−1]; 0 invalid)"
+      ],
+      "summary": "Malformed media is dropped SILENTLY (no wire response exists for datagrams): an impossible instance id (0) and a payload that is not frame-aligned."
+    },
+    {
+      "id": "limits.frame-cap-65536-accepted",
+      "file": "limits/frame-cap-65536-accepted.json",
+      "category": "resource-limits",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §3 (framing: length == 0 or > 65536 -> 401; 64 KiB is the cap, not 64 KiB − 1)",
+        "docs/wire-protocol-v2/spec.md §10 (control frame size 64 KiB hard)",
+        "docs/wire-protocol-v2/spec.md §4.4 (unknown proto3 fields ignored)"
+      ],
+      "summary": "Boundary: a frame whose length is EXACTLY 65536 passes the framing check (only > 65536 violates) and is processed — here a Subscribe plus an unknown padding field, answered with SubscribeResponse(OK)."
+    },
+    {
+      "id": "limits.preauth-response-128b",
+      "file": "limits/preauth-response-128b.json",
+      "category": "resource-limits",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.2 (pre-auth responses carry no detail; <= 128 B)",
+        "docs/wire-protocol-v2/spec.md §10 (general pre-auth responses <= 128 B — challenges, rejections, errors; TM-6 revised)",
+        "docs/wire-protocol-v2/threat-model.md §5.6/§6 (no small-request/large-response asymmetry)"
+      ],
+      "summary": "The 128 B pre-auth response boundary: the three pre-auth response shapes (AuthChallenge, AuthResult(202), AuthResult(204)) with their exact sizes — all without any detail field."
+    },
+    {
+      "id": "limits.pairing-response-320b",
+      "file": "limits/pairing-response-320b.json",
+      "category": "resource-limits",
+      "spec": [
+        "docs/wire-protocol-v2/spec.md §4.2 (the sole exception: successful PairingResponse <= 320 B Frame.length)",
+        "docs/wire-protocol-v2/spec.md §10 (successful PairingResponse <= 320 B Frame.length; TM-6 revised)",
+        "docs/wire-protocol-v2/threat-model.md §6 (PairingResponse size row)"
+      ],
+      "summary": "The 320 B PairingResponse boundary: the successful QR PairingResponse from the pairing happy path, byte-exact, with its total framed size asserted against the 320 B cap."
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "id": "control.error-202-authorization-unknown",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (AuthProof valid, identity matches no record -> AuthResult(202))",
+    "docs/wire-protocol-v2/spec.md §6.2 (202 AUTHORIZATION_UNKNOWN: retryable=no, re-pairing=yes)"
+  ],
+  "description": "Valid signature, unknown identity: the exchange completes with AuthResult(202) — pair first; the connection stays open and the Client may try another stored pairing.",
+  "preconditions": [
+    "Same exchange shape as control.auth-happy-path (identical bytes), but the Server's authorization store has NO record for this public key.",
+    "State machine: CONNECTING -> AUTHENTICATING; the failure is counted — the 5th auth failure on this connection closes with Close(203) instead (spec §5.2, TM-4)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "auth_init",
+      "frame_hex": "0000002e0a2c090100000000000000122103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d",
+      "body_hex": "0a2c090100000000000000122103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d",
+      "length": 46,
+      "decoded": {
+        "request_id": 1,
+        "client_public_key": "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "auth_challenge",
+      "frame_hex": "0000002d122b0901000000000000001220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "body_hex": "122b0901000000000000001220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "length": 45,
+      "decoded": {
+        "request_id": 1,
+        "server_random": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "auth_proof",
+      "frame_hex": "0000004d1a4b0901000000000000001240e77e55090b72af3cb8f42a8e6696b4797170b8c8236944ce4c17164e5d97762f8686dfcd64f4a21f5768fa6c94e6a816029a566fb849fa27cbe98385f4df060c",
+      "body_hex": "1a4b0901000000000000001240e77e55090b72af3cb8f42a8e6696b4797170b8c8236944ce4c17164e5d97762f8686dfcd64f4a21f5768fa6c94e6a816029a566fb849fa27cbe98385f4df060c",
+      "length": 77,
+      "decoded": {
+        "request_id": 1,
+        "signature": "e77e55090b72af3cb8f42a8e6696b4797170b8c8236944ce4c17164e5d97762f8686dfcd64f4a21f5768fa6c94e6a816029a566fb849fa27cbe98385f4df060c"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 4,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "auth_result",
+      "frame_hex": "000000122210090100000000000000120508ca011801",
+      "body_hex": "2210090100000000000000120508ca011801",
+      "length": 18,
+      "decoded": {
+        "request_id": 1,
+        "status": {
+          "code": 202,
+          "requires_repairing": true
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "The signature VERIFIES (it is the valid happy-path signature); only the identity is unknown — that is exactly 202, vs 203 for an invalid signature and 204 for a denied one.",
+    "Status: code 202, retryable=false, requires_repairing=true; NO detail — auth refusals are pre-auth responses (spec §4.2, §10 TM-6); total framed size <= 128 B (asserted).",
+    "Non-fatal: no Close; state stays AUTHENTICATING; the Client may re-AuthInit with another stored pairing (spec §5.2/§5.3).",
+    "Compare control.error-204-authorization-denied: same input bytes, different server store state (record exists but state=revoked) -> 204."
+  ],
+  "size_bounds": [
+    {
+      "frame": "auth_result",
+      "max_frame_bytes": 128,
+      "rule": "spec §4.2/§10 TM-6"
+    }
+  ]
+}

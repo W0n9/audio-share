@@ -1,0 +1,66 @@
+{
+  "id": "media.header-happy-path",
+  "category": "media-plane",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §7.1 (24-byte header, D4)",
+    "docs/wire-protocol-v2/spec.md §7.2 (field semantics)",
+    "docs/wire-protocol-v2/spec.md §7.3 (datagram sizing)",
+    "docs/wire-protocol-v2/spec.md §7.1 (flags: STREAM_START on the first datagram)"
+  ],
+  "description": "Baseline media datagrams with every header field exercised: STREAM_START on sequence 0 / timestamp 0, then the next datagram with all fields advanced. Payload = 8 stereo F32LE sample frames (64 B).",
+  "preconditions": [
+    "Session PLAYING; instance 1, generation 1; 48 kHz stereo F32LE (8 bytes per sample frame).",
+    "Datagrams ride QUIC DATAGRAM; the bytes below are the full application payload (24-byte header + payload), NOT length-prefixed.",
+    "Payload bytes are a synthetic ramp (byte i = (start + i) mod 256) — audio content is irrelevant to framing; determinism is the point."
+  ],
+  "steps": [
+    {
+      "kind": "datagram",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "000000010000000100000000000000000000000000000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "length": 88,
+      "decoded": {
+        "stream_instance_id": 1,
+        "config_generation": 1,
+        "sequence": 0,
+        "timestamp": 0,
+        "flags": "0x00000001",
+        "flags_set": [
+          "STREAM_START"
+        ],
+        "payload_bytes": 64,
+        "payload_frames": 8,
+        "frame_bytes": 8
+      },
+      "note": "First datagram of the instance: sequence 0, timestamp 0, STREAM_START set."
+    },
+    {
+      "kind": "datagram",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "000000010000000100000001000000000000000800000000404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+      "length": 88,
+      "decoded": {
+        "stream_instance_id": 1,
+        "config_generation": 1,
+        "sequence": 1,
+        "timestamp": 8,
+        "flags": "0x00000000",
+        "flags_set": [],
+        "payload_bytes": 64,
+        "payload_frames": 8,
+        "frame_bytes": 8
+      },
+      "note": "Next datagram: sequence +1, timestamp = prev + 8 frames (gapless continuity, §7.2), no flags."
+    }
+  ],
+  "assertions": [
+    "Every header field is exercised across the two datagrams: instance 1, generation 1, sequence 0->1, timestamp 0->8, flags 0x1->0x0.",
+    "All header integers are big-endian (network byte order) — unlike protobuf's little-endian fixed64 — see the header table in protos/wire-protocol-v2/control.proto.",
+    "Timestamp counts SAMPLE FRAMES (stereo frame = one frame, never interleaved samples); continuity: ts(next) = ts(prev) + frames(prev) (§7.2).",
+    "STREAM_START is an anchor hint on sequence 0/timestamp 0; the instance and generation fields are authoritative (§7.1)."
+  ]
+}

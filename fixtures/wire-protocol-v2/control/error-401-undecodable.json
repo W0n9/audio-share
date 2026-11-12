@@ -1,0 +1,71 @@
+{
+  "id": "control.error-401-undecodable",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.4 (validation table: undecodable bytes -> 401)"
+  ],
+  "description": "Undecodable bytes inside a correctly length-delimited frame: field 1 (AuthInit) declared with wire type 2 and length 255, but only 1 byte follows — the parse fails.",
+  "preconditions": [
+    "State machine: CONNECTING."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "<undecodable>",
+      "frame_hex": "000000030aff01",
+      "body_hex": "0aff01",
+      "length": 3,
+      "decoded": {
+        "note": "tag 0x0a = field 1, wire type 2, length varint 255; only 1 byte follows"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "fail"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000072a051203089103",
+      "body_hex": "2a051203089103",
+      "length": 7,
+      "decoded": {
+        "request_id": 0,
+        "status": {
+          "code": 401
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "000000053203089103",
+      "body_hex": "3203089103",
+      "length": 5,
+      "decoded": {
+        "code": 401
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 401,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "The declared frame length is honored (3 bytes follow the prefix); the failure is the message-level parse.",
+    "Error unsolicited (0, not encoded); fatal Error+Close+transport close, all 401."
+  ]
+}

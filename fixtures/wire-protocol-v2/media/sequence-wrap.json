@@ -1,0 +1,61 @@
+{
+  "id": "media.sequence-wrap",
+  "category": "media-plane",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §7.1 (sequence: per instance, from 0, mod 2^32)",
+    "docs/wire-protocol-v2/spec.md §7.2 (receivers maintain an RFC 3550 §A.1 extended 64-bit sequence with cycle folding)"
+  ],
+  "description": "Sequence wrap: the last datagram of instance 3 carries sequence 0xffffffff; the next carries 0x00000000 — the receiver folds the cycle, extending the sequence to 2^32.",
+  "preconditions": [
+    "Session PLAYING; instance 3 has streamed exactly 2^32 datagrams; timestamps continue on the capture clock.",
+    "Both datagrams carry 10 F32LE stereo frames (80 B payload)."
+  ],
+  "steps": [
+    {
+      "kind": "datagram",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "0000000300000001ffffffff00000000003a980000000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+      "length": 104,
+      "decoded": {
+        "stream_instance_id": 3,
+        "config_generation": 1,
+        "sequence": 4294967295,
+        "timestamp": 3840000,
+        "flags": "0x00000000",
+        "flags_set": [],
+        "payload_bytes": 80,
+        "payload_frames": 10,
+        "frame_bytes": 8
+      },
+      "note": "Last sequence value of the cycle."
+    },
+    {
+      "kind": "datagram",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "00000003000000010000000000000000003a985000000000505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+      "length": 104,
+      "decoded": {
+        "stream_instance_id": 3,
+        "config_generation": 1,
+        "sequence": 0,
+        "timestamp": 3840080,
+        "flags": "0x00000000",
+        "flags_set": [],
+        "payload_bytes": 80,
+        "payload_frames": 10,
+        "frame_bytes": 8
+      },
+      "note": "Wraps to 0; extended sequence = 2^32."
+    }
+  ],
+  "assertions": [
+    "The 32-bit sequence wraps mod 2^32 (0xffffffff -> 0x00000000) — it does NOT trigger a new instance; the instance id and timestamps are unchanged.",
+    "The receiver's RFC 3550 A.1 extended sequence folds the cycle: datagram 2's extended sequence is 2^32, not 0; loss/reorder/jitter accounting uses extended values (§7.2).",
+    "Timestamp continuity is unaffected by the sequence wrap: 3840000 + 10 = 3840080 (§7.2).",
+    "The timestamp itself is a u64 on a 48 kHz clock — ~12.2 million years to wrap; treated as monotonic within the instance (§7.2)."
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "id": "control.negotiate-happy-path",
+  "category": "control-happy-path",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.4 (Negotiate/NegotiateResponse)",
+    "docs/wire-protocol-v2/spec.md §4.5 (capability rules)",
+    "docs/wire-protocol-v2/spec.md §5.2 (NEGOTIATING -> READY row)"
+  ],
+  "description": "Version/capability negotiation with the canonical (empty) v2.0 capability sets, answered OK; the Server then pushes the current ConfigurationPublished, moving the session to READY.",
+  "preconditions": [
+    "Session authenticated (the auth exchange consumed request_id 1, hence Negotiate carries request_id 2).",
+    "State machine: NEGOTIATING. Server has a current Transfer Format (48 kHz stereo F32LE, config_generation 1).",
+    "v2.0 defines no optional capabilities: both sides send an empty list (spec §4.5)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "negotiate",
+      "frame_hex": "0000000d3a0b0902000000000000001002",
+      "body_hex": "3a0b0902000000000000001002",
+      "length": 13,
+      "decoded": {
+        "request_id": 2,
+        "protocol_major": 2,
+        "protocol_minor": 0,
+        "capabilities": []
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "negotiate_response",
+      "frame_hex": "0000000f420d09020000000000000012001802",
+      "body_hex": "420d09020000000000000012001802",
+      "length": 15,
+      "decoded": {
+        "request_id": 2,
+        "status": {},
+        "protocol_major": 2,
+        "protocol_minor": 0,
+        "capabilities": []
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "configuration_published",
+      "frame_hex": "00000013aa0210120e080110011a080880f70210021801",
+      "body_hex": "aa0210120e080110011a080880f70210021801",
+      "length": 19,
+      "decoded": {
+        "request_id": 0,
+        "configuration": {
+          "config_generation": 1,
+          "codec": 1,
+          "pcm": {
+            "sample_rate": 48000,
+            "channels": 2,
+            "sample_format": 1
+          }
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "protocol_minor = 0 and the empty capabilities list are proto3 defaults and are not encoded on the wire; they are listed in decoded for completeness.",
+    "NegotiateResponse echoes the accepted major (2) and the Server's minor within major 2 (0); the capabilities field is the intersection honored for this session — the ONLY session-authoritative set (spec §4.5, adjudication 2026-11-12).",
+    "ConfigurationPublished is a push: request_id 0 (proto3 default, not encoded). Server state moves NEGOTIATING -> READY and the push happens in the same transition (spec §5.2).",
+    "Note: pairing runs before negotiation; the two capability sets coincide only when both are empty, as here (spec §4.4)."
+  ]
+}

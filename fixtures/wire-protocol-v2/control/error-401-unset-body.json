@@ -1,0 +1,75 @@
+{
+  "id": "control.error-401-unset-body",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.1 (a Frame with no body set is malformed — 401)",
+    "docs/wire-protocol-v2/spec.md §4.4 (validation table row 1)"
+  ],
+  "description": "A non-empty Frame that never sets the oneof: a single unknown field (field 15) is ignored, leaving body unset -> Error(401)+Close(401).",
+  "preconditions": [
+    "State machine: CONNECTING."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "<no body; unknown field 15 only>",
+      "frame_hex": "00000000",
+      "body_hex": "",
+      "length": 0,
+      "decoded": {
+        "unknown_field": 15,
+        "wire_type": 0,
+        "value": 0
+      },
+      "has_unknown_fields": true,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000072a051203089103",
+      "body_hex": "2a051203089103",
+      "length": 7,
+      "decoded": {
+        "request_id": 0,
+        "status": {
+          "code": 401
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "000000053203089103",
+      "body_hex": "3203089103",
+      "length": 5,
+      "decoded": {
+        "code": 401
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 401,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "Unknown proto3 fields are ignored — but ignoring them leaves the body oneof unset, and that is malformed (401).",
+    "A literally empty Frame body is a length-0 frame and also 401 (see error-401-frame-length-zero); this vector isolates the unset-body rule at nonzero length.",
+    "Error unsolicited (0, not encoded)."
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "id": "control.malformed-capability-list-negotiate-401",
+  "category": "control-negative-space",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.4 (validation table: capabilities duplicated or not ascending -> 401)",
+    "docs/wire-protocol-v2/pairing.md §6.3 (canonical form: ascending numeric order, unique)"
+  ],
+  "description": "A Negotiate whose capabilities list is not in ascending numeric order ([2, 1]) is malformed: Error(401)+Close(401).",
+  "preconditions": [
+    "Session authenticated; state NEGOTIATING (request_id 2 follows the auth exchange's 1)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "negotiate",
+      "frame_hex": "000000113a0f090200000000000000100222020201",
+      "body_hex": "3a0f090200000000000000100222020201",
+      "length": 17,
+      "decoded": {
+        "request_id": 2,
+        "protocol_major": 2,
+        "protocol_minor": 0,
+        "capabilities": [
+          2,
+          1
+        ]
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000102a0e0902000000000000001203089103",
+      "body_hex": "2a0e0902000000000000001203089103",
+      "length": 16,
+      "decoded": {
+        "request_id": 2,
+        "status": {
+          "code": 401
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "000000053203089103",
+      "body_hex": "3203089103",
+      "length": 5,
+      "decoded": {
+        "code": 401
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 401,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "The canonical form exists only for a list that is already unique and ascending numeric order (count(u8) || id(u32 BE), pairing.md §6.3); [2, 1] has none, so the list is malformed.",
+    "The frame decoded to a known message, so Error echoes request_id 2.",
+    "Fatal: Error+Close, connection torn down (spec §4.4 validation table)."
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "id": "control.unknown-field-ignored",
+  "category": "control-negative-space",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.4 (validation table: unknown proto3 fields ignored)"
+  ],
+  "description": "An unknown field alongside a valid body is ignored under the standard evolution rule: the Subscribe inside is processed normally.",
+  "preconditions": [
+    "Session READY (authenticated, negotiated, configuration published).",
+    "Field 15 sits in the unassigned part of band 1–15; a future revision may assign it."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "subscribe (+unknown field 15)",
+      "frame_hex": "0000000c820209090100000000000000",
+      "body_hex": "820209090100000000000000",
+      "length": 12,
+      "decoded": {
+        "unknown_field": 15,
+        "wire_type": 0,
+        "value": 0,
+        "subscribe": {
+          "request_id": 1
+        }
+      },
+      "has_unknown_fields": true,
+      "expect_decode": "ok",
+      "note": "Unknown field encoded BEFORE the known one; field order does not matter."
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "subscribe_response",
+      "frame_hex": "0000001e8a021b09010000000000000012001a0e080110011a080880f70210021801",
+      "body_hex": "8a021b09010000000000000012001a0e080110011a080880f70210021801",
+      "length": 30,
+      "decoded": {
+        "request_id": 1,
+        "status": {},
+        "configuration": {
+          "config_generation": 1,
+          "codec": 1,
+          "pcm": {
+            "sample_rate": 48000,
+            "channels": 2,
+            "sample_format": 1
+          }
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "The unknown field is ignored; the known oneof case (subscribe) drives behavior — the request is answered normally with SubscribeResponse(OK) + current configuration.",
+    "Contrast with control.unknown-oneof-case-401: an unknown field alone leaves body unset (401); alongside a known case it is simply ignored."
+  ]
+}

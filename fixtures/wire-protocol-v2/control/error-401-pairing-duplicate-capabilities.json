@@ -1,0 +1,84 @@
+{
+  "id": "control.error-401-pairing-duplicate-capabilities",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.4 (validation table: PairingRequest capabilities duplicated or not ascending -> 401)",
+    "docs/wire-protocol-v2/pairing.md §6.3 (canonical form: unique, ascending numeric order)"
+  ],
+  "description": "PairingRequest with a duplicated capability id ([3, 3]): no canonical form exists, the list is malformed -> Error(401)+Close(401), not a 201 pairing rejection.",
+  "preconditions": [
+    "State machine: CONNECTING; QR nonce otherwise valid.",
+    "Malformed-list validation (401) is a §4.4 decidability rule checked ahead of pairing admission semantics (201)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "pairing_request",
+      "frame_hex": "0000007782017409010000000000000010011a10808182838485868788898a8b8c8d8e8f2220606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f2a2103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d30023a020303420a546573742050686f6e65",
+      "body_hex": "82017409010000000000000010011a10808182838485868788898a8b8c8d8e8f2220606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f2a2103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d30023a020303420a546573742050686f6e65",
+      "length": 119,
+      "decoded": {
+        "request_id": 1,
+        "pairing_mode": 1,
+        "pairing_nonce": "808182838485868788898a8b8c8d8e8f",
+        "client_random": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "client_public_key": "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d",
+        "protocol_major": 2,
+        "capabilities": [
+          3,
+          3
+        ],
+        "client_name": "Test Phone"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000102a0e0901000000000000001203089103",
+      "body_hex": "2a0e0901000000000000001203089103",
+      "length": 16,
+      "decoded": {
+        "request_id": 1,
+        "status": {
+          "code": 401
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "000000053203089103",
+      "body_hex": "3203089103",
+      "length": 5,
+      "decoded": {
+        "code": 401
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 4,
+      "code": 401,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "The frame decoded to a known message, so Error echoes request_id 1.",
+    "Duplicate ids cannot be put into canonical form (count(u8) || id(u32 BE) ascending, pairing.md §6.3) -> 401 MALFORMED_MESSAGE, fatal.",
+    "Note the pairing-failure paths that DO use 201: nonce admission, binding mismatch, invalid client_proof — never malformed lists."
+  ]
+}
