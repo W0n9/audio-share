@@ -1,0 +1,79 @@
+{
+  "id": "media.instance-change",
+  "category": "media-plane",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (PLAYING: capture restart -> StreamEnded(502), then StreamStarted(new instance))",
+    "docs/wire-protocol-v2/spec.md §7.2 (new instance id on every capture reset/restart; receiver epoch reset)",
+    "docs/wire-protocol-v2/spec.md §7.5 (new instance id: begin a new receiver epoch)"
+  ],
+  "description": "Capture restart: the reliable control stream announces the end of instance 1 and the start of instance 2, then the first media datagram of instance 2 arrives with STREAM_START; the receiver resets playback and statistics state.",
+  "preconditions": [
+    "Session PLAYING on instance 1, generation 1.",
+    "A new instance id is generated on every capture reset/restart/process restart/discontinuous clock (§7.2); monotonic +1 per Server process, wrapping 2^32−1 -> 1."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "stream_ended",
+      "frame_hex": "000000088a0305080110f603",
+      "body_hex": "8a0305080110f603",
+      "length": 8,
+      "decoded": {
+        "stream_instance_id": 1,
+        "code": 502
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok",
+      "note": "Instance 1 ends normally (capture restart)."
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "stream_started",
+      "frame_hex": "0000000782030408021001",
+      "body_hex": "82030408021001",
+      "length": 7,
+      "decoded": {
+        "stream_instance_id": 2,
+        "config_generation": 1,
+        "initial_timestamp": 0
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok",
+      "note": "Fresh instance 2, generation 1, first frame at capture-clock 0."
+    },
+    {
+      "kind": "datagram",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "datagram",
+      "datagram_hex": "000000020000000100000000000000000000000000000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "length": 88,
+      "decoded": {
+        "stream_instance_id": 2,
+        "config_generation": 1,
+        "sequence": 0,
+        "timestamp": 0,
+        "flags": "0x00000001",
+        "flags_set": [
+          "STREAM_START"
+        ],
+        "payload_bytes": 64,
+        "payload_frames": 8,
+        "frame_bytes": 8
+      },
+      "note": "First datagram of instance 2: sequence 0, timestamp 0, STREAM_START."
+    }
+  ],
+  "assertions": [
+    "The new instance BEGINS A NEW RECEIVER EPOCH: playback position, dedup window, jitter estimate and all §9 counters reset (§7.5); instance 1's statistics are finalized by the Client.",
+    "STREAM_START confirms the 0 origin; the reliable StreamStarted push carries the anchor, so loss cannot remove it while the connection lives (§7.5).",
+    "Old instance datagrams arriving after the switch (stragglers) are dropped against the new epoch (§7.5).",
+    "Sequence restarts at 0 for the new instance — a sequence reset is only legal alongside a new instance id."
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "id": "control.auth-happy-path",
+  "category": "control-happy-path",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §3 (framing, u32 BE length | Frame)",
+    "docs/wire-protocol-v2/spec.md §4.4 (AuthInit/AuthChallenge/AuthProof/AuthResult)",
+    "docs/wire-protocol-v2/pairing.md §9.1 (auth_context TLV, single-hash r||s)"
+  ],
+  "description": "Paired-client authentication: the full 4-message signed-challenge exchange, ending in AuthResult(OK) with a Server-assigned session_id.",
+  "preconditions": [
+    "One QUIC connection with ALPN audio-share/v2; SPKI pin verified at the handshake; control stream open.",
+    "Server authorization store contains a record for the test client identity key (test-keys.json), state=active.",
+    "State machine: CONNECTING. Isolated connection, so the request_id counter starts at 1.",
+    "auth_context inputs are the fixture constants in test-keys.json (fixed randomness + fixed TLS-Exporter stand-in)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "auth_init",
+      "frame_hex": "0000002e0a2c090100000000000000122103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d",
+      "body_hex": "0a2c090100000000000000122103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d",
+      "length": 46,
+      "decoded": {
+        "request_id": 1,
+        "client_public_key": "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "auth_challenge",
+      "frame_hex": "0000002d122b0901000000000000001220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "body_hex": "122b0901000000000000001220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "length": 45,
+      "decoded": {
+        "request_id": 1,
+        "server_random": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "auth_proof",
+      "frame_hex": "0000004d1a4b0901000000000000001240e77e55090b72af3cb8f42a8e6696b4797170b8c8236944ce4c17164e5d97762f8686dfcd64f4a21f5768fa6c94e6a816029a566fb849fa27cbe98385f4df060c",
+      "body_hex": "1a4b0901000000000000001240e77e55090b72af3cb8f42a8e6696b4797170b8c8236944ce4c17164e5d97762f8686dfcd64f4a21f5768fa6c94e6a816029a566fb849fa27cbe98385f4df060c",
+      "length": 77,
+      "decoded": {
+        "request_id": 1,
+        "signature": "e77e55090b72af3cb8f42a8e6696b4797170b8c8236944ce4c17164e5d97762f8686dfcd64f4a21f5768fa6c94e6a816029a566fb849fa27cbe98385f4df060c"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 4,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "auth_result",
+      "frame_hex": "0000001622140901000000000000001200190100000000000000",
+      "body_hex": "22140901000000000000001200190100000000000000",
+      "length": 22,
+      "decoded": {
+        "request_id": 1,
+        "status": {},
+        "session_id": 1
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "AuthChallenge is a pre-auth response: no detail, total framed size <= 128 B (spec §4.2, §10 TM-6).",
+    "The AuthProof signature is one ECDSA-P256-SHA256 over the RAW auth_context bytes (exactly one hash; never pre-hash into a SHA256withECDSA API) — pairing.md §9.1.",
+    "auth_context (hex in derivation below) = TLV(1,'auth') || TLV(2,server_random) || TLV(3,client_public_key) || TLV(4,server_public_key) || TLV(5,protocol_major) || TLV(6,exporter); implementations replay by rebuilding it and verifying the recorded signature.",
+    "AuthResult(OK) carries session_id=1 (Server counter from 1); state moves AUTHENTICATING -> NEGOTIATING (spec §5.2)."
+  ],
+  "size_bounds": [
+    {
+      "frame": "auth_challenge",
+      "max_frame_bytes": 128,
+      "rule": "spec §4.2/§10 TM-6: pre-auth responses <= 128 B"
+    }
+  ],
+  "derived": {
+    "auth_context_hex": "01000461757468020020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03002103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d04002011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c05000400000002060020c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "auth_context_sha256_hex": "14ff20a0a4a4ba84f76ea6e523d54ac17bfaad607d133e6de829f0e09001c0cb",
+    "auth_context_bytes": 155,
+    "signature": "ECDSA-P256-SHA256(client_identity_key, auth_context), fixed 64-byte r||s (IEEE P1363)",
+    "signing_nonce_k_label": "audio-share v2 TEST-ONLY ECDSA nonce | auth-happy-path (see test-keys.json)",
+    "encoding_assumptions": [
+      "TLV(5, protocol_major) encoded as u32 big-endian (flagged spec gap; see test-keys.json derivation_assumptions)"
+    ]
+  }
+}

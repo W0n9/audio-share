@@ -1,0 +1,61 @@
+{
+  "id": "control.error-204-revoked-active-session",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (any: fatal error raised -> matching Error + Close)",
+    "docs/wire-protocol-v2/spec.md §6.2 (revocation-driven close of an active session uses 204 within <= 5 s)",
+    "docs/wire-protocol-v2/pairing.md §9.2 (revocation semantics; TM-9)"
+  ],
+  "description": "Revocation of a live session: the operator revokes the Client identity while its session is PLAYING; within <= 5 s the session receives the fatal pair Error(204)+Close(204).",
+  "preconditions": [
+    "Session authenticated by the (now revoked) identity; state PLAYING with an active stream (session_id 1).",
+    "The authorization store changed under the session; Server Core watches the authorization-state generation (pairing.md §9.2)."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000072a05120308cc01",
+      "body_hex": "2a05120308cc01",
+      "length": 7,
+      "decoded": {
+        "request_id": 0,
+        "status": {
+          "code": 204
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "00000005320308cc01",
+      "body_hex": "320308cc01",
+      "length": 5,
+      "decoded": {
+        "code": 204
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "transport-close",
+      "index": 3,
+      "code": 204,
+      "closed_by": "S"
+    }
+  ],
+  "assertions": [
+    "Unsolicited Error: request_id 0 (proto3 default, not encoded) — no request is being answered.",
+    "Fatal pairing: Error+Close with the same code; the transport close carries 204 as well (spec §3).",
+    "The close reason is in the pairing/authorization-failure category — non-retryable without admin action (pairing.md §9.2, spec §6.3).",
+    "Note: the §5.2 supersede row (303) names Close alone; this revocation path has no such row and therefore follows the generic fatal-error row (Error + Close)."
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "id": "control.error-501-capture-unhealthy",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (READY: Subscribe with unhealthy capture -> Error(501, retryable=true); no state change)",
+    "docs/wire-protocol-v2/spec.md §5.2 (error response classes: 501 is a non-fatal instance)",
+    "docs/wire-protocol-v2/spec.md §6.2 (501 CAPTURE_FAILURE: retryable=yes, re-pairing=no)"
+  ],
+  "description": "Subscribe while the Endpoint capture is unhealthy/absent: non-fatal Error(501, retryable=true) — connection kept, state stays READY; the Client may retry after the next ConfigurationPublished.",
+  "preconditions": [
+    "Session READY (authenticated, negotiated, configuration published); NOT subscribed.",
+    "The Endpoint capture is absent or failed."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "subscribe",
+      "frame_hex": "0000000c820209090100000000000000",
+      "body_hex": "820209090100000000000000",
+      "length": 12,
+      "decoded": {
+        "request_id": 1
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "error",
+      "frame_hex": "000000122a10090100000000000000120508f5031001",
+      "body_hex": "2a10090100000000000000120508f5031001",
+      "length": 18,
+      "decoded": {
+        "request_id": 1,
+        "status": {
+          "code": 501,
+          "retryable": true
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok",
+      "note": "Non-fatal: NO paired Close; state unchanged (READY)."
+    }
+  ],
+  "assertions": [
+    "Status: code 501, retryable=true, requires_repairing=false (§6.2 defaults; the flag governs Client retry policy independently of fatality).",
+    "No Close: 501-on-Subscribe is one of the two v2.0 non-fatal Error instances (the other being duplicate-Subscribe 402) — spec §5.2 error classes.",
+    "Client policy (spec §5.3/§6.3): surface; MAY retry after the next ConfigurationPublished."
+  ]
+}

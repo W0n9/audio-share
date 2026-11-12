@@ -1,0 +1,63 @@
+{
+  "id": "control.error-303-session-superseded",
+  "category": "control-error-registry",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §5.2 (AUTHENTICATING: supersede — the older session of the same identity is closed with Close(303))",
+    "docs/wire-protocol-v2/spec.md §6.2 (303 SESSION_SUPERSEDED: retryable=no, re-pairing=no)",
+    "docs/wire-protocol-v2/spec.md §10 (one active session per Client identity, TM-3)"
+  ],
+  "description": "Same-identity supersede: a second connection authenticates the same Client identity; the OLD connection is closed with Close(303) (Close only — the §5.2 row names no paired Error).",
+  "preconditions": [
+    "Connection A: established, authenticated (session_id 1), state PLAYING.",
+    "Connection B: fresh CONNECTING -> AUTHENTICATING for the same identity; the auth exchange there consumed request_id 1."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "auth_result",
+      "frame_hex": "0000001622140901000000000000001200190200000000000000",
+      "body_hex": "22140901000000000000001200190200000000000000",
+      "length": 22,
+      "decoded": {
+        "request_id": 1,
+        "status": {},
+        "session_id": 2
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok",
+      "note": "On connection B: the new session is accepted (session_id 2)."
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "close",
+      "frame_hex": "00000005320308af02",
+      "body_hex": "320308af02",
+      "length": 5,
+      "decoded": {
+        "code": 303
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok",
+      "note": "On connection A: the superseded session is closed."
+    },
+    {
+      "kind": "transport-close",
+      "index": 3,
+      "code": 303,
+      "closed_by": "S",
+      "note": "Connection A transport-closes with code 303."
+    }
+  ],
+  "assertions": [
+    "The old session's Close is unsolicited from A's perspective; Close is one-way and never echoed (spec §5.4).",
+    "retryable=false per §6.2: another session owns this identity — the Client surfaces it, no automatic reconnect (spec §6.3).",
+    "Supersede replaces, not rejects: the replacement is counted in diagnostics (TM-3).",
+    "The §5.2 row names Close(303) alone (no paired Error) — this vector shows exactly that."
+  ]
+}

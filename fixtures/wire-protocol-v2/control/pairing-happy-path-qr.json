@@ -1,0 +1,131 @@
+{
+  "id": "control.pairing-happy-path-qr",
+  "category": "control-happy-path",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.4 (PairingRequest/Response/Confirm/Result, PairingConfirm.client_proof)",
+    "docs/wire-protocol-v2/pairing.md §6.2 (message sequence)",
+    "docs/wire-protocol-v2/pairing.md §6.3 (transcript binding, capabilities_canonical)",
+    "docs/wire-protocol-v2/pairing.md §6.3.1 (client_proof)"
+  ],
+  "description": "QR pairing, full 4-message flow including PairingConfirm.client_proof; the Server persists the identity only after verifying binding_echo and client_proof, then returns PairingResult(OK).",
+  "preconditions": [
+    "QUIC connection with ALPN audio-share/v2; SPKI pin derived from the QR key field verified at the handshake (pairing.md §6.1).",
+    "Admission gate: the QR nonce (test-keys.json fixed_randomness.pairing_nonce) is valid, unexpired and unused.",
+    "Local approval (Accept device) granted.",
+    "State machine: CONNECTING. Isolated connection; request_id counter starts at 1.",
+    "pairing.md does not fix the oneof case numbers' semantics here; wire slots come from spec §4.4."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "pairing_request",
+      "frame_hex": "0000007382017009010000000000000010011a10808182838485868788898a8b8c8d8e8f2220606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f2a2103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d3002420a546573742050686f6e65",
+      "body_hex": "82017009010000000000000010011a10808182838485868788898a8b8c8d8e8f2220606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f2a2103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d3002420a546573742050686f6e65",
+      "length": 115,
+      "decoded": {
+        "request_id": 1,
+        "pairing_mode": 1,
+        "pairing_nonce": "808182838485868788898a8b8c8d8e8f",
+        "client_random": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "client_public_key": "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d",
+        "protocol_major": 2,
+        "capabilities": [],
+        "client_name": "Test Phone"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "pairing_response",
+      "frame_hex": "000000d38a01cf01090100000000000000120018012210808182838485868788898a8b8c8d8e8f2a20606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f3220404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f3a2011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c40025230909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf5a08cf7940b474310246620a546573742050686f6e65",
+      "body_hex": "8a01cf01090100000000000000120018012210808182838485868788898a8b8c8d8e8f2a20606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f3220404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f3a2011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c40025230909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf5a08cf7940b474310246620a546573742050686f6e65",
+      "length": 211,
+      "decoded": {
+        "request_id": 1,
+        "status": {},
+        "pairing_mode": 1,
+        "pairing_nonce": "808182838485868788898a8b8c8d8e8f",
+        "client_random": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "server_random": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+        "server_public_key": "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c",
+        "protocol_major": 2,
+        "capabilities": [],
+        "binding": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "client_id": "cf7940b474310246",
+        "display_name": "Test Phone"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "C->S",
+      "channel": "control-stream",
+      "message": "pairing_confirm",
+      "frame_hex": "0000008092017d0901000000000000001230909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf1a40c7ae8b6474ebb7b6d654febfce10e38d3a479b4534b5436bbb7714ae3652bfc30b0d8ffbf1582ecb2af24e25ba47876b4a35dd00af0924b57648871f95baeee1",
+      "body_hex": "92017d0901000000000000001230909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf1a40c7ae8b6474ebb7b6d654febfce10e38d3a479b4534b5436bbb7714ae3652bfc30b0d8ffbf1582ecb2af24e25ba47876b4a35dd00af0924b57648871f95baeee1",
+      "length": 128,
+      "decoded": {
+        "request_id": 1,
+        "binding_echo": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "client_proof": "c7ae8b6474ebb7b6d654febfce10e38d3a479b4534b5436bbb7714ae3652bfc30b0d8ffbf1582ecb2af24e25ba47876b4a35dd00af0924b57648871f95baeee1"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 4,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "pairing_result",
+      "frame_hex": "0000000e9a010b0901000000000000001200",
+      "body_hex": "9a010b0901000000000000001200",
+      "length": 14,
+      "decoded": {
+        "request_id": 1,
+        "status": {}
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "PairingResponse is the sole larger pre-auth response: its total framed size must be <= 320 B (spec §4.2, §10 TM-6 as revised 2026-11-12); this vector's is smaller and the size bound is asserted.",
+    "PairingResponse echoes the offered capabilities set unchanged (empty in v2.0; an empty repeated field is not encoded), plus server_random, the raw 32-byte Ed25519 identity key, binding (48 B), client_id (first 8 of SHA-256(client_public_key)) and the accepted display name.",
+    "binding and binding_echo are TLS-Exporter outputs — fixture-fixed stand-ins (test-keys.json); the Client MUST verify binding equals its own derivation before sending PairingConfirm (pairing.md §6.3).",
+    "client_proof = ECDSA-P256-SHA256(identity key, TLV(1,'audio-share v2 pairing confirm') || TLV(2,binding)), 64-byte r||s, exactly one hash (pairing.md §6.3.1); the Server verifies it BEFORE persisting or answering PairingResult(OK).",
+    "PairingResult(OK) has an empty Status (present, no fields) — pairing persisted; state moves to NEGOTIATING and the Client next sends Negotiate (spec §5.3).",
+    "binding_context and the derived SAS code are recorded below as hand-derivation checks; binding/sas_seed themselves are fixture-fixed exporter stand-ins."
+  ],
+  "size_bounds": [
+    {
+      "frame": "pairing_response",
+      "max_frame_bytes": 320,
+      "rule": "spec §4.2/§10 TM-6: successful PairingResponse <= 320 B Frame.length"
+    }
+  ],
+  "derived": {
+    "binding_context_qr_hex": "010002717202000400000002030010808182838485868788898a8b8c8d8e8f040020606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f050020404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f06002103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d07002011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c0800010009000a546573742050686f6e65",
+    "binding_context_qr_sha256_hex": "9006ad9b963641483800cb15d74767762150fa3630ea17dfb4e600d16a32438b",
+    "binding_context_formula": "SHA-256( TLV(1,mode) || TLV(2,protocol_major) || TLV(3,pairing_nonce) || TLV(4,client_random) || TLV(5,server_random) || TLV(6,client_pubkey) || TLV(7,server_pubkey) || TLV(8,capabilities_canonical) || TLV(9,client_display_name) )",
+    "capabilities_canonical_of_empty": "00 (count u8 = 0)",
+    "proof_input_qr_hex": "01001e617564696f2d73686172652076322070616972696e6720636f6e6669726d020030909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "proof_input_formula": "TLV(1, 'audio-share v2 pairing confirm') || TLV(2, binding)",
+    "client_id_formula": "first 8 bytes of SHA-256(client_public_key)",
+    "client_id_hex": "cf7940b474310246",
+    "signing_nonce_k_label_qr": "audio-share v2 TEST-ONLY ECDSA nonce | pairing-confirm-qr (see test-keys.json)",
+    "encoding_assumptions": [
+      "TLV(1, mode) encoded as the pairing.md §6.2 ASCII mode string 'qr' (flagged spec gap; see test-keys.json)",
+      "TLV(2, protocol_major) encoded as u32 big-endian (flagged spec gap; see test-keys.json)"
+    ]
+  }
+}

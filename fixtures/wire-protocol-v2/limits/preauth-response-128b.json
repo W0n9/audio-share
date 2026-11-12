@@ -1,0 +1,75 @@
+{
+  "id": "limits.preauth-response-128b",
+  "category": "resource-limits",
+  "spec_cite": [
+    "docs/wire-protocol-v2/spec.md §4.2 (pre-auth responses carry no detail; <= 128 B)",
+    "docs/wire-protocol-v2/spec.md §10 (general pre-auth responses <= 128 B — challenges, rejections, errors; TM-6 revised)",
+    "docs/wire-protocol-v2/threat-model.md §5.6/§6 (no small-request/large-response asymmetry)"
+  ],
+  "description": "The 128 B pre-auth response boundary: the three pre-auth response shapes (AuthChallenge, AuthResult(202), AuthResult(204)) with their exact sizes — all without any detail field.",
+  "preconditions": [
+    "Pre-auth responses: AuthChallenge, pairing/auth refusals, pre-auth errors — stable codes only, NO detail (spec §4.2).",
+    "The sole exception to the 128 B rule is a successful PairingResponse (<= 320 B, see limits/pairing-response-320b).",
+    "The bound applies to the whole framed response (u32 BE length prefix included); the asserted sizes below are framed sizes."
+  ],
+  "steps": [
+    {
+      "kind": "frame",
+      "index": 1,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "auth_challenge",
+      "frame_hex": "0000002d122b0901000000000000001220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "body_hex": "122b0901000000000000001220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "length": 45,
+      "decoded": {
+        "request_id": 1,
+        "server_random": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 2,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "auth_result",
+      "frame_hex": "000000122210090100000000000000120508ca011801",
+      "body_hex": "2210090100000000000000120508ca011801",
+      "length": 18,
+      "decoded": {
+        "request_id": 1,
+        "status": {
+          "code": 202,
+          "requires_repairing": true
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    },
+    {
+      "kind": "frame",
+      "index": 3,
+      "dir": "S->C",
+      "channel": "control-stream",
+      "message": "auth_result",
+      "frame_hex": "00000010220e090100000000000000120308cc01",
+      "body_hex": "220e090100000000000000120308cc01",
+      "length": 16,
+      "decoded": {
+        "request_id": 1,
+        "status": {
+          "code": 204
+        }
+      },
+      "has_unknown_fields": false,
+      "expect_decode": "ok"
+    }
+  ],
+  "assertions": [
+    "Every step's framed size must be <= 128 bytes (asserted via size_bounds); the largest here is AuthChallenge at 47 B.",
+    "No detail field may be present in any pre-auth response — even a short one (spec §4.2; TM-6 as revised 2026-11-12 withdrew the nonce-gated blanket exemption: admission is gated per mode instead, not by response size).",
+    "These are the exact bytes of the frames used by control.auth-happy-path / error-202 / error-204."
+  ]
+}
