@@ -156,14 +156,14 @@ fn missing_store_starts_empty_and_creates_file_on_first_write() {
 
 #[test]
 fn a_backup_generation_is_kept_on_rewrite() {
-    // pairing.md §10.3: atomic write + one backup generation. The helper's
-    // backup name is `<stem>.bak` (clients.bak next to clients.json).
+    // pairing.md §10.3: atomic write + one backup generation. The backup keeps
+    // the full file name plus `.bak` (clients.json.bak next to clients.json).
     let dir = temp_dir();
     let store = AuthorizationStore::open(&dir).expect("open");
     store.insert_for_tests(client(CLIENT_PUB, "Test Phone"));
     store.insert_for_tests(client(OTHER_PUB, "Second"));
-    let backup = dir.join("pairing").join("clients.bak");
-    assert!(backup.is_file(), "one .bak generation must be kept");
+    let backup = dir.join("pairing").join("clients.json.bak");
+    assert!(backup.is_file(), "one .bak generation must be kept as clients.json.bak");
     // The backup holds the pre-rewrite content (only the first client).
     let text = std::fs::read_to_string(&backup).expect("backup text");
     assert!(text.contains(&hex8(CLIENT_PUB)));
