@@ -4,7 +4,7 @@
 
 **Blocked by:** 06, 07, 08
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Type:** task
 
