@@ -78,6 +78,11 @@ pub struct ServerConfig {
     /// `false` = the new session never replaces the old (unused in v2.0,
     /// TM-3 fixed replacement).
     pub keep_old_on_supersede: bool,
+    /// The first session id this machine assigns (§3: the Server assigns
+    /// ids from a registry-wide counter; the driver seeds each machine with
+    /// its position). Defaults to 1 for a standalone machine; the golden-
+    /// vector replay uses it to reproduce the registry's numbering.
+    pub session_id_base: u64,
 }
 
 /// TM-3: a new session of the same identity supersedes the old (Close(303)).
@@ -107,6 +112,12 @@ pub enum Event {
     Fatal(ErrorCode),
     /// Periodic revocation check (pairing.md §9.2: ≤ 5 s termination).
     RevocationCheck,
+    /// The session registry decided this session is superseded by a newer
+    /// session of the same identity (TM-3; the driver owns the registry and
+    /// translates its decision into this event on the OLD machine). The
+    /// machine emits Close carrying the code and closes the transport with
+    /// it (§5.2: Close(303) on the superseded session).
+    Superseded { code: ErrorCode },
 }
 
 /// One machine output, in order.
@@ -199,11 +210,12 @@ pub struct StateMachine {
 impl StateMachine {
     /// A fresh machine at CONNECTING.
     pub fn new(config: ServerConfig, store: &Arc<AuthorizationStore>) -> Self {
+        let session_id_base = config.session_id_base.max(1);
         Self {
             config,
             store: Arc::clone(store),
             state: ServerState::Connecting,
-            next_session_id: 1,
+            next_session_id: session_id_base,
             session_id: None,
             identity: None,
             subscribed: false,
@@ -295,6 +307,22 @@ impl StateMachine {
                 outcomes
             }
             Event::RevocationCheck => self.handle_revocation_check(),
+            Event::Superseded { code } => {
+                // §5.2: the superseded session emits Close(code) and the
+                // transport closes carrying the code (TM-3 fixed replacement).
+                let outcome = Outcome {
+                    frame: Some(Frame {
+                        body: Some(frame::Body::Close(crate::schema::Close {
+                            code: code.code,
+                            detail: String::new(),
+                        })),
+                    }),
+                    close_code: Some(code),
+                    transport_close_code: Some(code),
+                };
+                self.close(ServerState::Closed);
+                vec![outcome]
+            }
         }
     }
 
@@ -340,12 +368,38 @@ impl StateMachine {
                 self.handle_auth_init(init.request_id, &init.client_public_key, source)
             }
             (ServerState::Connecting, Some(frame::Body::PairingRequest(request))) => {
+                // §4.4 decidability first: a malformed capabilities list
+                // (duplicates, non-ascending, or > 255 entries) is rejected
+                // 401 BEFORE pairing admission semantics are consulted (the
+                // fixture cases error-401-pairing-capabilities-over-255 /
+                // error-401-pairing-duplicate-capabilities pin this order).
+                if auth::validate_capability_list_bounded(
+                    &request.capabilities,
+                    u8::MAX as usize,
+                )
+                .is_err()
+                {
+                    return self.malformed_fatal(request.request_id);
+                }
                 // §5.2 CONNECTING PairingRequest row — production pairing is a
                 // later phase; in v2.0-control-plane scope the admission gate
                 // has no live QR/SAS source, so a PairingRequest is refused
                 // 201 + Close(201) (no admission material exists — the
                 // nonce/window tables are empty). Pairing-failure rate limits
                 // (TM-5) apply at the pairing phase.
+                //
+                // Adjudication note (201 flag): the declined-201 fixture
+                // vector encodes PairingResult(201) WITHOUT the
+                // requires_repairing flag, but spec §6.2 sets the registry
+                // default for 201 to requires_repairing=yes and §4.2 requires
+                // senders to match the registry. Stance (ticket 07 work
+                // order): the sender follows the registry default and emits
+                // requires_repairing=true via `Status::registry(201)`; the
+                // declined-201 fixture's literal bytes are therefore NOT
+                // asserted byte-identically at sender level (its decode/
+                // assertions still run in the replay harness); fixtures are
+                // never modified here — the maintainer rules on the vector in
+                // the ticket Comments.
                 let outcomes = vec![
                     Outcome::frame(Frame {
                         body: Some(frame::Body::PairingResult(crate::schema::PairingResult {
