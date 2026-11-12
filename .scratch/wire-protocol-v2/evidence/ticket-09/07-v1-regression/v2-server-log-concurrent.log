@@ -1,0 +1,8 @@
+[2026-11-12 14:54:06.620] [info] v2 connection accepted remote=100.117.189.121:42181
+[2026-11-12 14:54:06.620] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:54:06.621] [debug] v2 session: control stream open source=100.117.x.x
+[2026-11-12 14:54:07.115] [info] v2 connection accepted remote=100.117.189.121:46724
+[2026-11-12 14:54:07.115] [debug] v2 session: transport established source=100.117.x.x
+[2026-11-12 14:54:07.116] [debug] v2 session: control stream open source=100.117.x.x
+[2026-11-12 14:54:07.408] [debug] v2 session ended source=100.117.x.x code=303
+[2026-11-12 14:54:07.408] [info] v2 session ended: ServerClosed(ErrorCode { code: 303, retryable: false, requires_repairing: false }) remote=Some(100.117.189.121:42181)

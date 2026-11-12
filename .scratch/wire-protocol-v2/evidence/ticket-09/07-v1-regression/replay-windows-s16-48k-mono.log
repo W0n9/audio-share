@@ -1,0 +1,8 @@
+# ./target/release/protocol-harness replay --fixture fixtures/protocol/v0.3.4/windows/s16-48k-mono
+replay: ok (offline)
+fixture: fixtures/protocol/v0.3.4/windows/s16-48k-mono
+provenance: synthesized-v0.3.4-semantics
+format: Some(Pcm16Bit) channels=1 sample_rate=48000 block_align=2
+control: start_play_id=1 heartbeats=1
+pcm: 6 datagrams, 7680 bytes, aligned payload 1464 (MTU 1492)
+# RESULT: exit=0
