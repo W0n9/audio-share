@@ -492,13 +492,19 @@ fn status_field(object: &serde_json::Map<String, serde_json::Value>) -> Status {
     match object.get("status") {
         Some(serde_json::Value::Object(value)) => {
             let code = u32_field(value, "code");
-            let mut status = if code == 0 {
-                Status::ok()
-            } else {
-                Status::registry(code)
-            };
-            // Fixture-asserted flags win over registry defaults (the fixtures
-            // pin the exact wire bytes; registry defaults match them anyway).
+            // The harness reads `decoded` LITERALLY — the fixture set's
+            // encoding convention (ticket 05's generator and ticket 08's
+            // independent regeneration agree): flags ride the wire exactly
+            // when the decoded listing asserts them. The §6.2
+            // registry-default rule for real senders lives in
+            // Status::registry(); note that the declined-201 vector leaves
+            // its flags unlisted (proto3 default) while the registry default
+            // for 201 is requires_repairing=true — recorded in ticket 06 as
+            // a potential adjudication follow-up for ticket 07's conformance.
+            let mut status = Status::ok();
+            status.code = code;
+            // Fixture-asserted flags win (the fixtures pin the exact wire
+            // bytes).
             if let Some(retryable) = value.get("retryable").and_then(|v| v.as_bool()) {
                 status.retryable = retryable;
             }
