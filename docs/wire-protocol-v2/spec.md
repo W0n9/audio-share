@@ -66,7 +66,7 @@ File `audio_share_v2.proto`, `syntax = "proto3"`, `package audio.share.v2`. One 
 
 | Band | Fields (oneof cases) | Contents |
 |---|---|---|
-| 1–15 | 1 `AuthInit` · 2 `AuthChallenge` · 3 `AuthProof` · 4 `AuthResult` · 5 `Error` · 6 `Close` | connection lifecycle: signed-challenge authentication, errors, close |
+| 1–15 | 1 `AuthInit` · 2 `AuthChallenge` · 3 `AuthProof` · 4 `AuthResult` · 5 `Error` · 6 `Close` · 7 `Negotiate` · 8 `NegotiateResponse` | connection lifecycle: signed-challenge authentication, version/capability negotiation, errors, close |
 | 16–31 | 16 `PairingRequest` · 17 `PairingResponse` · 18 `PairingConfirm` · 19 `PairingResult` | pairing (message sequence and crypto semantics: ticket 04) |
 | 32–47 | 32 `Subscribe` · 33 `SubscribeResponse` · 34 `Unsubscribe` · 35 `UnsubscribeResponse` · 36 `RequestConfiguration` · 37 `ConfigurationPublished` | subscription and configuration publication |
 | 48–63 | 48 `StreamStarted` · 49 `StreamEnded` | stream-instance lifecycle |
@@ -88,7 +88,7 @@ message Status {
 
 - `request_id`: sender-assigned, unique per sender per connection, monotonically increasing from 1; the receiver echoes it verbatim and never interprets it (opaque). `0` = "not a response" (pushes).
 - `retryable` / `requires_repairing`: senders MUST equal the §6 registry defaults in v2.0; per-instance refinement is a future revision.
-- `detail`: senders MUST cap at 256 bytes; receivers truncate for logging and MUST NOT reject a frame solely for a longer detail. Error responses are small by construction (≤ ~300 B typical, ≤ 64 KiB hard) — small unauthenticated requests never produce large error responses (baseline §Resource and Privacy Controls). Responses sent before authentication completes (`AuthChallenge`, pairing/auth refusals, pre-auth errors) carry **no `detail`** — stable codes only, keeping general pre-authentication responses ≤ 128 B (TM-6 as revised 2026-11-12: challenges, rejections, and errors; no `detail` field). The sole exception is a **successful `PairingResponse`**, which has its own `Frame.length` cap of **320 B**. Pairing admission is gated per mode — QR pairing requires a valid, unused nonce; SAS pairing requires the administrator-enabled local pairing window (SAS has no nonce); the earlier blanket "pairing exchange is nonce-gated" exemption is withdrawn (threat-model §6, TM-6 revised).
+- `detail`: senders MUST cap at 256 bytes; receivers truncate for logging and MUST NOT reject a frame solely for a longer detail. Error responses are small by construction (≤ ~300 B typical, ≤ 64 KiB hard) — small unauthenticated requests never produce large error responses (baseline §Resource and Privacy Controls). Responses sent before authentication completes (`AuthChallenge`, `PairingResult`, pairing/auth refusals, pre-auth errors) carry **no `detail`** — stable codes only, keeping general pre-authentication responses ≤ 128 B (TM-6 as revised 2026-11-12: challenges, rejections, and errors; no `detail` field). In particular an approval-declined pairing is answered with `PairingResult`(201) + `Close`(201) and no detail (§5.2). The sole exception is a **successful `PairingResponse`**, which has its own `Frame.length` cap of **320 B**. Pairing admission is gated per mode — QR pairing requires a valid, unused nonce; SAS pairing requires the administrator-enabled local pairing window (SAS has no nonce); the earlier blanket "pairing exchange is nonce-gated" exemption is withdrawn (threat-model §6, TM-6 revised).
 
 ### 4.3 Message direction
 
@@ -297,7 +297,8 @@ Implements: baseline §Control-Plane Semantics item 2 — explicit states, all l
 | CONNECTING | `PairingRequest` | admission gate (QR: valid, unused 16 B nonce; SAS: the admin-enabled local pairing window open); mode/major valid; pairing bounds ok (TM-5) | send `PairingResponse`(echoes incl. capabilities, `server_random`, Server key, `binding`, `client_id`, `display_name`); start 10 min pairing deadline | AUTHENTICATING (pairing exchange) |
 | CONNECTING | `PairingRequest` | admission gate failed (QR nonce invalid/expired/replayed; SAS window not open), bad mode or major | send `PairingResult`(201)+Close(201); count pairing failure | CLOSING |
 | CONNECTING | capacity exceeded | — | transport close carrying 301 | CLOSED |
-| CONNECTING | any other `Frame`; unset body; length violation | — | Error(401 or 402)+Close(same) | CLOSING |
+| CONNECTING | any other `Frame`: malformed — undecodable bytes, unset body, length violation, or a generic validation failure | — | Error(401)+Close(401) | CLOSING |
+| CONNECTING | any other `Frame`: valid but state-forbidden (e.g. a well-formed `Subscribe`) | — | Error(402)+Close(402) | CLOSING |
 | CONNECTING | second Client stream / Server-stream request | — | Error(402)+Close(402) | CLOSING |
 | CONNECTING / AUTHENTICATING | auth exchange deadline (10 s) exceeded | — | transport close carrying 601 | CLOSED |
 | AUTHENTICATING | `AuthProof`, signature valid, identity known and authorized | — | send `AuthResult`(OK, session_id); supersede: an older session of the same identity is closed with Close(303) | NEGOTIATING |
@@ -308,7 +309,7 @@ Implements: baseline §Control-Plane Semantics item 2 — explicit states, all l
 | AUTHENTICATING | `AuthInit` (retry) | < 5 failures on this connection; source rate ok | fresh challenge: send `AuthChallenge` | AUTHENTICATING |
 | AUTHENTICATING | source-address auth-failure rate exceeded (20 per sliding 60 s) | — | Close(302) | CLOSING |
 | AUTHENTICATING | `PairingConfirm`, `binding_echo` verified ∧ `client_proof` valid | local approval granted | persist pairing (pairing spec §8 — only now, after the proof); send `PairingResult`(OK) | NEGOTIATING |
-| AUTHENTICATING | `PairingConfirm`, `binding_echo` verified ∧ `client_proof` valid | approval declined | send `PairingResult`(201, detail "declined")+Close(201) | CLOSING |
+| AUTHENTICATING | `PairingConfirm`, `binding_echo` verified ∧ `client_proof` valid | approval declined | send `PairingResult`(201)+`Close`(201) — no `detail` (pre-auth no-detail rule, §4.2/TM-6); nothing persisted | CLOSING |
 | AUTHENTICATING | `PairingConfirm`, `binding_echo` mismatch or `client_proof` invalid | — | count pairing failure; nothing persisted; send `PairingResult`(201)+Close(201) | CLOSING |
 | AUTHENTICATING | pairing failure rate exceeded (5 per sliding 60 s per address, TM-5) | — | Close(302) | CLOSING |
 | AUTHENTICATING | pairing deadline (10 min) exceeded | — | Error(206)+Close(206) | CLOSING |
@@ -340,6 +341,8 @@ Implements: baseline §Control-Plane Semantics item 2 — explicit states, all l
 | CLOSING | 5 s grace elapsed without peer transport close | — | force transport close carrying the Close code | CLOSED |
 
 CLOSING accepts no new requests; a Close in flight makes the teardown observable, so it is bounded rather than silent.
+
+**CONNECTING 401/402 split (decidable).** For a stray first frame the code follows the error's **nature**, never reviewer discretion: a malformed message (undecodable bytes, unset body, frame-length violation) or a generic validation failure is answered 401 MALFORMED_MESSAGE; a message that decodes and validates but is forbidden in CONNECTING is answered 402 INVALID_STATE. The message-specific CONNECTING rows (`PairingRequest` admission, the auth-exchange rows, capacity, the second-stream rule) take precedence over this generic split.
 
 **Error response classes (decidable).** The tables use two `Error` classes. A **non-fatal** Error is a reply to the offending request: the connection is **maintained**, processing continues, and the state is unchanged — in v2.0 the instances are a duplicate `Subscribe` in READY or PLAYING (402, retryable=false) and `Subscribe` with unhealthy capture (501, retryable=true). A **fatal** Error is always paired with `Close` carrying the same code and tears the session down. Fatality is a property of the state-machine row, never of the code alone — e.g. 402 is non-fatal as a duplicate-`Subscribe` reply and fatal (Error(402)+Close(402)) for structural violations; the `retryable` flag governs Client retry policy (§6.3) independently of fatality.
 
@@ -456,6 +459,8 @@ Implements: baseline §Media-Plane Semantics (Encoding and Packet Header; IPv4, 
 
 `HEADER_SIZE = 24`. The header is **not** RTP wire-compatible; sequence, timestamp, loss, and jitter *semantics* follow RFC 3550 (baseline §Media-Plane §Encoding and Packet Header).
 
+**Reserved-flag rule (decidable, adjudication 2026-11-12).** The sender MUST zero flag bits 2–31; the receiver MUST ignore flag bits 2–31 and MUST NOT treat them as malformed — a datagram with any of bits 2–31 set is processed exactly as if the bits were zero (§7.5). A future revision may promote specific reserved bits to mandatory; until it does, they carry no meaning.
+
 Flags:
 
 | Bit | Name | Sender | Receiver |
@@ -503,7 +508,8 @@ Per-instance receiver state: extended sequence + cycle count, dedup window bitma
 | new instance id | begin a new receiver epoch: reset playback and statistics state; anchor at the first received datagram — STREAM_START confirms the 0 origin, and the reliable `StreamStarted` push carries the anchor, so loss cannot remove it while the connection lives |
 | generation unknown (newer) | unknown-config rule (§7.6) |
 | generation older than the current one (stale reorder across a change) | drop; count in `unknown_config_drops` (not decodable under the current configuration — never decoded with the previous generation) |
-| payload not frame-aligned, reserved flag bits set, or impossible fields (0 ids) | malformed media: drop, log locally |
+| payload not frame-aligned, or impossible fields (0 ids) | malformed media: drop, log locally |
+| any of flag bits 2–31 set | never malformed: the bits are ignored and the datagram is processed exactly as if they were zero (§7.1) |
 | duplicate (extended sequence already received within the dedup window) | drop; count `duplicates` |
 | arrived after its playout deadline | drop; count `late_dropped` — **separate from network loss** |
 
@@ -622,7 +628,7 @@ Malformed lengths, unknown fields/messages, version/capability conflicts, state 
 | Idempotent `Unsubscribe` (OK when not subscribed) | §5.2 | Approved by adjudication 2026-11-12: idempotent OK, covering duplicate/late `Unsubscribe` |
 | Duplicate `Subscribe` → 402 without close | §5.2 | Approved by adjudication 2026-11-12; PLAYING-state branch added and the non-fatal Error class (connection maintained) defined in §5.2 |
 | Same-identity supersede (303) vs reject | §6.2 | Accepted by adjudication 2026-11-12 (TM-3 signed) |
-| Reserved flag bits ignored (not rejected) | §7.1 | Accepted with D4 by adjudication 2026-11-12 (forward compatibility) |
+| Reserved flag bits ignored (not rejected) | §7.1, §7.5 | Accepted with D4 by adjudication 2026-11-12 (forward compatibility) |
 | TM-6's ≤ 128 B pre-auth bound vs `PairingResponse` size (~250 B) | §4.2, §10 | Resolved by adjudication 2026-11-12: TM-6 revised — 128 B general pre-auth cap, 320 B successful-`PairingResponse` cap, per-mode admission gates; the nonce-gated blanket exemption is withdrawn (SAS has no nonce) |
 | `PairingRequest.capabilities` = offered set (pairing.md §6.2 said "negotiated") | §4.4, §4.5 | Resolved by adjudication 2026-11-12: offered set + echo adopted; `NegotiateResponse` is the sole session authority; pairing.md revised to match; canonicalization unified to numeric-ID-ascending unique encoding |
 | No Client proof-of-possession of its identity key inside the pairing exchange | §4.4 | Resolved by adjudication 2026-11-12: `PairingConfirm.client_proof` (64 B) added; the Server verifies before persisting the identity or returning `PairingResult`(OK) (pairing.md §6.3.1) |
