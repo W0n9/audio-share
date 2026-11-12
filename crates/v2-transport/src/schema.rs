@@ -12,6 +12,8 @@
 //! `fixtures/wire-protocol-v2/` and round-trips these types byte-for-byte; the
 //! implementation has no private encoding (spec §11.1).
 
+#![allow(missing_docs, reason = "schema fields mirror the proto file's comments")]
+
 /// Envelope for every control-stream message (spec §4.1; proto `Frame`).
 ///
 /// The oneof case is the message type — behavior never depends on enum

@@ -151,6 +151,12 @@ pub enum StoreError {
         /// The underlying error.
         source: io::Error,
     },
+    /// The caller named a public key with no record (operator mistake, not
+    /// corruption — nothing on disk is wrong).
+    UnknownClient {
+        /// The key that was not found.
+        public_key: Vec<u8>,
+    },
 }
 
 impl fmt::Display for StoreError {
@@ -162,6 +168,11 @@ impl fmt::Display for StoreError {
                 path.display()
             ),
             Self::Io { operation, source } => write!(f, "{operation}: {source}"),
+            Self::UnknownClient { public_key } => write!(
+                f,
+                "revoke of an unknown public key ({} bytes)",
+                public_key.len()
+            ),
         }
     }
 }
@@ -278,10 +289,7 @@ impl AuthorizationStore {
             let found = guard
                 .iter()
                 .find(|client| client.public_key == public_key)
-                .ok_or_else(|| StoreError::Corrupted {
-                    path: self.path.clone().unwrap_or_default(),
-                    reason: "revoke of an unknown public key".to_owned(),
-                })?
+                .ok_or_else(|| StoreError::UnknownClient { public_key: public_key.to_vec() })?
                 .clone();
             let updated = StoredClient { state: ClientState::Revoked, ..found };
             if let Some(slot) = guard.iter_mut().find(|client| client.public_key == public_key) {

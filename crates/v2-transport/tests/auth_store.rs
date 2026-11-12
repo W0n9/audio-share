@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use v2_transport::auth_store::{AuthorizationStore, ClientState, StoredClient};
+use v2_transport::auth_store::{AuthorizationStore, ClientState, StoredClient, StoreError};
 
 fn temp_dir() -> PathBuf {
     tempfile::tempdir()
@@ -186,6 +186,15 @@ fn multiple_records_survive_a_round_trip() {
         store.authorize(&unhex(OTHER_PUB)),
         v2_transport::auth_store::Authorization::Authorized(_)
     ));
+}
+
+#[test]
+fn revoke_unknown_key_is_a_distinct_error() {
+    // Revoking an absent key is an operator mistake, not a corrupted store;
+    // the error must say so instead of suggesting clients.json.bak recovery.
+    let store = AuthorizationStore::in_memory();
+    let error = store.revoke(&unhex(CLIENT_PUB)).expect_err("unknown key");
+    assert!(matches!(error, StoreError::UnknownClient { .. }), "got {error:?}");
 }
 
 // ---------------------------------------------------------------------------
