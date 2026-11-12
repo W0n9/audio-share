@@ -646,7 +646,6 @@ fn message_name(f: &Frame) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prost::Message as _;
 
     /// Every fixture control case: both directions byte-checked, every
     /// transport-close row recorded. One test per category keeps failures
