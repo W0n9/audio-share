@@ -24,7 +24,9 @@ use v2_transport::driver::{SessionServer, AUTH_EXPORTER_LABEL};
 use v2_transport::framing::{check_length_prefix, decode_body, encode_frame, LengthCheck};
 use v2_transport::identity::{IdentityConfig, ServerIdentity};
 use v2_transport::limits::{CapacityGuard, Limits};
-use v2_transport::schema::{frame, AuthInit, AuthProof, AuthResult, Frame, Negotiate, Status};
+use v2_transport::schema::{
+    frame, AuthInit, AuthProof, AuthResult, Frame, Negotiate, Status, Subscribe,
+};
 use v2_transport::transport::{Transport, TransportConfig};
 
 /// TEST-ONLY client identity scalar (`fixtures/wire-protocol-v2/test-keys.json`).
@@ -244,6 +246,12 @@ fn auth_proof(request_id: u64, signature: Vec<u8>) -> Frame {
     }
 }
 
+fn subscribe(request_id: u64) -> Frame {
+    Frame {
+        body: Some(frame::Body::Subscribe(Subscribe { request_id })),
+    }
+}
+
 fn negotiate(request_id: u64, major: u32, capabilities: &[u32]) -> Frame {
     Frame {
         body: Some(frame::Body::Negotiate(Negotiate {
@@ -350,7 +358,17 @@ async fn auth_happy_path_reaches_ready_over_quic() {
         other => panic!("expected NegotiateResponse, got {other:?}"),
     }
 
-    let _ = server.store.clients();
+    // §5.2 READY: Subscribe is served with a SubscribeResponse (no capture
+    // is wired yet, so no StreamStarted push is expected).
+    send_frame(&mut send, &subscribe(3)).await;
+    match read_frame(&mut recv).await.body {
+        Some(frame::Body::SubscribeResponse(response)) => {
+            assert_eq!(response.request_id, 3);
+            assert_eq!(status_code(&response.status), 0);
+        }
+        other => panic!("expected SubscribeResponse, got {other:?}"),
+    }
+
     connection.close(quinn::VarInt::from_u32(701), b"");
     server.transport.stop();
 }

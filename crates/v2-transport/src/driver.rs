@@ -420,7 +420,8 @@ impl SessionServer {
                     closed_by_peer = Some(error);
                     break;
                 }
-                _ = &mut grace, if grace_armed => {                    let code = closing_code.unwrap_or(ErrorCode::NETWORK_FAILURE);
+                _ = &mut grace, if grace_armed => {
+                    let code = closing_code.unwrap_or(ErrorCode::NETWORK_FAILURE);
                     connection.close(quinn::VarInt::from_u32(code.code), b"");
                     watcher.abort();
                     self.release(&machine, registered);
