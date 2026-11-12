@@ -95,7 +95,14 @@ pub fn verify_pairing_proof(
 }
 
 /// Parse a 33-byte SEC1-compressed P-256 public key (pairing.md §2).
+///
+/// `p256`'s SEC1 decoder validates the point encoding; a key it accepts but
+/// whose compressed-prefix byte is neither 0x02 nor 0x03 is re-checked here so
+/// the store never holds a loosely-parsed key.
 pub fn parse_client_public_key(bytes: &[u8]) -> Result<VerifyingKey, ProofVerdict> {
+    if bytes.len() != 33 || (bytes[0] != 0x02 && bytes[0] != 0x03) {
+        return Err(ProofVerdict::Invalid);
+    }
     VerifyingKey::from_sec1_bytes(bytes).map_err(|_| ProofVerdict::Invalid)
 }
 
