@@ -198,7 +198,7 @@ impl MediaReceiver {
     /// §7.5: payload not frame-aligned → malformed: drop, count locally.
     pub fn check_alignment(&mut self, payload_len: usize, channels: u32, sample_bytes: u32) -> bool {
         let frame_bytes = (sample_bytes * channels) as usize;
-        if frame_bytes == 0 || payload_len % frame_bytes != 0 {
+        if frame_bytes == 0 || !payload_len.is_multiple_of(frame_bytes) {
             self.malformed_drops += 1;
             return false;
         }

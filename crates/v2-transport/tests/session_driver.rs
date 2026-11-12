@@ -652,3 +652,119 @@ async fn new_session_supersedes_the_old_with_303() {
     second.close(quinn::VarInt::from_u32(701), b"");
     server.transport.stop();
 }
+
+#[tokio::test]
+async fn deleting_the_record_ends_the_live_session_and_rejects_reconnects() {
+    // pairing.md §9.2: a running session is closed within ≤ 5 s after its
+    // record is removed, not only after an explicit state=revoked. The
+    // deletion is an external edit of clients.json, so the driver's poll must
+    // reload the file (§10.3 fail-closed on corruption).
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = AuthorizationStore::open(dir.path()).expect("open store");
+    store
+        .upsert(StoredClient {
+            client_id: "cf7940b474310246".to_owned(),
+            public_key: client_public_key(&client_key()),
+            display_name: "Test Phone".to_owned(),
+            state: ClientState::Active,
+        })
+        .expect("persist record");
+    let path = dir.path().join("pairing").join("clients.json");
+    let saved = std::fs::read(&path).expect("read store");
+
+    let server = TestServer::start(store, Limits::defaults(), |_| {}).await;
+    let connection = connect(server.address).await;
+    let (mut send, mut recv) = connection.open_bi().await.expect("control stream");
+    let result = authenticate(
+        &connection,
+        &mut send,
+        &mut recv,
+        server.identity.public_key_raw(),
+        1,
+    )
+    .await;
+    assert_eq!(status_code(&result.status), 0, "initially authorized");
+    send_frame(&mut send, &negotiate(2, 2, &[])).await;
+    match read_frame(&mut recv).await.body {
+        Some(frame::Body::NegotiateResponse(response)) => {
+            assert_eq!(status_code(&response.status), 0)
+        }
+        other => panic!("expected NegotiateResponse, got {other:?}"),
+    }
+
+    std::fs::remove_file(&path).expect("operator deletes the record");
+    let started = tokio::time::Instant::now();
+    let error = read_frame(&mut recv).await;
+    assert_eq!(
+        error_code(&error),
+        Some(ErrorCode::AUTHORIZATION_DENIED.code),
+        "deleted record is a revocation"
+    );
+    assert_eq!(
+        close_code(&read_frame(&mut recv).await),
+        Some(ErrorCode::AUTHORIZATION_DENIED.code)
+    );
+    assert!(
+        started.elapsed() <= Duration::from_secs(5),
+        "revocation must land within §9.2's 5 s budget"
+    );
+    assert_eq!(
+        await_close(&connection).await,
+        ErrorCode::AUTHORIZATION_DENIED.code
+    );
+
+    // With the record gone, a new connection is an unknown identity (202).
+    let unknown = connect(server.address).await;
+    let (mut send, mut recv) = unknown.open_bi().await.expect("control stream");
+    let result = authenticate(
+        &unknown,
+        &mut send,
+        &mut recv,
+        server.identity.public_key_raw(),
+        1,
+    )
+    .await;
+    assert_eq!(
+        status_code(&result.status),
+        ErrorCode::AUTHORIZATION_UNKNOWN.code,
+        "a deleted record is unknown for new connections"
+    );
+
+    // An operator revoke (state=revoked) keeps the record: new connections
+    // are refused with 204, also without a restart.
+    let revoked = String::from_utf8(saved.clone())
+        .expect("utf8 store")
+        .replacen("\"state\": \"active\"", "\"state\": \"revoked\"", 1);
+    std::fs::write(&path, revoked).expect("write revoked record");
+    let refused = connect(server.address).await;
+    let (mut send, mut recv) = refused.open_bi().await.expect("control stream");
+    let result = authenticate(
+        &refused,
+        &mut send,
+        &mut recv,
+        server.identity.public_key_raw(),
+        1,
+    )
+    .await;
+    assert_eq!(
+        status_code(&result.status),
+        ErrorCode::AUTHORIZATION_DENIED.code,
+        "a revoked identity is refused with 204"
+    );
+
+    // Restoring the record (re-add) authorizes a later connection again; the
+    // reload happens before authentication, not only on the poll tick.
+    std::fs::write(&path, &saved).expect("restore record");
+    let restored = connect(server.address).await;
+    let (mut send, mut recv) = restored.open_bi().await.expect("control stream");
+    let result = authenticate(
+        &restored,
+        &mut send,
+        &mut recv,
+        server.identity.public_key_raw(),
+        1,
+    )
+    .await;
+    assert_eq!(status_code(&result.status), 0, "re-added record authorizes again");
+    server.transport.stop();
+}

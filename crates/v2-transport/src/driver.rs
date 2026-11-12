@@ -33,7 +33,7 @@ use crate::auth_store::AuthorizationStore;
 use crate::codes::ErrorCode;
 use crate::framing::{encode_frame, FrameReader};
 use crate::identity::ServerIdentity;
-use crate::limits::{AddressRateGuard, Limits};
+use crate::limits::{outbound_limit_violation, AddressRateGuard, Limits, OutstandingRequests};
 use crate::schema::{self, frame, Frame};
 use crate::session::Termination;
 use crate::state_machine::{Event, Outcome, ServerConfig, ServerState, StateMachine};
@@ -208,7 +208,6 @@ impl SessionServer {
             // The driver always supplies the real per-connection exporter;
             // fixture replay supplies the recorded constant.
             auth_exporter: Some(exporter.to_vec()),
-            keep_old_on_supersede: crate::state_machine::SUPERSEDE_KEEP_OLD,
             session_id_base,
         };
         let mut machine = StateMachine::new(config, &self.store);
@@ -231,6 +230,11 @@ impl SessionServer {
         let mut closing_code: Option<ErrorCode> = None;
         let mut registered: Option<u64> = None;
         let mut closed_by_peer: Option<quinn::ConnectionError> = None;
+        // §10: at most 8 outstanding requests per session (over → 302). The
+        // current handlers reply synchronously, so this never exceeds one in
+        // practice; the guard is the enforcement point for async handlers and
+        // for duplicate in-flight ids.
+        let mut outstanding = OutstandingRequests::new(self.limits.max_outstanding_requests);
 
         loop {
             tokio::select! {
@@ -249,6 +253,7 @@ impl SessionServer {
                                             &connection,
                                             &mut send,
                                             outcomes,
+                                            machine.identity().is_some(),
                                             &mut closing_code,
                                             &mut grace,
                                             &mut grace_armed,
@@ -264,6 +269,34 @@ impl SessionServer {
                                 }
                             };
                             for inbound in frames {
+                                let inbound_request_id = crate::state_machine::request_id_of(&inbound.frame);
+                                if let Some(request_id) = inbound_request_id {
+                                    if !outstanding.track(request_id) {
+                                        tracing::info!(
+                                            source = %masked,
+                                            code = 302u32,
+                                            "v2 session: outstanding-request limit reached"
+                                        );
+                                        let outcomes = vec![rate_limited_outcome()];
+                                        if let Some(termination) = self
+                                            .flush(
+                                                &connection,
+                                                &mut send,
+                                                outcomes,
+                                                machine.identity().is_some(),
+                                                &mut closing_code,
+                                                &mut grace,
+                                                &mut grace_armed,
+                                            )
+                                            .await
+                                        {
+                                            watcher.abort();
+                                            self.release(&machine, registered);
+                                            return termination;
+                                        }
+                                        continue;
+                                    }
+                                }
                                 let request_is_close = matches!(
                                     inbound.frame.body,
                                     Some(frame::Body::Close(_))
@@ -289,6 +322,7 @@ impl SessionServer {
                                             &connection,
                                             &mut send,
                                             outcomes,
+                                            machine.identity().is_some(),
                                             &mut closing_code,
                                             &mut grace,
                                             &mut grace_armed,
@@ -301,25 +335,45 @@ impl SessionServer {
                                     }
                                     continue;
                                 }
+                                // Pick up operator edits (revoke/delete/replace)
+                                // before consulting authorization: new
+                                // connections see a changed store immediately
+                                // (pairing.md §9.2).
+                                if matches!(
+                                    inbound.frame.body,
+                                    Some(frame::Body::AuthInit(_) | frame::Body::AuthProof(_))
+                                ) {
+                                    if let Err(error) = self.store.reload_if_changed() {
+                                        tracing::error!(
+                                            error = %error,
+                                            "v2 session: authorization store reload failed; failing closed"
+                                        );
+                                    }
+                                }
                                 let before = machine.auth_failures();
                                 let mut outcomes = machine.handle(Event::Frame {
                                     frame: Box::new(inbound.frame),
                                     source: std::mem::take(&mut source_bytes),
                                 });
+                                if let Some(request_id) = inbound_request_id {
+                                    outstanding.complete(request_id);
+                                }
                                 let after = machine.auth_failures();
-                                if after > before {
+                                if let Some(code) = machine.take_auth_failure_code() {
                                     // Red line: log the registry code + a
                                     // masked source only — never the proof,
-                                    // the key, or the identity.
+                                    // the key, or the identity. The code is
+                                    // the actual failure (202/203/204/401),
+                                    // never a blanket 203.
                                     tracing::info!(
                                         source = %masked,
-                                        code = 203u32,
+                                        code = code.code,
                                         "v2 session: authentication failed"
                                     );
-                                    if self.note_auth_failure(source) {
-                                        tracing::info!(source = %masked, code = 302u32, "v2 session: source auth-failure budget reached");
-                                        outcomes = vec![rate_limited_outcome()];
-                                    }
+                                }
+                                if after > before && self.note_auth_failure(source) {
+                                    tracing::info!(source = %masked, code = 302u32, "v2 session: source auth-failure budget reached");
+                                    outcomes = vec![rate_limited_outcome()];
                                 }
                                 if request_is_close
                                     && machine.state() == ServerState::Closing
@@ -334,6 +388,7 @@ impl SessionServer {
                                         &connection,
                                         &mut send,
                                         outcomes,
+                                        machine.identity().is_some(),
                                         &mut closing_code,
                                         &mut grace,
                                         &mut grace_armed,
@@ -368,6 +423,7 @@ impl SessionServer {
                             &connection,
                             &mut send,
                             outcomes,
+                            machine.identity().is_some(),
                             &mut closing_code,
                             &mut grace,
                             &mut grace_armed,
@@ -388,6 +444,7 @@ impl SessionServer {
                             &connection,
                             &mut send,
                             outcomes,
+                            machine.identity().is_some(),
                             &mut closing_code,
                             &mut grace,
                             &mut grace_armed,
@@ -400,12 +457,21 @@ impl SessionServer {
                     }
                 }
                 _ = revocation.tick() => {
+                    // Reload before the check so a deleted/edited record is
+                    // visible within this ≤ 5 s window (pairing.md §9.2).
+                    if let Err(error) = self.store.reload_if_changed() {
+                        tracing::error!(
+                            error = %error,
+                            "v2 session: authorization store reload failed; failing closed"
+                        );
+                    }
                     let outcomes = machine.handle(Event::RevocationCheck);
                     if let Some(termination) = self
                         .flush(
                             &connection,
                             &mut send,
                             outcomes,
+                            machine.identity().is_some(),
                             &mut closing_code,
                             &mut grace,
                             &mut grace_armed,
@@ -458,6 +524,7 @@ impl SessionServer {
         connection: &quinn::Connection,
         send: &mut quinn::SendStream,
         outcomes: Vec<Outcome>,
+        authenticated: bool,
         closing_code: &mut Option<ErrorCode>,
         grace: &mut std::pin::Pin<Box<tokio::time::Sleep>>,
         grace_armed: &mut bool,
@@ -470,6 +537,13 @@ impl SessionServer {
             } = outcome;
             let has_frame = frame.is_some();
             if let Some(frame) = frame {
+                // §10/TM-6/TM-7: never emit a frame over its size bound; an
+                // oversized frame is a local bug, so fail closed (599).
+                if let Some(reason) = outbound_limit_violation(&frame, authenticated) {
+                    tracing::error!(%reason, "v2 session: outbound frame exceeds its §10 bound");
+                    connection.close(quinn::VarInt::from_u32(ErrorCode::INTERNAL_ERROR.code), b"");
+                    return Some(Termination::ServerClosed(ErrorCode::INTERNAL_ERROR));
+                }
                 let bytes = match encode_frame(&frame) {
                     Ok(bytes) => bytes,
                     Err(error) => {
@@ -598,7 +672,10 @@ fn rate_limited_outcome() -> Outcome {
 }
 
 /// Log red line: authentication failures name the source only in masked form.
-fn masked_source(source: IpAddr) -> String {
+///
+/// IPv4 keeps the first two octets, IPv6 the first two segments; the host /
+/// interface part never reaches a log line (threat-model.md §TM-4 line 35).
+pub fn masked_source(source: IpAddr) -> String {
     match source {
         IpAddr::V4(v4) => {
             let octets = v4.octets();
