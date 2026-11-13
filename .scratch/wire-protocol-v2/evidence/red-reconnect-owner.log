@@ -1,0 +1,55 @@
+> Task :app:buildKotlinToolingMetadata UP-TO-DATE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:extractIncludeReleaseProto UP-TO-DATE
+> Task :app:extractProto UP-TO-DATE
+> Task :app:extractReleaseProto UP-TO-DATE
+> Task :app:generateReleaseProto UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:checkReleaseAarMetadata UP-TO-DATE
+> Task :app:generateReleaseResValues UP-TO-DATE
+> Task :app:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :app:generateReleaseResources UP-TO-DATE
+> Task :app:mergeReleaseResources UP-TO-DATE
+> Task :app:packageReleaseResources UP-TO-DATE
+> Task :app:parseReleaseLocalResources UP-TO-DATE
+> Task :app:createReleaseCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksRelease UP-TO-DATE
+> Task :app:processReleaseMainManifest UP-TO-DATE
+> Task :app:processReleaseManifest UP-TO-DATE
+> Task :app:processReleaseManifestForPackage UP-TO-DATE
+> Task :app:processReleaseResources UP-TO-DATE
+> Task :app:javaPreCompileRelease UP-TO-DATE
+> Task :app:extractTestProto UP-TO-DATE
+> Task :app:extractTestReleaseProto UP-TO-DATE
+> Task :app:preReleaseUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileReleaseUnitTest UP-TO-DATE
+> Task :app:compileReleaseKotlin
+> Task :app:compileReleaseJavaWithJavac UP-TO-DATE
+> Task :app:processReleaseJavaRes UP-TO-DATE
+> Task :app:bundleReleaseClassesToRuntimeJar
+> Task :app:bundleReleaseClassesToCompileJar
+> Task :app:extractIncludeReleaseUnitTestProto
+> Task :app:generateReleaseUnitTestProto NO-SOURCE
+> Task :app:compileReleaseUnitTestKotlin
+> Task :app:compileReleaseUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processReleaseUnitTestJavaRes UP-TO-DATE
+
+> Task :app:testReleaseUnitTest FAILED
+
+SessionStateRelayTest > service_same_owner_reconnect_replays_the_new_native_ready FAILED
+    org.junit.ComparisonFailure at SessionStateRelayTest.kt:68
+
+1 test completed, 1 failed
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:testReleaseUnitTest'.
+> There were failing tests. See the report at: file:///home/w0n9/workspaces/audio-share/.claude/worktrees/agent-ae8d4922334c6e2c4/android-client-v2/app/build/reports/tests/testReleaseUnitTest/index.html
+
+* Try:
+> Run with --scan to get full insights.
+
+BUILD FAILED in 2s
+31 actionable tasks: 6 executed, 25 up-to-date

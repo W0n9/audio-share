@@ -47,7 +47,36 @@ pub enum ServerState {
     Closed,
 }
 
-/// Static server configuration the machine consults (never mutated by it).
+/// A read-only capture/stream observation shared by the Server and its
+/// session machines (§5.2). It carries state, not media or recovery actions.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CaptureSnapshot {
+    /// The current Transfer Format, or `None` when capture is absent.
+    pub configuration: Option<crate::schema::Configuration>,
+    /// Whether the capture backend is healthy.
+    pub healthy: bool,
+    /// Whether a stream instance is active (Subscribe pushes StreamStarted).
+    pub stream_active: bool,
+    /// The active stream instance id (meaningful iff `stream_active`).
+    pub stream_instance_id: u32,
+    /// Capture-clock position of the next media frame (iff `stream_active`).
+    pub next_frame_timestamp: u64,
+}
+
+impl CaptureSnapshot {
+    /// No capture injected: Subscribe is refused with 501.
+    pub fn absent() -> Self {
+        Self {
+            configuration: None,
+            healthy: true,
+            stream_active: false,
+            stream_instance_id: 1,
+            next_frame_timestamp: 0,
+        }
+    }
+}
+
+/// Server identity/session policy plus a replaceable capture observation.
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
     /// The raw 32-byte Ed25519 identity public key (PairingResponse /
@@ -55,19 +84,9 @@ pub struct ServerConfig {
     pub server_public_key: Vec<u8>,
     /// The Server's minor within major 2 (NegotiateResponse).
     pub protocol_minor: u32,
-    /// The current Transfer Format, when one is published (§5.1 READY entry:
-    /// push `ConfigurationPublished` if a Transfer Format is current).
-    pub current_configuration: Option<crate::schema::Configuration>,
-    /// Whether a capture instance is active (Subscribe → StreamStarted push).
-    pub capture_active: bool,
-    /// Whether the capture backend is healthy (§5.2 READY Subscribe guard).
-    pub capture_healthy: bool,
-    /// The active stream instance id (§7.1, ∈ [1, 2^32−1]); meaningful only
-    /// while `capture_active`. Source of `StreamStarted.stream_instance_id`.
-    pub stream_instance_id: u32,
-    /// Capture-clock position of the next media frame (§4.4); meaningful
-    /// only while `capture_active`. Source of `StreamStarted.initial_timestamp`.
-    pub next_frame_timestamp: u64,
+    /// The latest capture observation used for configuration publication,
+    /// Subscribe gating and StreamStarted (§5.2).
+    pub capture: CaptureSnapshot,
     /// Auth failures per connection (TM-4; default 5, `Limits`).
     pub max_auth_failures_per_connection: u32,
     /// Test-support only: fixed challenge randomness (spec §4.4 says 32
@@ -292,9 +311,15 @@ impl StateMachine {
         }
     }
 
-    /// The static configuration (for constructing derived machines in tests).
+    /// The current configuration (for constructing derived machines in tests).
     pub fn config(&self) -> &ServerConfig {
         &self.config
+    }
+
+    /// Refresh capture observations before a control request. This does not
+    /// change session/subscription state or start/recover capture.
+    pub fn update_capture(&mut self, capture: CaptureSnapshot) {
+        self.config.capture = capture;
     }
 
     /// Process one event; returns the ordered outcomes.
@@ -558,7 +583,7 @@ impl StateMachine {
                 // §5.2: ConfigurationPublished with the request echoed.
                 let push = crate::schema::ConfigurationPublished {
                     request_id: request.request_id,
-                    configuration: self.config.current_configuration.clone(),
+                    configuration: self.config.capture.configuration.clone(),
                 };
                 vec![Outcome::frame(Frame {
                     body: Some(frame::Body::ConfigurationPublished(push)),
@@ -805,7 +830,7 @@ impl StateMachine {
         })];
         // §5.1 READY entry: push ConfigurationPublished if a Transfer Format
         // is current.
-        if let Some(configuration) = self.config.current_configuration.clone() {
+        if let Some(configuration) = self.config.capture.configuration.clone() {
             let push = crate::schema::ConfigurationPublished {
                 request_id: 0,
                 configuration: Some(configuration),
@@ -833,7 +858,7 @@ impl StateMachine {
             })];
         }
         // Absent = no Transfer Format is current (capture never injected).
-        if !self.config.capture_healthy || self.config.current_configuration.is_none() {
+        if !self.config.capture.healthy || self.config.capture.configuration.is_none() {
             // §5.2: capture unhealthy or absent → Error(501, retryable=true);
             // no state change.
             return vec![Outcome::frame(Frame {
@@ -849,19 +874,19 @@ impl StateMachine {
                 crate::schema::SubscribeResponse {
                     request_id,
                     status: Status::ok(),
-                    configuration: self.config.current_configuration.clone(),
+                    configuration: self.config.capture.configuration.clone(),
                 },
             )),
         })];
         // §5.2 READY Subscribe: "if a stream is active, push StreamStarted
         // (active instance, current generation, next-frame timestamp)".
-        if self.config.capture_active {
-            if let Some(configuration) = &self.config.current_configuration {
+        if self.config.capture.stream_active {
+            if let Some(configuration) = &self.config.capture.configuration {
                 outcomes.push(Outcome::frame(Frame {
                     body: Some(frame::Body::StreamStarted(crate::schema::StreamStarted {
-                        stream_instance_id: self.config.stream_instance_id,
+                        stream_instance_id: self.config.capture.stream_instance_id,
                         config_generation: configuration.config_generation,
-                        initial_timestamp: self.config.next_frame_timestamp,
+                        initial_timestamp: self.config.capture.next_frame_timestamp,
                     })),
                 }));
             }

@@ -7,6 +7,17 @@ import subprocess
 import threading
 from pathlib import Path
 
+
+def wake_screen(serial: str, *, strict: bool) -> None:
+    """正常唤醒严格检查；失败清理尽力完成两个动作，不掩盖原始失败。"""
+    for action in (("input", "keyevent", "224"), ("wm", "dismiss-keyguard")):
+        try:
+            subprocess.run(["adb", "-s", serial, "shell", *action], check=strict, timeout=10)
+        except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            if strict:
+                raise
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--serial", required=True, help="adb 设备序列号")
 parser.add_argument("--config", required=True, help="只含 host/port/pinnedSpki/serverKey 的 JSON")
@@ -47,8 +58,7 @@ try:
             subprocess.run(["adb", "-s", args.serial, "shell", "input", "keyevent", "223"], check=True, timeout=10)
             screen_asleep = True
         elif "AWAIT_SCREEN_WAKE" in line:
-            subprocess.run(["adb", "-s", args.serial, "shell", "input", "keyevent", "224"], check=True, timeout=10)
-            subprocess.run(["adb", "-s", args.serial, "shell", "wm", "dismiss-keyguard"], check=True, timeout=10)
+            wake_screen(args.serial, strict=True)
             screen_asleep = False
     process.wait(timeout=5)
 except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
@@ -59,8 +69,7 @@ finally:
         process.kill()
     process.wait(timeout=5)
     if screen_asleep:
-        subprocess.run(["adb", "-s", args.serial, "shell", "input", "keyevent", "224"], timeout=10)
-        subprocess.run(["adb", "-s", args.serial, "shell", "wm", "dismiss-keyguard"], timeout=10)
+        wake_screen(args.serial, strict=False)
 output = "".join(lines)
 if args.server_log and connections_at_ready is not None:
     final_connections = Path(args.server_log).read_text().count("[info] v2 connection accepted")

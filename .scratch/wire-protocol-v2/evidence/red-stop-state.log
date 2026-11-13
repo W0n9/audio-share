@@ -1,0 +1,55 @@
+> Task :app:buildKotlinToolingMetadata
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:extractIncludeReleaseProto
+> Task :app:extractProto
+> Task :app:extractReleaseProto
+> Task :app:generateReleaseProto
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:checkReleaseAarMetadata
+> Task :app:generateReleaseResValues
+> Task :app:mapReleaseSourceSetPaths
+> Task :app:generateReleaseResources
+> Task :app:mergeReleaseResources
+> Task :app:packageReleaseResources
+> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksRelease
+> Task :app:parseReleaseLocalResources
+> Task :app:processReleaseMainManifest
+> Task :app:processReleaseManifest
+> Task :app:extractTestProto
+> Task :app:extractTestReleaseProto
+> Task :app:preReleaseUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileRelease
+> Task :app:javaPreCompileReleaseUnitTest
+> Task :app:processReleaseManifestForPackage
+> Task :app:processReleaseResources
+> Task :app:compileReleaseKotlin
+> Task :app:compileReleaseJavaWithJavac
+> Task :app:processReleaseJavaRes
+> Task :app:bundleReleaseClassesToRuntimeJar
+> Task :app:bundleReleaseClassesToCompileJar
+> Task :app:extractIncludeReleaseUnitTestProto
+> Task :app:generateReleaseUnitTestProto NO-SOURCE
+> Task :app:compileReleaseUnitTestKotlin
+> Task :app:compileReleaseUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processReleaseUnitTestJavaRes
+
+> Task :app:testReleaseUnitTest FAILED
+
+SessionStateRelayTest > stop_during_native_update_retains_closed_snapshot_on_rebind FAILED
+    org.junit.ComparisonFailure at SessionStateRelayTest.kt:41
+
+1 test completed, 1 failed
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:testReleaseUnitTest'.
+> There were failing tests. See the report at: file:///home/w0n9/workspaces/audio-share/.claude/worktrees/agent-ae8d4922334c6e2c4/android-client-v2/app/build/reports/tests/testReleaseUnitTest/index.html
+
+* Try:
+> Run with --scan to get full insights.
+
+BUILD FAILED in 8s
+31 actionable tasks: 31 executed

@@ -1,0 +1,25 @@
+{
+  "workspace": {
+    "passed": 465,
+    "failed": 0,
+    "ignored": 4
+  },
+  "native_default": {
+    "passed": 102,
+    "failed": 0,
+    "ignored": 0
+  },
+  "native_test_support": {
+    "passed": 102,
+    "failed": 0,
+    "ignored": 0
+  },
+  "jvm": {
+    "tests": 36,
+    "failed": 0,
+    "errors": 0,
+    "ignored": 0
+  },
+  "instrumentation_compile": "PASS",
+  "default_release": "PASS"
+}

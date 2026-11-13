@@ -13,7 +13,9 @@
 use v2_transport::auth_store::{AuthorizationStore, ClientState, StoredClient};
 use v2_transport::framing::{decode_body, encode_body};
 use v2_transport::schema::{frame, Frame};
-use v2_transport::state_machine::{Event, ServerConfig, ServerState, StateMachine};
+use v2_transport::state_machine::{
+    CaptureSnapshot, Event, ServerConfig, ServerState, StateMachine,
+};
 use v2_transport::vectors::FixtureSet;
 
 const CLIENT_PUB: &str = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
@@ -51,19 +53,19 @@ fn config(_store: &std::sync::Arc<AuthorizationStore>) -> ServerConfig {
     ServerConfig {
         server_public_key: unhex(SERVER_PUB),
         protocol_minor: 0,
-        current_configuration: Some(v2_transport::schema::Configuration {
-            config_generation: 1,
-            codec: v2_transport::schema::Codec::Pcm as i32,
-            pcm: Some(v2_transport::schema::PcmParameters {
-                sample_rate: 48_000,
-                channels: 2,
-                sample_format: v2_transport::schema::SampleFormat::F32Le as i32,
+        capture: CaptureSnapshot {
+            configuration: Some(v2_transport::schema::Configuration {
+                config_generation: 1,
+                codec: v2_transport::schema::Codec::Pcm as i32,
+                pcm: Some(v2_transport::schema::PcmParameters {
+                    sample_rate: 48_000,
+                    channels: 2,
+                    sample_format: v2_transport::schema::SampleFormat::F32Le as i32,
+                }),
             }),
-        }),
-        capture_active: true,
-        capture_healthy: true,
-        stream_instance_id: 1,
-        next_frame_timestamp: 0,
+            stream_active: true,
+            ..CaptureSnapshot::absent()
+        },
         max_auth_failures_per_connection: 5,
         server_random_override: Some(unhex(SERVER_RANDOM)),
         auth_exporter: Some(unhex(AUTH_EXPORTER)),
@@ -397,7 +399,7 @@ fn negotiate_unknown_capability_replays_byte_identically() {
     // without a config change, so run this case WITHOUT a current
     // configuration: the machine then emits only NegotiateResponse.
     let mut config = config(&store);
-    config.current_configuration = None;
+    config.capture.configuration = None;
     let mut machine = StateMachine::new(config, &store);
     machine_auth(&mut machine, &store);
     let events = vec![Event::Frame {
@@ -461,7 +463,7 @@ fn capture_unhealthy_501_replays_byte_identically() {
         .expect("case present");
     let store = store_with_client();
     let mut config = config(&store);
-    config.capture_healthy = false;
+    config.capture.healthy = false;
     let mut machine = StateMachine::new(config, &store);
     machine_auth(&mut machine, &store);
     machine_negotiate(&mut machine);
@@ -557,7 +559,7 @@ fn unknown_field_ignored_replays_byte_identically() {
     // The fixture's SubscribeResponse carries the configuration but the case
     // has no StreamStarted push (capture_active is a PLAYING precondition,
     // not a READY one) — replay subscribes without an active capture.
-    config.capture_active = false;
+    config.capture.stream_active = false;
     let mut machine = StateMachine::new(config, &store);
     machine_auth(&mut machine, &store);
     // Discard NegotiateResponse + the READY-entry ConfigurationPublished push

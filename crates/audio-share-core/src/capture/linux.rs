@@ -427,11 +427,7 @@ fn start_capture(config: &CaptureConfig, sink: FrameSink) -> Result<CaptureSessi
                     negotiated.format, negotiated.rate, negotiated.channels
                 )));
             };
-            Ok(CaptureSession {
-                format,
-                signal,
-                thread: Some(capture_thread),
-            })
+            Ok(CaptureSession::from_thread(format, signal, capture_thread))
         }
         Ok(Err(message)) => {
             signal.stop();
