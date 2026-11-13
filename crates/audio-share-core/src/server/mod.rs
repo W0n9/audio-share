@@ -21,7 +21,7 @@ use tokio::net::{lookup_host, TcpListener, TcpSocket, TcpStream, UdpSocket};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
-use crate::capture::{CaptureBackend, CaptureConfig, CaptureSession};
+use crate::capture::{CaptureBackend, CaptureConfig, CaptureObserver, CaptureSession};
 use crate::error::{Error, Result};
 use crate::protocol::{
     decode_command, encode_get_format_response, encode_heartbeat, encode_start_play_response,
@@ -233,6 +233,16 @@ impl ServerHandle {
     /// The immutable capture format served by this server.
     pub fn format(&self) -> AudioFormat {
         (*self.format).clone()
+    }
+
+    /// Read-only capture observation for other protocol adapters. Capture
+    /// completion leaves the Server running with its immutable format; this
+    /// observer never changes v1 behavior or recovers capture (ADR-0003).
+    pub fn capture_observer(&self) -> CaptureObserver {
+        self.capture
+            .as_ref()
+            .expect("a running Server owns its capture session")
+            .observer()
     }
 
     /// Stop capture, close every TCP session and the UDP socket, and join all

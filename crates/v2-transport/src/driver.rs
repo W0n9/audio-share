@@ -69,37 +69,10 @@ struct SessionHandle {
     events: mpsc::UnboundedSender<DriverEvent>,
 }
 
-/// A read-only snapshot of the capture/stream state the control plane
-/// consults (§5.2 Subscribe / RequestConfiguration / StreamStarted). It
-/// carries state only; media sending is out of scope for the control plane.
-#[derive(Clone, Debug, PartialEq)]
-pub struct CaptureSnapshot {
-    /// The current Transfer Format, or `None` when capture is absent.
-    pub configuration: Option<schema::Configuration>,
-    /// Whether the capture backend is healthy.
-    pub healthy: bool,
-    /// Whether a stream instance is active (Subscribe pushes StreamStarted).
-    pub stream_active: bool,
-    /// The active stream instance id (meaningful iff `stream_active`).
-    pub stream_instance_id: u32,
-    /// Capture-clock position of the next media frame (iff `stream_active`).
-    pub next_frame_timestamp: u64,
-}
+// Keep the existing driver::CaptureSnapshot import path for callers.
+pub use crate::state_machine::CaptureSnapshot;
 
-impl CaptureSnapshot {
-    /// No capture injected: Subscribe is refused with 501.
-    pub fn absent() -> Self {
-        Self {
-            configuration: None,
-            healthy: true,
-            stream_active: false,
-            stream_instance_id: 1,
-            next_frame_timestamp: 0,
-        }
-    }
-}
-
-/// Provider of the live capture snapshot, read once per connection.
+/// Provider of the live capture snapshot, read before each control request.
 pub type CaptureStateSource = dyn Fn() -> CaptureSnapshot + Send + Sync;
 
 /// The v2 Server session layer: shared configuration + the per-Client
@@ -110,18 +83,10 @@ pub struct SessionServer {
     pub server_public_key: Vec<u8>,
     /// Accepted protocol minor within major 2.
     pub protocol_minor: u32,
-    /// The current Transfer Format pushed after Negotiate/RequestConfiguration.
-    pub current_configuration: Option<schema::Configuration>,
-    /// Whether a capture instance is active (Subscribe → StreamStarted).
-    pub capture_active: bool,
-    /// Whether the capture backend is healthy (README Subscribe guard).
-    pub capture_healthy: bool,
-    /// Stream instance id used when `capture_active` (§7.1).
-    pub stream_instance_id: u32,
-    /// Next-frame capture timestamp used when `capture_active`.
-    pub next_frame_timestamp: u64,
-    /// Optional live capture-state source; when set it overrides the static
-    /// `current_configuration` / `capture_*` / stream fields per connection.
+    /// Static capture observation when no live source is installed.
+    pub capture: CaptureSnapshot,
+    /// Optional live capture-state source; when set it overrides `capture`
+    /// before every control request.
     pub capture_source: Option<Arc<CaptureStateSource>>,
     /// Server-wide limits (spec §10); auth-failure fields feed TM-4/TM-5.
     pub limits: Limits,
@@ -141,8 +106,8 @@ impl std::fmt::Debug for SessionServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionServer")
             .field("protocol_minor", &self.protocol_minor)
-            .field("capture_active", &self.capture_active)
-            .field("capture_healthy", &self.capture_healthy)
+            .field("capture_active", &self.capture.stream_active)
+            .field("capture_healthy", &self.capture.healthy)
             .field("limits", &self.limits)
             .finish_non_exhaustive()
     }
@@ -155,11 +120,7 @@ impl SessionServer {
         Self {
             server_public_key: identity.public_key_raw().to_vec(),
             protocol_minor: 0,
-            current_configuration: None,
-            capture_active: false,
-            capture_healthy: true,
-            stream_instance_id: 1,
-            next_frame_timestamp: 0,
+            capture: CaptureSnapshot::absent(),
             capture_source: None,
             rate: Mutex::new(AddressRateGuard::new(
                 limits.auth_failure_window,
@@ -173,6 +134,12 @@ impl SessionServer {
             registry: Mutex::new(HashMap::new()),
             next_session_id: AtomicU64::new(1),
         }
+    }
+
+    fn capture_snapshot(&self) -> CaptureSnapshot {
+        self.capture_source
+            .as_ref()
+            .map_or_else(|| self.capture.clone(), |source| source())
     }
 
     /// Drive one admitted QUIC connection through the §5.2 control plane
@@ -239,26 +206,10 @@ impl SessionServer {
         });
 
         let session_id_base = self.next_session_id.fetch_add(1, Ordering::SeqCst);
-        let capture = self.capture_source.as_ref().map(|source| source());
         let config = ServerConfig {
             server_public_key: self.server_public_key.clone(),
             protocol_minor: self.protocol_minor,
-            current_configuration: match &capture {
-                Some(snapshot) => snapshot.configuration.clone(),
-                None => self.current_configuration.clone(),
-            },
-            capture_active: capture
-                .as_ref()
-                .map_or(self.capture_active, |snapshot| snapshot.stream_active),
-            capture_healthy: capture
-                .as_ref()
-                .map_or(self.capture_healthy, |snapshot| snapshot.healthy),
-            stream_instance_id: capture
-                .as_ref()
-                .map_or(self.stream_instance_id, |s| s.stream_instance_id),
-            next_frame_timestamp: capture
-                .as_ref()
-                .map_or(self.next_frame_timestamp, |s| s.next_frame_timestamp),
+            capture: self.capture_snapshot(),
             max_auth_failures_per_connection: self.limits.max_auth_failures_per_connection,
             #[cfg(feature = "test-support")]
             server_random_override: None,
@@ -401,6 +352,10 @@ impl SessionServer {
                                         );
                                     }
                                 }
+                                // Capture can end while this session stays READY
+                                // (ADR-0003). Never use the connection's startup
+                                // health for Subscribe/configuration/stream data.
+                                machine.update_capture(self.capture_snapshot());
                                 let before = machine.auth_failures();
                                 let mut outcomes = machine.handle(Event::Frame {
                                     frame: Box::new(inbound.frame),

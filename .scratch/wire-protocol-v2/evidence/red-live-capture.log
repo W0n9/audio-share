@@ -1,0 +1,126 @@
+   Compiling libc v0.2.191
+   Compiling cfg-if v1.0.5
+   Compiling zeroize v1.9.1
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling subtle v2.6.1
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.1
+   Compiling const-oid v0.9.6
+   Compiling find-msvc-tools v0.1.15
+   Compiling shlex v2.0.1
+   Compiling once_cell v1.21.4
+   Compiling log v0.4.35
+   Compiling rand_core v0.10.1
+   Compiling getrandom v0.4.3
+   Compiling untrusted v0.9.0
+   Compiling cfg_aliases v0.2.2
+   Compiling pin-project-lite v0.2.17
+   Compiling base16ct v0.2.0
+   Compiling bytes v1.12.1
+   Compiling serde_core v1.0.229
+   Compiling thiserror v2.0.21
+   Compiling rustls v0.23.46
+   Compiling cpufeatures v0.3.1
+   Compiling anyhow v1.0.104
+   Compiling time-core v0.1.9
+   Compiling either v1.19.0
+   Compiling powerfmt v0.2.1
+   Compiling deranged v0.5.9
+   Compiling zmij v1.0.23
+   Compiling num-conv v0.2.2
+   Compiling tinyvec v1.13.3
+   Compiling serde_json v1.0.154
+   Compiling rustix v1.1.6
+   Compiling rustc-hash v2.1.3
+   Compiling serde v1.0.229
+   Compiling slab v0.4.12
+   Compiling quinn-udp v0.5.16
+   Compiling quinn v0.11.12
+   Compiling chacha20 v0.10.2
+   Compiling rand_pcg v0.10.2
+   Compiling base64 v0.22.1
+   Compiling lru-slab v0.1.3
+   Compiling cpufeatures v0.2.17
+   Compiling bitflags v2.13.2
+   Compiling cc v1.11.1
+   Compiling itoa v1.0.19
+   Compiling der v0.7.10
+   Compiling tracing-core v0.1.36
+   Compiling rustls-pki-types v1.15.1
+   Compiling memchr v2.8.3
+   Compiling lazy_static v1.5.1
+   Compiling linux-raw-sys v0.12.1
+   Compiling thread_local v1.1.10
+   Compiling nu-ansi-term v0.50.3
+   Compiling fastrand v2.5.0
+   Compiling itertools v0.14.0
+   Compiling smallvec v1.16.5
+   Compiling wire-protocol-transcript v0.1.0 (/home/w0n9/workspaces/audio-share/.claude/worktrees/agent-ae8d4922334c6e2c4/crates/v2-transport/transcript)
+   Compiling sharded-slab v0.1.7
+   Compiling generic-array v0.14.7
+   Compiling pem v3.0.6
+   Compiling tracing-log v0.2.0
+   Compiling tracing-subscriber v0.3.23
+   Compiling syn v3.0.10
+   Compiling syn v2.0.119
+   Compiling spki v0.7.3
+   Compiling time v0.3.55
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling sec1 v0.7.3
+   Compiling digest v0.10.7
+   Compiling getrandom v0.2.17
+   Compiling socket2 v0.6.5
+   Compiling errno v0.3.14
+   Compiling mio v1.2.4
+   Compiling ring v0.17.14
+   Compiling hmac v0.12.1
+   Compiling sha2 v0.10.9
+   Compiling signal-hook-registry v1.4.8
+   Compiling rfc6979 v0.4.0
+   Compiling rand_core v0.6.4
+   Compiling rand v0.10.3
+   Compiling ff v0.13.1
+   Compiling crypto-bigint v0.5.5
+   Compiling signature v2.2.0
+   Compiling group v0.13.0
+   Compiling yasna v0.5.2
+   Compiling tempfile v3.27.0
+   Compiling elliptic-curve v0.13.8
+   Compiling ecdsa v0.16.9
+   Compiling primeorder v0.13.6
+   Compiling p256 v0.13.2
+   Compiling thiserror-impl v2.0.21
+   Compiling tokio-macros v2.7.2
+   Compiling serde_derive v1.0.229
+   Compiling tokio v1.54.1
+   Compiling tracing-attributes v0.1.31
+   Compiling prost-derive v0.13.5
+   Compiling tracing v0.1.44
+   Compiling prost v0.13.5
+   Compiling rustls-webpki v0.103.16
+   Compiling rcgen v0.13.2
+   Compiling quinn-proto v0.11.19
+   Compiling v2-transport v0.4.1 (/home/w0n9/workspaces/audio-share/.claude/worktrees/agent-ae8d4922334c6e2c4/crates/v2-transport)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.13s
+     Running tests/session_driver.rs (target/debug/deps/session_driver-6840d43459a7572f)
+
+running 1 test
+
+thread 'ready_capture_failure_refuses_first_subscribe_without_subscribing' (333622) panicked at crates/v2-transport/tests/session_driver.rs:456:9:
+assertion `left == right` failed: READY capture failure must refuse Subscribe without changing subscription: Frame { body: Some(SubscribeResponse(SubscribeResponse { request_id: 3, status: Status { code: 0, retryable: false, requires_repairing: false, detail: "" }, configuration: Some(Configuration { config_generation: 1, codec: Pcm, pcm: Some(PcmParameters { sample_rate: 48000, channels: 2, sample_format: F32Le }) }) })) }
+  left: None
+ right: Some(501)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test ready_capture_failure_refuses_first_subscribe_without_subscribing ... FAILED
+
+failures:
+
+failures:
+    ready_capture_failure_refuses_first_subscribe_without_subscribing
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.16s
+
+error: test failed, to rerun pass `-p v2-transport --test session_driver`

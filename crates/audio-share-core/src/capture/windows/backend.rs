@@ -221,11 +221,7 @@ impl CaptureBackend for WasapiCapture {
             .map_err(|error| Error::io("spawn WASAPI capture thread", error))?;
 
         match ready_receiver.recv() {
-            Ok(Ok(format)) => Ok(CaptureSession {
-                format,
-                signal,
-                thread: Some(thread),
-            }),
+            Ok(Ok(format)) => Ok(CaptureSession::from_thread(format, signal, thread)),
             Ok(Err(error)) => {
                 let _ = thread.join();
                 Err(error)

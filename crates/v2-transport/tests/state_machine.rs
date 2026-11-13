@@ -6,7 +6,9 @@
 use v2_transport::auth_store::{AuthorizationStore, ClientState, StoredClient};
 use v2_transport::codes::ErrorCode;
 use v2_transport::schema::{frame, Frame, Status};
-use v2_transport::state_machine::{Event, ServerConfig, ServerState, StateMachine};
+use v2_transport::state_machine::{
+    CaptureSnapshot, Event, ServerConfig, ServerState, StateMachine,
+};
 
 const CLIENT_PUB: &str = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
 const SERVER_PUB: &str = "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c";
@@ -116,19 +118,19 @@ fn machine_on(store: std::sync::Arc<AuthorizationStore>) -> StateMachine {
         ServerConfig {
             server_public_key: unhex(SERVER_PUB),
             protocol_minor: 0,
-            current_configuration: Some(v2_transport::schema::Configuration {
-                config_generation: 1,
-                codec: v2_transport::schema::Codec::Pcm as i32,
-                pcm: Some(v2_transport::schema::PcmParameters {
-                    sample_rate: 48_000,
-                    channels: 2,
-                    sample_format: v2_transport::schema::SampleFormat::F32Le as i32,
+            capture: CaptureSnapshot {
+                configuration: Some(v2_transport::schema::Configuration {
+                    config_generation: 1,
+                    codec: v2_transport::schema::Codec::Pcm as i32,
+                    pcm: Some(v2_transport::schema::PcmParameters {
+                        sample_rate: 48_000,
+                        channels: 2,
+                        sample_format: v2_transport::schema::SampleFormat::F32Le as i32,
+                    }),
                 }),
-            }),
-            capture_active: true,
-            capture_healthy: true,
-            stream_instance_id: 1,
-            next_frame_timestamp: 0,
+                stream_active: true,
+                ..CaptureSnapshot::absent()
+            },
             max_auth_failures_per_connection: 5,
             // Golden-vector replay constants (test-keys.json): the pinned
             // challenge randomness and the TLS-Exporter stand-in.
@@ -837,7 +839,10 @@ fn ready_capture_unhealthy_subscribe_is_501_retryable() {
     let store = store_with_client();
     let mut machine = StateMachine::new(
         ServerConfig {
-            capture_healthy: false,
+            capture: CaptureSnapshot {
+                healthy: false,
+                ..machine(&store).config().capture.clone()
+            },
             ..machine(&store).config().clone()
         },
         &std::sync::Arc::new(clone_store(&store)),
@@ -863,14 +868,12 @@ fn ready_capture_unhealthy_subscribe_is_501_retryable() {
 fn ready_capture_absent_subscribe_is_501_retryable() {
     // §5.2: "capture unhealthy or absent" -> Error(501, retryable=true), no
     // state change. Absent = no current Configuration (capture never injected
-    // or never produced a Transfer Format) even though `capture_healthy`
+    // or never produced a Transfer Format) even though `capture.healthy`
     // defaults to true.
     let store = store_with_client();
     let mut machine = StateMachine::new(
         ServerConfig {
-            current_configuration: None,
-            capture_active: false,
-            capture_healthy: true,
+            capture: CaptureSnapshot::absent(),
             ..machine(&store).config().clone()
         },
         &std::sync::Arc::new(clone_store(&store)),
@@ -908,9 +911,12 @@ fn ready_subscribe_stream_started_comes_from_stream_state() {
     let store = store_with_client();
     let mut machine = StateMachine::new(
         ServerConfig {
-            capture_active: true,
-            stream_instance_id: 7,
-            next_frame_timestamp: 123_456,
+            capture: CaptureSnapshot {
+                stream_active: true,
+                stream_instance_id: 7,
+                next_frame_timestamp: 123_456,
+                ..machine(&store).config().capture.clone()
+            },
             ..machine(&store).config().clone()
         },
         &std::sync::Arc::new(clone_store(&store)),

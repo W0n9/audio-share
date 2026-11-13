@@ -18,7 +18,7 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
 use audio_share_core::capture::{
-    platform_backend, synthetic_backend, CaptureBackend, CaptureConfig,
+    platform_backend, synthetic_backend, CaptureBackend, CaptureConfig, CaptureObserver,
 };
 use audio_share_core::config::{EncodingSetting, DEFAULT_PORT};
 use audio_share_core::paths;
@@ -330,7 +330,7 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
         tracing::info!("v2 transport disabled (--v2-port=0); v1 TCP/UDP unaffected");
         None
     } else {
-        match start_v2_transport(&cli, &format).await {
+        match start_v2_transport(&cli, handle.capture_observer()).await {
             Ok((transport, accept_task)) => {
                 tracing::info!(
                     "v2 listen success on {}, alpn={}",
@@ -363,46 +363,6 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
     Ok(())
 }
 
-/// Map the live capture format to the v2 control-plane capture state. A
-/// format that cannot form a valid `Configuration` (spec §4.4) leaves capture
-/// absent, so `Subscribe` is refused with Error(501, retryable=true). No
-/// media stream is active in this phase, hence `stream_active: false`.
-fn v2_capture_snapshot(
-    format: &audio_share_core::protocol::AudioFormat,
-) -> v2_transport::driver::CaptureSnapshot {
-    use audio_share_core::protocol::Encoding;
-    use v2_transport::schema::{Codec, Configuration, PcmParameters, SampleFormat};
-
-    let mut snapshot = v2_transport::driver::CaptureSnapshot::absent();
-    let sample_format = match format.encoding_kind() {
-        Some(Encoding::PcmFloat) => SampleFormat::F32Le,
-        Some(Encoding::Pcm8Bit) => SampleFormat::U8,
-        Some(Encoding::Pcm16Bit) => SampleFormat::S16Le,
-        Some(Encoding::Pcm24Bit) => SampleFormat::S24Le,
-        Some(Encoding::Pcm32Bit) => SampleFormat::S32Le,
-        Some(Encoding::Invalid) | None => return snapshot,
-    };
-    let (Ok(channels), Ok(sample_rate)) = (
-        u32::try_from(format.channels),
-        u32::try_from(format.sample_rate),
-    ) else {
-        return snapshot;
-    };
-    if channels == 0 || sample_rate == 0 {
-        return snapshot;
-    }
-    snapshot.configuration = Some(Configuration {
-        config_generation: 1,
-        codec: Codec::Pcm as i32,
-        pcm: Some(PcmParameters {
-            sample_rate,
-            channels,
-            sample_format: sample_format as i32,
-        }),
-    });
-    snapshot
-}
-
 /// Start the v2 transport: load the Ed25519 identity key, bind the QUIC
 /// endpoint, and spawn the accept loop that enforces the §10 resource limits
 /// and logs connection lifecycles.
@@ -412,7 +372,7 @@ fn v2_capture_snapshot(
 /// (the directory that also holds `server.log`).
 async fn start_v2_transport(
     cli: &Cli,
-    capture_format: &audio_share_core::protocol::AudioFormat,
+    capture: CaptureObserver,
 ) -> Result<
     (
         std::sync::Arc<v2_transport::transport::Transport>,
@@ -461,8 +421,7 @@ async fn start_v2_transport(
     // the live capture format here; it never sends media in this phase.
     let mut session_server =
         v2_transport::driver::SessionServer::new(&identity, std::sync::Arc::new(store));
-    let snapshot = v2_capture_snapshot(capture_format);
-    session_server.capture_source = Some(std::sync::Arc::new(move || snapshot.clone()));
+    session_server.capture_source = Some(as_cmd::v2_capture_source(capture));
     let session_server = std::sync::Arc::new(session_server);
 
     let bind = resolve_bind_address("::", cli.v2_port)
@@ -739,6 +698,7 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use as_cmd::v2_capture_snapshot;
     use audio_share_core::capture::EncodingPreference;
     use audio_share_core::protocol::{AudioFormat, Encoding};
     use v2_transport::schema::{Codec, SampleFormat};
