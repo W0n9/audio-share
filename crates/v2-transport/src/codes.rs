@@ -87,50 +87,134 @@ impl ErrorCode {
     ];
 
     /// 101: major ≠ 2 or unsupported minor.
-    pub const VERSION_MISMATCH: ErrorCode = ErrorCode { code: 101, retryable: false, requires_repairing: false };
+    pub const VERSION_MISMATCH: ErrorCode = ErrorCode {
+        code: 101,
+        retryable: false,
+        requires_repairing: false,
+    };
     /// 102: a listed capability cannot be honored.
-    pub const UNSUPPORTED_CAPABILITY: ErrorCode = ErrorCode { code: 102, retryable: false, requires_repairing: false };
+    pub const UNSUPPORTED_CAPABILITY: ErrorCode = ErrorCode {
+        code: 102,
+        retryable: false,
+        requires_repairing: false,
+    };
     /// 201: nonce invalid/expired/replayed, binding mismatch, or declined.
-    pub const PAIRING_REJECTED: ErrorCode = ErrorCode { code: 201, retryable: false, requires_repairing: true };
+    pub const PAIRING_REJECTED: ErrorCode = ErrorCode {
+        code: 201,
+        retryable: false,
+        requires_repairing: true,
+    };
     /// 202: signature valid but the identity matches no Server record.
-    pub const AUTHORIZATION_UNKNOWN: ErrorCode = ErrorCode { code: 202, retryable: false, requires_repairing: true };
+    pub const AUTHORIZATION_UNKNOWN: ErrorCode = ErrorCode {
+        code: 202,
+        retryable: false,
+        requires_repairing: true,
+    };
     /// 203: signature verification failed (invalid proof).
-    pub const AUTHENTICATION_FAILED: ErrorCode = ErrorCode { code: 203, retryable: false, requires_repairing: true };
+    pub const AUTHENTICATION_FAILED: ErrorCode = ErrorCode {
+        code: 203,
+        retryable: false,
+        requires_repairing: true,
+    };
     /// 204: known identity denied (revoked, insufficient role).
-    pub const AUTHORIZATION_DENIED: ErrorCode = ErrorCode { code: 204, retryable: false, requires_repairing: false };
+    pub const AUTHORIZATION_DENIED: ErrorCode = ErrorCode {
+        code: 204,
+        retryable: false,
+        requires_repairing: false,
+    };
     /// 205: pinned SPKI ≠ presented certificate (local classification only).
-    pub const SERVER_IDENTITY_MISMATCH: ErrorCode = ErrorCode { code: 205, retryable: false, requires_repairing: true };
+    pub const SERVER_IDENTITY_MISMATCH: ErrorCode = ErrorCode {
+        code: 205,
+        retryable: false,
+        requires_repairing: true,
+    };
     /// 206: no pairing result within the 10 min lifetime.
-    pub const PAIRING_PENDING_TIMEOUT: ErrorCode = ErrorCode { code: 206, retryable: true, requires_repairing: false };
+    pub const PAIRING_PENDING_TIMEOUT: ErrorCode = ErrorCode {
+        code: 206,
+        retryable: true,
+        requires_repairing: false,
+    };
     /// 301: Server at capacity.
-    pub const BUSY: ErrorCode = ErrorCode { code: 301, retryable: true, requires_repairing: false };
+    pub const BUSY: ErrorCode = ErrorCode {
+        code: 301,
+        retryable: true,
+        requires_repairing: false,
+    };
     /// 302: auth/pairing failure or outstanding-request rate exceeded.
-    pub const RATE_LIMITED: ErrorCode = ErrorCode { code: 302, retryable: true, requires_repairing: false };
+    pub const RATE_LIMITED: ErrorCode = ErrorCode {
+        code: 302,
+        retryable: true,
+        requires_repairing: false,
+    };
     /// 303: the same Client identity opened a new session.
-    pub const SESSION_SUPERSEDED: ErrorCode = ErrorCode { code: 303, retryable: false, requires_repairing: false };
+    pub const SESSION_SUPERSEDED: ErrorCode = ErrorCode {
+        code: 303,
+        retryable: false,
+        requires_repairing: false,
+    };
     /// 401: undecodable, unset body, oversized frame, zero code, invalid
     /// Configuration.
-    pub const MALFORMED_MESSAGE: ErrorCode = ErrorCode { code: 401, retryable: false, requires_repairing: false };
+    pub const MALFORMED_MESSAGE: ErrorCode = ErrorCode {
+        code: 401,
+        retryable: false,
+        requires_repairing: false,
+    };
     /// 402: request or push illegal for the current state (fatal except the
     /// duplicate-`Subscribe` reply).
-    pub const INVALID_STATE: ErrorCode = ErrorCode { code: 402, retryable: false, requires_repairing: false };
+    pub const INVALID_STATE: ErrorCode = ErrorCode {
+        code: 402,
+        retryable: false,
+        requires_repairing: false,
+    };
     /// 403: receiver cannot decode the published Transfer Format.
-    pub const UNSUPPORTED_MEDIA_CONFIGURATION: ErrorCode = ErrorCode { code: 403, retryable: false, requires_repairing: false };
+    pub const UNSUPPORTED_MEDIA_CONFIGURATION: ErrorCode = ErrorCode {
+        code: 403,
+        retryable: false,
+        requires_repairing: false,
+    };
     /// 501: Endpoint capture failed or absent.
-    pub const CAPTURE_FAILURE: ErrorCode = ErrorCode { code: 501, retryable: true, requires_repairing: false };
+    pub const CAPTURE_FAILURE: ErrorCode = ErrorCode {
+        code: 501,
+        retryable: true,
+        requires_repairing: false,
+    };
     /// 502: stream instance ended normally.
-    pub const STREAM_ENDED: ErrorCode = ErrorCode { code: 502, retryable: true, requires_repairing: false };
+    pub const STREAM_ENDED: ErrorCode = ErrorCode {
+        code: 502,
+        retryable: true,
+        requires_repairing: false,
+    };
     /// 503: administrative Server stop.
-    pub const SERVER_STOPPING: ErrorCode = ErrorCode { code: 503, retryable: true, requires_repairing: false };
+    pub const SERVER_STOPPING: ErrorCode = ErrorCode {
+        code: 503,
+        retryable: true,
+        requires_repairing: false,
+    };
     /// 599: unexpected Server error (bounded detail).
-    pub const INTERNAL_ERROR: ErrorCode = ErrorCode { code: 599, retryable: false, requires_repairing: false };
+    pub const INTERNAL_ERROR: ErrorCode = ErrorCode {
+        code: 599,
+        retryable: false,
+        requires_repairing: false,
+    };
     /// 601: temporary network failure, idle timeout, undeliverable Close,
     /// deadline.
-    pub const NETWORK_FAILURE: ErrorCode = ErrorCode { code: 601, retryable: true, requires_repairing: false };
+    pub const NETWORK_FAILURE: ErrorCode = ErrorCode {
+        code: 601,
+        retryable: true,
+        requires_repairing: false,
+    };
     /// 602: transport cannot carry media datagrams.
-    pub const DATAGRAM_UNSUPPORTED: ErrorCode = ErrorCode { code: 602, retryable: true, requires_repairing: false };
+    pub const DATAGRAM_UNSUPPORTED: ErrorCode = ErrorCode {
+        code: 602,
+        retryable: true,
+        requires_repairing: false,
+    };
     /// 701: normal Client stop.
-    pub const CLIENT_STOPPING: ErrorCode = ErrorCode { code: 701, retryable: false, requires_repairing: false };
+    pub const CLIENT_STOPPING: ErrorCode = ErrorCode {
+        code: 701,
+        retryable: false,
+        requires_repairing: false,
+    };
 
     /// Look up a code in the registry; `None` for values outside it.
     pub fn from_code(code: u32) -> Option<Self> {
@@ -215,19 +299,58 @@ mod tests {
     #[test]
     fn registry_flags_match_spec_62() {
         // Spot-check the §6.2 columns: retryable / re-pairing.
-        assert_eq!(ErrorCode::from_code(101).map(|e| (e.retryable, e.requires_repairing)), Some((false, false)));
-        assert_eq!(ErrorCode::from_code(201).map(|e| (e.retryable, e.requires_repairing)), Some((false, true)));
-        assert_eq!(ErrorCode::from_code(202).map(|e| (e.retryable, e.requires_repairing)), Some((false, true)));
-        assert_eq!(ErrorCode::from_code(203).map(|e| (e.retryable, e.requires_repairing)), Some((false, true)));
-        assert_eq!(ErrorCode::from_code(204).map(|e| (e.retryable, e.requires_repairing)), Some((false, false)));
-        assert_eq!(ErrorCode::from_code(206).map(|e| (e.retryable, e.requires_repairing)), Some((true, false)));
-        assert_eq!(ErrorCode::from_code(301).map(|e| (e.retryable, e.requires_repairing)), Some((true, false)));
-        assert_eq!(ErrorCode::from_code(303).map(|e| (e.retryable, e.requires_repairing)), Some((false, false)));
-        assert_eq!(ErrorCode::from_code(401).map(|e| (e.retryable, e.requires_repairing)), Some((false, false)));
-        assert_eq!(ErrorCode::from_code(501).map(|e| (e.retryable, e.requires_repairing)), Some((true, false)));
-        assert_eq!(ErrorCode::from_code(599).map(|e| (e.retryable, e.requires_repairing)), Some((false, false)));
-        assert_eq!(ErrorCode::from_code(601).map(|e| (e.retryable, e.requires_repairing)), Some((true, false)));
-        assert_eq!(ErrorCode::from_code(701).map(|e| (e.retryable, e.requires_repairing)), Some((false, false)));
+        assert_eq!(
+            ErrorCode::from_code(101).map(|e| (e.retryable, e.requires_repairing)),
+            Some((false, false))
+        );
+        assert_eq!(
+            ErrorCode::from_code(201).map(|e| (e.retryable, e.requires_repairing)),
+            Some((false, true))
+        );
+        assert_eq!(
+            ErrorCode::from_code(202).map(|e| (e.retryable, e.requires_repairing)),
+            Some((false, true))
+        );
+        assert_eq!(
+            ErrorCode::from_code(203).map(|e| (e.retryable, e.requires_repairing)),
+            Some((false, true))
+        );
+        assert_eq!(
+            ErrorCode::from_code(204).map(|e| (e.retryable, e.requires_repairing)),
+            Some((false, false))
+        );
+        assert_eq!(
+            ErrorCode::from_code(206).map(|e| (e.retryable, e.requires_repairing)),
+            Some((true, false))
+        );
+        assert_eq!(
+            ErrorCode::from_code(301).map(|e| (e.retryable, e.requires_repairing)),
+            Some((true, false))
+        );
+        assert_eq!(
+            ErrorCode::from_code(303).map(|e| (e.retryable, e.requires_repairing)),
+            Some((false, false))
+        );
+        assert_eq!(
+            ErrorCode::from_code(401).map(|e| (e.retryable, e.requires_repairing)),
+            Some((false, false))
+        );
+        assert_eq!(
+            ErrorCode::from_code(501).map(|e| (e.retryable, e.requires_repairing)),
+            Some((true, false))
+        );
+        assert_eq!(
+            ErrorCode::from_code(599).map(|e| (e.retryable, e.requires_repairing)),
+            Some((false, false))
+        );
+        assert_eq!(
+            ErrorCode::from_code(601).map(|e| (e.retryable, e.requires_repairing)),
+            Some((true, false))
+        );
+        assert_eq!(
+            ErrorCode::from_code(701).map(|e| (e.retryable, e.requires_repairing)),
+            Some((false, false))
+        );
     }
 
     #[test]
@@ -236,6 +359,9 @@ mod tests {
         assert_eq!(ErrorCode::from_code(999), None);
         // 205 exists in the registry but is a local classification; 205's slot
         // is still resolvable (the Client uses it as a Close code).
-        assert_eq!(ErrorCode::from_code(205), Some(ErrorCode::SERVER_IDENTITY_MISMATCH));
+        assert_eq!(
+            ErrorCode::from_code(205),
+            Some(ErrorCode::SERVER_IDENTITY_MISMATCH)
+        );
     }
 }
