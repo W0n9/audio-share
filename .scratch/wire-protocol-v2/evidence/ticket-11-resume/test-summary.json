@@ -1,0 +1,28 @@
+{
+  "workspace-tests.log": {
+    "passed": 463,
+    "failed": 0,
+    "ignored": 4
+  },
+  "native-production-tests.log": {
+    "passed": 102,
+    "failed": 0,
+    "ignored": 0
+  },
+  "native-test-support-tests.log": {
+    "passed": 102,
+    "failed": 0,
+    "ignored": 0
+  },
+  "workspace_ignored_tests": [
+    "test pipewire_list_endpoints_and_live_replay ... ignored, starts real headless PipeWire/wireplumber daemons",
+    "test linux_pipewire_capture_end_to_end ... ignored, starts real headless PipeWire/wireplumber daemons",
+    "test update::tests::fetches_the_real_latest_release_over_https ... ignored, requires network access to api.github.com",
+    "test headless_pipewire_spike_end_to_end ... ignored, starts real headless PipeWire/wireplumber daemons"
+  ],
+  "kotlin_jvm": {
+    "passed": 31,
+    "failed": 0
+  },
+  "default_release": "PASS without testSupport/deviceTests"
+}

@@ -17,12 +17,15 @@ import org.json.JSONObject
  */
 class ControlSessionService : Service() {
     private var session: ClientSession? = null
-    private var stateListener: ((String) -> Unit)? = null
+    private val relay = SessionStateRelay()
     private val binder = ControlBinder(this)
 
     override fun onBind(intent: Intent?): IBinder = binder
 
-    fun setStateListener(listener: ((String) -> Unit)?) { stateListener = listener }
+    fun setStateListener(listener: ((String) -> Unit)?) = relay.setListener(listener)
+
+    /** 即使会话已清理，也保留最后的关闭状态。 */
+    fun stateSnapshot(): String = session?.stateSnapshot() ?: relay.snapshot()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
@@ -33,7 +36,7 @@ class ControlSessionService : Service() {
         if (session == null && intent != null && intent.hasValidConfiguration()) {
             session = ClientSession(this, object : ClientSession.Listener {
                 override fun onStats(json: JSONObject) = Unit
-                override fun onStateChange(state: String) { stateListener?.invoke(state) }
+                override fun onStateChange(state: String) { relay.publish(state) }
                 override fun onLog(line: String) = Unit
             }).also {
                 it.bindHintEnabled = intent.getBooleanExtra("bindHint", false)
@@ -96,4 +99,4 @@ class ControlSessionService : Service() {
     }
 }
 
-class ControlBinder(internal val service: ControlSessionService) : Binder()
+class ControlBinder(val service: ControlSessionService) : Binder()
