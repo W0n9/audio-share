@@ -62,6 +62,12 @@ pub struct ServerConfig {
     pub capture_active: bool,
     /// Whether the capture backend is healthy (§5.2 READY Subscribe guard).
     pub capture_healthy: bool,
+    /// The active stream instance id (§7.1, ∈ [1, 2^32−1]); meaningful only
+    /// while `capture_active`. Source of `StreamStarted.stream_instance_id`.
+    pub stream_instance_id: u32,
+    /// Capture-clock position of the next media frame (§4.4); meaningful
+    /// only while `capture_active`. Source of `StreamStarted.initial_timestamp`.
+    pub next_frame_timestamp: u64,
     /// Auth failures per connection (TM-4; default 5, `Limits`).
     pub max_auth_failures_per_connection: u32,
     /// Test-support only: fixed challenge randomness (spec §4.4 says 32
@@ -826,7 +832,8 @@ impl StateMachine {
                 })),
             })];
         }
-        if !self.config.capture_healthy {
+        // Absent = no Transfer Format is current (capture never injected).
+        if !self.config.capture_healthy || self.config.current_configuration.is_none() {
             // §5.2: capture unhealthy or absent → Error(501, retryable=true);
             // no state change.
             return vec![Outcome::frame(Frame {
@@ -852,9 +859,9 @@ impl StateMachine {
             if let Some(configuration) = &self.config.current_configuration {
                 outcomes.push(Outcome::frame(Frame {
                     body: Some(frame::Body::StreamStarted(crate::schema::StreamStarted {
-                        stream_instance_id: 1,
+                        stream_instance_id: self.config.stream_instance_id,
                         config_generation: configuration.config_generation,
-                        initial_timestamp: 0,
+                        initial_timestamp: self.config.next_frame_timestamp,
                     })),
                 }));
             }
