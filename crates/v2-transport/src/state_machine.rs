@@ -428,18 +428,12 @@ impl StateMachine {
                 // nonce/window tables are empty). Pairing-failure rate limits
                 // (TM-5) apply at the pairing phase.
                 //
-                // Adjudication note (201 flag): the declined-201 fixture
-                // vector encodes PairingResult(201) WITHOUT the
-                // requires_repairing flag, but spec §6.2 sets the registry
-                // default for 201 to requires_repairing=yes and §4.2 requires
-                // senders to match the registry. Stance (ticket 07 work
-                // order): the sender follows the registry default and emits
-                // requires_repairing=true via `Status::registry(201)`; the
-                // declined-201 fixture's literal bytes are therefore NOT
-                // asserted byte-identically at sender level (its decode/
-                // assertions still run in the replay harness); fixtures are
-                // never modified here — the maintainer rules on the vector in
-                // the ticket Comments.
+                // Adjudicated 2026-11-13 (ticket 07 Comments): the 201
+                // vector was the bug, not §4.2. error-201-pairing-declined
+                // now encodes the §6.2 registry defaults
+                // (requires_repairing=true, `18 01`), so the sender's
+                // `Status::registry(201)` matches the fixture byte-for-byte
+                // and the sibling proof-invalid case.
                 let outcomes = vec![
                     Outcome::frame(Frame {
                         body: Some(frame::Body::PairingResult(crate::schema::PairingResult {

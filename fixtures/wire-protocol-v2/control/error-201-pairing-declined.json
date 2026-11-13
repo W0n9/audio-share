@@ -88,13 +88,14 @@
       "dir": "S->C",
       "channel": "control-stream",
       "message": "pairing_result",
-      "frame_hex": "000000119a010e090100000000000000120308c901",
-      "body_hex": "9a010e090100000000000000120308c901",
-      "length": 17,
+      "frame_hex": "000000139a0110090100000000000000120508c9011801",
+      "body_hex": "9a0110090100000000000000120508c9011801",
+      "length": 19,
       "decoded": {
         "request_id": 1,
         "status": {
-          "code": 201
+          "code": 201,
+          "requires_repairing": true
         }
       },
       "has_unknown_fields": false,
@@ -136,7 +137,7 @@
   ],
   "assertions": [
     "Both proofs verify (binding_echo matches the Client's exporter derivation; client_proof validates against the claimed identity key — the proof inputs are the pairing-happy-path-qr constants): the rejection is purely the declined local approval (spec §5.2), not a proof failure.",
-    "PairingResult(201)'s Status carries NO detail field: pre-auth responses never carry detail (spec §4.2/TM-6) — the pre-adjudication 'PairingResult(201, detail \"declined\")' wording is withdrawn by the 2026-11-12 adjudication.",
+    "PairingResult(201)'s Status carries NO detail field: pre-auth responses never carry detail (spec §4.2/TM-6) — the pre-adjudication 'PairingResult(201, detail \"declined\")' wording is withdrawn by the 2026-11-12 adjudication. The Status DOES carry the §6.2 registry defaults retryable=false, requires_repairing=true (`18 01`), per the 2026-11-13 adjudication.",
     "Approval rejection is exactly PairingResult(201) + Close(201) and nothing else (spec §5.2); the transport close carries 201.",
     "Nothing is persisted: the observable is that no subsequent accept for this identity exists — the authorization store is unchanged, so a later connection authenticating with the same key still receives AuthResult(202) AUTHORIZATION_UNKNOWN (persistence happens only after verified proofs AND approval; spec §5.2, pairing.md §6.3.1/§8).",
     "Both refusal frames are <= 128 B (size_bounds); PairingResponse remains the sole <= 320 B pre-auth exception."
