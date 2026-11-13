@@ -1,0 +1,6 @@
+Command: 从本次隔离 Server 日志筛选 v2 session ended 的 701 应用层记录；不导出 TLS trace。
+
+[2026-11-13 07:54:37.291] [debug] v2 session ended source=0:0:: code=701
+[2026-11-13 07:54:37.291] [info] v2 session ended: ClientClosed(ErrorCode { code: 701, retryable: false, requires_repairing: false }) remote=0:0::
+[2026-11-13 07:56:40.177] [debug] v2 session ended source=0:0:: code=701
+[2026-11-13 07:56:40.177] [info] v2 session ended: ClientClosed(ErrorCode { code: 701, retryable: false, requires_repairing: false }) remote=0:0::

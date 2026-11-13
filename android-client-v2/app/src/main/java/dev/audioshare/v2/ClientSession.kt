@@ -14,6 +14,7 @@ import java.net.Inet6Address
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.min
 import kotlin.random.Random
 
@@ -52,6 +53,11 @@ class ClientSession(
 
     private var handle = AtomicLong(0)
     private val running = AtomicBoolean(false)
+    private val currentState = AtomicReference("IDLE")
+
+    /** 最近一次实际 native 状态；停止后保持 CLOSED，不暴露已失效的 handle。 */
+    fun stateSnapshot(): String = currentState.get()
+
     private var configuration = SessionConfiguration("", 0, "", "", "")
 
     /** Reconnect attempt counter; reset on start(). */
@@ -83,6 +89,7 @@ class ClientSession(
             ClientNative.stop(h)
             ClientNative.destroy(h)
         }
+        currentState.set("CLOSED")
         listener.onStateChange("CLOSED")
         listener.onLog("stopped by user")
     }
@@ -145,7 +152,11 @@ class ClientSession(
             try {
                 while (running.get() && handle.get() == myHandle) {
                     val state = ClientNative.getState(myHandle) ?: ""
-                    listener.onStateChange(state)
+                    // 陈旧 handle 的空回答不是状态；不能覆盖新会话的快照。
+                    if (state.isNotEmpty() && handle.get() == myHandle) {
+                        currentState.set(state)
+                        listener.onStateChange(state)
+                    }
                     if (state == "READY") {
                         // §6.3: backoff resets to base when a session reaches READY
                         backoffAttempts.set(0)

@@ -1,0 +1,10 @@
+Command: python3 -I .scratch/wire-protocol-v2/evidence/ticket-11-resume/run-instrumentation.py --test rebind --config "$PUBLIC_CONFIG" --output "$RESULT_FILE"
+Context: 实际测试构建与 RED/GREEN 阶段见 README.md；公钥/pin 脱敏。
+
+INSTRUMENTATION_STATUS: stream=AWAITING_ACTIVITY
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+FAIL: java.lang.AssertionError: READY 会话重绑定后必须立即重放 READY；实际：snapshot=IDLE
+
+INSTRUMENTATION_CODE: 0
