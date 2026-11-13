@@ -69,6 +69,39 @@ struct SessionHandle {
     events: mpsc::UnboundedSender<DriverEvent>,
 }
 
+/// A read-only snapshot of the capture/stream state the control plane
+/// consults (§5.2 Subscribe / RequestConfiguration / StreamStarted). It
+/// carries state only; media sending is out of scope for the control plane.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CaptureSnapshot {
+    /// The current Transfer Format, or `None` when capture is absent.
+    pub configuration: Option<schema::Configuration>,
+    /// Whether the capture backend is healthy.
+    pub healthy: bool,
+    /// Whether a stream instance is active (Subscribe pushes StreamStarted).
+    pub stream_active: bool,
+    /// The active stream instance id (meaningful iff `stream_active`).
+    pub stream_instance_id: u32,
+    /// Capture-clock position of the next media frame (iff `stream_active`).
+    pub next_frame_timestamp: u64,
+}
+
+impl CaptureSnapshot {
+    /// No capture injected: Subscribe is refused with 501.
+    pub fn absent() -> Self {
+        Self {
+            configuration: None,
+            healthy: true,
+            stream_active: false,
+            stream_instance_id: 1,
+            next_frame_timestamp: 0,
+        }
+    }
+}
+
+/// Provider of the live capture snapshot, read once per connection.
+pub type CaptureStateSource = dyn Fn() -> CaptureSnapshot + Send + Sync;
+
 /// The v2 Server session layer: shared configuration + the per-Client
 /// registry + the source-address rate guard. One per endpoint; cheap to
 /// share across the accept loop's spawned tasks via `Arc`.
@@ -83,6 +116,13 @@ pub struct SessionServer {
     pub capture_active: bool,
     /// Whether the capture backend is healthy (README Subscribe guard).
     pub capture_healthy: bool,
+    /// Stream instance id used when `capture_active` (§7.1).
+    pub stream_instance_id: u32,
+    /// Next-frame capture timestamp used when `capture_active`.
+    pub next_frame_timestamp: u64,
+    /// Optional live capture-state source; when set it overrides the static
+    /// `current_configuration` / `capture_*` / stream fields per connection.
+    pub capture_source: Option<Arc<CaptureStateSource>>,
     /// Server-wide limits (spec §10); auth-failure fields feed TM-4/TM-5.
     pub limits: Limits,
     /// Auth-exchange deadline override (tests shorten it).
@@ -118,6 +158,9 @@ impl SessionServer {
             current_configuration: None,
             capture_active: false,
             capture_healthy: true,
+            stream_instance_id: 1,
+            next_frame_timestamp: 0,
+            capture_source: None,
             rate: Mutex::new(AddressRateGuard::new(
                 limits.auth_failure_window,
                 limits.auth_failures_per_window,
@@ -196,12 +239,26 @@ impl SessionServer {
         });
 
         let session_id_base = self.next_session_id.fetch_add(1, Ordering::SeqCst);
+        let capture = self.capture_source.as_ref().map(|source| source());
         let config = ServerConfig {
             server_public_key: self.server_public_key.clone(),
             protocol_minor: self.protocol_minor,
-            current_configuration: self.current_configuration.clone(),
-            capture_active: self.capture_active,
-            capture_healthy: self.capture_healthy,
+            current_configuration: match &capture {
+                Some(snapshot) => snapshot.configuration.clone(),
+                None => self.current_configuration.clone(),
+            },
+            capture_active: capture
+                .as_ref()
+                .map_or(self.capture_active, |snapshot| snapshot.stream_active),
+            capture_healthy: capture
+                .as_ref()
+                .map_or(self.capture_healthy, |snapshot| snapshot.healthy),
+            stream_instance_id: capture
+                .as_ref()
+                .map_or(self.stream_instance_id, |s| s.stream_instance_id),
+            next_frame_timestamp: capture
+                .as_ref()
+                .map_or(self.next_frame_timestamp, |s| s.next_frame_timestamp),
             max_auth_failures_per_connection: self.limits.max_auth_failures_per_connection,
             #[cfg(feature = "test-support")]
             server_random_override: None,

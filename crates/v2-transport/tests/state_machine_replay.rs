@@ -62,6 +62,8 @@ fn config(_store: &std::sync::Arc<AuthorizationStore>) -> ServerConfig {
         }),
         capture_active: true,
         capture_healthy: true,
+        stream_instance_id: 1,
+        next_frame_timestamp: 0,
         max_auth_failures_per_connection: 5,
         server_random_override: Some(unhex(SERVER_RANDOM)),
         auth_exporter: Some(unhex(AUTH_EXPORTER)),
