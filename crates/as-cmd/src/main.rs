@@ -330,7 +330,7 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
         tracing::info!("v2 transport disabled (--v2-port=0); v1 TCP/UDP unaffected");
         None
     } else {
-        match start_v2_transport(&cli, &host).await {
+        match start_v2_transport(&cli).await {
             Ok((transport, accept_task)) => {
                 tracing::info!(
                     "v2 listen success on {}, alpn={}",
@@ -372,7 +372,6 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
 /// (the directory that also holds `server.log`).
 async fn start_v2_transport(
     cli: &Cli,
-    host: &str,
 ) -> Result<
     (
         std::sync::Arc<v2_transport::transport::Transport>,
@@ -411,14 +410,18 @@ async fn start_v2_transport(
     let authorized = store.clients().len();
     tracing::info!(
         "v2 authorization store ready: {authorized} client record(s), {}",
-        if store.is_persistent() { "persistent" } else { "in-memory" }
+        if store.is_persistent() {
+            "persistent"
+        } else {
+            "in-memory"
+        }
     );
     let session_server = std::sync::Arc::new(v2_transport::driver::SessionServer::new(
         &identity,
         std::sync::Arc::new(store),
     ));
 
-    let bind = resolve_bind_address(host, cli.v2_port)
+    let bind = resolve_bind_address("::", cli.v2_port)
         .await
         .map_err(|error| format!("resolve v2 bind address: {error}"))?;
     // One limits configuration drives both admission (the capacity guard) and
@@ -426,7 +429,10 @@ async fn start_v2_transport(
     let limits = v2_transport::limits::Limits::defaults();
     let transport = std::sync::Arc::new(
         v2_transport::transport::Transport::start(
-            v2_transport::transport::TransportConfig { bind, limits: limits.clone() },
+            v2_transport::transport::TransportConfig {
+                bind,
+                limits: limits.clone(),
+            },
             &identity,
         )
         .map_err(|error| error.to_string())?,
@@ -459,13 +465,10 @@ async fn start_v2_transport(
                     });
                 }
                 None => {
-                    let stopped = accepted
-                        .lifecycle
-                        .termination()
-                        .is_some_and(|termination| {
-                            termination.code().code
-                                == v2_transport::codes::ErrorCode::SERVER_STOPPING.code
-                        });
+                    let stopped = accepted.lifecycle.termination().is_some_and(|termination| {
+                        termination.code().code
+                            == v2_transport::codes::ErrorCode::SERVER_STOPPING.code
+                    });
                     if stopped {
                         break;
                     }
@@ -480,21 +483,41 @@ async fn start_v2_transport(
 /// Resolve a bind host (name or IP) and port to a socket address, mirroring
 /// the v1 server's resolution.
 async fn resolve_bind_address(host: &str, port: u16) -> Result<std::net::SocketAddr, String> {
+    // The v2 default is an IPv6 wildcard so one listener can accept IPv4-
+    // mapped and native IPv6 clients. Prefer IPv6 for name resolution too.
+    let host = if host.is_empty() { "::" } else { host };
     tokio::net::lookup_host((host, port))
         .await
         .map_err(|error| format!("{host}:{port}: {error}"))?
-        .next()
+        .min_by_key(std::net::SocketAddr::is_ipv4)
         .ok_or_else(|| format!("{host}:{port} resolved to no addresses"))
 }
 
-/// Parse v0.3.4 `[host][:port]` bind syntax.
-///
-/// A bare flag or an empty host selects the default private IPv4 address and,
-/// when no port follows, port 65530. Ports are validated instead of wrapping
-/// modulo 65536 (an intentional safety fix documented in `as-cmd.md`).
+/// Parse `[host][:port]`, including raw and bracketed IPv6. A bare flag or
+/// empty host retains v1's default private IPv4 address and port 65530; the
+/// v2 resolver owns its own :: wildcard default.
 fn parse_bind(raw: &str) -> Result<(String, u16), String> {
-    let (host, port_text) = match raw.split_once(':') {
-        Some((host, port_text)) => (host, Some(port_text)),
+    if raw.parse::<std::net::Ipv6Addr>().is_ok() {
+        return Ok((raw.to_owned(), DEFAULT_PORT));
+    }
+    if let Some(rest) = raw.strip_prefix('[') {
+        let (host, suffix) = rest
+            .split_once(']')
+            .ok_or_else(|| format!("invalid bracketed bind address {raw:?}"))?;
+        host.parse::<std::net::Ipv6Addr>()
+            .map_err(|_| format!("invalid IPv6 bind address {raw:?}"))?;
+        let port = match suffix.strip_prefix(':') {
+            Some(text) => text
+                .parse::<u16>()
+                .map_err(|_| format!("invalid port {text:?}"))?,
+            None if suffix.is_empty() => DEFAULT_PORT,
+            _ => return Err(format!("invalid bind address {raw:?}")),
+        };
+        return Ok((host.to_owned(), port));
+    }
+    let (host, port_text) = match raw.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') => (host, Some(port)),
+        Some(_) => return Err(format!("invalid bind address {raw:?}")),
         None => (raw, None),
     };
     let host = if host.is_empty() {
@@ -673,6 +696,23 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 mod tests {
     use super::*;
     use audio_share_core::capture::EncodingPreference;
+
+    #[tokio::test]
+    async fn ipv6_bind_syntax_and_default_are_supported() {
+        assert_eq!(parse_bind("::1").unwrap(), ("::1".to_owned(), DEFAULT_PORT));
+        assert_eq!(
+            parse_bind("[::1]:65080").unwrap(),
+            ("::1".to_owned(), 65_080)
+        );
+        let bind = resolve_bind_address("::", 65531).await.unwrap();
+        assert_eq!(bind, "[::]:65531".parse().unwrap());
+        assert!(bind.is_ipv6());
+        for family in ["::1", "127.0.0.1"] {
+            let bind = resolve_bind_address(family, 0).await.unwrap();
+            let socket = std::net::UdpSocket::bind(bind).expect("loopback listener");
+            assert_eq!(socket.local_addr().unwrap().ip(), bind.ip());
+        }
+    }
 
     #[test]
     fn parse_bind_uses_default_port_when_missing() {

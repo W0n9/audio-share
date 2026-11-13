@@ -50,6 +50,16 @@ pub enum IdentityError {
         /// Why the parse failed.
         reason: String,
     },
+    /// Durable pairings exist but the identity key has disappeared.
+    MissingWithAuthorizations {
+        /// The missing identity key.
+        path: PathBuf,
+    },
+    /// The authorization state could not be inspected safely.
+    AuthorizationUnavailable {
+        /// The durable-state load error.
+        reason: String,
+    },
     /// POSIX: the key file or its directory is readable by group/other.
     LoosePermissions {
         /// The offending path.
@@ -72,6 +82,8 @@ impl fmt::Display for IdentityError {
             Self::Corrupted { path, reason } => {
                 write!(f, "server identity key {} is corrupted: {}; v2 stays disabled, reset the identity explicitly to recover", path.display(), reason)
             }
+            Self::MissingWithAuthorizations { path } => write!(f, "server identity key {} is missing while durable Android Client pairings exist; v2 stays disabled, reset identity and authorization together explicitly", path.display()),
+            Self::AuthorizationUnavailable { reason } => write!(f, "authorization state could not be checked before identity provisioning: {reason}; v2 stays disabled"),
             Self::LoosePermissions { path, mode } => write!(
                 f,
                 "server identity {} has loose permissions (mode {:o}); refusing to enable v2 (use --allow-loose-key-permissions to override)",
@@ -114,8 +126,10 @@ impl ServerIdentity {
         let identity_dir = config.data_dir.join("identity");
         let key_path = identity_dir.join(IDENTITY_KEY_FILE);
         let created = !identity_dir.exists();
-        fs::create_dir_all(&identity_dir)
-            .map_err(|source| IdentityError::Io { operation: "create identity directory", source })?;
+        fs::create_dir_all(&identity_dir).map_err(|source| IdentityError::Io {
+            operation: "create identity directory",
+            source,
+        })?;
         // A freshly created directory is tightened to 0700 explicitly
         // (create_dir_all honors the umask, typically 022 → 0755; pairing.md
         // §10.2). An existing directory is never silently repaired: a loose
@@ -144,12 +158,24 @@ impl ServerIdentity {
                 path: key_path.clone(),
                 reason: "not a PKCS#8 PEM private key".to_owned(),
             })?;
-            let key_pair = Ed25519KeyPair::from_pkcs8(&der).map_err(|error| IdentityError::Corrupted {
-                path: key_path.clone(),
-                reason: error.to_string(),
-            })?;
+            let key_pair =
+                Ed25519KeyPair::from_pkcs8(&der).map_err(|error| IdentityError::Corrupted {
+                    path: key_path.clone(),
+                    reason: error.to_string(),
+                })?;
             Ok(Self::from_key_pair(key_pair, der, key_path))
         } else {
+            match crate::auth_store::AuthorizationStore::open(&config.data_dir) {
+                Ok(store) if !store.clients().is_empty() => {
+                    return Err(IdentityError::MissingWithAuthorizations { path: key_path });
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(IdentityError::AuthorizationUnavailable {
+                        reason: error.to_string(),
+                    });
+                }
+            }
             let rng = ring::rand::SystemRandom::new();
             let document = Ed25519KeyPair::generate_pkcs8(&rng)
                 .map_err(|_| IdentityError::Io {
@@ -245,7 +271,9 @@ impl ServerIdentity {
             .expect("TLS 1.3 is available in the rustls ring provider")
             .with_no_client_auth()
             .with_single_cert(
-                vec![rustls_pki_types::CertificateDer::from(certificate.der().to_vec())],
+                vec![rustls_pki_types::CertificateDer::from(
+                    certificate.der().to_vec(),
+                )],
                 rustls_pki_types::PrivateKeyDer::Pkcs8(rustls_pki_types::PrivatePkcs8KeyDer::from(
                     self.pkcs8_der.clone(),
                 )),
@@ -266,11 +294,17 @@ fn check_file_permissions(path: &Path, allow_loose: bool) -> Result<(), Identity
     {
         use std::os::unix::fs::PermissionsExt as _;
         let mode = fs::metadata(path)
-            .map_err(|source| IdentityError::Io { operation: "stat identity key", source })?
+            .map_err(|source| IdentityError::Io {
+                operation: "stat identity key",
+                source,
+            })?
             .permissions()
             .mode();
         if mode & 0o077 != 0 && !allow_loose {
-            return Err(IdentityError::LoosePermissions { path: path.to_path_buf(), mode });
+            return Err(IdentityError::LoosePermissions {
+                path: path.to_path_buf(),
+                mode,
+            });
         }
     }
     #[cfg(windows)]
@@ -290,11 +324,17 @@ fn check_directory_permissions(path: &Path, allow_loose: bool) -> Result<(), Ide
     {
         use std::os::unix::fs::PermissionsExt as _;
         let mode = fs::metadata(path)
-            .map_err(|source| IdentityError::Io { operation: "stat identity directory", source })?
+            .map_err(|source| IdentityError::Io {
+                operation: "stat identity directory",
+                source,
+            })?
             .permissions()
             .mode();
         if mode & 0o077 != 0 && !allow_loose {
-            return Err(IdentityError::LoosePermissions { path: path.to_path_buf(), mode });
+            return Err(IdentityError::LoosePermissions {
+                path: path.to_path_buf(),
+                mode,
+            });
         }
     }
     #[cfg(not(unix))]
@@ -336,11 +376,17 @@ pub(crate) fn atomic_write_with_backup(path: &Path, contents: &str) -> Result<()
         {
             use std::os::unix::fs::PermissionsExt as _;
             fs::set_permissions(&temp, fs::Permissions::from_mode(0o600)).map_err(|source| {
-                IdentityError::Io { operation: "restrict temp file permissions", source }
+                IdentityError::Io {
+                    operation: "restrict temp file permissions",
+                    source,
+                }
             })?;
         }
         io::Write::write_all(&mut file, contents.as_bytes()).map_err(|source| {
-            IdentityError::Io { operation: "write identity key", source }
+            IdentityError::Io {
+                operation: "write identity key",
+                source,
+            }
         })?;
         file.sync_all().map_err(|source| IdentityError::Io {
             operation: "fsync identity key",
@@ -376,7 +422,9 @@ fn pem_to_pkcs8_der(pem: &str) -> Option<Vec<u8>> {
         .filter(|line| !line.trim().starts_with("-----"))
         .collect();
     if pem.trim().starts_with(PEM_BEGIN) && pem.trim().contains(PEM_END) {
-        base64::engine::general_purpose::STANDARD.decode(body.trim()).ok()
+        base64::engine::general_purpose::STANDARD
+            .decode(body.trim())
+            .ok()
     } else {
         None
     }
@@ -400,15 +448,18 @@ mod tests {
     #[test]
     fn fingerprint_is_eight_groups_of_eight_uppercase_hex() {
         // pairing.md §7.4 example shape: "1A2B3C4D 5E6F7081 …" × 8 groups.
-        let digest: Vec<u8> = std::iter::repeat_n([0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81], 4)
-            .flatten()
-            .collect();
+        let digest: Vec<u8> =
+            std::iter::repeat_n([0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81], 4)
+                .flatten()
+                .collect();
         let groups = hex_groups(&digest[..32]);
         let parts: Vec<&str> = groups.split(' ').collect();
         assert_eq!(parts.len(), 8);
         for part in &parts {
             assert_eq!(part.len(), 8);
-            assert!(part.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
+            assert!(part
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
         }
         assert!(groups.starts_with("1A2B3C4D 5E6F7081"));
     }
@@ -456,7 +507,10 @@ mod tests {
     }
 
     fn config(dir: &Path) -> IdentityConfig {
-        IdentityConfig { data_dir: dir.to_path_buf(), allow_loose_permissions: false }
+        IdentityConfig {
+            data_dir: dir.to_path_buf(),
+            allow_loose_permissions: false,
+        }
     }
 
     #[test]
@@ -490,6 +544,32 @@ mod tests {
         assert_eq!(first.public_key_raw(), second.public_key_raw());
         assert_eq!(first.spki_sha256(), second.spki_sha256());
         assert_eq!(first.fingerprint(), second.fingerprint());
+    }
+
+    #[test]
+    fn missing_identity_with_persisted_authorizations_fails_closed() {
+        let dir = TempGuard::new();
+        ServerIdentity::open(&config(&dir.path())).expect("first bootstrapping");
+        let key_path = dir.path().join("identity").join(IDENTITY_KEY_FILE);
+        let store = crate::auth_store::AuthorizationStore::open(&dir.path()).expect("empty store");
+        let key = p256::ecdsa::SigningKey::from_slice(&[7; 32]).expect("valid test key");
+        let public_key = key.verifying_key().to_encoded_point(true);
+        store
+            .upsert(crate::auth_store::StoredClient {
+                client_id: "fixture-client".into(),
+                public_key: public_key.as_bytes().to_vec(),
+                display_name: "Test Phone".into(),
+                state: crate::auth_store::ClientState::Active,
+            })
+            .expect("persist durable pairing");
+        fs::remove_file(&key_path).unwrap();
+
+        let error = ServerIdentity::open(&config(&dir.path())).unwrap_err();
+        assert!(matches!(
+            error,
+            IdentityError::MissingWithAuthorizations { .. }
+        ));
+        assert!(!key_path.exists());
     }
 
     #[test]
@@ -529,7 +609,10 @@ mod tests {
         fs::set_permissions(&key_path, fs::Permissions::from_mode(0o644)).unwrap();
 
         let error = ServerIdentity::open(&config(&dir.path())).expect_err("loose perms refused");
-        assert!(matches!(error, IdentityError::LoosePermissions { .. }), "{error}");
+        assert!(
+            matches!(error, IdentityError::LoosePermissions { .. }),
+            "{error}"
+        );
 
         // The override flag permits the load (pairing.md §10.2).
         let loose = IdentityConfig {
@@ -551,7 +634,10 @@ mod tests {
         let identity_dir = dir.path().join("identity");
         fs::set_permissions(&identity_dir, fs::Permissions::from_mode(0o755)).unwrap();
         let error = ServerIdentity::open(&config(&dir.path())).expect_err("loose dir refused");
-        assert!(matches!(error, IdentityError::LoosePermissions { .. }), "{error}");
+        assert!(
+            matches!(error, IdentityError::LoosePermissions { .. }),
+            "{error}"
+        );
 
         // The override flag permits the load (pairing.md §10.2).
         let loose = IdentityConfig {
@@ -566,8 +652,15 @@ mod tests {
         let dir = TempGuard::new();
         let identity = ServerIdentity::open(&config(&dir.path())).expect("generate");
         let tls = identity.tls_server_config().expect("tls config");
-        assert!(tls.max_early_data_size == 0, "0-RTT must be off by default in the TLS config");
-        assert_eq!(tls.alpn_protocols.len(), 0, "ALPN policy belongs to the transport");
+        assert!(
+            tls.max_early_data_size == 0,
+            "0-RTT must be off by default in the TLS config"
+        );
+        assert_eq!(
+            tls.alpn_protocols.len(),
+            0,
+            "ALPN policy belongs to the transport"
+        );
     }
 
     #[test]

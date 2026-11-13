@@ -6,11 +6,10 @@
 //! pairing/auth/control operation is accepted as early data), idle timeout
 //! 30 s with 10 s keep-alive (D3).
 //!
-//! Capacity (TM-1/TM-2) is enforced at accept: surplus connections are
-//! refused immediately, signaled by the QUIC transport close alone carrying
-//! no application code (§5.2 CONNECTING capacity row: "transport close
-//! carrying 301" rides the connection close once accepted; a pre-handshake
-//! refusal can only use the transport-layer CONNECTION_REFUSED).
+//! Capacity (TM-1/TM-2) is enforced at accept: surplus handshakes perform
+//! one bounded handshake solely to deliver application Close(301), then
+//! terminate without creating a control session. There is no `Incoming::refuse`
+//! path whose transport-only CONNECTION_REFUSED would masquerade as 601.
 //!
 //! Scope boundary: TLS + ALPN + capacity only. Authentication and the §5.2
 //! control-plane table are ticket 07.
@@ -39,10 +38,33 @@ pub struct TransportConfig {
 impl Default for TransportConfig {
     fn default() -> Self {
         Self {
-            bind: SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), DEFAULT_V2_PORT),
+            bind: SocketAddr::new(
+                std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+                DEFAULT_V2_PORT,
+            ),
             limits: Limits::defaults(),
         }
     }
+}
+
+/// Build the listener socket with explicit dual-stack configuration.
+/// Hosts that prohibit IPv4-mapped sockets retain an IPv6-only listener rather than
+/// silently moving to IPv4. This applies to the default configuration and to
+/// explicit `[::]:port` binds alike.
+fn dual_stack_socket(address: SocketAddr) -> std::io::Result<std::net::UdpSocket> {
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(address),
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )?;
+    if address.is_ipv6() {
+        if let Err(error) = socket.set_only_v6(false) {
+            tracing::debug!(%error, "dual stack unavailable; retaining IPv6-only listener");
+        }
+    }
+    socket.bind(&address.into())?;
+    socket.set_nonblocking(true)?;
+    Ok(socket.into())
 }
 
 /// A failure of [`Transport::start`] or the accept loop.
@@ -76,7 +98,9 @@ pub struct Transport {
 
 impl std::fmt::Debug for Transport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Transport").field("local_addr", &self.local_addr).finish()
+        f.debug_struct("Transport")
+            .field("local_addr", &self.local_addr)
+            .finish()
     }
 }
 
@@ -87,8 +111,14 @@ impl Transport {
     /// applies the v2 transport policy on top: TLS 1.3 only, ALPN
     /// `audio-share/v2`, `max_early_data_size = 0`, idle timeout 30 s,
     /// keep-alive 10 s (D3, D7).
-    pub fn start(config: TransportConfig, identity: &ServerIdentity) -> Result<Self, TransportError> {
-        config.limits.validate().map_err(TransportError::InvalidLimits)?;
+    pub fn start(
+        config: TransportConfig,
+        identity: &ServerIdentity,
+    ) -> Result<Self, TransportError> {
+        config
+            .limits
+            .validate()
+            .map_err(TransportError::InvalidLimits)?;
 
         let mut tls = identity
             .tls_server_config()
@@ -99,29 +129,38 @@ impl Transport {
         // operation can arrive as early data.
         tls.max_early_data_size = 0;
 
-        let quic = QuicServerConfig::try_from(tls)
-            .map_err(|error| TransportError::Identity(crate::identity::IdentityError::Io {
+        let quic = QuicServerConfig::try_from(tls).map_err(|error| {
+            TransportError::Identity(crate::identity::IdentityError::Io {
                 operation: "build QUIC TLS session",
                 source: std::io::Error::other(error.to_string()),
-            }))?;
+            })
+        })?;
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic));
 
         let mut transport = quinn::TransportConfig::default();
         // D3: 30 s idle timeout, symmetric; the fallback when a Close cannot
         // be delivered. Explicit value, never a silently inherited default.
         transport.max_idle_timeout(Some(
-            quinn::IdleTimeout::try_from(crate::IDLE_TIMEOUT)
-                .expect("30 s fits the QUIC varint"),
+            quinn::IdleTimeout::try_from(crate::IDLE_TIMEOUT).expect("30 s fits the QUIC varint"),
         ));
         transport.keep_alive_interval(Some(crate::KEEP_ALIVE_INTERVAL));
         server_config.transport_config(Arc::new(transport));
 
-        let endpoint = quinn::Endpoint::server(server_config, config.bind)
-            .map_err(TransportError::Bind)?;
-        let local_addr = endpoint
-            .local_addr()
-            .map_err(TransportError::Bind)?;
-        Ok(Self { endpoint, local_addr })
+        let runtime = quinn::default_runtime()
+            .ok_or_else(|| TransportError::Bind(std::io::Error::other("no async runtime")))?;
+        let socket = dual_stack_socket(config.bind).map_err(TransportError::Bind)?;
+        let endpoint = quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(server_config),
+            socket,
+            runtime,
+        )
+        .map_err(TransportError::Bind)?;
+        let local_addr = endpoint.local_addr().map_err(TransportError::Bind)?;
+        Ok(Self {
+            endpoint,
+            local_addr,
+        })
     }
 
     /// The actual UDP listen address (with the resolved ephemeral port).
@@ -153,7 +192,9 @@ impl Transport {
                 None => {
                     return AcceptedConnection {
                         connection: None,
-                        lifecycle: terminated(Termination::ServerClosed(crate::codes::ErrorCode::SERVER_STOPPING)),
+                        lifecycle: terminated(Termination::ServerClosed(
+                            crate::codes::ErrorCode::SERVER_STOPPING,
+                        )),
                         remote_address: None,
                         capacity: CapacityDecision::Admit,
                     };
@@ -171,9 +212,17 @@ impl Transport {
                         decision = ?over,
                         "v2 connection refused: capacity"
                     );
-                    incoming.refuse();
-                    // Refusal happens pre-handshake; the peer sees the
-                    // transport-level CONNECTION_REFUSED. Count the outcome
+                    // A one-shot handshake, bounded by the same Client timeout,
+                    // lets the peer receive the registry's application close.
+                    // No control stream is accepted and no session is created.
+                    if let Ok(connecting) = incoming.accept() {
+                        spawn_capacity_refusal(
+                            connecting,
+                            CapacityGuard::decision_error_code(over),
+                        );
+                    }
+                    // Count the outcome through the returned lifecycle.
+                    // Count the outcome
                     // through the returned lifecycle.
                     return AcceptedConnection {
                         connection: None,
@@ -207,11 +256,14 @@ impl Transport {
             }
             Err(error) => {
                 guard.handshake_abandoned();
-                let masked = remote_address.map(|address| crate::driver::masked_source(address.ip()));
+                let masked =
+                    remote_address.map(|address| crate::driver::masked_source(address.ip()));
                 tracing::info!(remote = ?masked, error = %error, "v2 handshake failed");
                 AcceptedConnection {
                     connection: None,
-                    lifecycle: terminated(Termination::Lost(crate::codes::ErrorCode::NETWORK_FAILURE)),
+                    lifecycle: terminated(Termination::Lost(
+                        crate::codes::ErrorCode::NETWORK_FAILURE,
+                    )),
                     remote_address,
                     capacity: decision,
                 }
@@ -227,7 +279,10 @@ impl Transport {
     /// (`Arc`) handle can stop too, and the endpoint also stops when the last
     /// handle drops.
     pub fn stop(&self) {
-        self.endpoint.close(quinn::VarInt::from_u32(crate::codes::ErrorCode::SERVER_STOPPING.code), b"server stopping");
+        self.endpoint.close(
+            quinn::VarInt::from_u32(crate::codes::ErrorCode::SERVER_STOPPING.code),
+            b"server stopping",
+        );
     }
 }
 
@@ -267,6 +322,19 @@ pub fn classify_close(error: &quinn::ConnectionError) -> Termination {
     }
 }
 
+/// Complete only enough of a handshake to deliver a coded application close.
+/// A plain `Incoming::refuse()` carries CONNECTION_REFUSED, which clients can
+/// only classify as 601. Refusal tasks are deliberately fire-and-forget and
+/// never run a control loop or await peer data after the close.
+fn spawn_capacity_refusal(connecting: quinn::Connecting, code: crate::codes::ErrorCode) {
+    tokio::spawn(async move {
+        let result = tokio::time::timeout(Duration::from_secs(5), connecting).await;
+        if let Ok(Ok(connection)) = result {
+            connection.close(quinn::VarInt::from_u32(code.code), b"");
+        }
+    });
+}
+
 /// Grace period for teardown tasks (§5.1 CLOSING: 5 s grace timer).
 pub const CLOSING_GRACE: Duration = Duration::from_secs(5);
 
@@ -281,10 +349,7 @@ mod tests {
     use crate::identity::IdentityConfig;
 
     fn temp_data_dir() -> std::path::PathBuf {
-        tempfile::tempdir()
-            .expect("tempdir")
-            .path()
-            .to_path_buf()
+        tempfile::tempdir().expect("tempdir").path().to_path_buf()
     }
 
     fn loopback(port: u16) -> TransportConfig {
@@ -303,11 +368,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn default_is_dual_stack_wildcard() {
+        assert_eq!(
+            TransportConfig::default().bind.ip(),
+            "::".parse::<std::net::Ipv6Addr>().unwrap()
+        );
+        let socket = socket2::Socket::new(
+            socket2::Domain::IPV6,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )
+        .expect("IPv6 socket");
+        socket.set_only_v6(false).expect("dual stack");
+        socket
+            .bind(&TransportConfig::default().bind.into())
+            .expect("default bind");
+        if socket.set_only_v6(false).is_err() {
+            eprintln!("IPv4 mapped sockets are not supported by this host");
+        }
+    }
+
+    #[tokio::test]
     async fn start_binds_requested_port() {
         let dir = temp_data_dir();
         let identity = identity_at(&dir);
         let transport = Transport::start(loopback(0), &identity).expect("start");
-        assert_ne!(transport.local_addr().port(), 0, "OS resolved an ephemeral port");
+        assert_ne!(
+            transport.local_addr().port(),
+            0,
+            "OS resolved an ephemeral port"
+        );
         transport.stop();
     }
 
@@ -352,7 +442,10 @@ mod tests {
         let client_result = client.await;
         assert!(client_result.is_err(), "wrong-ALPN handshake must fail");
         let accepted = server_task.await.expect("accept task");
-        assert!(accepted.connection.is_none(), "no connection comes out of a failed handshake");
+        assert!(
+            accepted.connection.is_none(),
+            "no connection comes out of a failed handshake"
+        );
         assert_eq!(accepted.lifecycle.state(), LifecycleState::Closed);
         transport.stop();
     }
@@ -373,7 +466,10 @@ mod tests {
         let client = connect_with_alpn(address, ALPN_PROTOCOL).expect("client endpoint");
         let connection = client.await.expect("handshake succeeds with matching ALPN");
         let accepted = accept_task.await.expect("accept task");
-        assert!(accepted.connection.is_some(), "server accepted the connection");
+        assert!(
+            accepted.connection.is_some(),
+            "server accepted the connection"
+        );
         assert_eq!(accepted.lifecycle.state(), LifecycleState::Connecting);
         assert_eq!(accepted.capacity, CapacityDecision::Admit);
 
@@ -383,8 +479,10 @@ mod tests {
         send.write_all(b"probe").await.expect("write");
         send.finish().expect("finish");
         let server_connection = accepted.connection.expect("accepted");
-        let (mut server_send, mut server_recv) =
-            server_connection.accept_bi().await.expect("server sees the stream");
+        let (mut server_send, mut server_recv) = server_connection
+            .accept_bi()
+            .await
+            .expect("server sees the stream");
         let mut buf = vec![0u8; 5];
         server_recv.read_exact(&mut buf).await.expect("read");
         assert_eq!(&buf, b"probe");
@@ -394,6 +492,36 @@ mod tests {
         recv.read_exact(&mut ack).await.expect("read ack");
         assert_eq!(&ack, b"ack");
 
+        transport.stop();
+    }
+
+    #[tokio::test]
+    async fn capacity_rejection_observes_application_close_301() {
+        let dir = temp_data_dir();
+        let identity = identity_at(&dir);
+        let mut config = loopback(0);
+        config.limits.max_concurrent_handshakes = 1;
+        let transport = Arc::new(Transport::start(config, &identity).expect("start"));
+        let address = transport.local_addr();
+        let mut guard = CapacityGuard::new(Limits {
+            max_concurrent_handshakes: 1,
+            ..Limits::defaults()
+        });
+        assert_eq!(guard.try_begin_handshake(), CapacityDecision::Admit);
+        let pending = guard.try_begin_handshake();
+        assert_eq!(pending, CapacityDecision::HandshakeBound);
+
+        let client = connect_with_alpn(address, ALPN_PROTOCOL).expect("client endpoint");
+        let accepted = transport.accept_one(&mut guard).await;
+        assert!(accepted.connection.is_none());
+        let connection = client
+            .await
+            .expect("server completes the bounded handshake");
+        let error = connection.closed().await;
+        let quinn::ConnectionError::ApplicationClosed(close) = error else {
+            panic!("expected application close carrying 301, got {error:?}");
+        };
+        assert_eq!(u64::from(close.error_code), 301);
         transport.stop();
     }
 
@@ -421,7 +549,11 @@ mod tests {
         drop(accepted.connection);
         // The guard in the spawned task was local; reconstruct the same state
         // here for the direct-call checks below.
-        let mut guard = CapacityGuard::new(Limits { max_sessions: 1, max_concurrent_handshakes: 1, ..Limits::defaults() });
+        let mut guard = CapacityGuard::new(Limits {
+            max_sessions: 1,
+            max_concurrent_handshakes: 1,
+            ..Limits::defaults()
+        });
         assert_eq!(guard.try_begin_handshake(), CapacityDecision::Admit);
         guard.handshake_completed();
         assert_eq!(guard.try_begin_handshake(), CapacityDecision::SessionBound);
@@ -440,11 +572,17 @@ mod tests {
             reason: Vec::new().into(),
         });
         let termination = classify_close(&app);
-        assert_eq!(termination, Termination::ClientClosed(crate::codes::ErrorCode::CLIENT_STOPPING));
+        assert_eq!(
+            termination,
+            Termination::ClientClosed(crate::codes::ErrorCode::CLIENT_STOPPING)
+        );
 
         // Transport loss (timeout) classifies 601 locally (§5.2).
         let timeout = quinn::ConnectionError::TimedOut;
-        assert_eq!(classify_close(&timeout), Termination::Lost(crate::codes::ErrorCode::NETWORK_FAILURE));
+        assert_eq!(
+            classify_close(&timeout),
+            Termination::Lost(crate::codes::ErrorCode::NETWORK_FAILURE)
+        );
     }
 
     #[test]
@@ -454,67 +592,5 @@ mod tests {
     }
 
     /// A client endpoint with a custom ALPN and an accept-all verifier
-    /// (test-only: the SPKI-pinning client is ticket 08's deliverable).
-    fn connect_with_alpn(
-        address: SocketAddr,
-        alpn: &[u8],
-    ) -> Result<quinn::Connecting, String> {
-        let provider = rustls::crypto::ring::default_provider();
-        let mut crypto = rustls::ClientConfig::builder_with_provider(provider.into())
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .expect("TLS 1.3 available")
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptAny))
-            .with_no_client_auth();
-        crypto.alpn_protocols = vec![alpn.to_vec()];
-        let endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap())
-            .map_err(|error| error.to_string())?;
-        let config = quinn::ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
-                .map_err(|error| error.to_string())?,
-        ));
-        endpoint
-            .connect_with(config, address, "audio-share-server.local")
-            .map_err(|error| error.to_string())
-    }
-
-    /// Test-only verifier: accepts any certificate. Never ships — the
-    /// production client pins the SPKI (pairing.md §11.3).
-    #[derive(Debug)]
-    struct AcceptAny;
-
-    impl rustls::client::danger::ServerCertVerifier for AcceptAny {
-        fn verify_server_cert(
-            &self,
-            _end_entity: &rustls_pki_types::CertificateDer<'_>,
-            _intermediates: &[rustls_pki_types::CertificateDer<'_>],
-            _server_name: &rustls_pki_types::ServerName<'_>,
-            _ocsp: &[u8],
-            _now: rustls_pki_types::UnixTime,
-        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-            Ok(rustls::client::danger::ServerCertVerified::assertion())
-        }
-
-        fn verify_tls12_signature(
-            &self,
-            _message: &[u8],
-            _certificate: &rustls_pki_types::CertificateDer<'_>,
-            _dss: &rustls::DigitallySignedStruct,
-        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-        }
-
-        fn verify_tls13_signature(
-            &self,
-            _message: &[u8],
-            _certificate: &rustls_pki_types::CertificateDer<'_>,
-            _dss: &rustls::DigitallySignedStruct,
-        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-        }
-
-        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-            vec![rustls::SignatureScheme::ED25519]
-        }
-    }
+    use crate::test_support::connect_with_alpn;
 }

@@ -167,7 +167,6 @@ impl CapacityGuard {
     }
 }
 
-
 /// Sliding-window rate accounting keyed by source address (TM-4: 20 auth
 /// failures per sliding 60 s per source → 302).
 ///
@@ -184,7 +183,11 @@ pub struct AddressRateGuard {
 impl AddressRateGuard {
     /// Create a guard with this window and per-address event limit.
     pub fn new(window: Duration, limit: u32) -> Self {
-        Self { window, limit, events: HashMap::new() }
+        Self {
+            window,
+            limit,
+            events: HashMap::new(),
+        }
     }
 
     /// Record an event for the address; `true` when the address has now
@@ -207,7 +210,10 @@ impl AddressRateGuard {
         self.events
             .get(&address)
             .map(|entry| {
-                entry.iter().filter(|instant| now.duration_since(**instant) < self.window).count()
+                entry
+                    .iter()
+                    .filter(|instant| now.duration_since(**instant) < self.window)
+                    .count()
                     >= self.limit as usize
             })
             .unwrap_or(false)
@@ -216,7 +222,9 @@ impl AddressRateGuard {
     /// Drop addresses whose newest event is entirely outside the window.
     fn prune_stale(&mut self, now: Instant) {
         self.events.retain(|_, entry| {
-            entry.iter().any(|instant| now.duration_since(*instant) < self.window)
+            entry
+                .iter()
+                .any(|instant| now.duration_since(*instant) < self.window)
         });
     }
 
@@ -265,7 +273,10 @@ pub struct OutstandingRequests {
 impl OutstandingRequests {
     /// A fresh counter with the configured bound.
     pub fn new(limit: u32) -> Self {
-        Self { pending: std::collections::HashSet::new(), limit: limit as usize }
+        Self {
+            pending: std::collections::HashSet::new(),
+            limit: limit as usize,
+        }
     }
 
     /// Admit a request, or return false when the bound is already reached
@@ -401,7 +412,10 @@ mod tests {
         for _ in 0..16 {
             assert_eq!(guard.try_begin_handshake(), CapacityDecision::Admit);
         }
-        assert_eq!(guard.try_begin_handshake(), CapacityDecision::HandshakeBound);
+        assert_eq!(
+            guard.try_begin_handshake(),
+            CapacityDecision::HandshakeBound
+        );
         // Abandoning releases the slot.
         guard.handshake_abandoned();
         assert_eq!(guard.try_begin_handshake(), CapacityDecision::Admit);
@@ -409,7 +423,10 @@ mod tests {
 
     #[test]
     fn capacity_guard_session_bound_outranks_handshake_bound() {
-        let mut guard = CapacityGuard::new(Limits { max_sessions: 1, ..Limits::defaults() });
+        let mut guard = CapacityGuard::new(Limits {
+            max_sessions: 1,
+            ..Limits::defaults()
+        });
         assert_eq!(guard.try_begin_handshake(), CapacityDecision::Admit);
         guard.handshake_completed();
         // 1 established session fills the whole table: 301 regardless of the
@@ -456,7 +473,10 @@ mod tests {
             guard.record(a, now);
         }
         assert!(guard.is_limited(a, now));
-        assert!(!guard.is_limited(b, now), "another source is unaffected (TM-4)");
+        assert!(
+            !guard.is_limited(b, now),
+            "another source is unaffected (TM-4)"
+        );
         assert_eq!(guard.tracked_addresses(), 1);
     }
 
@@ -466,7 +486,10 @@ mod tests {
         for id in 1..=8 {
             assert!(guard.track(id), "request {id} is within the bound");
         }
-        assert!(!guard.track(9), "the 9th outstanding request is over the bound");
+        assert!(
+            !guard.track(9),
+            "the 9th outstanding request is over the bound"
+        );
         assert!(!guard.track(1), "a duplicate in-flight id is refused");
         guard.complete(1);
         assert_eq!(guard.outstanding(), 7);
@@ -491,14 +514,20 @@ mod tests {
         // Pre-auth errors are small and carry no detail.
         assert_eq!(outbound_limit_violation(&error(""), false), None);
         // Post-auth errors may carry detail, within TM-7.
-        assert_eq!(outbound_limit_violation(&error(&"x".repeat(256)), true), None);
+        assert_eq!(
+            outbound_limit_violation(&error(&"x".repeat(256)), true),
+            None
+        );
         assert!(outbound_limit_violation(&error(&"x".repeat(257)), true).is_some());
         assert!(outbound_limit_violation(&error(&"x".repeat(600)), true).is_some());
         // The same detail before authentication is refused outright.
         assert!(outbound_limit_violation(&error("leak"), false).is_some());
 
         let close = |detail: &str| Frame {
-            body: Some(frame::Body::Close(Close { code: 203, detail: detail.to_owned() })),
+            body: Some(frame::Body::Close(Close {
+                code: 203,
+                detail: detail.to_owned(),
+            })),
         };
         assert_eq!(outbound_limit_violation(&close(""), false), None);
         assert!(
@@ -522,7 +551,10 @@ mod tests {
                 display_name: display_name.to_owned(),
             })),
         };
-        assert_eq!(outbound_limit_violation(&pairing("Test Phone"), false), None);
+        assert_eq!(
+            outbound_limit_violation(&pairing("Test Phone"), false),
+            None
+        );
         assert!(
             outbound_limit_violation(&pairing(&"x".repeat(400)), false).is_some(),
             "the successful PairingResponse exception is capped at 320 B"

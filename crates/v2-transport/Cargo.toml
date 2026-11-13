@@ -8,9 +8,11 @@ rust-version.workspace = true
 
 [dependencies]
 prost.workspace = true
+wire-protocol-transcript = { path = "transcript" }
 sha2.workspace = true
 tokio.workspace = true
 tracing = "0.1"
+socket2 = { version = "0.6", features = ["all"] }
 
 # Production: the Server verifies Client proofs with ECDSA P-256 (pairing.md
 # PR-9); the authorization store is JSON (pairing.md §8.1).

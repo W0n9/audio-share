@@ -19,7 +19,9 @@ fn ipv4_source_keeps_only_the_first_two_octets() {
 
 #[test]
 fn ipv6_source_keeps_only_the_first_two_segments() {
-    let source = "2001:db8:1234:5678:9abc:def0:1234:5678".parse().expect("IPv6");
+    let source = "2001:db8:1234:5678:9abc:def0:1234:5678"
+        .parse()
+        .expect("IPv6");
     assert_eq!(masked_source(source), "2001:db8::");
 }
 
@@ -37,7 +39,10 @@ impl Capture {
 
 impl io::Write for Capture {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.buffer.lock().expect("capture lock").extend_from_slice(bytes);
+        self.buffer
+            .lock()
+            .expect("capture lock")
+            .extend_from_slice(bytes);
         Ok(bytes.len())
     }
 
@@ -87,67 +92,7 @@ fn identity() -> (tempfile::TempDir, ServerIdentity) {
     (dir, identity)
 }
 
-fn connect_with_alpn(
-    address: std::net::SocketAddr,
-    alpn: &[u8],
-) -> Result<quinn::Connecting, String> {
-    let provider = rustls::crypto::ring::default_provider();
-    let mut crypto = rustls::ClientConfig::builder_with_provider(provider.into())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .expect("TLS 1.3 available")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAny))
-        .with_no_client_auth();
-    crypto.alpn_protocols = vec![alpn.to_vec()];
-    let endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().expect("client bind"))
-        .map_err(|error| error.to_string())?;
-    let config = quinn::ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
-            .map_err(|error| error.to_string())?,
-    ));
-    endpoint
-        .connect_with(config, address, "audio-share-server.local")
-        .map_err(|error| error.to_string())
-}
-
-/// Test-only verifier: accepts any certificate (pairing.md §11.3).
-#[derive(Debug)]
-struct AcceptAny;
-
-impl rustls::client::danger::ServerCertVerifier for AcceptAny {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls_pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
-        _server_name: &rustls_pki_types::ServerName<'_>,
-        _ocsp: &[u8],
-        _now: rustls_pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _certificate: &rustls_pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _certificate: &rustls_pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![rustls::SignatureScheme::ED25519]
-    }
-}
+use v2_transport::test_support::connect_with_alpn;
 
 #[tokio::test]
 async fn capacity_refusal_log_masks_the_remote_address() {
@@ -163,7 +108,11 @@ async fn capacity_refusal_log_masks_the_remote_address() {
     let address = transport.local_addr();
     let client = connect_with_alpn(address, ALPN_PROTOCOL).expect("client endpoint");
     let (accepted, client_result) = tokio::join!(transport.accept_one(&mut guard), client);
-    assert!(client_result.is_err(), "a capacity-refused handshake must fail");
+    let connection = client_result.expect("coded refusal completes its bounded handshake");
+    assert!(matches!(
+        connection.closed().await,
+        quinn::ConnectionError::ApplicationClosed(close) if u64::from(close.error_code) == 301
+    ));
     assert!(accepted.connection.is_none(), "no session is admitted");
     let raw = accepted.remote_address.expect("peer address").to_string();
 
@@ -204,12 +153,11 @@ async fn failed_handshake_log_masks_the_remote_address() {
     let address = transport.local_addr();
     let mut guard = CapacityGuard::new(Limits::defaults());
     let client = connect_with_alpn(address, b"audio-share/v1").expect("client endpoint");
-    let (accepted, client_result) =
-        tokio::time::timeout(Duration::from_secs(5), async {
-            tokio::join!(transport.accept_one(&mut guard), client)
-        })
-        .await
-        .expect("handshake failure timeout");
+    let (accepted, client_result) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(transport.accept_one(&mut guard), client)
+    })
+    .await
+    .expect("handshake failure timeout");
     assert!(client_result.is_err(), "wrong ALPN must fail the handshake");
     assert!(accepted.connection.is_none());
     let raw = accepted.remote_address.expect("peer address").to_string();
