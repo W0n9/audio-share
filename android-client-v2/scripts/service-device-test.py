@@ -42,6 +42,8 @@ try:
     for line in process.stdout:
         lines.append(line)
         if "AWAITING_ACTIVITY" in line and not launched:
+            # 长时间构建后设备可能已休眠；普通 UI 测试需先唤醒，不处理解锁密码。
+            wake_screen(args.serial, strict=True)
             launched = True
             launch = ["adb", "-s", args.serial, "shell", "am", "start", "-W", "-f", "0x10008000",
                       "-n", "dev.audioshare.v2/.MainActivity"]

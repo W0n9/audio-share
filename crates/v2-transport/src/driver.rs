@@ -69,10 +69,10 @@ struct SessionHandle {
     events: mpsc::UnboundedSender<DriverEvent>,
 }
 
-// Keep the existing driver::CaptureSnapshot import path for callers.
+// 为调用者保留既有 driver::CaptureSnapshot 导入路径。
 pub use crate::state_machine::CaptureSnapshot;
 
-/// Provider of the live capture snapshot, read before each control request.
+/// 每个控制请求前读取的实时 capture 快照来源。
 pub type CaptureStateSource = dyn Fn() -> CaptureSnapshot + Send + Sync;
 
 /// The v2 Server session layer: shared configuration + the per-Client
@@ -83,10 +83,9 @@ pub struct SessionServer {
     pub server_public_key: Vec<u8>,
     /// Accepted protocol minor within major 2.
     pub protocol_minor: u32,
-    /// Static capture observation when no live source is installed.
+    /// 未设置实时来源时使用的静态 capture 观察值。
     pub capture: CaptureSnapshot,
-    /// Optional live capture-state source; when set it overrides `capture`
-    /// before every control request.
+    /// 可选实时 capture 来源；设置后在每个控制请求前覆盖 `capture`。
     pub capture_source: Option<Arc<CaptureStateSource>>,
     /// Server-wide limits (spec §10); auth-failure fields feed TM-4/TM-5.
     pub limits: Limits,
@@ -352,9 +351,8 @@ impl SessionServer {
                                         );
                                     }
                                 }
-                                // Capture can end while this session stays READY
-                                // (ADR-0003). Never use the connection's startup
-                                // health for Subscribe/configuration/stream data.
+                                // READY 会话期间 capture 可能结束（ADR-0003）；
+                                // Subscribe/配置/流信息不得继续使用连接启动时的健康值。
                                 machine.update_capture(self.capture_snapshot());
                                 let before = machine.auth_failures();
                                 let mut outcomes = machine.handle(Event::Frame {
