@@ -1,0 +1,6 @@
+Command: 筛选本次 Server 应用日志的 v2 session ended / 701，不保留 TLS trace
+
+[2026-11-13 10:57:09.783] [debug] v2 session ended source=0:0:: code=701
+[2026-11-13 10:57:09.784] [info] v2 session ended: ClientClosed(ErrorCode { code: 701, retryable: false, requires_repairing: false }) remote=0:0::
+[2026-11-13 11:09:22.402] [debug] v2 session ended source=0:0:: code=701
+[2026-11-13 11:09:22.402] [info] v2 session ended: ClientClosed(ErrorCode { code: 701, retryable: false, requires_repairing: false }) remote=0:0::

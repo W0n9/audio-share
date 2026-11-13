@@ -12,7 +12,7 @@ class SessionStateRelay @JvmOverloads constructor(initialListener: ((String) -> 
 
     fun snapshot(): String = synchronized(lock) { state }
 
-    /** Unscoped publication retained for existing callers; sessions use [Source]. */
+    /** 保留既有调用者的无来源发布接口；会话使用 [Source]。 */
     fun publish(next: String) {
         if (next.isEmpty()) return
         synchronized(lock) { publishLocked(next) }
@@ -27,7 +27,7 @@ class SessionStateRelay @JvmOverloads constructor(initialListener: ((String) -> 
         listener?.invoke(next)
     }
 
-    /** A new native session has its own event source, even if its handle is reused. */
+    /** 每个新 native 会话有独立事件来源，即使数值 handle 被复用。 */
     fun beginSession(): Source = synchronized(lock) {
         Source().also { activeSource = it; publishLocked("IDLE") }
     }
@@ -37,19 +37,17 @@ class SessionStateRelay @JvmOverloads constructor(initialListener: ((String) -> 
 
         fun isCurrent(): Boolean = synchronized(lock) { activeSource === this && !closed }
 
-        /** Native reads never hold the publication lock. A STOP/new session
-         * during the read invalidates this source before its result is committed. */
+        /** native 读取不持有发布锁；读取期间的 STOP/新会话会在提交结果前使旧来源失效。 */
         fun poll(readNativeState: () -> String): String {
             val next = readNativeState()
             return if (publish(next, terminal = next == "CLOSED")) next else ""
         }
 
-        /** Forward a state for this owner. Native CLOSED ends its native source
-         * in [poll]; a Service owner stays valid across reconnect until [close]. */
+        /** 转发此所有者的状态；[poll] 中 native CLOSED 终止 native 来源，
+         * Service 所有者则保持到 [close]，允许合法重连。 */
         fun publish(next: String): Boolean = publish(next, terminal = false)
 
-        /** Source validation, terminal state and callback publication are one
-         * operation, so a checked-but-late READY cannot follow CLOSED. */
+        /** 来源校验、终态写入与回调发布原子化，避免已检查但迟到的 READY 跟在 CLOSED 后面。 */
         private fun publish(next: String, terminal: Boolean): Boolean = synchronized(lock) {
             if (next.isEmpty() || activeSource !== this || closed) return false
             if (terminal) closed = true
