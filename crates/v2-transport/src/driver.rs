@@ -260,9 +260,7 @@ impl SessionServer {
                                         )
                                         .await
                                     {
-                                        watcher.abort();
-                                        self.release(&machine, registered);
-                                        return termination;
+                                        return self.terminate(&watcher, &machine, registered, termination);
                                     }
                                     self.sync_registry(&machine, &event_tx, &mut registered);
                                     continue;
@@ -290,9 +288,7 @@ impl SessionServer {
                                             )
                                             .await
                                         {
-                                            watcher.abort();
-                                            self.release(&machine, registered);
-                                            return termination;
+                                            return self.terminate(&watcher, &machine, registered, termination);
                                         }
                                         continue;
                                     }
@@ -329,9 +325,7 @@ impl SessionServer {
                                         )
                                         .await
                                     {
-                                        watcher.abort();
-                                        self.release(&machine, registered);
-                                        return termination;
+                                        return self.terminate(&watcher, &machine, registered, termination);
                                     }
                                     continue;
                                 }
@@ -395,9 +389,7 @@ impl SessionServer {
                                     )
                                     .await
                                 {
-                                    watcher.abort();
-                                    self.release(&machine, registered);
-                                    return termination;
+                                    return self.terminate(&watcher, &machine, registered, termination);
                                 }
                                 self.sync_registry(&machine, &event_tx, &mut registered);
                             }
@@ -430,9 +422,7 @@ impl SessionServer {
                         )
                         .await
                     {
-                        watcher.abort();
-                        self.release(&machine, registered);
-                        return termination;
+                        return self.terminate(&watcher, &machine, registered, termination);
                     }
                     self.sync_registry(&machine, &event_tx, &mut registered);
                 }
@@ -451,9 +441,7 @@ impl SessionServer {
                         )
                         .await
                     {
-                        watcher.abort();
-                        self.release(&machine, registered);
-                        return termination;
+                        return self.terminate(&watcher, &machine, registered, termination);
                     }
                 }
                 _ = revocation.tick() => {
@@ -478,9 +466,7 @@ impl SessionServer {
                         )
                         .await
                     {
-                        watcher.abort();
-                        self.release(&machine, registered);
-                        return termination;
+                        return self.terminate(&watcher, &machine, registered, termination);
                     }
                 }
                 error = connection.closed() => {
@@ -490,15 +476,11 @@ impl SessionServer {
                 _ = &mut grace, if grace_armed => {
                     let code = closing_code.unwrap_or(ErrorCode::NETWORK_FAILURE);
                     connection.close(quinn::VarInt::from_u32(code.code), b"");
-                    watcher.abort();
-                    self.release(&machine, registered);
-                    return Termination::ServerClosed(code);
+                    return self.terminate(&watcher, &machine, registered, Termination::ServerClosed(code));
                 }
             }
         }
 
-        watcher.abort();
-        self.release(&machine, registered);
         let termination = match closed_by_peer {
             Some(error) => {
                 let classified = classify_close(&error);
@@ -513,6 +495,20 @@ impl SessionServer {
             None => Termination::Lost(ErrorCode::NETWORK_FAILURE),
         };
         tracing::debug!(source = %masked, code = termination.code().code, "v2 session ended");
+        self.terminate(&watcher, &machine, registered, termination)
+    }
+
+    /// Stop the second-stream watcher and release the registered session once
+    /// on every terminal path, preserving the existing flush classification.
+    fn terminate(
+        &self,
+        watcher: &tokio::task::JoinHandle<()>,
+        machine: &StateMachine,
+        registered: Option<u64>,
+        termination: Termination,
+    ) -> Termination {
+        watcher.abort();
+        self.release(machine, registered);
         termination
     }
 

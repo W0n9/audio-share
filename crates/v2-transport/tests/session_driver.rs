@@ -145,64 +145,7 @@ async fn connect(address: SocketAddr) -> quinn::Connection {
         .expect("handshake")
 }
 
-fn connect_with_alpn(address: SocketAddr, alpn: &[u8]) -> Result<quinn::Connecting, String> {
-    let provider = rustls::crypto::ring::default_provider();
-    let mut crypto = rustls::ClientConfig::builder_with_provider(provider.into())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .expect("TLS 1.3 available")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAny))
-        .with_no_client_auth();
-    crypto.alpn_protocols = vec![alpn.to_vec()];
-    let endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap())
-        .map_err(|error| error.to_string())?;
-    let config = quinn::ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
-            .map_err(|error| error.to_string())?,
-    ));
-    endpoint
-        .connect_with(config, address, "audio-share-server.local")
-        .map_err(|error| error.to_string())
-}
-
-/// Test-only verifier: accepts any certificate (pairing.md §11.3).
-#[derive(Debug)]
-struct AcceptAny;
-
-impl rustls::client::danger::ServerCertVerifier for AcceptAny {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls_pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
-        _server_name: &rustls_pki_types::ServerName<'_>,
-        _ocsp: &[u8],
-        _now: rustls_pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _certificate: &rustls_pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _certificate: &rustls_pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![rustls::SignatureScheme::ED25519]
-    }
-}
+pub use v2_transport::test_support::connect_with_alpn;
 
 async fn read_frame(recv: &mut quinn::RecvStream) -> Frame {
     let mut prefix = [0u8; 4];
@@ -765,6 +708,10 @@ async fn deleting_the_record_ends_the_live_session_and_rejects_reconnects() {
         1,
     )
     .await;
-    assert_eq!(status_code(&result.status), 0, "re-added record authorizes again");
+    assert_eq!(
+        status_code(&result.status),
+        0,
+        "re-added record authorizes again"
+    );
     server.transport.stop();
 }

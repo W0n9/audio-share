@@ -27,6 +27,8 @@
 - `android-app/` v0.3.4 线构建/测试不受影响。
 - 真机安装冒烟（adb install + 启动到 IDLE 即可；完整握手联调在 09）。
 
+## Comments
+
 ### 2026-11-12 — implemented on `ticket/08-android-client-v2`（final commit：本条注释所在 commit）
 
 除真机冒烟外全部 DoD 项完成；冒烟因设备不可达记 NOT RUN（见末条），故 Status 置 `ready-for-human`。

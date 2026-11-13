@@ -88,8 +88,10 @@ pub extern "system" fn Java_dev_audioshare_v2_ClientNative_createSession(
         }
         let mut server_public_key = Vec::with_capacity(32);
         for i in 0..server_key_hex.len() / 2 {
-            server_public_key
-                .push(u8::from_str_radix(&server_key_hex[2 * i..2 * i + 2], 16).map_err(|e| e.to_string())?);
+            server_public_key.push(
+                u8::from_str_radix(&server_key_hex[2 * i..2 * i + 2], 16)
+                    .map_err(|e| e.to_string())?,
+            );
         }
         let session = Session::new(SessionConfig {
             host,
@@ -128,7 +130,10 @@ pub extern "system" fn Java_dev_audioshare_v2_ClientNative_connect(
             if addr.is_empty() {
                 None
             } else {
-                Some(addr.parse().map_err(|_| format!("bad bind address {addr:?}"))?)
+                Some(
+                    addr.parse()
+                        .map_err(|_| format!("bad bind address {addr:?}"))?,
+                )
             }
         };
         s.connect(bind).map(|_| true)

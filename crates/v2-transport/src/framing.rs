@@ -59,9 +59,7 @@ pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>, FrameError> {
     }
     let mut out = Vec::with_capacity(LENGTH_PREFIX_BYTES + body_len);
     out.extend_from_slice(&(body_len as u32).to_be_bytes());
-    frame
-        .encode(&mut out)
-        .map_err(|_| FrameError::Encode)?;
+    frame.encode(&mut out).map_err(|_| FrameError::Encode)?;
     Ok(out)
 }
 
@@ -163,7 +161,10 @@ impl FrameReader {
                 let body: Vec<u8> = self.buffer.drain(..body_len).collect();
                 self.expect_body = None;
                 let frame = decode_body(&body)?;
-                out.push(InboundFrame { frame, length: body_len });
+                out.push(InboundFrame {
+                    frame,
+                    length: body_len,
+                });
             } else {
                 if self.buffer.len() < LENGTH_PREFIX_BYTES {
                     return Ok(out);
@@ -204,7 +205,10 @@ mod tests {
 
     fn close_frame(code: u32) -> Frame {
         Frame {
-            body: Some(frame::Body::Close(Close { code, detail: String::new() })),
+            body: Some(frame::Body::Close(Close {
+                code,
+                detail: String::new(),
+            })),
         }
     }
 
@@ -217,7 +221,10 @@ mod tests {
     }
 
     fn unhex(s: &str) -> Vec<u8> {
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     #[test]
@@ -231,13 +238,19 @@ mod tests {
     #[test]
     fn length_prefix_zero_rejects() {
         // Fixture control.error-401-frame-length-zero: raw-stream "00000000".
-        assert_eq!(check_length_prefix([0x00, 0x00, 0x00, 0x00]), LengthCheck::Reject);
+        assert_eq!(
+            check_length_prefix([0x00, 0x00, 0x00, 0x00]),
+            LengthCheck::Reject
+        );
     }
 
     #[test]
     fn length_prefix_65537_rejects_on_prefix_alone() {
         // Fixture control.error-401-frame-length-oversize: raw-stream "00010001".
-        assert_eq!(check_length_prefix([0x00, 0x01, 0x00, 0x01]), LengthCheck::Reject);
+        assert_eq!(
+            check_length_prefix([0x00, 0x01, 0x00, 0x01]),
+            LengthCheck::Reject
+        );
     }
 
     #[test]
@@ -275,7 +288,12 @@ mod tests {
         assert_eq!(frames[0].length, 5);
         assert_eq!(
             frames[0].frame,
-            Frame { body: Some(frame::Body::Close(Close { code: 701, detail: String::new() })) }
+            Frame {
+                body: Some(frame::Body::Close(Close {
+                    code: 701,
+                    detail: String::new()
+                }))
+            }
         );
     }
 
@@ -323,13 +341,19 @@ mod tests {
 
     #[test]
     fn oversized_outbound_encoding_is_rejected() {
-        let mut frame = Frame { body: Some(frame::Body::Subscribe(crate::schema::Subscribe { request_id: 1 })) };
+        let mut frame = Frame {
+            body: Some(frame::Body::Subscribe(crate::schema::Subscribe {
+                request_id: 1,
+            })),
+        };
         // Pad past the cap with an unknown field (field 1000, length-delim).
         // Build manually: tag 0xC2 3E (field 1000, wire type 2), varint length
         // 65519, then zeros — the shape limits/frame-cap-65536-accepted pins.
         frame.body = None;
         let err = encode_frame(&Frame { body: None }).unwrap_err();
-        assert!(matches!(err, FrameError::UnsetBody) || matches!(err, FrameError::LengthOutOfBounds(_)));
+        assert!(
+            matches!(err, FrameError::UnsetBody) || matches!(err, FrameError::LengthOutOfBounds(_))
+        );
         assert!(!hex(&[0]).is_empty()); // keep hex helper used
     }
 }

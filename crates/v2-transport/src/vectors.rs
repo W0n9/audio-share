@@ -27,7 +27,9 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::framing::{check_length_prefix, decode_body, encode_frame, encode_body, FrameReader, LengthCheck};
+use crate::framing::{
+    check_length_prefix, decode_body, encode_body, encode_frame, FrameReader, LengthCheck,
+};
 use crate::schema::{frame, Codec, Frame, PairingMode, Status};
 
 /// One replayed case summary.
@@ -212,13 +214,21 @@ pub fn replay_case(_relative: &str, case: &FixtureCase, report: &mut ReplayRepor
         match step.kind.as_str() {
             "frame" => {
                 if let Err(message) = replay_frame_step(case, step_index, step, &mut checks) {
-                    report.failures.push(Failure { case: case.id.clone(), step: step_index, message });
+                    report.failures.push(Failure {
+                        case: case.id.clone(),
+                        step: step_index,
+                        message,
+                    });
                     return;
                 }
             }
             "raw-stream" => {
                 if let Err(message) = replay_raw_stream_step(case, step_index, step, &mut checks) {
-                    report.failures.push(Failure { case: case.id.clone(), step: step_index, message });
+                    report.failures.push(Failure {
+                        case: case.id.clone(),
+                        step: step_index,
+                        message,
+                    });
                     return;
                 }
             }
@@ -240,7 +250,10 @@ pub fn replay_case(_relative: &str, case: &FixtureCase, report: &mut ReplayRepor
             "datagram" => {
                 // Media-plane steps are ticket-10 scope (spec §7); the
                 // control-plane harness skips them with a recorded reason.
-                report.skipped.push((case.id.clone(), "datagram step (media plane, ticket 10+)".to_owned()));
+                report.skipped.push((
+                    case.id.clone(),
+                    "datagram step (media plane, ticket 10+)".to_owned(),
+                ));
                 return;
             }
             other => {
@@ -258,13 +271,16 @@ pub fn replay_case(_relative: &str, case: &FixtureCase, report: &mut ReplayRepor
     // id-based (auth-*/pairing-* cover every signature-carrying case in the
     // fixture set, including error-203-authentication-failed, whose "auth"
     // prefix is inside "authentication").
-    let carries_crypto = case.id.contains("auth")
-        || case.id.contains("pairing");
+    let carries_crypto = case.id.contains("auth") || case.id.contains("pairing");
     if carries_crypto {
         match verify_case_signatures(case) {
             Ok(check) => checks.push(check),
             Err(message) => {
-                report.failures.push(Failure { case: case.id.clone(), step: 0, message });
+                report.failures.push(Failure {
+                    case: case.id.clone(),
+                    step: 0,
+                    message,
+                });
                 return;
             }
         }
@@ -273,13 +289,20 @@ pub fn replay_case(_relative: &str, case: &FixtureCase, report: &mut ReplayRepor
     // Size bounds.
     for bound in &case.size_bounds {
         if let Err(message) = check_size_bound(case, bound) {
-            report.failures.push(Failure { case: case.id.clone(), step: 0, message });
+            report.failures.push(Failure {
+                case: case.id.clone(),
+                step: 0,
+                message,
+            });
             return;
         }
         checks.push("size-bound");
     }
 
-    report.cases.push(CaseReport { id: case.id.clone(), checks });
+    report.cases.push(CaseReport {
+        id: case.id.clone(),
+        checks,
+    });
 }
 
 fn replay_frame_step(
@@ -322,14 +345,20 @@ fn replay_frame_step(
                 return Ok(());
             }
             Err(error) => {
-                return Err(format!("step {step_index}: fixture body does not decode: {error}"))
+                return Err(format!(
+                    "step {step_index}: fixture body does not decode: {error}"
+                ))
             }
         };
         // The nested known message (if any) drives the parsed body; unknown
         // fields alone leave the body unset → malformed (spec §4.4).
         let nested = decoded
             .get("subscribe")
-            .or_else(|| decoded.get("unknown_field_1000").and_then(|u| u.get("subscribe")))
+            .or_else(|| {
+                decoded
+                    .get("unknown_field_1000")
+                    .and_then(|u| u.get("subscribe"))
+            })
             .and_then(|s| s.as_object());
         if let Some(nested) = nested {
             let expected = Frame {
@@ -370,7 +399,13 @@ fn replay_frame_step(
 
     // Build the message from `decoded` (encoding direction). The step's
     // normalized `message` label disambiguates the bare-request_id shapes.
-    let built = build_frame(decoded, step.has_unknown_fields, case, step_index, step.message_name())?;
+    let built = build_frame(
+        decoded,
+        step.has_unknown_fields,
+        case,
+        step_index,
+        step.message_name(),
+    )?;
 
     // 1. Encoding: serialize the built message; MUST equal the fixture bytes.
     let encoded = encode_body(&built)
@@ -421,7 +456,9 @@ fn replay_raw_stream_step(
         .ok_or_else(|| "raw-stream step without bytes_hex".to_owned())?;
     let bytes = unhex(bytes_hex);
     if bytes.len() < 4 {
-        return Err(format!("step {step_index}: raw-stream shorter than a length prefix"));
+        return Err(format!(
+            "step {step_index}: raw-stream shorter than a length prefix"
+        ));
     }
     let mut prefix = [0u8; 4];
     prefix.copy_from_slice(&bytes[..4]);
@@ -457,7 +494,10 @@ fn replay_raw_stream_step(
 // ---------------------------------------------------------------------------
 
 fn req_id(object: &serde_json::Map<String, serde_json::Value>) -> u64 {
-    object.get("request_id").and_then(|v| v.as_u64()).unwrap_or(0)
+    object
+        .get("request_id")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
 }
 
 fn bytes_field(object: &serde_json::Map<String, serde_json::Value>, name: &str) -> Vec<u8> {
@@ -484,7 +524,12 @@ fn u32_list(object: &serde_json::Map<String, serde_json::Value>, name: &str) -> 
     object
         .get(name)
         .and_then(|v| v.as_array())
-        .map(|list| list.iter().filter_map(|v| v.as_u64()).map(|v| v as u32).collect())
+        .map(|list| {
+            list.iter()
+                .filter_map(|v| v.as_u64())
+                .map(|v| v as u32)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -539,21 +584,32 @@ fn build_frame(
     // object's shape decides the case. Match by the discriminating keys.
     let body = match object {
         // AuthInit: client_public_key present.
-        o if o.contains_key("client_public_key") && o.contains_key("request_id") && !o.contains_key("client_name") && !o.contains_key("signature") && !o.contains_key("server_random") && !o.contains_key("session_id") && !o.contains_key("protocol_major") && !o.contains_key("pairing_mode") && !o.contains_key("binding_echo") && !o.contains_key("code") => {
+        o if o.contains_key("client_public_key")
+            && o.contains_key("request_id")
+            && !o.contains_key("client_name")
+            && !o.contains_key("signature")
+            && !o.contains_key("server_random")
+            && !o.contains_key("session_id")
+            && !o.contains_key("protocol_major")
+            && !o.contains_key("pairing_mode")
+            && !o.contains_key("binding_echo")
+            && !o.contains_key("code") =>
+        {
             frame::Body::AuthInit(crate::schema::AuthInit {
                 request_id: req_id(o),
                 client_public_key: bytes_field(o, "client_public_key"),
             })
         }
         // AuthProof: signature present.
-        o if o.contains_key("signature") => {
-            frame::Body::AuthProof(crate::schema::AuthProof {
-                request_id: req_id(o),
-                signature: bytes_field(o, "signature"),
-            })
-        }
+        o if o.contains_key("signature") => frame::Body::AuthProof(crate::schema::AuthProof {
+            request_id: req_id(o),
+            signature: bytes_field(o, "signature"),
+        }),
         // AuthChallenge: server_random present, no status.
-        o if o.contains_key("server_random") && !o.contains_key("status") && !o.contains_key("pairing_mode") => {
+        o if o.contains_key("server_random")
+            && !o.contains_key("status")
+            && !o.contains_key("pairing_mode") =>
+        {
             frame::Body::AuthChallenge(crate::schema::AuthChallenge {
                 request_id: req_id(o),
                 server_random: bytes_field(o, "server_random"),
@@ -593,12 +649,10 @@ fn build_frame(
                 client_proof: bytes_field(o, "client_proof"),
             })
         }
-        o if message_name == Some("auth_init") => {
-            frame::Body::AuthInit(crate::schema::AuthInit {
-                request_id: req_id(o),
-                client_public_key: bytes_field(o, "client_public_key"),
-            })
-        }
+        o if message_name == Some("auth_init") => frame::Body::AuthInit(crate::schema::AuthInit {
+            request_id: req_id(o),
+            client_public_key: bytes_field(o, "client_public_key"),
+        }),
         o if message_name == Some("auth_proof") => {
             frame::Body::AuthProof(crate::schema::AuthProof {
                 request_id: req_id(o),
@@ -651,7 +705,10 @@ fn build_frame(
             frame::Body::StreamStarted(crate::schema::StreamStarted {
                 stream_instance_id: u32_field(o, "stream_instance_id"),
                 config_generation: u32_field(o, "config_generation"),
-                initial_timestamp: o.get("initial_timestamp").and_then(|v| v.as_u64()).unwrap_or(0),
+                initial_timestamp: o
+                    .get("initial_timestamp")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
             })
         }
         o if message_name == Some("stream_ended") => {
@@ -665,28 +722,76 @@ fn build_frame(
             frame::Body::PlaybackDiagnostics(crate::schema::PlaybackDiagnostics {
                 stream_instance_id: u32_field(o, "stream_instance_id"),
                 config_generation: u32_field(o, "config_generation"),
-                extended_highest_sequence: o.get("extended_highest_sequence").and_then(|v| v.as_u64()).unwrap_or(0),
-                cumulative_lost: o.get("cumulative_lost").and_then(|v| v.as_i64()).unwrap_or(0),
+                extended_highest_sequence: o
+                    .get("extended_highest_sequence")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cumulative_lost: o
+                    .get("cumulative_lost")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0),
                 interval_lost: o.get("interval_lost").and_then(|v| v.as_i64()).unwrap_or(0),
-                cumulative_received: o.get("cumulative_received").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_received: o.get("interval_received").and_then(|v| v.as_u64()).unwrap_or(0),
-                cumulative_duplicates: o.get("cumulative_duplicates").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_duplicates: o.get("interval_duplicates").and_then(|v| v.as_u64()).unwrap_or(0),
-                cumulative_reordered: o.get("cumulative_reordered").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_reordered: o.get("interval_reordered").and_then(|v| v.as_u64()).unwrap_or(0),
+                cumulative_received: o
+                    .get("cumulative_received")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_received: o
+                    .get("interval_received")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cumulative_duplicates: o
+                    .get("cumulative_duplicates")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_duplicates: o
+                    .get("interval_duplicates")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cumulative_reordered: o
+                    .get("cumulative_reordered")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_reordered: o
+                    .get("interval_reordered")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
                 max_reorder_distance: u32_field(o, "max_reorder_distance"),
-                cumulative_late_drops: o.get("cumulative_late_drops").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_late_drops: o.get("interval_late_drops").and_then(|v| v.as_u64()).unwrap_or(0),
-                cumulative_unknown_config_drops: o.get("cumulative_unknown_config_drops").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_unknown_config_drops: o.get("interval_unknown_config_drops").and_then(|v| v.as_u64()).unwrap_or(0),
-                cumulative_concealments: o.get("cumulative_concealments").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_concealments: o.get("interval_concealments").and_then(|v| v.as_u64()).unwrap_or(0),
-                concealed_frames: o.get("concealed_frames").and_then(|v| v.as_i64()).unwrap_or(0),
+                cumulative_late_drops: o
+                    .get("cumulative_late_drops")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_late_drops: o
+                    .get("interval_late_drops")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cumulative_unknown_config_drops: o
+                    .get("cumulative_unknown_config_drops")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_unknown_config_drops: o
+                    .get("interval_unknown_config_drops")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cumulative_concealments: o
+                    .get("cumulative_concealments")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_concealments: o
+                    .get("interval_concealments")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                concealed_frames: o
+                    .get("concealed_frames")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0),
                 underruns: o.get("underruns").and_then(|v| v.as_u64()).unwrap_or(0),
                 jitter_microseconds: u32_field(o, "jitter_microseconds"),
                 buffer_current_ms: u32_field(o, "buffer_current_ms"),
                 buffer_target_ms: u32_field(o, "buffer_target_ms"),
-                submitted_position: o.get("submitted_position").and_then(|v| v.as_u64()).unwrap_or(0),
+                submitted_position: o
+                    .get("submitted_position")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
             })
         }
         o if message_name == Some("pairing_response") => {
@@ -711,27 +816,32 @@ fn build_frame(
                 status: status_field(o),
             })
         }
-        o if message_name == Some("error") => {
-            frame::Body::Error(crate::schema::Error {
-                request_id: req_id(o),
-                status: status_field(o),
-            })
-        }
-        o if message_name == Some("close") => {
-            frame::Body::Close(crate::schema::Close {
-                code: u32_field(o, "code"),
-                detail: string_field(o, "detail"),
-            })
-        }
+        o if message_name == Some("error") => frame::Body::Error(crate::schema::Error {
+            request_id: req_id(o),
+            status: status_field(o),
+        }),
+        o if message_name == Some("close") => frame::Body::Close(crate::schema::Close {
+            code: u32_field(o, "code"),
+            detail: string_field(o, "detail"),
+        }),
         // AuthResult: session_id or (status + request_id without other payload).
-        o if o.contains_key("session_id") => {
-            frame::Body::AuthResult(crate::schema::AuthResult {
-                request_id: req_id(o),
-                status: status_field(o),
-                session_id: o.get("session_id").and_then(|v| v.as_u64()).unwrap_or(0),
-            })
-        }
-        o if o.contains_key("status") && !o.contains_key("configuration") && !o.contains_key("pairing_mode") && !o.contains_key("protocol_major") && !o.contains_key("code") && !o.contains_key("stream_instance_id") && !o.contains_key("binding") && !o.contains_key("binding_echo") && !o.contains_key("pairing_nonce") && !o.contains_key("server_random") && !o.contains_key("client_random") => {
+        o if o.contains_key("session_id") => frame::Body::AuthResult(crate::schema::AuthResult {
+            request_id: req_id(o),
+            status: status_field(o),
+            session_id: o.get("session_id").and_then(|v| v.as_u64()).unwrap_or(0),
+        }),
+        o if o.contains_key("status")
+            && !o.contains_key("configuration")
+            && !o.contains_key("pairing_mode")
+            && !o.contains_key("protocol_major")
+            && !o.contains_key("code")
+            && !o.contains_key("stream_instance_id")
+            && !o.contains_key("binding")
+            && !o.contains_key("binding_echo")
+            && !o.contains_key("pairing_nonce")
+            && !o.contains_key("server_random")
+            && !o.contains_key("client_random") =>
+        {
             // AuthResult (error outcome) vs PairingResult share this shape —
             // decide by the case id's message family.
             if case.id.contains("pairing") {
@@ -748,7 +858,14 @@ fn build_frame(
             }
         }
         // Error: request_id + status where status.code != 0, unsolicited or echo.
-        o if o.contains_key("status") && o.get("status").and_then(|s| s.get("code")).and_then(|c| c.as_u64()).unwrap_or(0) != 0 && o.keys().count() <= 2 => {
+        o if o.contains_key("status")
+            && o.get("status")
+                .and_then(|s| s.get("code"))
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0)
+                != 0
+            && o.keys().count() <= 2 =>
+        {
             frame::Body::Error(crate::schema::Error {
                 request_id: req_id(o),
                 status: status_field(o),
@@ -762,7 +879,11 @@ fn build_frame(
             })
         }
         // Negotiate: protocol_major + capabilities, no status.
-        o if o.contains_key("protocol_major") && o.contains_key("capabilities") && !o.contains_key("status") && !o.contains_key("pairing_mode") => {
+        o if o.contains_key("protocol_major")
+            && o.contains_key("capabilities")
+            && !o.contains_key("status")
+            && !o.contains_key("pairing_mode") =>
+        {
             frame::Body::Negotiate(crate::schema::Negotiate {
                 request_id: req_id(o),
                 protocol_major: u32_field(o, "protocol_major"),
@@ -834,14 +955,18 @@ fn build_frame(
             frame::Body::SubscribeResponse(crate::schema::SubscribeResponse {
                 request_id: req_id(o),
                 status: status_field(o),
-                configuration: Some(build_configuration(o.get("configuration").expect("configuration object"))?),
+                configuration: Some(build_configuration(
+                    o.get("configuration").expect("configuration object"),
+                )?),
             })
         }
         // ConfigurationPublished: configuration present (statusless).
         o if o.contains_key("configuration") => {
             frame::Body::ConfigurationPublished(crate::schema::ConfigurationPublished {
                 request_id: req_id(o),
-                configuration: Some(build_configuration(o.get("configuration").expect("configuration object"))?),
+                configuration: Some(build_configuration(
+                    o.get("configuration").expect("configuration object"),
+                )?),
             })
         }
         // StreamStarted: stream_instance_id + config_generation + initial_timestamp, no code.
@@ -849,7 +974,10 @@ fn build_frame(
             frame::Body::StreamStarted(crate::schema::StreamStarted {
                 stream_instance_id: u32_field(o, "stream_instance_id"),
                 config_generation: u32_field(o, "config_generation"),
-                initial_timestamp: o.get("initial_timestamp").and_then(|v| v.as_u64()).unwrap_or(0),
+                initial_timestamp: o
+                    .get("initial_timestamp")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
             })
         }
         // StreamEnded: stream_instance_id + code.
@@ -861,32 +989,83 @@ fn build_frame(
             })
         }
         // PlaybackDiagnostics: the diagnostics snapshot's discriminating keys.
-        o if o.contains_key("jitter_microseconds") || o.contains_key("extended_highest_sequence") || o.contains_key("submitted_position") => {
+        o if o.contains_key("jitter_microseconds")
+            || o.contains_key("extended_highest_sequence")
+            || o.contains_key("submitted_position") =>
+        {
             frame::Body::PlaybackDiagnostics(crate::schema::PlaybackDiagnostics {
                 stream_instance_id: u32_field(o, "stream_instance_id"),
                 config_generation: u32_field(o, "config_generation"),
-                extended_highest_sequence: o.get("extended_highest_sequence").and_then(|v| v.as_u64()).unwrap_or(0),
-                cumulative_lost: o.get("cumulative_lost").and_then(|v| v.as_i64()).unwrap_or(0),
+                extended_highest_sequence: o
+                    .get("extended_highest_sequence")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cumulative_lost: o
+                    .get("cumulative_lost")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0),
                 interval_lost: o.get("interval_lost").and_then(|v| v.as_i64()).unwrap_or(0),
-                cumulative_received: o.get("cumulative_received").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_received: o.get("interval_received").and_then(|v| v.as_u64()).unwrap_or(0),
-                cumulative_duplicates: o.get("cumulative_duplicates").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_duplicates: o.get("interval_duplicates").and_then(|v| v.as_u64()).unwrap_or(0),
-                cumulative_reordered: o.get("cumulative_reordered").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_reordered: o.get("interval_reordered").and_then(|v| v.as_u64()).unwrap_or(0),
+                cumulative_received: o
+                    .get("cumulative_received")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_received: o
+                    .get("interval_received")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cumulative_duplicates: o
+                    .get("cumulative_duplicates")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_duplicates: o
+                    .get("interval_duplicates")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cumulative_reordered: o
+                    .get("cumulative_reordered")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_reordered: o
+                    .get("interval_reordered")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
                 max_reorder_distance: u32_field(o, "max_reorder_distance"),
-                cumulative_late_drops: o.get("cumulative_late_drops").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_late_drops: o.get("interval_late_drops").and_then(|v| v.as_u64()).unwrap_or(0),
-                cumulative_unknown_config_drops: o.get("cumulative_unknown_config_drops").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_unknown_config_drops: o.get("interval_unknown_config_drops").and_then(|v| v.as_u64()).unwrap_or(0),
-                cumulative_concealments: o.get("cumulative_concealments").and_then(|v| v.as_u64()).unwrap_or(0),
-                interval_concealments: o.get("interval_concealments").and_then(|v| v.as_u64()).unwrap_or(0),
-                concealed_frames: o.get("concealed_frames").and_then(|v| v.as_i64()).unwrap_or(0),
+                cumulative_late_drops: o
+                    .get("cumulative_late_drops")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_late_drops: o
+                    .get("interval_late_drops")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cumulative_unknown_config_drops: o
+                    .get("cumulative_unknown_config_drops")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_unknown_config_drops: o
+                    .get("interval_unknown_config_drops")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                cumulative_concealments: o
+                    .get("cumulative_concealments")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                interval_concealments: o
+                    .get("interval_concealments")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                concealed_frames: o
+                    .get("concealed_frames")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0),
                 underruns: o.get("underruns").and_then(|v| v.as_u64()).unwrap_or(0),
                 jitter_microseconds: u32_field(o, "jitter_microseconds"),
                 buffer_current_ms: u32_field(o, "buffer_current_ms"),
                 buffer_target_ms: u32_field(o, "buffer_target_ms"),
-                submitted_position: o.get("submitted_position").and_then(|v| v.as_u64()).unwrap_or(0),
+                submitted_position: o
+                    .get("submitted_position")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
             })
         }
         o => {
@@ -944,7 +1123,8 @@ fn verify_case_signatures(case: &FixtureCase) -> Result<&'static str, String> {
 
     // The client identity key is fixture-fixed (test-keys.json); every
     // signature in the control set is made with it.
-    let client_public_key_hex = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
+    let client_public_key_hex =
+        "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
     let verifying = VerifyingKey::from_sec1_bytes(&unhex(client_public_key_hex))
         .map_err(|error| format!("fixture client public key unusable: {error}"))?;
 
@@ -967,7 +1147,14 @@ fn verify_case_signatures(case: &FixtureCase) -> Result<&'static str, String> {
             let signature = case
                 .steps
                 .iter()
-                .find(|step| step.kind == "frame" && step.decoded.as_ref().map(|d| d.get("signature").is_some()).unwrap_or(false))
+                .find(|step| {
+                    step.kind == "frame"
+                        && step
+                            .decoded
+                            .as_ref()
+                            .map(|d| d.get("signature").is_some())
+                            .unwrap_or(false)
+                })
                 .and_then(|step| step.decoded.as_ref())
                 .and_then(|d| d.get("signature"))
                 .and_then(|v| v.as_str())
@@ -984,7 +1171,14 @@ fn verify_case_signatures(case: &FixtureCase) -> Result<&'static str, String> {
             let signature = case
                 .steps
                 .iter()
-                .find(|step| step.kind == "frame" && step.decoded.as_ref().map(|d| d.get("client_proof").is_some()).unwrap_or(false))
+                .find(|step| {
+                    step.kind == "frame"
+                        && step
+                            .decoded
+                            .as_ref()
+                            .map(|d| d.get("client_proof").is_some())
+                            .unwrap_or(false)
+                })
                 .and_then(|step| step.decoded.as_ref())
                 .and_then(|d| d.get("client_proof"))
                 .and_then(|v| v.as_str())
@@ -1001,7 +1195,14 @@ fn verify_case_signatures(case: &FixtureCase) -> Result<&'static str, String> {
             let binding = case
                 .steps
                 .iter()
-                .find(|step| step.kind == "frame" && step.decoded.as_ref().map(|d| d.get("binding").is_some()).unwrap_or(false))
+                .find(|step| {
+                    step.kind == "frame"
+                        && step
+                            .decoded
+                            .as_ref()
+                            .map(|d| d.get("binding").is_some())
+                            .unwrap_or(false)
+                })
                 .and_then(|step| step.decoded.as_ref())
                 .and_then(|d| d.get("binding"))
                 .and_then(|v| v.as_str())
@@ -1010,7 +1211,14 @@ fn verify_case_signatures(case: &FixtureCase) -> Result<&'static str, String> {
             let signature = case
                 .steps
                 .iter()
-                .find(|step| step.kind == "frame" && step.decoded.as_ref().map(|d| d.get("client_proof").is_some()).unwrap_or(false))
+                .find(|step| {
+                    step.kind == "frame"
+                        && step
+                            .decoded
+                            .as_ref()
+                            .map(|d| d.get("client_proof").is_some())
+                            .unwrap_or(false)
+                })
                 .and_then(|step| step.decoded.as_ref())
                 .and_then(|d| d.get("client_proof"))
                 .and_then(|v| v.as_str())
@@ -1026,7 +1234,14 @@ fn verify_case_signatures(case: &FixtureCase) -> Result<&'static str, String> {
             let binding = case
                 .steps
                 .iter()
-                .find(|step| step.kind == "frame" && step.decoded.as_ref().map(|d| d.get("binding").is_some()).unwrap_or(false))
+                .find(|step| {
+                    step.kind == "frame"
+                        && step
+                            .decoded
+                            .as_ref()
+                            .map(|d| d.get("binding").is_some())
+                            .unwrap_or(false)
+                })
                 .and_then(|step| step.decoded.as_ref())
                 .and_then(|d| d.get("binding"))
                 .and_then(|v| v.as_str())
@@ -1035,7 +1250,14 @@ fn verify_case_signatures(case: &FixtureCase) -> Result<&'static str, String> {
             let signature = case
                 .steps
                 .iter()
-                .find(|step| step.kind == "frame" && step.decoded.as_ref().map(|d| d.get("client_proof").is_some()).unwrap_or(false))
+                .find(|step| {
+                    step.kind == "frame"
+                        && step
+                            .decoded
+                            .as_ref()
+                            .map(|d| d.get("client_proof").is_some())
+                            .unwrap_or(false)
+                })
                 .and_then(|step| step.decoded.as_ref())
                 .and_then(|d| d.get("client_proof"))
                 .and_then(|v| v.as_str())
@@ -1050,7 +1272,14 @@ fn verify_case_signatures(case: &FixtureCase) -> Result<&'static str, String> {
             let signature = case
                 .steps
                 .iter()
-                .find(|step| step.kind == "frame" && step.decoded.as_ref().map(|d| d.get("client_proof").is_some()).unwrap_or(false))
+                .find(|step| {
+                    step.kind == "frame"
+                        && step
+                            .decoded
+                            .as_ref()
+                            .map(|d| d.get("client_proof").is_some())
+                            .unwrap_or(false)
+                })
                 .and_then(|step| step.decoded.as_ref())
                 .and_then(|d| d.get("client_proof"))
                 .and_then(|v| v.as_str())
@@ -1061,8 +1290,13 @@ fn verify_case_signatures(case: &FixtureCase) -> Result<&'static str, String> {
             let proof_input = build_pairing_proof_input(&unhex(qr_binding_hex));
             let signature = Signature::from_slice(&unhex(signature))
                 .map_err(|error| format!("client_proof (invalid): bad r||s: {error}"))?;
-            if verifying.verify(&unhex(&hex(&proof_input)), &signature).is_ok() {
-                return Err("pairing-proof-invalid: the corrupted proof VERIFIED — replay bug".to_owned());
+            if verifying
+                .verify(&unhex(&hex(&proof_input)), &signature)
+                .is_ok()
+            {
+                return Err(
+                    "pairing-proof-invalid: the corrupted proof VERIFIED — replay bug".to_owned(),
+                );
             }
             Ok("signature-invalid-confirmed")
         }
@@ -1072,7 +1306,14 @@ fn verify_case_signatures(case: &FixtureCase) -> Result<&'static str, String> {
             let signature = case
                 .steps
                 .iter()
-                .find(|step| step.kind == "frame" && step.decoded.as_ref().map(|d| d.get("signature").is_some()).unwrap_or(false))
+                .find(|step| {
+                    step.kind == "frame"
+                        && step
+                            .decoded
+                            .as_ref()
+                            .map(|d| d.get("signature").is_some())
+                            .unwrap_or(false)
+                })
                 .and_then(|step| step.decoded.as_ref())
                 .and_then(|d| d.get("signature"))
                 .and_then(|v| v.as_str())
@@ -1097,7 +1338,14 @@ fn verify_case_signatures(case: &FixtureCase) -> Result<&'static str, String> {
             let signature = case
                 .steps
                 .iter()
-                .find(|step| step.kind == "frame" && step.decoded.as_ref().map(|d| d.get("signature").is_some()).unwrap_or(false))
+                .find(|step| {
+                    step.kind == "frame"
+                        && step
+                            .decoded
+                            .as_ref()
+                            .map(|d| d.get("signature").is_some())
+                            .unwrap_or(false)
+                })
                 .and_then(|step| step.decoded.as_ref())
                 .and_then(|d| d.get("signature"))
                 .and_then(|v| v.as_str())
@@ -1141,7 +1389,10 @@ fn check_size_bound(case: &FixtureCase, bound: &SizeBound) -> Result<(), String>
         if framed.len() > bound.max_frame_bytes {
             return Err(format!(
                 "size bound violated for {} in {}: {} > {} bytes",
-                bound.frame, case.id, framed.len(), bound.max_frame_bytes
+                bound.frame,
+                case.id,
+                framed.len(),
+                bound.max_frame_bytes
             ));
         }
         let _ = index;
@@ -1155,11 +1406,26 @@ impl FixtureStep {
     fn message_name(&self) -> Option<&str> {
         let text = self.message.as_deref()?;
         let known = [
-            "auth_init", "auth_challenge", "auth_proof", "auth_result", "error", "close",
-            "negotiate", "negotiate_response", "pairing_request", "pairing_response",
-            "pairing_confirm", "pairing_result", "subscribe", "subscribe_response",
-            "unsubscribe", "unsubscribe_response", "request_configuration",
-            "configuration_published", "stream_started", "stream_ended",
+            "auth_init",
+            "auth_challenge",
+            "auth_proof",
+            "auth_result",
+            "error",
+            "close",
+            "negotiate",
+            "negotiate_response",
+            "pairing_request",
+            "pairing_response",
+            "pairing_confirm",
+            "pairing_result",
+            "subscribe",
+            "subscribe_response",
+            "unsubscribe",
+            "unsubscribe_response",
+            "request_configuration",
+            "configuration_published",
+            "stream_started",
+            "stream_ended",
             "playback_diagnostics",
         ];
         known.into_iter().find(|name| text.trim() == *name)

@@ -52,11 +52,7 @@ class ClientSession(
 
     private var handle = AtomicLong(0)
     private val running = AtomicBoolean(false)
-    private var host = ""
-    private var port = 0
-    private var pinnedSpkiHex = ""
-    private var serverPublicKeyHex = ""
-    private var clientName = ""
+    private var configuration = SessionConfiguration("", 0, "", "", "")
 
     /** Reconnect attempt counter; reset on start(). */
     private val backoffAttempts = AtomicLong(0)
@@ -71,19 +67,9 @@ class ClientSession(
     @Volatile private var activeNetworkAddress: String? = null
     @Volatile private var registeredCallback: ConnectivityManager.NetworkCallback? = null
 
-    fun start(
-        host: String,
-        port: Int,
-        pinnedSpkiHex: String,
-        serverPublicKeyHex: String,
-        clientName: String,
-    ) {
+    fun start(configuration: SessionConfiguration) {
         if (running.getAndSet(true)) return
-        this.host = host
-        this.port = port
-        this.pinnedSpkiHex = pinnedSpkiHex
-        this.serverPublicKeyHex = serverPublicKeyHex
-        this.clientName = clientName
+        this.configuration = configuration
         backoffAttempts.set(0)
         registerNetworkCallback()
         startSession()
@@ -118,7 +104,8 @@ class ClientSession(
     private fun startSession() {
         executor.execute {
             val h = ClientNative.createSession(
-                host, port, pinnedSpkiHex, serverPublicKeyHex, clientName
+                configuration.host, configuration.port, configuration.pinnedSpkiHex,
+                configuration.serverPublicKeyHex, configuration.clientName
             )
             if (h == 0L) {
                 listener.onLog("createSession failed; retrying after backoff")
@@ -127,7 +114,7 @@ class ClientSession(
             }
             handle.set(h)
             val bind = if (bindHintEnabled) (activeNetworkAddress ?: "") else ""
-            listener.onLog("connect(host=$host port=$port bind=$bind)")
+            listener.onLog("connect(host=${configuration.host} port=${configuration.port} bind=$bind)")
             val ok = ClientNative.connect(h, bind)
             if (!ok) {
                 listener.onLog("native connect() rejected; retrying after backoff")
@@ -312,16 +299,43 @@ class ClientSession(
  * owner. `closeCode == null` means transport loss without a Close (classified
  * 601 by the native side) and IS retryable.
  */
+data class SessionConfiguration(
+    val host: String,
+    val port: Int,
+    val pinnedSpkiHex: String,
+    val serverPublicKeyHex: String,
+    val clientName: String,
+)
+
+/** Wire registry value at the Kotlin/JNI boundary; raw integers never define policy. */
+@JvmInline
+value class CloseCode(val wireValue: Int) {
+    companion object {
+        val BUSY = CloseCode(301)
+        val RATE_LIMITED = CloseCode(302)
+        val SERVER_STOPPING = CloseCode(503)
+        val NETWORK_FAILURE = CloseCode(601)
+        val DATAGRAM_UNSUPPORTED = CloseCode(602)
+
+        fun fromWire(value: Int): CloseCode = CloseCode(value)
+        fun transportLoss(): CloseCode? = null
+    }
+}
+
 internal object ReconnectPolicy {
-    /** 301/302 retryable; 503/601/602 reconnect; everything else surfaces. */
-    fun shouldReconnect(closeCode: Int?): Boolean = when (closeCode) {
+    fun shouldReconnect(closeCode: CloseCode?): Boolean = when (closeCode) {
         null -> true
-        301, 302, 503, 601, 602 -> true
+        CloseCode.BUSY,
+        CloseCode.RATE_LIMITED,
+        CloseCode.SERVER_STOPPING,
+        CloseCode.NETWORK_FAILURE,
+        CloseCode.DATAGRAM_UNSUPPORTED -> true
         else -> false
     }
 
-    /**
-     * §6.3 backoff for the nth attempt: 1 s base, ×2 per attempt, 30 s cap,
+    fun shouldReconnect(closeCode: Int?): Boolean = shouldReconnect(closeCode?.let(CloseCode::fromWire))
+
+    /**     * §6.3 backoff for the nth attempt: 1 s base, ×2 per attempt, 30 s cap,
      * ±20% uniform jitter. [random] is injected for deterministic tests.
      */
     fun backoffDelayMs(attempt: Long, random: Double): Long {

@@ -149,7 +149,11 @@ pub struct Outcome {
 
 impl Outcome {
     fn frame(frame: Frame) -> Self {
-        Self { frame: Some(frame), close_code: None, transport_close_code: None }
+        Self {
+            frame: Some(frame),
+            close_code: None,
+            transport_close_code: None,
+        }
     }
 
     /// The fatal pair: Error + Close with the same code, then transport close.
@@ -180,7 +184,11 @@ impl Outcome {
 
     /// A bare transport close (301/601-style rows).
     fn transport_close(code: ErrorCode) -> Self {
-        Self { frame: None, close_code: None, transport_close_code: Some(code) }
+        Self {
+            frame: None,
+            close_code: None,
+            transport_close_code: Some(code),
+        }
     }
 }
 
@@ -303,7 +311,10 @@ impl StateMachine {
             Event::AuthDeadline => {
                 // §5.2 CONNECTING/AUTHENTICATING: auth deadline (10 s) →
                 // transport close carrying 601.
-                if matches!(self.state, ServerState::Connecting | ServerState::Authenticating) {
+                if matches!(
+                    self.state,
+                    ServerState::Connecting | ServerState::Authenticating
+                ) {
                     self.close(ServerState::Closed);
                     vec![Outcome::transport_close(ErrorCode::NETWORK_FAILURE)]
                 } else {
@@ -390,7 +401,7 @@ impl StateMachine {
                 // §5.2 "any": non-fatal Error (no paired Close) is advisory.
                 Vec::new()
             }
-            other => self.handle_request(other, request_id, source)
+            other => self.handle_request(other, request_id, source),
         }
     }
 
@@ -413,11 +424,8 @@ impl StateMachine {
                 // 401 BEFORE pairing admission semantics are consulted (the
                 // fixture cases error-401-pairing-capabilities-over-255 /
                 // error-401-pairing-duplicate-capabilities pin this order).
-                if auth::validate_capability_list_bounded(
-                    &request.capabilities,
-                    u8::MAX as usize,
-                )
-                .is_err()
+                if auth::validate_capability_list_bounded(&request.capabilities, u8::MAX as usize)
+                    .is_err()
                 {
                     return self.malformed_fatal(request.request_id);
                 }
@@ -536,7 +544,9 @@ impl StateMachine {
                     request_id: unsubscribe.request_id,
                     status: Status::ok(),
                 };
-                vec![Outcome::frame(Frame { body: Some(frame::Body::UnsubscribeResponse(response)) })]
+                vec![Outcome::frame(Frame {
+                    body: Some(frame::Body::UnsubscribeResponse(response)),
+                })]
             }
             (ServerState::Ready, Some(frame::Body::RequestConfiguration(request))) => {
                 // §5.2: ConfigurationPublished with the request echoed.
@@ -544,7 +554,9 @@ impl StateMachine {
                     request_id: request.request_id,
                     configuration: self.config.current_configuration.clone(),
                 };
-                vec![Outcome::frame(Frame { body: Some(frame::Body::ConfigurationPublished(push)) })]
+                vec![Outcome::frame(Frame {
+                    body: Some(frame::Body::ConfigurationPublished(push)),
+                })]
             }
             (ServerState::Ready, Some(frame::Body::PlaybackDiagnostics(_))) => {
                 // §9: diagnostics ride the control stream; the Server treats
@@ -641,8 +653,7 @@ impl StateMachine {
         );
 
         // PR-9: one ECDSA-P256-SHA256 over the RAW context bytes.
-        let signature_ok =
-            auth::verify_auth_proof(&client_public_key, &context, signature).is_ok();
+        let signature_ok = auth::verify_auth_proof(&client_public_key, &context, signature).is_ok();
 
         if !signature_ok {
             // §5.2: signature invalid → AuthResult(203); count failure; the
@@ -776,13 +787,15 @@ impl StateMachine {
         let accepted: Vec<u32> = Vec::new();
         self.state = ServerState::Ready;
         let mut outcomes = vec![Outcome::frame(Frame {
-            body: Some(frame::Body::NegotiateResponse(crate::schema::NegotiateResponse {
-                request_id: negotiate.request_id,
-                status: Status::ok(),
-                protocol_major: crate::codes::PROTOCOL_MAJOR,
-                protocol_minor: self.config.protocol_minor,
-                capabilities: accepted,
-            })),
+            body: Some(frame::Body::NegotiateResponse(
+                crate::schema::NegotiateResponse {
+                    request_id: negotiate.request_id,
+                    status: Status::ok(),
+                    protocol_major: crate::codes::PROTOCOL_MAJOR,
+                    protocol_minor: self.config.protocol_minor,
+                    capabilities: accepted,
+                },
+            )),
         })];
         // §5.1 READY entry: push ConfigurationPublished if a Transfer Format
         // is current.
@@ -791,7 +804,9 @@ impl StateMachine {
                 request_id: 0,
                 configuration: Some(configuration),
             };
-            outcomes.push(Outcome::frame(Frame { body: Some(frame::Body::ConfigurationPublished(push)) }));
+            outcomes.push(Outcome::frame(Frame {
+                body: Some(frame::Body::ConfigurationPublished(push)),
+            }));
         }
         outcomes
     }
@@ -823,11 +838,13 @@ impl StateMachine {
         }
         self.subscribed = true;
         let mut outcomes = vec![Outcome::frame(Frame {
-            body: Some(frame::Body::SubscribeResponse(crate::schema::SubscribeResponse {
-                request_id,
-                status: Status::ok(),
-                configuration: self.config.current_configuration.clone(),
-            })),
+            body: Some(frame::Body::SubscribeResponse(
+                crate::schema::SubscribeResponse {
+                    request_id,
+                    status: Status::ok(),
+                    configuration: self.config.current_configuration.clone(),
+                },
+            )),
         })];
         // §5.2 READY Subscribe: "if a stream is active, push StreamStarted
         // (active instance, current generation, next-frame timestamp)".

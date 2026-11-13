@@ -44,9 +44,7 @@ impl MediaHeader {
             stream_instance_id: u32::from_be_bytes([b[0], b[1], b[2], b[3]]),
             config_generation: u32::from_be_bytes([b[4], b[5], b[6], b[7]]),
             sequence: u32::from_be_bytes([b[8], b[9], b[10], b[11]]),
-            timestamp: u64::from_be_bytes([
-                b[12], b[13], b[14], b[15], b[16], b[17], b[18], b[19],
-            ]),
+            timestamp: u64::from_be_bytes([b[12], b[13], b[14], b[15], b[16], b[17], b[18], b[19]]),
             flags: u32::from_be_bytes([b[20], b[21], b[22], b[23]]),
         };
         if h.stream_instance_id == 0 || h.config_generation == 0 {
@@ -196,7 +194,12 @@ impl MediaReceiver {
     }
 
     /// §7.5: payload not frame-aligned → malformed: drop, count locally.
-    pub fn check_alignment(&mut self, payload_len: usize, channels: u32, sample_bytes: u32) -> bool {
+    pub fn check_alignment(
+        &mut self,
+        payload_len: usize,
+        channels: u32,
+        sample_bytes: u32,
+    ) -> bool {
         let frame_bytes = (sample_bytes * channels) as usize;
         if frame_bytes == 0 || !payload_len.is_multiple_of(frame_bytes) {
             self.malformed_drops += 1;
@@ -319,7 +322,10 @@ mod tests {
         // the reserved bits simply carry no meaning; the datagram processes
         let mut r = MediaReceiver::new();
         let v = r.observe(&h);
-        assert!(matches!(v, ObserveVerdict::Ok { gap: 0 }), "first datagram anchors the epoch: no gap accounting precedes it");
+        assert!(
+            matches!(v, ObserveVerdict::Ok { gap: 0 }),
+            "first datagram anchors the epoch: no gap accounting precedes it"
+        );
     }
 
     /// Golden vector media.flags-reserved-bit31-ignored: 0x80000000.
@@ -407,7 +413,10 @@ mod tests {
             flags: 0,
         };
         let v = r.observe(&h2);
-        assert!(matches!(v, ObserveVerdict::Ok { gap: 0 }), "wrap is in-order, not reorder");
+        assert!(
+            matches!(v, ObserveVerdict::Ok { gap: 0 }),
+            "wrap is in-order, not reorder"
+        );
         assert_eq!(r.extended_highest, 0x1_0000_0000, "cycle folded in");
         assert_eq!(r.cumulative_duplicates, 0);
     }
@@ -423,7 +432,10 @@ mod tests {
             timestamp: 40,
             flags: 0,
         };
-        assert!(matches!(r.observe(&h), ObserveVerdict::Ok { gap: 0 }), "first datagram anchors the epoch");
+        assert!(
+            matches!(r.observe(&h), ObserveVerdict::Ok { gap: 0 }),
+            "first datagram anchors the epoch"
+        );
         assert_eq!(r.observe(&h), ObserveVerdict::Duplicate);
         assert_eq!(r.cumulative_duplicates, 1);
     }

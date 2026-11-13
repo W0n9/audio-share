@@ -15,10 +15,9 @@ pub const PAIRING_PROOF_LABEL: &[u8] = b"audio-share v2 pairing confirm";
 
 /// A TLV element: `tag(u8) || len(u16 BE) || value` (pairing.md §6.3).
 pub fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(3 + value.len());
-    out.push(tag);
-    out.extend_from_slice(&(value.len() as u16).to_be_bytes());
-    out.extend_from_slice(value);
+    let mut out = Vec::with_capacity(value.len() + 3);
+    wire_protocol_transcript::push_tlv(&mut out, tag, value)
+        .expect("normative transcript inputs fit within TLV u16 length");
     out
 }
 
@@ -36,12 +35,15 @@ pub fn build_auth_context(
     auth_exporter: &[u8],
 ) -> Vec<u8> {
     let mut out = Vec::new();
-    out.extend_from_slice(&tlv(1, b"auth"));
-    out.extend_from_slice(&tlv(2, server_random));
-    out.extend_from_slice(&tlv(3, client_public_key));
-    out.extend_from_slice(&tlv(4, server_public_key));
-    out.extend_from_slice(&tlv(5, &crate::codes::PROTOCOL_MAJOR.to_be_bytes()));
-    out.extend_from_slice(&tlv(6, auth_exporter));
+    wire_protocol_transcript::append_auth_context(
+        &mut out,
+        server_random,
+        client_public_key,
+        server_public_key,
+        crate::codes::PROTOCOL_MAJOR,
+        auth_exporter,
+    )
+    .expect("normative transcript inputs fit within TLV u16 length");
     out
 }
 
@@ -80,7 +82,8 @@ pub fn verify_auth_proof(
     let key = parse_client_public_key(client_public_key)?;
     // A non-64-byte signature is not an IEEE P1363 r||s — invalid proof.
     let signature = Signature::from_slice(signature).map_err(|_| ProofVerdict::Invalid)?;
-    key.verify(context, &signature).map_err(|_| ProofVerdict::Invalid)
+    key.verify(context, &signature)
+        .map_err(|_| ProofVerdict::Invalid)
 }
 
 /// Verify a §6.3.1 pairing client_proof over its proof input.
@@ -89,7 +92,11 @@ pub fn verify_pairing_proof(
     binding: &[u8],
     client_proof: &[u8],
 ) -> Result<(), ProofVerdict> {
-    verify_auth_proof(client_public_key, &build_pairing_proof_input(binding), client_proof)
+    verify_auth_proof(
+        client_public_key,
+        &build_pairing_proof_input(binding),
+        client_proof,
+    )
 }
 
 /// Parse a 33-byte SEC1-compressed P-256 public key (pairing.md §2).
@@ -159,10 +166,16 @@ impl std::fmt::Display for CapabilityListError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::TooMany { count, max } => {
-                write!(f, "{count} capability ids exceed the canonical count(u8) bound {max}")
+                write!(
+                    f,
+                    "{count} capability ids exceed the canonical count(u8) bound {max}"
+                )
             }
             Self::NotCanonical { earlier, later } => {
-                write!(f, "capability ids {earlier} then {later}: the list must be ascending and unique")
+                write!(
+                    f,
+                    "capability ids {earlier} then {later}: the list must be ascending and unique"
+                )
             }
         }
     }
@@ -219,9 +232,20 @@ mod tests {
         // TLV(5, protocol_major) = 05 00 04 00 00 00 02 (pairing.md §6.3):
         // tag 05, u16 BE length 0004, value 00000002.
         let built = build_auth_context(&[], &[], &[], &[]);
-        let needle = [0x05u8, 0x00, 0x04, 0x00, 0x00, 0x00, crate::codes::PROTOCOL_MAJOR as u8];
+        let needle = [
+            0x05u8,
+            0x00,
+            0x04,
+            0x00,
+            0x00,
+            0x00,
+            crate::codes::PROTOCOL_MAJOR as u8,
+        ];
         assert_eq!(
-            built.windows(needle.len()).find(|w| *w == needle).map(|w| w.to_vec()),
+            built
+                .windows(needle.len())
+                .find(|w| *w == needle)
+                .map(|w| w.to_vec()),
             Some(needle.to_vec()),
             "the fixed 4-byte BE major must appear as TLV(5) — never a varint"
         );
@@ -284,11 +308,17 @@ mod tests {
         assert!(validate_capability_list(&[1, 2, 3]).is_ok());
         assert_eq!(
             validate_capability_list(&[2, 1]),
-            Err(CapabilityListError::NotCanonical { earlier: 2, later: 1 })
+            Err(CapabilityListError::NotCanonical {
+                earlier: 2,
+                later: 1
+            })
         );
         assert_eq!(
             validate_capability_list(&[3, 3]),
-            Err(CapabilityListError::NotCanonical { earlier: 3, later: 3 })
+            Err(CapabilityListError::NotCanonical {
+                earlier: 3,
+                later: 3
+            })
         );
     }
 

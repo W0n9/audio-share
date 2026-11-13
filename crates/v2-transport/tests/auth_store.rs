@@ -5,13 +5,10 @@
 
 use std::path::PathBuf;
 
-use v2_transport::auth_store::{AuthorizationStore, ClientState, StoredClient, StoreError};
+use v2_transport::auth_store::{AuthorizationStore, ClientState, StoreError, StoredClient};
 
 fn temp_dir() -> PathBuf {
-    tempfile::tempdir()
-        .expect("tempdir")
-        .path()
-        .to_path_buf()
+    tempfile::tempdir().expect("tempdir").path().to_path_buf()
 }
 
 fn client(pub_hex: &str, name: &str) -> StoredClient {
@@ -45,7 +42,10 @@ const OTHER_PUB: &str = "02dd4d011a1b03e2a9e8075b627e88b4ed87559e6c65d84f7c3978a
 fn unknown_identity_classifies_202() {
     let store = AuthorizationStore::in_memory();
     let verdict = store.authorize(&unhex(CLIENT_PUB));
-    assert!(matches!(verdict, v2_transport::auth_store::Authorization::Unknown(_)));
+    assert!(matches!(
+        verdict,
+        v2_transport::auth_store::Authorization::Unknown(_)
+    ));
 }
 
 #[test]
@@ -90,8 +90,16 @@ fn store_persists_as_clients_json_with_0600() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let mode = std::fs::metadata(&path).expect("metadata").permissions().mode();
-        assert_eq!(mode & 0o777, 0o600, "clients.json must be 0600, got {:o}", mode);
+        let mode = std::fs::metadata(&path)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "clients.json must be 0600, got {:o}",
+            mode
+        );
         let dir_mode = std::fs::metadata(dir.join("pairing"))
             .expect("dir metadata")
             .permissions()
@@ -163,7 +171,10 @@ fn a_backup_generation_is_kept_on_rewrite() {
     store.insert_for_tests(client(CLIENT_PUB, "Test Phone"));
     store.insert_for_tests(client(OTHER_PUB, "Second"));
     let backup = dir.join("pairing").join("clients.json.bak");
-    assert!(backup.is_file(), "one .bak generation must be kept as clients.json.bak");
+    assert!(
+        backup.is_file(),
+        "one .bak generation must be kept as clients.json.bak"
+    );
     // The backup holds the pre-rewrite content (only the first client).
     let text = std::fs::read_to_string(&backup).expect("backup text");
     assert!(text.contains(&hex8(CLIENT_PUB)));
@@ -194,7 +205,10 @@ fn revoke_unknown_key_is_a_distinct_error() {
     // the error must say so instead of suggesting clients.json.bak recovery.
     let store = AuthorizationStore::in_memory();
     let error = store.revoke(&unhex(CLIENT_PUB)).expect_err("unknown key");
-    assert!(matches!(error, StoreError::UnknownClient { .. }), "got {error:?}");
+    assert!(
+        matches!(error, StoreError::UnknownClient { .. }),
+        "got {error:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -224,7 +238,9 @@ fn record_json(client_id: &str, public_key_b64: &str, display_name: &str) -> Str
 const CLIENT_PUB_B64: &str = "A9ClKd50dWQawFDHkrQs_weRB8pTENp5U9JZUSFHfA9t";
 
 fn load_error(entries: &str) -> String {
-    open_raw(entries).expect_err("malformed store must fail closed").to_string()
+    open_raw(entries)
+        .expect_err("malformed store must fail closed")
+        .to_string()
 }
 
 #[test]
@@ -232,8 +248,14 @@ fn public_key_must_be_a_33_byte_compressed_point() {
     // 32 bytes, not the §8.1 33-byte SEC1-compressed point.
     let short = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     let error = load_error(&record_json("cf7940b474310246", short, "Test Phone"));
-    assert!(error.contains("public_key"), "the refusal must name the field: {error}");
-    assert!(error.contains("33"), "the refusal should cite the compressed-point shape: {error}");
+    assert!(
+        error.contains("public_key"),
+        "the refusal must name the field: {error}"
+    );
+    assert!(
+        error.contains("33"),
+        "the refusal should cite the compressed-point shape: {error}"
+    );
 }
 
 #[test]
@@ -242,14 +264,24 @@ fn public_key_must_decode_to_a_valid_curve_point() {
     // and no point decodes — the store must not hold an unusable credential.
     let off_curve = "Av__________________________________________";
     let error = load_error(&record_json("cf7940b474310246", off_curve, "Test Phone"));
-    assert!(error.contains("public_key"), "the refusal must name the field: {error}");
+    assert!(
+        error.contains("public_key"),
+        "the refusal must name the field: {error}"
+    );
 }
 
 #[test]
 fn client_id_must_match_the_derived_value() {
     // pairing.md §8.1: client_id = first 8 bytes of SHA-256(public_key), hex.
-    let error = load_error(&record_json("deadbeefdeadbeef", CLIENT_PUB_B64, "Test Phone"));
-    assert!(error.contains("client_id"), "the refusal must name the field: {error}");
+    let error = load_error(&record_json(
+        "deadbeefdeadbeef",
+        CLIENT_PUB_B64,
+        "Test Phone",
+    ));
+    assert!(
+        error.contains("client_id"),
+        "the refusal must name the field: {error}"
+    );
 }
 
 #[test]
@@ -261,7 +293,10 @@ fn client_id_case_is_canonical_lowercase() {
     let mixed = format!("{}{}", canonical[..2].to_ascii_uppercase(), &canonical[2..]);
     assert_ne!(mixed, canonical);
     let error = load_error(&record_json(&mixed, CLIENT_PUB_B64, "Test Phone"));
-    assert!(error.contains("client_id"), "the refusal must name the field: {error}");
+    assert!(
+        error.contains("client_id"),
+        "the refusal must name the field: {error}"
+    );
     assert!(
         error.contains("canonical"),
         "the refusal should explain the canonical requirement: {error}"
@@ -281,7 +316,10 @@ fn persisted_client_id_is_always_canonical() {
 
     let path = dir.join("pairing").join("clients.json");
     let text = std::fs::read_to_string(&path).expect("read clients.json");
-    assert!(text.contains(&hex8(CLIENT_PUB)), "canonical id must be persisted: {text}");
+    assert!(
+        text.contains(&hex8(CLIENT_PUB)),
+        "canonical id must be persisted: {text}"
+    );
     assert!(
         !text.contains(&hex8(CLIENT_PUB).to_ascii_uppercase()),
         "noncanonical uppercase id must never be persisted: {text}"
@@ -301,7 +339,10 @@ fn persisted_client_id_is_always_canonical() {
 fn display_name_is_capped_at_63_bytes() {
     let name = "x".repeat(64);
     let error = load_error(&record_json("cf7940b474310246", CLIENT_PUB_B64, &name));
-    assert!(error.contains("display_name"), "the refusal must name the field: {error}");
+    assert!(
+        error.contains("display_name"),
+        "the refusal must name the field: {error}"
+    );
 }
 
 #[test]
@@ -309,7 +350,10 @@ fn duplicate_client_ids_are_rejected() {
     let one = record_json("cf7940b474310246", CLIENT_PUB_B64, "Test Phone");
     let two = record_json("cf7940b474310246", CLIENT_PUB_B64, "Impostor");
     let error = load_error(&format!("{one}, {two}"));
-    assert!(error.contains("duplicate"), "the refusal must explain the duplicate: {error}");
+    assert!(
+        error.contains("duplicate"),
+        "the refusal must explain the duplicate: {error}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -322,7 +366,9 @@ fn duplicate_client_ids_are_rejected() {
 fn deleting_the_file_revokes_the_identity_on_reload() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = AuthorizationStore::open(dir.path()).expect("open");
-    store.upsert(client(CLIENT_PUB, "Test Phone")).expect("upsert");
+    store
+        .upsert(client(CLIENT_PUB, "Test Phone"))
+        .expect("upsert");
     let path = dir.path().join("pairing").join("clients.json");
     let saved = std::fs::read(&path).expect("read store");
     assert!(matches!(
@@ -355,13 +401,20 @@ fn deleting_the_file_revokes_the_identity_on_reload() {
 fn corrupt_reload_fails_closed_and_recovers() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = AuthorizationStore::open(dir.path()).expect("open");
-    store.upsert(client(CLIENT_PUB, "Test Phone")).expect("upsert");
+    store
+        .upsert(client(CLIENT_PUB, "Test Phone"))
+        .expect("upsert");
     let path = dir.path().join("pairing").join("clients.json");
     let saved = std::fs::read(&path).expect("read store");
 
     std::fs::write(&path, b"{not json").expect("corrupt store");
-    let error = store.reload_if_changed().expect_err("corruption must be reported");
-    assert!(matches!(error, StoreError::Corrupted { .. }), "got {error:?}");
+    let error = store
+        .reload_if_changed()
+        .expect_err("corruption must be reported");
+    assert!(
+        matches!(error, StoreError::Corrupted { .. }),
+        "got {error:?}"
+    );
     assert!(
         matches!(
             store.authorize(&unhex(CLIENT_PUB)),

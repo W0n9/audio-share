@@ -90,7 +90,10 @@ fn assert_identity_layout(config_dir: &Path) {
     let identity_dir = config_dir.join("identity");
     let key = identity_dir.join("server-identity.pem");
     assert!(key.is_file(), "identity key missing at {}", key.display());
-    let file_mode = fs::metadata(&key).expect("key metadata").permissions().mode();
+    let file_mode = fs::metadata(&key)
+        .expect("key metadata")
+        .permissions()
+        .mode();
     assert_eq!(
         file_mode & 0o777,
         0o600,
@@ -117,8 +120,10 @@ async fn v2_is_enabled_by_default_on_65531() {
         let temp = tempfile::tempdir().expect("temporary directory");
         let tcp_port = free_tcp_port();
         let (mut child, log_path, _) = spawn(temp.path(), tcp_port, &[]);
-        let listening = "v2 listen success on 127.0.0.1:65531";
-        if !wait_until(Duration::from_secs(10), || log_text(&log_path).contains(listening)) {
+        let listening = "v2 listen success on [::]:65531";
+        if !wait_until(Duration::from_secs(10), || {
+            log_text(&log_path).contains(listening)
+        }) {
             let _ = child.kill();
             let _ = wait_child(&mut child, Duration::from_secs(5));
             panic!(
@@ -127,10 +132,12 @@ async fn v2_is_enabled_by_default_on_65531() {
             );
         }
         interrupt(&child);
-        let status = wait_child(&mut child, Duration::from_secs(15)).unwrap_or_else(|| {
-            panic!("as-cmd did not exit\nstderr: {}", read_stderr(&mut child))
-        });
-        assert!(status.success(), "graceful stop must exit 0, got {status:?}");
+        let status = wait_child(&mut child, Duration::from_secs(15))
+            .unwrap_or_else(|| panic!("as-cmd did not exit\nstderr: {}", read_stderr(&mut child)));
+        assert!(
+            status.success(),
+            "graceful stop must exit 0, got {status:?}"
+        );
     } else {
         eprintln!("skipping: UDP 65531 is already in use on this host");
     }
@@ -144,7 +151,7 @@ async fn v2_listener_starts_with_logs_and_stops_on_sigint() {
 
     let (mut child, log_path, _) = spawn(temp.path(), tcp_port, &[&format!("--v2-port={v2_port}")]);
 
-    let listening = format!("v2 listen success on 127.0.0.1:{v2_port}");
+    let listening = format!("v2 listen success on [::]:{v2_port}");
     if !wait_until(Duration::from_secs(10), || {
         let log = log_text(&log_path);
         log.contains(&listening) && log.contains("fingerprint=")
@@ -179,9 +186,15 @@ async fn v2_listener_starts_with_logs_and_stops_on_sigint() {
 
     interrupt(&child);
     let status = wait_child(&mut child, Duration::from_secs(15)).unwrap_or_else(|| {
-        panic!("as-cmd did not exit after SIGINT\nstderr: {}", read_stderr(&mut child))
+        panic!(
+            "as-cmd did not exit after SIGINT\nstderr: {}",
+            read_stderr(&mut child)
+        )
     });
-    assert!(status.success(), "graceful stop must exit 0, got {status:?}");
+    assert!(
+        status.success(),
+        "graceful stop must exit 0, got {status:?}"
+    );
 
     let log = log_text(&log_path);
     assert!(
@@ -198,10 +211,15 @@ async fn v2_disabled_with_zero_port_is_v1_only() {
     let (mut child, log_path, _) = spawn(temp.path(), tcp_port, &["--v2-port=0"]);
 
     let listening = format!("tcp listen success on 127.0.0.1:{tcp_port}");
-    if !wait_until(Duration::from_secs(10), || log_text(&log_path).contains(&listening)) {
+    if !wait_until(Duration::from_secs(10), || {
+        log_text(&log_path).contains(&listening)
+    }) {
         let _ = child.kill();
         let _ = wait_child(&mut child, Duration::from_secs(5));
-        panic!("as-cmd did not start the v1 server\nlog:\n{}", log_text(&log_path));
+        panic!(
+            "as-cmd did not start the v1 server\nlog:\n{}",
+            log_text(&log_path)
+        );
     }
     // Give the startup path a beat to (not) log v2 lines.
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -227,7 +245,10 @@ async fn v2_disabled_with_zero_port_is_v1_only() {
     interrupt(&child);
     let status = wait_child(&mut child, Duration::from_secs(15))
         .unwrap_or_else(|| panic!("as-cmd did not exit\nstderr: {}", read_stderr(&mut child)));
-    assert!(status.success(), "graceful stop must exit 0, got {status:?}");
+    assert!(
+        status.success(),
+        "graceful stop must exit 0, got {status:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -237,11 +258,11 @@ async fn loose_permissions_refuse_v2_without_killing_v1_and_flag_overrides() {
     let v2_port = free_udp_port();
 
     // Phase 1: mint a valid identity with default (tight) permissions.
-    let (mut child, log_path, _) =
-        spawn(temp.path(), tcp_port, &[&format!("--v2-port={v2_port}")]);
-    let listening = format!("v2 listen success on 127.0.0.1:{v2_port}");
+    let (mut child, log_path, _) = spawn(temp.path(), tcp_port, &[&format!("--v2-port={v2_port}")]);
+    let listening = format!("v2 listen success on [::]:{v2_port}");
     assert!(
-        wait_until(Duration::from_secs(10), || log_text(&log_path).contains(&listening)),
+        wait_until(Duration::from_secs(10), || log_text(&log_path)
+            .contains(&listening)),
         "phase-1 v2 must start\nlog: {}",
         log_text(&log_path)
     );
@@ -257,10 +278,12 @@ async fn loose_permissions_refuse_v2_without_killing_v1_and_flag_overrides() {
     fs::set_permissions(&identity_dir, fs::Permissions::from_mode(0o755)).expect("loosen dir");
 
     let tcp_port2 = free_tcp_port();
-    let (mut child, log_path, _) = spawn(temp.path(), tcp_port2, &[&format!("--v2-port={v2_port}")]);
+    let (mut child, log_path, _) =
+        spawn(temp.path(), tcp_port2, &[&format!("--v2-port={v2_port}")]);
     let listening2 = format!("tcp listen success on 127.0.0.1:{tcp_port2}");
     assert!(
-        wait_until(Duration::from_secs(10), || log_text(&log_path).contains(&listening2)),
+        wait_until(Duration::from_secs(10), || log_text(&log_path)
+            .contains(&listening2)),
         "phase-2 v1 must still start\nlog: {}",
         log_text(&log_path)
     );
@@ -279,7 +302,10 @@ async fn loose_permissions_refuse_v2_without_killing_v1_and_flag_overrides() {
         "v2 must not listen after the permission refusal:\n{log}"
     );
     // The server is still alive and owns v1.
-    assert!(child.try_wait().expect("query child").is_none(), "as-cmd must keep running");
+    assert!(
+        child.try_wait().expect("query child").is_none(),
+        "as-cmd must keep running"
+    );
     interrupt(&child);
     let status = wait_child(&mut child, Duration::from_secs(15))
         .unwrap_or_else(|| panic!("phase-2 as-cmd did not exit"));
@@ -295,9 +321,10 @@ async fn loose_permissions_refuse_v2_without_killing_v1_and_flag_overrides() {
             "--allow-loose-key-permissions",
         ],
     );
-    let listening3 = format!("v2 listen success on 127.0.0.1:{v2_port}");
+    let listening3 = format!("v2 listen success on [::]:{v2_port}");
     assert!(
-        wait_until(Duration::from_secs(10), || log_text(&log_path).contains(&listening3)),
+        wait_until(Duration::from_secs(10), || log_text(&log_path)
+            .contains(&listening3)),
         "phase-3 v2 must start under the override\nlog: {}",
         log_text(&log_path)
     );

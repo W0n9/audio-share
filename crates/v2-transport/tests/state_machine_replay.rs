@@ -18,10 +18,8 @@ use v2_transport::vectors::FixtureSet;
 
 const CLIENT_PUB: &str = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
 const SERVER_PUB: &str = "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c";
-const SERVER_RANDOM: &str =
-    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
-const AUTH_EXPORTER: &str =
-    "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";
+const SERVER_RANDOM: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+const AUTH_EXPORTER: &str = "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";
 /// The auth-happy-path signature (valid; error-202 reuses it). error-203's
 /// corrupted signature travels in its own fixture body, so this constant is
 /// only referenced by the setup helpers below.
@@ -89,13 +87,24 @@ fn emitted(outcomes: &[v2_transport::state_machine::Outcome]) -> Vec<String> {
 /// Replay one case's C->S `frame` steps through a machine; every S->C frame
 /// step must appear byte-identically, in order, with no extra frames.
 #[track_caller]
-fn assert_steps_match(case: &v2_transport::vectors::FixtureCase, machine: &mut StateMachine, events: &[Event]) {
+fn assert_steps_match(
+    case: &v2_transport::vectors::FixtureCase,
+    machine: &mut StateMachine,
+    events: &[Event],
+) {
     let expected: Vec<(usize, String)> = case
         .steps
         .iter()
         .enumerate()
         .filter(|(_, step)| step.kind == "frame" && step.dir.as_deref() == Some("S->C"))
-        .map(|(i, step)| (i + 1, step.body_hex.clone().expect("S->C frame step carries body_hex")))
+        .map(|(i, step)| {
+            (
+                i + 1,
+                step.body_hex
+                    .clone()
+                    .expect("S->C frame step carries body_hex"),
+            )
+        })
         .collect();
 
     let mut produced: Vec<String> = Vec::new();
@@ -116,7 +125,9 @@ fn fixture_set() -> FixtureSet {
     FixtureSet::repo_default().expect("fixtures/wire-protocol-v2/ is present")
 }
 
-fn case_body_steps(case: &v2_transport::vectors::FixtureCase) -> Vec<(Option<String>, Option<String>)> {
+fn case_body_steps(
+    case: &v2_transport::vectors::FixtureCase,
+) -> Vec<(Option<String>, Option<String>)> {
     case.steps
         .iter()
         .filter(|step| step.kind == "frame")
@@ -138,8 +149,14 @@ fn auth_happy_path_replays_byte_identically() {
     let store = store_with_client();
     let mut machine = StateMachine::new(config(&store), &store);
     let events = vec![
-        Event::Frame { frame: Box::new(feed(steps[0].1.as_deref().expect("auth_init body"))), source: unhex(CLIENT_PUB) },
-        Event::Frame { frame: Box::new(feed(steps[2].1.as_deref().expect("auth_proof body"))), source: unhex(CLIENT_PUB) },
+        Event::Frame {
+            frame: Box::new(feed(steps[0].1.as_deref().expect("auth_init body"))),
+            source: unhex(CLIENT_PUB),
+        },
+        Event::Frame {
+            frame: Box::new(feed(steps[2].1.as_deref().expect("auth_proof body"))),
+            source: unhex(CLIENT_PUB),
+        },
     ];
     assert_steps_match(case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Negotiating);
@@ -160,8 +177,14 @@ fn error_202_unknown_identity_replays_byte_identically() {
     let store = std::sync::Arc::new(AuthorizationStore::in_memory());
     let mut machine = StateMachine::new(config(&store), &store);
     let events = vec![
-        Event::Frame { frame: Box::new(feed(steps[0].1.as_deref().unwrap())), source: unhex(CLIENT_PUB) },
-        Event::Frame { frame: Box::new(proof(steps[2].1.as_deref().unwrap())), source: unhex(CLIENT_PUB) },
+        Event::Frame {
+            frame: Box::new(feed(steps[0].1.as_deref().unwrap())),
+            source: unhex(CLIENT_PUB),
+        },
+        Event::Frame {
+            frame: Box::new(proof(steps[2].1.as_deref().unwrap())),
+            source: unhex(CLIENT_PUB),
+        },
     ];
     assert_steps_match(case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Authenticating, "non-fatal");
@@ -187,11 +210,21 @@ fn error_203_invalid_signature_replays_byte_identically() {
     let store = store_with_client();
     let mut machine = StateMachine::new(config(&store), &store);
     let events = vec![
-        Event::Frame { frame: Box::new(feed(steps[0].1.as_deref().unwrap())), source: unhex(CLIENT_PUB) },
-        Event::Frame { frame: Box::new(feed(steps[2].1.as_deref().unwrap())), source: unhex(CLIENT_PUB) },
+        Event::Frame {
+            frame: Box::new(feed(steps[0].1.as_deref().unwrap())),
+            source: unhex(CLIENT_PUB),
+        },
+        Event::Frame {
+            frame: Box::new(feed(steps[2].1.as_deref().unwrap())),
+            source: unhex(CLIENT_PUB),
+        },
     ];
     assert_steps_match(case, &mut machine, &events);
-    assert_eq!(machine.state(), ServerState::Authenticating, "failure 1 of 5");
+    assert_eq!(
+        machine.state(),
+        ServerState::Authenticating,
+        "failure 1 of 5"
+    );
 }
 
 #[test]
@@ -215,8 +248,14 @@ fn error_204_denied_identity_replays_byte_identically() {
     let store = std::sync::Arc::new(store);
     let mut machine = StateMachine::new(config(&store), &store);
     let events = vec![
-        Event::Frame { frame: Box::new(feed(steps[0].1.as_deref().unwrap())), source: unhex(CLIENT_PUB) },
-        Event::Frame { frame: Box::new(feed(steps[2].1.as_deref().unwrap())), source: unhex(CLIENT_PUB) },
+        Event::Frame {
+            frame: Box::new(feed(steps[0].1.as_deref().unwrap())),
+            source: unhex(CLIENT_PUB),
+        },
+        Event::Frame {
+            frame: Box::new(feed(steps[2].1.as_deref().unwrap())),
+            source: unhex(CLIENT_PUB),
+        },
     ];
     assert_steps_match(case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Authenticating, "non-fatal");
@@ -235,8 +274,14 @@ fn error_204_revoked_active_session_replays_byte_identically() {
     let mut machine = StateMachine::new(config(&store), &store);
     // Drive to READY (the fixture's precondition: active session).
     machine.handle(Event::Frame { frame: Box::new(feed("0a2c090100000000000000122103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d")), source: unhex(CLIENT_PUB) });
-    machine.handle(Event::Frame { frame: Box::new(proof_with(1, VALID_SIG)), source: unhex(CLIENT_PUB) });
-    machine.handle(Event::Frame { frame: Box::new(feed("3a0b0902000000000000001002")), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame {
+        frame: Box::new(proof_with(1, VALID_SIG)),
+        source: unhex(CLIENT_PUB),
+    });
+    machine.handle(Event::Frame {
+        frame: Box::new(feed("3a0b0902000000000000001002")),
+        source: unhex(CLIENT_PUB),
+    });
     assert_eq!(machine.state(), ServerState::Ready);
     store.revoke(&unhex(CLIENT_PUB)).expect("revoke");
     let events = vec![Event::RevocationCheck];
@@ -285,19 +330,31 @@ fn error_303_supersede_emits_close_303_on_the_old_session() {
     });
     let produced = emitted(&outcomes);
     assert_eq!(produced, vec!["320308af02".to_owned()], "Close(303) alone");
-    assert_eq!(outcomes[0].transport_close_code.map(|code| code.code), Some(303));
+    assert_eq!(
+        outcomes[0].transport_close_code.map(|code| code.code),
+        Some(303)
+    );
     assert_eq!(old_machine.state(), ServerState::Closed);
 }
 
 fn machine_auth(machine: &mut StateMachine, _store: &std::sync::Arc<AuthorizationStore>) {
     machine.handle(Event::Frame { frame: Box::new(feed("0a2c090100000000000000122103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d")), source: unhex(CLIENT_PUB) });
-    let out = machine.handle(Event::Frame { frame: Box::new(proof_with(1, VALID_SIG)), source: unhex(CLIENT_PUB) });
-    assert!(matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
-        Some(frame::Body::AuthResult(r)) if r.status.code == 0), "auth ok: {out:?}");
+    let out = machine.handle(Event::Frame {
+        frame: Box::new(proof_with(1, VALID_SIG)),
+        source: unhex(CLIENT_PUB),
+    });
+    assert!(
+        matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
+        Some(frame::Body::AuthResult(r)) if r.status.code == 0),
+        "auth ok: {out:?}"
+    );
 }
 
 fn machine_negotiate(machine: &mut StateMachine) {
-    machine.handle(Event::Frame { frame: Box::new(feed("3a0b0902000000000000001002")), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame {
+        frame: Box::new(feed("3a0b0902000000000000001002")),
+        source: unhex(CLIENT_PUB),
+    });
 }
 
 #[test]
@@ -312,7 +369,10 @@ fn negotiate_happy_path_replays_byte_identically() {
     let store = store_with_client();
     let mut machine = StateMachine::new(config(&store), &store);
     machine_auth(&mut machine, &store);
-    let events = vec![Event::Frame { frame: Box::new(feed("3a0b0902000000000000001002")), source: unhex(CLIENT_PUB) }];
+    let events = vec![Event::Frame {
+        frame: Box::new(feed("3a0b0902000000000000001002")),
+        source: unhex(CLIENT_PUB),
+    }];
     assert_steps_match(case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Ready);
 }
@@ -338,7 +398,10 @@ fn negotiate_unknown_capability_replays_byte_identically() {
     config.current_configuration = None;
     let mut machine = StateMachine::new(config, &store);
     machine_auth(&mut machine, &store);
-    let events = vec![Event::Frame { frame: Box::new(feed("3a0e0902000000000000001002220107")), source: unhex(CLIENT_PUB) }];
+    let events = vec![Event::Frame {
+        frame: Box::new(feed("3a0e0902000000000000001002220107")),
+        source: unhex(CLIENT_PUB),
+    }];
     assert_steps_match(case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Ready);
 }
@@ -362,13 +425,26 @@ fn duplicate_subscribe_402_nonfatal_replays_byte_identically() {
     // The PLAYING precondition consumes the original subscribe (request_id 1)
     // outside the case's step list; consume it in the setup too, discarding
     // the machine's output (SubscribeResponse + StreamStarted).
-    machine.handle(Event::Frame { frame: Box::new(feed("820209090100000000000000")), source: unhex(CLIENT_PUB) });
+    machine.handle(Event::Frame {
+        frame: Box::new(feed("820209090100000000000000")),
+        source: unhex(CLIENT_PUB),
+    });
     let events = vec![
-        Event::Frame { frame: Box::new(feed("820209090200000000000000")), source: unhex(CLIENT_PUB) },
-        Event::Frame { frame: Box::new(feed("a20209090300000000000000")), source: unhex(CLIENT_PUB) },
+        Event::Frame {
+            frame: Box::new(feed("820209090200000000000000")),
+            source: unhex(CLIENT_PUB),
+        },
+        Event::Frame {
+            frame: Box::new(feed("a20209090300000000000000")),
+            source: unhex(CLIENT_PUB),
+        },
     ];
     assert_steps_match(case, &mut machine, &events);
-    assert_eq!(machine.state(), ServerState::Ready, "non-fatal: still READY");
+    assert_eq!(
+        machine.state(),
+        ServerState::Ready,
+        "non-fatal: still READY"
+    );
 }
 
 #[test]
@@ -387,7 +463,10 @@ fn capture_unhealthy_501_replays_byte_identically() {
     let mut machine = StateMachine::new(config, &store);
     machine_auth(&mut machine, &store);
     machine_negotiate(&mut machine);
-    let events = vec![Event::Frame { frame: Box::new(feed("820209090100000000000000")), source: unhex(CLIENT_PUB) }];
+    let events = vec![Event::Frame {
+        frame: Box::new(feed("820209090100000000000000")),
+        source: unhex(CLIENT_PUB),
+    }];
     assert_steps_match(case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Ready, "non-fatal");
 }
@@ -408,7 +487,10 @@ fn negative_space_402s_replay_byte_identically() {
     // control.connecting-valid-subscribe-402: fresh machine.
     let (_store, mut machine) = fresh();
     let case = find("control.connecting-valid-subscribe-402");
-    let events = vec![Event::Frame { frame: Box::new(feed("820209090100000000000000")), source: unhex(CLIENT_PUB) }];
+    let events = vec![Event::Frame {
+        frame: Box::new(feed("820209090100000000000000")),
+        source: unhex(CLIENT_PUB),
+    }];
     assert_steps_match(&case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Closing);
     drop(machine);
@@ -416,7 +498,10 @@ fn negative_space_402s_replay_byte_identically() {
     // control.subscribe-before-ready-402: NEGOTIATING machine.
     let (_store, mut machine) = ready_before_negotiate();
     let case = find("control.subscribe-before-ready-402");
-    let events = vec![Event::Frame { frame: Box::new(feed("820209090100000000000000")), source: unhex(CLIENT_PUB) }];
+    let events = vec![Event::Frame {
+        frame: Box::new(feed("820209090100000000000000")),
+        source: unhex(CLIENT_PUB),
+    }];
     assert_steps_match(&case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Closing);
     drop(machine);
@@ -442,7 +527,10 @@ fn negative_space_401_replays_byte_identically() {
     let store = store_with_client();
     let mut machine = StateMachine::new(config(&store), &store);
     machine_auth(&mut machine, &store);
-    let events = vec![Event::Frame { frame: Box::new(feed("3a0f090200000000000000100222020201")), source: unhex(CLIENT_PUB) }];
+    let events = vec![Event::Frame {
+        frame: Box::new(feed("3a0f090200000000000000100222020201")),
+        source: unhex(CLIENT_PUB),
+    }];
     assert_steps_match(case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Closing);
 }
@@ -472,8 +560,14 @@ fn unknown_field_ignored_replays_byte_identically() {
     machine_auth(&mut machine, &store);
     // Discard NegotiateResponse + the READY-entry ConfigurationPublished push
     // (READY with a published configuration is the fixture's precondition).
-    machine.handle(Event::Frame { frame: Box::new(feed("3a0b0902000000000000001002")), source: unhex(CLIENT_PUB) });
-    let events = vec![Event::Frame { frame: Box::new(feed("820209090100000000000000")), source: unhex(CLIENT_PUB) }];
+    machine.handle(Event::Frame {
+        frame: Box::new(feed("3a0b0902000000000000001002")),
+        source: unhex(CLIENT_PUB),
+    });
+    let events = vec![Event::Frame {
+        frame: Box::new(feed("820209090100000000000000")),
+        source: unhex(CLIENT_PUB),
+    }];
     assert_steps_match(case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Ready);
 }
@@ -507,7 +601,10 @@ fn unknown_oneof_case_is_a_framing_level_401() {
 
     // The framing layer rejects the raw body: unset body → 401.
     let decode = decode_body(&unhex("82051372657365727665642d666f722d667574757265"));
-    assert!(decode.is_err(), "unknown oneof case 80 leaves the body unset");
+    assert!(
+        decode.is_err(),
+        "unknown oneof case 80 leaves the body unset"
+    );
 
     // The driver answers with the machine's fatal row (Error(401)+Close(401),
     // request_id 0): drive it through Event::Frame-less fatal machinery.
@@ -573,13 +670,19 @@ fn framing_level_401_fixtures_replay_byte_identically() {
                     decode_body(&body[4..4 + body_len.min(body.len().saturating_sub(4))]).is_err()
                 }
             };
-            assert!(framing_rejects, "{id}: framing must reject the documented violation");
+            assert!(
+                framing_rejects,
+                "{id}: framing must reject the documented violation"
+            );
         }
 
         // The machine's fatal row emits the byte-identical pair.
         let store = store_opt.take().unwrap_or_else(store_with_client);
         let mut machine = StateMachine::new(config(&store), &store);
-        let outcomes = machine.handle(Event::Frame { frame: Box::new(Frame { body: None }), source: unhex(CLIENT_PUB) });
+        let outcomes = machine.handle(Event::Frame {
+            frame: Box::new(Frame { body: None }),
+            source: unhex(CLIENT_PUB),
+        });
         assert_eq!(emitted(&outcomes), vec![error_step, close_step], "{id}");
         assert_eq!(machine.state(), ServerState::Closing, "{id}");
         store_opt = None; // one machine per case; rebuild the store next round
@@ -598,7 +701,10 @@ fn error_101_version_mismatch_replays_byte_identically() {
     let store = store_with_client();
     let mut machine = StateMachine::new(config(&store), &store);
     machine_auth(&mut machine, &store);
-    let events = vec![Event::Frame { frame: Box::new(feed("3a0b0902000000000000001001")), source: unhex(CLIENT_PUB) }];
+    let events = vec![Event::Frame {
+        frame: Box::new(feed("3a0b0902000000000000001001")),
+        source: unhex(CLIENT_PUB),
+    }];
     assert_steps_match(case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Closing);
     // transport-close 101 comes from the close_code of the last outcome.
@@ -618,8 +724,14 @@ fn error_701_client_stopping_replays_byte_identically() {
     let mut machine = StateMachine::new(config(&store), &store);
     machine_auth(&mut machine, &store);
     machine_negotiate(&mut machine);
-    machine.handle(Event::Frame { frame: Box::new(feed("820209090100000000000000")), source: unhex(CLIENT_PUB) });
-    let events = vec![Event::Frame { frame: Box::new(feed("320308bd05")), source: unhex(CLIENT_PUB) }];
+    machine.handle(Event::Frame {
+        frame: Box::new(feed("820209090100000000000000")),
+        source: unhex(CLIENT_PUB),
+    });
+    let events = vec![Event::Frame {
+        frame: Box::new(feed("320308bd05")),
+        source: unhex(CLIENT_PUB),
+    }];
     assert_steps_match(case, &mut machine, &events);
     assert_eq!(machine.state(), ServerState::Closing);
 }
@@ -661,9 +773,18 @@ fn client_reported_error_and_close_rows_replay_byte_identically() {
             .and_then(|step| step.body_hex.clone())
             .unwrap_or_else(|| panic!("{id}: close step"));
         let (store, mut machine) = ready();
-        let out = machine.handle(Event::Frame { frame: Box::new(feed(&error_hex)), source: unhex(CLIENT_PUB) });
-        assert!(out.iter().all(|outcome| outcome.frame.is_none()), "{id}: advisory Error emits nothing");
-        let out = machine.handle(Event::Frame { frame: Box::new(feed(&close_hex)), source: unhex(CLIENT_PUB) });
+        let out = machine.handle(Event::Frame {
+            frame: Box::new(feed(&error_hex)),
+            source: unhex(CLIENT_PUB),
+        });
+        assert!(
+            out.iter().all(|outcome| outcome.frame.is_none()),
+            "{id}: advisory Error emits nothing"
+        );
+        let out = machine.handle(Event::Frame {
+            frame: Box::new(feed(&close_hex)),
+            source: unhex(CLIENT_PUB),
+        });
         assert!(out.is_empty(), "{id}: Close is never echoed");
         assert_eq!(machine.state(), ServerState::Closing, "{id}");
         drop(store);
