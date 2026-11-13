@@ -15,9 +15,9 @@
 //! crate — replayed from source so a fixture edit breaks the build's tests,
 //! never silently.
 
-use crate::proto::{frame::Body, Frame};
 use crate::control::ClientMachine;
 use crate::frame::FrameDecoder;
+use crate::proto::{frame::Body, Frame};
 #[cfg(test)]
 use prost::Message as _;
 
@@ -85,44 +85,49 @@ fn hex(b: &[u8]) -> String {
 /// Load one case file.
 pub fn load_case(rel: &str) -> Case {
     let path = format!("{FIXTURE_ROOT}/{rel}");
-    let raw = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {path}: {e}"));
+    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     let v: serde_json::Value = serde_json::from_str(&raw).expect("case JSON");
     let steps = v["steps"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|s| {
-            match s["kind"].as_str().unwrap() {
-                "frame" => Step::Frame {
-                    dir: Dir::parse(s["dir"].as_str().unwrap()),
-                    message: s["message"].as_str().unwrap_or("").to_string(),
-                    frame_hex: s["frame_hex"].as_str().unwrap_or("").to_string(),
-                    body_hex: s["body_hex"].as_str().unwrap_or("").to_string(),
-                    decoded: s["decoded"].clone(),
-                    has_unknown_fields: s["has_unknown_fields"].as_bool().unwrap_or(false),
-                },
-                "raw-stream" => Step::RawStream {
-                    bytes_hex: s["bytes_hex"].as_str().unwrap_or("").to_string(),
-                },
-                "transport-close" => Step::TransportClose {
-                    code: s["code"].as_u64().unwrap() as u32,
-                    closed_by: s["closed_by"].as_str().unwrap().to_string(),
-                },
-                other => panic!("unknown step kind {other} in {rel}"),
-            }
+        .map(|s| match s["kind"].as_str().unwrap() {
+            "frame" => Step::Frame {
+                dir: Dir::parse(s["dir"].as_str().unwrap()),
+                message: s["message"].as_str().unwrap_or("").to_string(),
+                frame_hex: s["frame_hex"].as_str().unwrap_or("").to_string(),
+                body_hex: s["body_hex"].as_str().unwrap_or("").to_string(),
+                decoded: s["decoded"].clone(),
+                has_unknown_fields: s["has_unknown_fields"].as_bool().unwrap_or(false),
+            },
+            "raw-stream" => Step::RawStream {
+                bytes_hex: s["bytes_hex"].as_str().unwrap_or("").to_string(),
+            },
+            "transport-close" => Step::TransportClose {
+                code: s["code"].as_u64().unwrap() as u32,
+                closed_by: s["closed_by"].as_str().unwrap().to_string(),
+            },
+            other => panic!("unknown step kind {other} in {rel}"),
         })
         .collect();
     Case {
         id: v["id"].as_str().unwrap().to_string(),
         preconditions: v["preconditions"]
             .as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
         steps,
         assertions: v["assertions"]
             .as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
         size_bounds: v["size_bounds"]
             .as_array()
@@ -139,7 +144,10 @@ pub fn load_case(rel: &str) -> Case {
     }
 }
 
-const FIXTURE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/wire-protocol-v2");
+const FIXTURE_ROOT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../fixtures/wire-protocol-v2"
+);
 
 // ---------------------------------------------------------------------------
 // decoded → Frame construction (encoding direction)
@@ -180,7 +188,11 @@ pub fn build_frame_from_decoded(decoded: &serde_json::Value, message: &str) -> O
             protocol_minor: dec_u64(decoded, "protocol_minor") as u32,
             capabilities: decoded["capabilities"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_u64().map(|n| n as u32)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_u64().map(|n| n as u32))
+                        .collect()
+                })
                 .unwrap_or_default(),
         }),
         "negotiate_response" => Body::NegotiateResponse(crate::proto::NegotiateResponse {
@@ -190,7 +202,11 @@ pub fn build_frame_from_decoded(decoded: &serde_json::Value, message: &str) -> O
             protocol_minor: dec_u64(decoded, "protocol_minor") as u32,
             capabilities: decoded["capabilities"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_u64().map(|n| n as u32)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_u64().map(|n| n as u32))
+                        .collect()
+                })
                 .unwrap_or_default(),
         }),
         "error" => Body::Error(crate::proto::Error {
@@ -210,7 +226,11 @@ pub fn build_frame_from_decoded(decoded: &serde_json::Value, message: &str) -> O
             protocol_major: dec_u64(decoded, "protocol_major") as u32,
             capabilities: decoded["capabilities"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_u64().map(|n| n as u32)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_u64().map(|n| n as u32))
+                        .collect()
+                })
                 .unwrap_or_default(),
             client_name: decoded["client_name"].as_str().unwrap_or("").to_string(),
         }),
@@ -225,7 +245,11 @@ pub fn build_frame_from_decoded(decoded: &serde_json::Value, message: &str) -> O
             protocol_major: dec_u64(decoded, "protocol_major") as u32,
             capabilities: decoded["capabilities"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_u64().map(|n| n as u32)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_u64().map(|n| n as u32))
+                        .collect()
+                })
                 .unwrap_or_default(),
             binding: dec_bytes(decoded, "binding"),
             client_id: dec_bytes(decoded, "client_id"),
@@ -258,12 +282,12 @@ pub fn build_frame_from_decoded(decoded: &serde_json::Value, message: &str) -> O
         "request_configuration" => Body::RequestConfiguration(crate::proto::RequestConfiguration {
             request_id: dec_u64(decoded, "request_id"),
         }),
-        "configuration_published" => Body::ConfigurationPublished(
-            crate::proto::ConfigurationPublished {
+        "configuration_published" => {
+            Body::ConfigurationPublished(crate::proto::ConfigurationPublished {
                 request_id: dec_u64(decoded, "request_id"),
                 configuration: decoded.get("configuration").map(build_configuration),
-            },
-        ),
+            })
+        }
         "stream_started" => Body::StreamStarted(crate::proto::StreamStarted {
             stream_instance_id: dec_u64(decoded, "stream_instance_id") as u32,
             config_generation: dec_u64(decoded, "config_generation") as u32,
@@ -284,11 +308,11 @@ pub fn build_frame_from_decoded(decoded: &serde_json::Value, message: &str) -> O
 /// missing key → None (unset field, per the encoding policy).
 fn build_status(v: Option<&serde_json::Value>) -> Option<crate::proto::Status> {
     v.map(|obj| crate::proto::Status {
-            code: obj["code"].as_u64().unwrap_or(0) as u32,
-            retryable: obj["retryable"].as_bool().unwrap_or(false),
-            requires_repairing: obj["requires_repairing"].as_bool().unwrap_or(false),
-            detail: obj["detail"].as_str().unwrap_or("").to_string(),
-        })
+        code: obj["code"].as_u64().unwrap_or(0) as u32,
+        retryable: obj["retryable"].as_bool().unwrap_or(false),
+        requires_repairing: obj["requires_repairing"].as_bool().unwrap_or(false),
+        detail: obj["detail"].as_str().unwrap_or("").to_string(),
+    })
 }
 
 fn build_configuration(v: &serde_json::Value) -> crate::proto::Configuration {
@@ -424,7 +448,11 @@ pub fn assert_decoding_roundtrip(step_frame: &Step) {
         unhex(frame_hex)[2],
         unhex(frame_hex)[3],
     ]);
-    assert_eq!(len as usize, body.len(), "length prefix must match body length");
+    assert_eq!(
+        len as usize,
+        body.len(),
+        "length prefix must match body length"
+    );
 }
 
 /// State-machine direction: feed the C->S frames + raw-stream violations and
@@ -451,7 +479,7 @@ pub fn drive_case(case: &Case) -> ReplayOutcome {
     if pre.contains("State machine: CONNECTING") {
         // machine starts Idle; a first C->S auth_init implies the handshake
         // completed and AuthInit was sent
-        machine.state = crate::control::ClientState::ConnectingSent;
+        machine.state = crate::control::ClientState::Authenticating;
     } else if pre.contains("NEGOTIATING")
         || (pre.contains("negotiated") && !pre.contains("READY"))
         || pre.contains("request_id counter continues")
@@ -482,12 +510,17 @@ pub fn drive_case(case: &Case) -> ReplayOutcome {
         negotiated = true;
         machine.next_request_id = seed_request_id(case);
     } else if pre.contains("authenticated") || pre.contains("identity") {
-        machine.state = crate::control::ClientState::ConnectingSent;
+        machine.state = crate::control::ClientState::Authenticating;
     }
 
     for step in &case.steps {
         match step {
-            Step::Frame { dir, message, decoded, .. } => {
+            Step::Frame {
+                dir,
+                message,
+                decoded,
+                ..
+            } => {
                 let Some(frame) = build_frame_from_decoded(decoded, message) else {
                     continue;
                 };
@@ -569,7 +602,12 @@ pub fn drive_case(case: &Case) -> ReplayOutcome {
 fn seed_request_id(case: &Case) -> u64 {
     let mut min = u64::MAX;
     for step in &case.steps {
-        if let Step::Frame { dir: Dir::CtoS, decoded, .. } = step {
+        if let Step::Frame {
+            dir: Dir::CtoS,
+            decoded,
+            ..
+        } = step
+        {
             if let Some(id) = decoded["request_id"].as_u64() {
                 if id > 0 {
                     min = min.min(id);
@@ -700,7 +738,10 @@ mod tests {
     fn assert_case(rel: &str) {
         let case = load_case(rel);
         for step in &case.steps {
-            if let Step::Frame { has_unknown_fields, .. } = step {
+            if let Step::Frame {
+                has_unknown_fields, ..
+            } = step
+            {
                 if !*has_unknown_fields {
                     assert_encoding_matches(step);
                 }
@@ -709,7 +750,10 @@ mod tests {
         }
         // size bounds (README contract item 6)
         for step in &case.steps {
-            if let Step::Frame { message, frame_hex, .. } = step {
+            if let Step::Frame {
+                message, frame_hex, ..
+            } = step
+            {
                 for bound in &case.size_bounds {
                     if message.contains(bound.frame.as_str()) {
                         let len = u32::from_be_bytes([
@@ -763,10 +807,16 @@ mod tests {
     /// direction (the spec's actual rule) is exercised by the decode() calls.
     #[test]
     fn unknown_fields_decode_without_error() {
-        for rel in ["control/unknown-field-ignored.json", "control/unknown-oneof-case-401.json"] {
+        for rel in [
+            "control/unknown-field-ignored.json",
+            "control/unknown-oneof-case-401.json",
+        ] {
             let case = load_case(rel);
             for step in &case.steps {
-                if let Step::Frame { body_hex, decoded, .. } = step {
+                if let Step::Frame {
+                    body_hex, decoded, ..
+                } = step
+                {
                     let body = unhex(body_hex);
                     let frame = Frame::decode(body.as_slice()).expect("decode");
                     // unknown-field-ignored: the known content survives
@@ -826,21 +876,29 @@ mod tests {
         let v = m.enter_authenticating(init).expect("auth init");
         assert!(matches!(v, crate::control::Verdict::Send(_)));
         // step 2: AuthChallenge S->C
-        let Step::Frame { decoded, .. } = &case.steps[1] else { panic!() };
+        let Step::Frame { decoded, .. } = &case.steps[1] else {
+            panic!()
+        };
         let ch = build_frame_from_decoded(decoded, "auth_challenge").unwrap();
         let (r1, _) = m.on_frame(&ch);
         let Ok(crate::control::Verdict::Send(proof)) = r1 else {
             panic!("machine must emit AuthProof, got {r1:?}");
         };
         // the emitted AuthProof decodes and its request_id echoes the exchange
-        let Some(Body::AuthProof(p)) = proof.body else { panic!() };
+        let Some(Body::AuthProof(p)) = proof.body else {
+            panic!()
+        };
         assert_eq!(p.request_id, 1);
         assert_eq!(p.signature.len(), 64);
         // step 4: AuthResult OK → Negotiate → NEGOTIATING
-        let Step::Frame { decoded, .. } = &case.steps[3] else { panic!() };
+        let Step::Frame { decoded, .. } = &case.steps[3] else {
+            panic!()
+        };
         let ok = build_frame_from_decoded(decoded, "auth_result").unwrap();
         let (r2, _) = m.on_frame(&ok);
-        assert!(matches!(r2, Ok(crate::control::Verdict::Send(f)) if message_name(&f) == "negotiate"));
+        assert!(
+            matches!(r2, Ok(crate::control::Verdict::Send(f)) if message_name(&f) == "negotiate")
+        );
         assert_eq!(m.state, crate::control::ClientState::Negotiating);
     }
 
@@ -855,13 +913,19 @@ mod tests {
             ("control/error-204-authorization-denied.json", 204),
         ] {
             let case = load_case(rel);
-            let Step::Frame { decoded, .. } = case.steps.last().unwrap() else { panic!() };
+            let Step::Frame { decoded, .. } = case.steps.last().unwrap() else {
+                panic!()
+            };
             let res = build_frame_from_decoded(decoded, "auth_result").unwrap();
             let mut m = ClientMachine::new();
-            m.state = crate::control::ClientState::ConnectingSent;
+            m.state = crate::control::ClientState::Authenticating;
             m.seed_pending(1, crate::control::PendingKind::AuthInit);
             let (r, _) = m.on_frame(&res);
-            assert_eq!(r, Err(crate::control::CloseInfo { code, remote: true }), "{rel}");
+            assert_eq!(
+                r,
+                Err(crate::control::CloseInfo { code, remote: true }),
+                "{rel}"
+            );
             assert_eq!(m.state, crate::control::ClientState::Closed);
         }
     }
@@ -874,13 +938,17 @@ mod tests {
         let mut m = ClientMachine::new();
         m.state = crate::control::ClientState::Negotiating;
         m.seed_pending(2, crate::control::PendingKind::Negotiate);
-        let Step::Frame { decoded, .. } = &case.steps[1] else { panic!() };
+        let Step::Frame { decoded, .. } = &case.steps[1] else {
+            panic!()
+        };
         let resp = build_frame_from_decoded(decoded, "negotiate_response").unwrap();
         let (r, _) = m.on_frame(&resp);
         assert_eq!(r, Ok(crate::control::Verdict::Ok));
         assert_eq!(m.state, crate::control::ClientState::Ready);
         // push configuration
-        let Step::Frame { decoded, .. } = &case.steps[2] else { panic!() };
+        let Step::Frame { decoded, .. } = &case.steps[2] else {
+            panic!()
+        };
         let pubr = build_frame_from_decoded(decoded, "configuration_published").unwrap();
         let (r, ev) = m.on_frame(&pubr);
         assert_eq!(r, Ok(crate::control::Verdict::Ok));
@@ -911,7 +979,9 @@ mod tests {
         m.seed_pending(2, crate::control::PendingKind::Subscribe);
         // step 1: C->S duplicate subscribe (already reflected in state)
         // step 2: S->C non-fatal Error(402)
-        let Step::Frame { decoded, .. } = &case.steps[1] else { panic!() };
+        let Step::Frame { decoded, .. } = &case.steps[1] else {
+            panic!()
+        };
         let err = build_frame_from_decoded(decoded, "error").unwrap();
         let (r, ev) = m.on_frame(&err);
         assert_eq!(r, Ok(crate::control::Verdict::Ok), "connection maintained");
@@ -919,7 +989,9 @@ mod tests {
         assert_eq!(m.state, crate::control::ClientState::Playing);
         // step 4: S->C ConfigurationPublished (response to RequestConfiguration)
         m.seed_pending(3, crate::control::PendingKind::RequestConfiguration);
-        let Step::Frame { decoded, .. } = &case.steps[3] else { panic!() };
+        let Step::Frame { decoded, .. } = &case.steps[3] else {
+            panic!()
+        };
         let pubr = build_frame_from_decoded(decoded, "configuration_published").unwrap();
         let (r, _) = m.on_frame(&pubr);
         assert_eq!(r, Ok(crate::control::Verdict::Ok));
@@ -933,7 +1005,9 @@ mod tests {
         let case = load_case("control/error-403-unsupported-media-configuration.json");
         let mut m = ClientMachine::new();
         m.state = crate::control::ClientState::Ready;
-        let Step::Frame { decoded, .. } = &case.steps[0] else { panic!() };
+        let Step::Frame { decoded, .. } = &case.steps[0] else {
+            panic!()
+        };
         let pubr = build_frame_from_decoded(decoded, "configuration_published").unwrap();
         let (r, _) = m.on_frame(&pubr);
         let Ok(crate::control::Verdict::Fatal { code }) = r else {
@@ -941,8 +1015,19 @@ mod tests {
         };
         assert_eq!(code, 403);
         // the fixture's C->S error and close bodies, built independently
-        let Step::Frame { body_hex: err_body, .. } = &case.steps[1] else { panic!() };
-        let Step::Frame { body_hex: close_body, .. } = &case.steps[2] else { panic!() };
+        let Step::Frame {
+            body_hex: err_body, ..
+        } = &case.steps[1]
+        else {
+            panic!()
+        };
+        let Step::Frame {
+            body_hex: close_body,
+            ..
+        } = &case.steps[2]
+        else {
+            panic!()
+        };
         // the machine-level frames (helpers) must encode to the fixture bytes
         let err_frame = crate::proto::Error {
             request_id: 0,
@@ -977,8 +1062,12 @@ mod tests {
         let mut m = ClientMachine::new();
         m.state = crate::control::ClientState::Ready;
         let v = m.user_stop();
-        let crate::control::Verdict::Send(f) = v else { panic!("expected Send") };
-        let Step::Frame { body_hex, .. } = &case.steps[0] else { panic!() };
+        let crate::control::Verdict::Send(f) = v else {
+            panic!("expected Send")
+        };
+        let Step::Frame { body_hex, .. } = &case.steps[0] else {
+            panic!()
+        };
         assert_eq!(hex(&f.encode_to_vec()), body_hex.as_str());
     }
 
@@ -992,7 +1081,9 @@ mod tests {
             "control/error-401-frame-length-oversize.json",
         ] {
             let case = load_case(rel);
-            let Step::RawStream { bytes_hex } = &case.steps[0] else { panic!() };
+            let Step::RawStream { bytes_hex } = &case.steps[0] else {
+                panic!()
+            };
             let mut d = FrameDecoder::new();
             assert!(d.push(&unhex(bytes_hex)).is_err(), "{rel} must be rejected");
         }
@@ -1004,7 +1095,9 @@ mod tests {
     #[test]
     fn pairing_response_within_320b() {
         let case = load_case("limits/pairing-response-320b.json");
-        let Step::Frame { frame_hex, .. } = &case.steps[0] else { panic!() };
+        let Step::Frame { frame_hex, .. } = &case.steps[0] else {
+            panic!()
+        };
         let b = unhex(frame_hex);
         let len = u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize;
         assert_eq!(len, 211);
@@ -1023,11 +1116,8 @@ mod tests {
         let confirm = case_decoded(&case, 2);
         // TLV canonicalization (pairing.md §6.3): mode 'qr', major 2 BE
         let binding = dec_bytes(&resp, "binding");
-        let proof_input = crate::auth::pairing_tlv(
-            b"audio-share v2 pairing confirm",
-            &binding,
-        )
-        .unwrap();
+        let proof_input =
+            crate::auth::pairing_tlv(b"audio-share v2 pairing confirm", &binding).unwrap();
         // the recorded client_proof verifies over the proof_input with the
         // fixture identity key
         let key = crate::auth::test_client_identity_key();
@@ -1088,8 +1178,7 @@ mod tests {
             .filter_map(|c| c["file"].as_str())
             .filter(|f| f.starts_with("control/") || f.starts_with("limits/"))
             .collect();
-        let runner_cases: Vec<String> =
-            all_control_cases().iter().map(|s| s.to_string()).collect();
+        let runner_cases: Vec<String> = all_control_cases().iter().map(|s| s.to_string()).collect();
         assert_eq!(
             manifest_cases.len(),
             runner_cases.len(),

@@ -57,9 +57,9 @@ impl ResponseWatch {
         let pending: std::collections::HashSet<u64> = pending.iter().copied().collect();
         self.deadlines.retain(|id, _| pending.contains(id));
         for id in pending {
-            self.deadlines.entry(id).or_insert(
-                now + std::time::Duration::from_secs(RESPONSE_DEADLINE_SECS),
-            );
+            self.deadlines
+                .entry(id)
+                .or_insert(now + std::time::Duration::from_secs(RESPONSE_DEADLINE_SECS));
         }
     }
 
@@ -115,6 +115,20 @@ pub struct Session {
     pub config: SessionConfig,
     pub shared: Arc<SharedState>,
     runtime: tokio::runtime::Runtime,
+}
+
+/// Terminal event emitted by the session's public lifecycle boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionEvent {
+    Closed(CloseInfo),
+}
+
+/// A malformed control frame is a protocol-terminal event, not network loss.
+pub fn session_event_for_frame_error(_error: &crate::frame::FramedError) -> SessionEvent {
+    SessionEvent::Closed(CloseInfo {
+        code: 401,
+        remote: false,
+    })
 }
 
 impl Session {
@@ -191,7 +205,10 @@ impl Session {
     }
 
     /// Start the connect + control loop on the runtime. Non-blocking.
-    pub fn connect(self: &Arc<Self>, bind_local_address: Option<std::net::IpAddr>) -> Result<(), String> {
+    pub fn connect(
+        self: &Arc<Self>,
+        bind_local_address: Option<std::net::IpAddr>,
+    ) -> Result<(), String> {
         if self.shared.stopping.load(Ordering::SeqCst) {
             return Err("session stopped".into());
         }
@@ -215,7 +232,10 @@ impl Session {
         Ok(())
     }
 
-    async fn run(self: Arc<Self>, bind_local_address: Option<std::net::IpAddr>) -> Result<(), RunError> {
+    async fn run(
+        self: Arc<Self>,
+        bind_local_address: Option<std::net::IpAddr>,
+    ) -> Result<(), RunError> {
         let socket = self.make_client_socket(bind_local_address)?;
         let pin_verifier = Arc::new(
             PinnedSpkiVerifier::new(&self.config.pinned_spki_hex)
@@ -234,9 +254,7 @@ impl Session {
         ));
         // §3/D3: keep-alive every 10 s; declare the peer dead after 30 s idle.
         let mut transport = quinn::TransportConfig::default();
-        transport.keep_alive_interval(Some(std::time::Duration::from_secs(
-            KEEP_ALIVE_SECS,
-        )));
+        transport.keep_alive_interval(Some(std::time::Duration::from_secs(KEEP_ALIVE_SECS)));
         transport.max_idle_timeout(Some(
             quinn::IdleTimeout::try_from(std::time::Duration::from_secs(IDLE_TIMEOUT_SECS))
                 .map_err(|_| "idle timeout out of range".to_string())?,
@@ -252,7 +270,12 @@ impl Session {
         .map_err(|e| format!("endpoint: {e}"))?;
         endpoint.set_default_client_config(client_config);
 
-        log::info!("connecting {}:{} ALPN {}", self.config.host, self.config.port, String::from_utf8_lossy(ALPN));
+        log::info!(
+            "connecting {}:{} ALPN {}",
+            self.config.host,
+            self.config.port,
+            String::from_utf8_lossy(ALPN)
+        );
         let connecting = {
             use std::net::ToSocketAddrs;
             let addr = (self.config.host.as_str(), self.config.port)
@@ -296,9 +319,9 @@ impl Session {
         let mut machine = ClientMachine::new();
         machine.set_auth_context(self.config.server_public_key.clone(), exporter, key);
         let auth_init = machine.auth_init(client_public_key);
-        let v = machine
-            .enter_authenticating(auth_init)
-            .map_err(|info| RunError::Other(format!("auth init rejected locally: {}", info.code)))?;
+        let v = machine.enter_authenticating(auth_init).map_err(|info| {
+            RunError::Other(format!("auth init rejected locally: {}", info.code))
+        })?;
         send_verdict(&mut tx, &v).await?;
         self.set_state(machine.state.clone());
         *self.shared.control_stream.lock().await = Some(tx);
@@ -307,8 +330,8 @@ impl Session {
         let mut decoder = FrameDecoder::new();
         let mut rx_buf = vec![0u8; 8192];
         // Absolute auth deadline: armed once, never rebuilt by a read (§3).
-        let auth_deadline = tokio::time::Instant::now()
-            + std::time::Duration::from_secs(AUTH_DEADLINE_SECS);
+        let auth_deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(AUTH_DEADLINE_SECS);
         let mut watch = ResponseWatch::default();
         let pending = machine.pending_ids();
         watch.observe(tokio::time::Instant::now(), &pending);
@@ -321,7 +344,7 @@ impl Session {
                         Err(e) => break 'control Err(format!("control read: {e}")),
                     }
                 }
-                _ = tokio::time::sleep_until(auth_deadline), if machine.state == ClientState::ConnectingSent => {
+                _ = tokio::time::sleep_until(auth_deadline), if machine.state == ClientState::Authenticating => {
                     break 'control Err(format!("auth exchange deadline ({AUTH_DEADLINE_SECS} s) → 601"));
                 }
                 expired_id = watch.expired() => {
@@ -333,7 +356,21 @@ impl Session {
             };
             let frames = match decoder.push(&rx_buf[..n]) {
                 Ok(f) => f,
-                Err(e) => break 'control Err(format!("frame decode: {e}")),
+                Err(e) => {
+                    let SessionEvent::Closed(info) = session_event_for_frame_error(&e);
+                    self.record_error(format!("frame decode: {e}"));
+                    self.record_close(info);
+                    if let Some(mut tx) = self.shared.control_stream.lock().await.take() {
+                        for frame in crate::control::frames::fatal_frames(401) {
+                            let bytes = encode_frame(&frame).map_err(|error| error.to_string())?;
+                            tx.write_all(&bytes)
+                                .await
+                                .map_err(|error| format!("send: {error}"))?;
+                        }
+                    }
+                    conn.close(quinn::VarInt::from_u32(401), b"malformed message");
+                    break 'control Ok(());
+                }
             };
             for frame in frames {
                 // request-id pairing sanity (§4.2): a response whose request_id
@@ -347,8 +384,10 @@ impl Session {
                 }
                 match result {
                     Ok(crate::control::Verdict::Ok) => {}
-                    Ok(v @ (crate::control::Verdict::Send(_)
-                    | crate::control::Verdict::Reject { .. })) => {
+                    Ok(
+                        v @ (crate::control::Verdict::Send(_)
+                        | crate::control::Verdict::Reject { .. }),
+                    ) => {
                         // One lock for the one write (S4); Reject writes a
                         // non-fatal Error and keeps the connection open (§5.3).
                         let mut tx_guard = self.shared.control_stream.lock().await;
@@ -368,7 +407,10 @@ impl Session {
                             }
                         }
                         drop(tx_guard);
-                        conn.close(quinn::VarInt::from_u64(u64::from(code)).unwrap(), b"");
+                        self.record_close(crate::control::CloseInfo {
+                            code,
+                            remote: false,
+                        });
                         break 'control Ok(());
                     }
                     Ok(crate::control::Verdict::Stop(info)) => {
@@ -420,7 +462,13 @@ impl Session {
         let state = self.state_name();
         let connected = self.shared.connected.load(Ordering::Acquire);
         let error = self.shared.last_error.lock().unwrap().clone();
-        let close = self.shared.close_info.lock().unwrap().as_ref().map(|c| c.code);
+        let close = self
+            .shared
+            .close_info
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|c| c.code);
         format!(
             "{{\"state\":\"{state}\",\"connected\":{connected},\"last_error\":{},\"close_code\":{}}}",
             json_escape(&error),
@@ -450,7 +498,6 @@ impl Session {
         })
     }
 }
-
 
 /// Client identity for the session. The fixture identity exists only behind
 /// the `test-support` feature (E2E APKs); a production build without real
@@ -505,15 +552,22 @@ fn classify_run_error(error: &RunError) -> u32 {
     }
 }
 
-async fn send_verdict(tx: &mut quinn::SendStream, v: &crate::control::Verdict) -> Result<(), String> {
+async fn send_verdict(
+    tx: &mut quinn::SendStream,
+    v: &crate::control::Verdict,
+) -> Result<(), String> {
     let frame = match v {
         crate::control::Verdict::Send(f) => Some(f.clone()),
-        crate::control::Verdict::Reject { code } => Some(crate::control::frames::error_frame(*code)),
+        crate::control::Verdict::Reject { code } => {
+            Some(crate::control::frames::error_frame(*code))
+        }
         _ => None,
     };
     if let Some(frame) = frame {
         let bytes = encode_frame(&frame).map_err(|e| e.to_string())?;
-        tx.write_all(&bytes).await.map_err(|e| format!("send: {e}"))?;
+        tx.write_all(&bytes)
+            .await
+            .map_err(|e| format!("send: {e}"))?;
     }
     Ok(())
 }
@@ -602,12 +656,18 @@ mod tests {
         unsafe { rebind_endpoint_from_raw_fd(&endpoint, fd) }.expect("rebind");
 
         assert_ne!(
-            endpoint.local_addr().expect("local addr after rebind").port(),
+            endpoint
+                .local_addr()
+                .expect("local addr after rebind")
+                .port(),
             old_port,
             "endpoint must now use the second socket"
         );
         assert_eq!(
-            endpoint.local_addr().expect("local addr after rebind").port(),
+            endpoint
+                .local_addr()
+                .expect("local addr after rebind")
+                .port(),
             new_port,
         );
         endpoint.wait_idle().await;
@@ -732,11 +792,27 @@ mod tests {
         assert_eq!(expired, 7);
     }
 
+    #[test]
+    fn malformed_remote_frame_is_401_not_network_failure() {
+        let mut decoder = FrameDecoder::new();
+        let error = decoder.push(&0u32.to_be_bytes()).unwrap_err();
+        assert_eq!(
+            session_event_for_frame_error(&error),
+            SessionEvent::Closed(CloseInfo {
+                code: 401,
+                remote: false
+            })
+        );
+    }
+
     /// §6.3: a pin mismatch is classified 205 (no reconnect); every other
     /// run error is transport loss (601).
     #[test]
     fn run_error_classification_matches_section_6_3() {
-        assert_eq!(classify_run_error(&RunError::Other("handshake: refused".into())), 601);
+        assert_eq!(
+            classify_run_error(&RunError::Other("handshake: refused".into())),
+            601
+        );
         assert_eq!(classify_run_error(&RunError::PinMismatch), 205);
     }
 
@@ -760,7 +836,10 @@ mod tests {
     #[test]
     fn remote_close_code_is_surfaced() {
         let session = Session::new(test_config()).expect("session");
-        session.record_close(CloseInfo { code: 204, remote: true });
+        session.record_close(CloseInfo {
+            code: 204,
+            remote: true,
+        });
         let json = session.stats_json();
         assert!(json.contains("\"state\":\"CLOSED\""), "got: {json}");
         assert!(json.contains("\"close_code\":204"), "got: {json}");
