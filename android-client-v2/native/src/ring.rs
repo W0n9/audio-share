@@ -88,7 +88,10 @@ impl MediaRing {
     #[cfg(test)]
     fn read_for_test(&self, start: u64, len: usize) -> Vec<u8> {
         debug_assert!(len <= self.capacity);
-        debug_assert!(start + len as u64 <= self.write_pos, "reading unwritten data");
+        debug_assert!(
+            start + len as u64 <= self.write_pos,
+            "reading unwritten data"
+        );
         let mut out = vec![0u8; len];
         unsafe {
             let cap = self.capacity;

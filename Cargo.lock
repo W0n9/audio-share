@@ -5229,11 +5229,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "socket2",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "v2-transport",
+ "wire-protocol-transcript",
 ]
 
 [[package]]
@@ -5893,6 +5895,10 @@ dependencies = [
  "cfg-if",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "wire-protocol-transcript"
+version = "0.1.0"
 
 [[package]]
 name = "wit-bindgen"

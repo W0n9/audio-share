@@ -193,8 +193,7 @@ impl PinnedSpkiVerifier {
     pub fn new(pinned_spki_sha256_hex: &str) -> Result<Self, PinError> {
         Ok(PinnedSpkiVerifier {
             pin: SpkiPin::from_hex(pinned_spki_sha256_hex)?,
-            algorithms: rustls::crypto::ring::default_provider()
-                .signature_verification_algorithms,
+            algorithms: rustls::crypto::ring::default_provider().signature_verification_algorithms,
             mismatch: AtomicBool::new(false),
         })
     }
@@ -334,8 +333,7 @@ mod tests {
         let pin = SpkiPin::of_certificate(&cert).unwrap();
         let v = PinnedSpkiVerifier {
             pin,
-            algorithms: rustls::crypto::ring::default_provider()
-                .signature_verification_algorithms,
+            algorithms: rustls::crypto::ring::default_provider().signature_verification_algorithms,
             mismatch: AtomicBool::new(false),
         };
         let res = v.verify_server_cert(
@@ -357,8 +355,7 @@ mod tests {
         let pin_a = SpkiPin::of_certificate(&cert_a).unwrap();
         let v = PinnedSpkiVerifier {
             pin: pin_a,
-            algorithms: rustls::crypto::ring::default_provider()
-                .signature_verification_algorithms,
+            algorithms: rustls::crypto::ring::default_provider().signature_verification_algorithms,
             mismatch: AtomicBool::new(false),
         };
         let (_, cert_b) = self_signed_cert();
@@ -381,8 +378,7 @@ mod tests {
         let pin = SpkiPin::of_certificate(&cert).unwrap();
         let v = PinnedSpkiVerifier {
             pin,
-            algorithms: rustls::crypto::ring::default_provider()
-                .signature_verification_algorithms,
+            algorithms: rustls::crypto::ring::default_provider().signature_verification_algorithms,
             mismatch: AtomicBool::new(false),
         };
         let res = v.verify_server_cert(

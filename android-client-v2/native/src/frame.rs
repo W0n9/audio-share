@@ -30,7 +30,9 @@ pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>, FramedError> {
     let len = body.len();
     if len == 0 || len > CONTROL_FRAME_CAP {
         // a sender can never produce either: an empty Frame is unset-body (401)
-        return Err(FramedError(format!("frame length {len} violates the §3 cap")));
+        return Err(FramedError(format!(
+            "frame length {len} violates the §3 cap"
+        )));
     }
     let mut out = Vec::with_capacity(4 + len);
     out.extend_from_slice(&(len as u32).to_be_bytes());
@@ -64,12 +66,14 @@ impl FrameDecoder {
             if self.buf.len() < 4 {
                 return Ok(out);
             }
-            let len = u32::from_be_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]])
-                as usize;
+            let len =
+                u32::from_be_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]) as usize;
             // §3: length == 0 or length > 65536 → 401, before any allocation
             if len == 0 || len > CONTROL_FRAME_CAP {
                 self.buf.clear();
-                return Err(FramedError(format!("frame length {len} violates §3 (0 or > 64 KiB)")));
+                return Err(FramedError(format!(
+                    "frame length {len} violates §3 (0 or > 64 KiB)"
+                )));
             }
             if self.buf.len() < 4 + len {
                 return Ok(out);
@@ -136,10 +140,10 @@ mod tests {
         // length check by pushing a 65536-byte frame of a valid Subscribe.
         let mut body = vec![0x82, 0x02, 0x09];
         body.extend_from_slice(&1u64.to_le_bytes()); // request_id 1 (fixed64 f1)
-        // pad with unknown field 1000 (varint, wire type 0): tag 0xa0 0x3e …
-        // Simpler: pad via an unknown field 15 varint of zeros to reach size.
-        // Build padding with field 1000 wiretype 2 (bytes): tag c2 3e, len …
-        // We construct the exact fixture body instead:
+                                                     // pad with unknown field 1000 (varint, wire type 0): tag 0xa0 0x3e …
+                                                     // Simpler: pad via an unknown field 15 varint of zeros to reach size.
+                                                     // Build padding with field 1000 wiretype 2 (bytes): tag c2 3e, len …
+                                                     // We construct the exact fixture body instead:
         let fixture_body = {
             let h = hex::decode(
                 "820209090100000000000000c23eefff03000000000000000000000000000000000000000000000000000000000000000000",

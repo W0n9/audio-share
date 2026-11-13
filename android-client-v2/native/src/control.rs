@@ -101,7 +101,7 @@ pub enum ClientState {
     /// Session created; transport handshake not done. No app message processed.
     Idle,
     /// Handshake done, control stream open, AuthInit sent (AUTHENTICATING).
-    ConnectingSent,
+    Authenticating,
     /// Identity authenticated (or pairing confirmed), Negotiate sent.
     Negotiating,
     /// Authenticated ∧ negotiated. Configuration is a data condition.
@@ -119,7 +119,7 @@ impl ClientState {
     pub fn name(&self) -> &'static str {
         match self {
             ClientState::Idle => "IDLE",
-            ClientState::ConnectingSent => "AUTHENTICATING",
+            ClientState::Authenticating => "AUTHENTICATING",
             ClientState::Negotiating => "NEGOTIATING",
             ClientState::Ready => "READY",
             ClientState::Playing => "PLAYING",
@@ -268,10 +268,7 @@ impl ClientMachine {
     ///
     /// Errors are local protocol/programming errors: the wrong state
     /// (`ClientState` not `Idle`, 402) or a frame that is not AuthInit (401).
-    pub fn enter_authenticating(
-        &mut self,
-        auth_init: Frame,
-    ) -> Result<Verdict, CloseInfo> {
+    pub fn enter_authenticating(&mut self, auth_init: Frame) -> Result<Verdict, CloseInfo> {
         if !matches!(self.state, ClientState::Idle) {
             return Err(CloseInfo {
                 code: 402,
@@ -287,7 +284,7 @@ impl ClientMachine {
             });
         };
         self.pending.insert(init.request_id, PendingKind::AuthInit);
-        self.state = ClientState::ConnectingSent;
+        self.state = ClientState::Authenticating;
         Ok(Verdict::Send(auth_init))
     }
 
@@ -327,18 +324,25 @@ impl ClientMachine {
             return self.fatal(402);
         }
         let request_id = self.take_request_id();
-        self.pending.insert(request_id, PendingKind::RequestConfiguration);
+        self.pending
+            .insert(request_id, PendingKind::RequestConfiguration);
         Verdict::Send(Frame {
-            body: Some(Body::RequestConfiguration(crate::proto::RequestConfiguration {
-                request_id,
-            })),
+            body: Some(Body::RequestConfiguration(
+                crate::proto::RequestConfiguration { request_id },
+            )),
         })
     }
 
     /// Fold one received control frame.
     pub fn on_frame(&mut self, frame: &Frame) -> (Result<Verdict, CloseInfo>, Option<Event>) {
         if self.state.is_closed() {
-            return (Err(CloseInfo { code: 0, remote: false }), None);
+            return (
+                Err(CloseInfo {
+                    code: 0,
+                    remote: false,
+                }),
+                None,
+            );
         }
         let Some(body) = frame.body.as_ref() else {
             // §4.4 validation table: unset body is malformed (401) — and a
@@ -392,20 +396,25 @@ impl ClientMachine {
             }
         }
         if let Body::Error(error) = body {
-            if error.request_id != 0
-                && self.pending.remove(&error.request_id).is_none() {
-                    // A late Error is dropped like any unmatched response.
-                    return (Ok(Verdict::Ok), None);
-                }
+            if error.request_id != 0 && self.pending.remove(&error.request_id).is_none() {
+                // A late Error is dropped like any unmatched response.
+                return (Ok(Verdict::Ok), None);
+            }
         }
 
         match (self.state.clone(), body) {
             // ---- AUTHENTICATING -------------------------------------------------
-            (ClientState::ConnectingSent, Body::AuthChallenge(c)) => {
+            (ClientState::Authenticating, Body::AuthChallenge(c)) => {
                 // §5.3: send AuthProof over the raw auth_context bytes. The
                 // signing material is explicit session state on the machine.
                 let Some(auth) = self.auth.as_ref() else {
-                    return (Err(CloseInfo { code: 601, remote: false }), None);
+                    return (
+                        Err(CloseInfo {
+                            code: 601,
+                            remote: false,
+                        }),
+                        None,
+                    );
                 };
                 match crate::auth::build_auth_proof(
                     c.request_id,
@@ -416,10 +425,16 @@ impl ClientMachine {
                     &auth.client_identity,
                 ) {
                     Ok(f) => (Ok(Verdict::Send(f)), None),
-                    Err(_) => (Err(CloseInfo { code: 601, remote: false }), None),
+                    Err(_) => (
+                        Err(CloseInfo {
+                            code: 601,
+                            remote: false,
+                        }),
+                        None,
+                    ),
                 }
             }
-            (ClientState::ConnectingSent, Body::AuthResult(r)) => {
+            (ClientState::Authenticating, Body::AuthResult(r)) => {
                 let code = r.status.as_ref().map_or(0, |s| s.code);
                 if code == 0 {
                     // §5.3: send Negotiate → NEGOTIATING
@@ -444,11 +459,11 @@ impl ClientMachine {
                     (Err(CloseInfo { code, remote: true }), None)
                 }
             }
-            (ClientState::ConnectingSent, Body::PairingResponse(_)) => {
+            (ClientState::Authenticating, Body::PairingResponse(_)) => {
                 // pairing is phase 6; an unrequested PairingResponse is illegal
                 (Ok(self.fatal(402)), None)
             }
-            (ClientState::ConnectingSent, Body::PairingResult(r)) => {
+            (ClientState::Authenticating, Body::PairingResult(r)) => {
                 let code = r.status.as_ref().map_or(0, |s| s.code);
                 if code == 0 {
                     self.state = ClientState::Negotiating;
@@ -567,7 +582,9 @@ impl ClientMachine {
                 // arrive paired with Close — the Close row handles teardown.
                 (
                     Ok(Verdict::Ok),
-                    Some(Event::NonFatalError(e.status.as_ref().map_or(0, |s| s.code))),
+                    Some(Event::NonFatalError(
+                        e.status.as_ref().map_or(0, |s| s.code),
+                    )),
                 )
             }
             // ---- every other (state, frame) pair is state-forbidden --------------
@@ -656,13 +673,12 @@ impl Default for ClientMachine {
 /// UNSPECIFIED → invalid. A structurally invalid configuration is a
 /// malformed message: Error(401)+Close(401).
 pub fn validate_configuration(cfg: &Configuration) -> Result<(), &'static str> {
-    let Some(pcm) = cfg.pcm.as_ref() else {
-        return Err("codec PCM requires pcm parameters");
-    };
-    if cfg.codec != 1 {
-        // CODEC_UNSPECIFIED (0) or a codec the schema has not assigned
-        return Err("unsupported codec");
+    if cfg.codec == 0 {
+        return Err("codec must not be UNSPECIFIED");
     }
+    let Some(pcm) = cfg.pcm.as_ref() else {
+        return Err("codec requires PCM parameters in v2.0");
+    };
     if pcm.sample_rate == 0 || pcm.channels == 0 || pcm.sample_format == 0 {
         return Err("pcm parameters must be nonzero");
     }
@@ -685,9 +701,8 @@ pub fn configuration_decodable(cfg: &Configuration) -> bool {
 mod tests {
     use super::*;
     use crate::proto::{
-        AuthChallenge, AuthResult, ConfigurationPublished, Error, NegotiateResponse,
-        PcmParameters, PlaybackDiagnostics, Status, StreamEnded, StreamStarted, Subscribe,
-        SubscribeResponse,
+        AuthChallenge, AuthResult, ConfigurationPublished, Error, NegotiateResponse, PcmParameters,
+        PlaybackDiagnostics, Status, StreamEnded, StreamStarted, Subscribe, SubscribeResponse,
     };
 
     fn frame(body: Body) -> Frame {
@@ -764,7 +779,7 @@ mod tests {
     #[test]
     fn auth_result_ok_sends_negotiate() {
         let mut m = ClientMachine::new();
-        m.state = ClientState::ConnectingSent;
+        m.state = ClientState::Authenticating;
         m.seed_pending(1, PendingKind::AuthInit);
         let (v, e) = m.on_frame(&frame(Body::AuthResult(AuthResult {
             request_id: 1,
@@ -778,7 +793,10 @@ mod tests {
         let Some(Body::Negotiate(n)) = neg.body else {
             panic!("expected negotiate body");
         };
-        assert_eq!((n.protocol_major, n.protocol_minor, n.capabilities.len()), (2, 0, 0));
+        assert_eq!(
+            (n.protocol_major, n.protocol_minor, n.capabilities.len()),
+            (2, 0, 0)
+        );
         assert_eq!(m.state, ClientState::Negotiating);
     }
 
@@ -787,7 +805,7 @@ mod tests {
     fn auth_result_error_closes_without_retry() {
         for code in [202u32, 203, 204] {
             let mut m = ClientMachine::new();
-            m.state = ClientState::ConnectingSent;
+            m.state = ClientState::Authenticating;
             m.seed_pending(1, PendingKind::AuthInit);
             let (v, _) = m.on_frame(&frame(Body::AuthResult(AuthResult {
                 request_id: 1,
@@ -812,7 +830,7 @@ mod tests {
             crate::auth::tests_const_exporter(),
             crate::auth::test_client_identity_key(),
         );
-        m.state = ClientState::ConnectingSent;
+        m.state = ClientState::Authenticating;
         m.seed_pending(1, PendingKind::AuthInit);
         let (v, _) = m.on_frame(&frame(Body::AuthChallenge(AuthChallenge {
             request_id: 1,
@@ -865,7 +883,7 @@ mod tests {
     #[test]
     fn response_without_status_is_fatal_401() {
         let mut m = ClientMachine::new();
-        m.state = ClientState::ConnectingSent;
+        m.state = ClientState::Authenticating;
         m.seed_pending(1, PendingKind::AuthInit);
         let (v, _) = m.on_frame(&frame(Body::AuthResult(AuthResult {
             request_id: 1,
@@ -953,7 +971,10 @@ mod tests {
         let Some(Body::RequestConfiguration(req)) = &config.body else {
             panic!("expected RequestConfiguration body");
         };
-        assert_eq!(req.request_id, 3, "ids only increase; earlier ids never reused");
+        assert_eq!(
+            req.request_id, 3,
+            "ids only increase; earlier ids never reused"
+        );
     }
 
     #[test]
@@ -963,7 +984,10 @@ mod tests {
         let init = m.auth_init(vec![0x02]);
         assert_eq!(
             m.enter_authenticating(init).expect_err("not Idle"),
-            CloseInfo { code: 402, remote: false }
+            CloseInfo {
+                code: 402,
+                remote: false
+            }
         );
 
         let mut m = ClientMachine::new();
@@ -973,7 +997,10 @@ mod tests {
         }));
         assert_eq!(
             m.enter_authenticating(not_init).expect_err("not AuthInit"),
-            CloseInfo { code: 401, remote: false }
+            CloseInfo {
+                code: 401,
+                remote: false
+            }
         );
         assert_eq!(m.state, ClientState::Closed);
     }
@@ -1077,7 +1104,7 @@ mod tests {
     fn close_is_terminal_in_every_state_without_output() {
         for state in [
             ClientState::Idle,
-            ClientState::ConnectingSent,
+            ClientState::Authenticating,
             ClientState::Negotiating,
             ClientState::Ready,
             ClientState::Playing,
@@ -1127,7 +1154,7 @@ mod tests {
             crate::auth::tests_const_exporter(),
             crate::auth::test_client_identity_key(),
         );
-        m.state = ClientState::ConnectingSent;
+        m.state = ClientState::Authenticating;
         m.seed_pending(1, PendingKind::AuthInit);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
@@ -1181,6 +1208,22 @@ mod tests {
         assert_eq!(v, Ok(Verdict::Ok));
         assert_eq!(e, Some(Event::ConfigurationPublished(1)));
         assert_eq!(m.config.as_ref().unwrap().config_generation, 1);
+    }
+
+    #[test]
+    fn structurally_valid_unknown_codec_is_fatal_403_not_401() {
+        let mut m = machine_at_ready();
+        let mut unknown = config(1);
+        unknown.codec = 2;
+        unknown.pcm.as_mut().unwrap().sample_format = 3;
+        let (result, _) = m.on_frame(&frame(Body::ConfigurationPublished(
+            ConfigurationPublished {
+                request_id: 0,
+                configuration: Some(unknown),
+            },
+        )));
+        assert_eq!(result, Ok(Verdict::Fatal { code: 403 }));
+        assert_eq!(m.state, ClientState::Closed);
     }
 
     /// §4.4 validation table: codec absent (proto3 default 0 = UNSPECIFIED)
@@ -1333,7 +1376,13 @@ mod tests {
                 code: 201,
                 detail: String::new(),
             })));
-            assert_eq!(v, Ok(Verdict::Stop(CloseInfo { code: 201, remote: true })));
+            assert_eq!(
+                v,
+                Ok(Verdict::Stop(CloseInfo {
+                    code: 201,
+                    remote: true
+                }))
+            );
             assert_eq!(m.state, ClientState::Closed);
         }
     }
@@ -1351,7 +1400,7 @@ mod tests {
     /// CONNECTING/NEGOTIATING decodes fine but is state-forbidden → 402.
     #[test]
     fn state_forbidden_subscribe_is_fatal_402() {
-        for state in [ClientState::ConnectingSent, ClientState::Negotiating] {
+        for state in [ClientState::Authenticating, ClientState::Negotiating] {
             let mut m = ClientMachine::new();
             m.state = state;
             let (v, _) = m.on_frame(&frame(Body::Subscribe(Subscribe { request_id: 1 })));
@@ -1411,7 +1460,7 @@ mod tests {
     #[test]
     fn state_names_match_surface_contract() {
         assert_eq!(ClientState::Idle.name(), "IDLE");
-        assert_eq!(ClientState::ConnectingSent.name(), "AUTHENTICATING");
+        assert_eq!(ClientState::Authenticating.name(), "AUTHENTICATING");
         assert_eq!(ClientState::Negotiating.name(), "NEGOTIATING");
         assert_eq!(ClientState::Ready.name(), "READY");
         assert_eq!(ClientState::Playing.name(), "PLAYING");

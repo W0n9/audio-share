@@ -21,7 +21,7 @@ class ReconnectPolicyTest {
 
     @Test
     fun transport_loss_without_a_close_reconnects_as_601() {
-        assertTrue(ReconnectPolicy.shouldReconnect(null))
+        assertTrue(ReconnectPolicy.shouldReconnect(null as CloseCode?))
     }
 
     @Test
