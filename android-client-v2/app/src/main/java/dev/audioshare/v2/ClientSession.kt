@@ -53,6 +53,10 @@ class ClientSession(
     private var handle = AtomicLong(0)
     private val running = AtomicBoolean(false)
     private var configuration = SessionConfiguration("", 0, "", "", "")
+    @Volatile private var latestState = "IDLE"
+
+    /** Current observed state, available when an Activity rebinds. */
+    fun currentState(): String = latestState
 
     /** Reconnect attempt counter; reset on start(). */
     private val backoffAttempts = AtomicLong(0)
@@ -83,6 +87,7 @@ class ClientSession(
             ClientNative.stop(h)
             ClientNative.destroy(h)
         }
+        latestState = "CLOSED"
         listener.onStateChange("CLOSED")
         listener.onLog("stopped by user")
     }
@@ -145,6 +150,7 @@ class ClientSession(
             try {
                 while (running.get() && handle.get() == myHandle) {
                     val state = ClientNative.getState(myHandle) ?: ""
+                    latestState = state
                     listener.onStateChange(state)
                     if (state == "READY") {
                         // §6.3: backoff resets to base when a session reaches READY

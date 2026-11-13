@@ -22,7 +22,11 @@ class ControlSessionService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = binder
 
-    fun setStateListener(listener: ((String) -> Unit)?) { stateListener = listener }
+    fun setStateListener(listener: ((String) -> Unit)?) {
+        stateListener = listener
+        // New Activity bindings observe the existing session, not an IDLE placeholder.
+        listener?.invoke(session?.currentState() ?: "IDLE")
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
