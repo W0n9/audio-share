@@ -53,3 +53,7 @@ Branch `ticket/06-server-v2-transport`, final commit `941f54f` (slices `f96cee8`
 - Windows ACL warn path compiles to a no-op pass-through (§12 decision); it needs a Windows host to validate the actual warning log — never run on Windows.
 - Media-plane (datagram) fixture steps are ticket 10 scope; the control harness records them as skipped with the reason (and the golden-vector test asserts the control set itself is never skipped).
 - GUI v2 enablement (shared lifecycle observation) is future GUI work; the domain API is ready.
+
+### 2026-11-13 — 201-flag adjudication resolved
+
+The maintainer ruled the vector, not §4.2, was wrong: `control/error-201-pairing-declined.json` now encodes the §6.2 registry default `requires_repairing=true` (`12 05 08 c9 01 18 01`, frame length 19), matching its proof-invalid sibling. Both replay harnesses read the flag from the fixture (`decoded` / bytes); no harness-side exception remains.

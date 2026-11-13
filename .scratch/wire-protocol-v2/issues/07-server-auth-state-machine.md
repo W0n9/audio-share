@@ -68,3 +68,9 @@ Branch `ticket/07-server-auth-state-machine`, final code commit `7174d9b` (slice
 - Backup naming: pairing.md §8.1 says `clients.json.bak`, but the shared atomic-write helper names backups `<stem>.bak`, so the store's backup is `clients.bak` (same convention as `server-identity.bak`). Recorded here; aligning either side is a one-line follow-up.
 - `protocol-harness replay --fixture fixtures/wire-protocol-v2` stays v1-only (its `Manifest.source` is typed as a string; the v2 manifest uses an object) — v2 replay lives in `tests/golden_vectors.rs` and `tests/state_machine_replay.rs`.
 - The 10 s auth deadline is tested with a shortened override; the real 10 s value is not timed in CI. Windows ACL/log paths remain unvalidated on a Windows host (ticket-06 leftover).
+
+### 2026-11-13 — maintainer adjudication (201 flag + 402 wording)
+
+**201 `requires_repairing` — the vector was the bug, spec prevails.** `control/error-201-pairing-declined.json` was missing the flag: its `Status` encoded only `code=201` while the same-code sibling `error-201-pairing-proof-invalid.json` encoded `requires_repairing=true` (`18 01`). §4.2 is hard ("senders MUST equal the §6 registry defaults") and §6.2's 201 row has re-pairing = yes, with no carve-out. The vector is now corrected to `12 05 08 c9 01 18 01` (frame `00000013…`), and both replay harnesses (tickets 06/08) read the flag from `decoded`/bytes. The machine already emitted `Status::registry(201)`; no production code change was needed.
+
+**402 fatality — Requirements wording was imprecise, code was correct.** The Requirements line "合法但状态不允许 402 且保持连接" over-generalized "keep the connection" to every 402. Per §5.2/§6.2 the fatality of 402 is decided by the state-machine row, not the code: the only non-fatal 402 is a duplicate `Subscribe` in READY/PLAYING; every other 402 is fatal (Error + Close, connection dropped). All four 402 scenarios in the implementation are correct as built.
