@@ -1,0 +1,7 @@
+Command: python3 -I .scratch/wire-protocol-v2/evidence/check-wake-cli.py "$PWD"（缺少初始屏幕准备时）
+
+Traceback (most recent call last):
+  File "/home/w0n9/workspaces/audio-share/.claude/worktrees/agent-aa86283231ae9e815/.scratch/wire-protocol-v2/evidence/check-wake-cli.py", line 54, in <module>
+    assert wakes == (3 if fail else 2), calls
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: [['-s', 'HOST-STUB-ONLY', 'shell', 'am', 'instrument', '-w', '-r', '-e', 'case', 'ready', 'dev.audioshare.v2.test/dev.audioshare.v2.ControlSessionInstrumentation'], ['-s', 'HOST-STUB-ONLY', 'shell', 'am', 'start', '-W', '-f', '0x10008000', '-n', 'dev.audioshare.v2/.MainActivity', '-e', 'host', 'NO-SERVER', '-e', 'pinnedSpki', 'HOST-ONLY-PIN', '-e', 'serverKey', 'HOST-ONLY-KEY', '--ei', 'port', '0', '--ez', 'bindHint', 'false'], ['-s', 'HOST-STUB-ONLY', 'shell', 'input', 'keyevent', '223'], ['-s', 'HOST-STUB-ONLY', 'shell', 'input', 'keyevent', '224'], ['-s', 'HOST-STUB-ONLY', 'shell', 'wm', 'dismiss-keyguard']]

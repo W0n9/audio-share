@@ -66,6 +66,8 @@ fixture 的 P-256 **公钥**；测试 APK 的 fixture 身份仍仅在显式
 
 MIUI 可能要求用户确认测试 APK 的 USB 安装，并禁止后台自行弹出 Activity。
 工装通过 `adb am start` 显式打开界面，不修改这些权限、不使用 root 绕过。
+各用例启动前会普通唤醒屏幕并请求 dismiss-keyguard；密码锁仍需用户手动解锁，
+不能把休眠时未绑定的 Activity 当作 native 状态失败。
 `lock` 会实际关闭屏幕并唤醒，失败时也尝试恢复屏幕。
 
 `-PdeviceTests=true` 仅保留独立测试 APK 消费的少量 Binder API；仍启用 R8。

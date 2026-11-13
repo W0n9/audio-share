@@ -1,0 +1,9 @@
+Command: 最终无屏幕准备的真实 release 复验；IDLE 环境失败，详见最终验收报告
+
+INSTRUMENTATION_STATUS: stream=AWAITING_ACTIVITY
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+FAIL: java.lang.AssertionError: 原生会话完成认证后，Activity 必须显示 READY；实际文本：[audio-share v2 control session, IDLE, ]
+
+INSTRUMENTATION_CODE: 0

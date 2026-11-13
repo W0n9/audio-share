@@ -1,0 +1,32 @@
+Command: 仅筛选 DEBUG-ticket11-final 状态边界；证明 native/Service READY、屏幕睡眠时Activity未绑定
+
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=IDLE accepted=true snapshot=IDLE
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=IDLE accepted=true snapshot=IDLE
+D/ClientSession(24095): [DEBUG-ticket11-final] poller start handle=1
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=IDLE accepted=true snapshot=IDLE
+D/ClientSession(24095): [DEBUG-ticket11-final] handle=1 state=IDLE snapshot=IDLE sourceCurrent=true
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=CLOSED accepted=true snapshot=CLOSED
+D/ClientSession(24095): [DEBUG-ticket11-final] poller exit handle=1 snapshot=CLOSED
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=IDLE accepted=true snapshot=IDLE
+D/ClientSession(24095): [DEBUG-ticket11-final] poller start handle=2
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=IDLE accepted=true snapshot=IDLE
+D/ClientSession(24095): [DEBUG-ticket11-final] handle=2 state=IDLE snapshot=IDLE sourceCurrent=true
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=AUTHENTICATING accepted=true snapshot=AUTHENTICATING
+D/ClientSession(24095): [DEBUG-ticket11-final] handle=2 state=AUTHENTICATING snapshot=AUTHENTICATING sourceCurrent=true
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ClientSession(24095): [DEBUG-ticket11-final] handle=2 state=READY snapshot=READY sourceCurrent=true
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=READY accepted=true snapshot=READY
+D/ControlSessionService(24095): [DEBUG-ticket11-final] state=CLOSED accepted=false snapshot=CLOSED

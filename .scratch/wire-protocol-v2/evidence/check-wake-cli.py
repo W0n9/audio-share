@@ -17,13 +17,16 @@ arguments = sys.argv[1:]
 with open(os.environ["FAKE_ADB_LOG"], "a") as log:
     log.write(json.dumps(arguments) + "\\n")
 if "instrument" in arguments:
+    print("INSTRUMENTATION_STATUS: stream=AWAITING_ACTIVITY", flush=True)
     print("INSTRUMENTATION_STATUS: stream=AWAIT_SCREEN_SLEEP", flush=True)
     print("INSTRUMENTATION_STATUS: stream=AWAIT_SCREEN_WAKE", flush=True)
     print("OK (1 test)", flush=True)
     raise SystemExit(0)
-if os.environ.get("FAIL_WAKE") and arguments[-3:] == ["input", "keyevent", "224"]:
+with open(os.environ["FAKE_ADB_LOG"]) as log:
+    slept = any(json.loads(line)[-3:] == ["input", "keyevent", "223"] for line in log)
+if os.environ.get("FAIL_WAKE") and slept and arguments[-3:] == ["input", "keyevent", "224"]:
     raise SystemExit(7)
-if os.environ.get("FAIL_WAKE") and arguments[-2:] == ["wm", "dismiss-keyguard"]:
+if os.environ.get("FAIL_WAKE") and slept and arguments[-2:] == ["wm", "dismiss-keyguard"]:
     raise SystemExit(7)
 ''')
     adb.chmod(0o700)
@@ -48,8 +51,11 @@ if os.environ.get("FAIL_WAKE") and arguments[-2:] == ["wm", "dismiss-keyguard"]:
         wakes = sum(call[-3:] == ["input", "keyevent", "224"] for call in calls)
         dismisses = sum(call[-2:] == ["wm", "dismiss-keyguard"] for call in calls)
         assert run.returncode == (1 if fail else 0), (run.returncode, run.stdout, run.stderr)
-        assert wakes == (2 if fail else 1), calls
-        assert dismisses == 1, calls
+        assert wakes == (3 if fail else 2), calls
+        assert dismisses == 2, calls
+        launch = next(index for index, call in enumerate(calls) if "start" in call)
+        assert calls[launch - 2][-3:] == ["input", "keyevent", "224"], "启动 Activity 前必须唤醒屏幕"
+        assert calls[launch - 1][-2:] == ["wm", "dismiss-keyguard"], "启动 Activity 前必须请求普通 keyguard 解除"
         if fail:
             assert "FAIL: adb 操作失败或超时" in output.read_text()
         else:

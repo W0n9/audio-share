@@ -60,8 +60,8 @@ class SessionStateRelayTest {
         assertFalse(first.publish("READY"), "native CLOSED is terminal for its source")
         assertEquals("CLOSED", service.snapshot())
 
-        // The Service still owns this ClientSession during bounded backoff.
-        // Its new native session must publish normally; the old one is terminal.
+        // bounded backoff 期间 Service 仍拥有 ClientSession；
+        // 新 native 会话必须正常发布，旧来源已经终止。
         val second = nativeState.beginSession()
         assertEquals("AUTHENTICATING", second.poll { "AUTHENTICATING" })
         assertFalse(first.publish("READY"), "old native event source is no longer current")
