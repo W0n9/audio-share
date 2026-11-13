@@ -3,10 +3,8 @@ use v2_transport::auth;
 // Fixture constants (fixtures/wire-protocol-v2/test-keys.json, control/auth-happy-path.json).
 const CLIENT_PUB: &str = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
 const SERVER_PUB: &str = "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c";
-const AUTH_SERVER_RANDOM: &str =
-    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
-const AUTH_EXPORTER: &str =
-    "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";
+const AUTH_SERVER_RANDOM: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+const AUTH_EXPORTER: &str = "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";
 /// The recorded auth_context (control/auth-happy-path.json derived block).
 const AUTH_CONTEXT: &str = "01000461757468020020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03002103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d04002011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c05000400000002060020c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";
 /// The valid happy-path signature (r||s 64 bytes).
@@ -45,11 +43,8 @@ fn client_id_is_first_8_of_sha256_public_key() {
 #[test]
 fn valid_proof_verifies_over_raw_auth_context() {
     // PR-9: exactly one hash — the ECDSA-SHA256 over the RAW auth_context bytes.
-    let verdict = auth::verify_auth_proof(
-        &unhex(CLIENT_PUB),
-        &unhex(AUTH_CONTEXT),
-        &unhex(VALID_SIG),
-    );
+    let verdict =
+        auth::verify_auth_proof(&unhex(CLIENT_PUB), &unhex(AUTH_CONTEXT), &unhex(VALID_SIG));
     assert_eq!(verdict, Ok(()));
 }
 
@@ -61,7 +56,10 @@ fn corrupted_proof_fails_verification() {
         &unhex(AUTH_CONTEXT),
         &unhex(INVALID_SIG),
     );
-    assert!(verdict.is_err(), "the corrupted 203 signature must not verify");
+    assert!(
+        verdict.is_err(),
+        "the corrupted 203 signature must not verify"
+    );
 }
 
 #[test]
@@ -92,20 +90,26 @@ fn capabilities_must_be_ascending_and_unique() {
     assert!(auth::validate_capability_list(&[]).is_ok());
     assert!(auth::validate_capability_list(&[7]).is_ok());
     assert!(auth::validate_capability_list(&[1, 2, 3]).is_ok());
-    assert!(auth::validate_capability_list(&[2, 1]).is_err(), "descending is malformed");
-    assert!(auth::validate_capability_list(&[3, 3]).is_err(), "duplicates are malformed");
+    assert!(
+        auth::validate_capability_list(&[2, 1]).is_err(),
+        "descending is malformed"
+    );
+    assert!(
+        auth::validate_capability_list(&[3, 3]).is_err(),
+        "duplicates are malformed"
+    );
 }
 
 #[test]
 fn canonical_capabilities_is_count_u8_then_ids_u32_be() {
     // pairing.md §6.3: count(u8) || for each id ascending: id(u32 BE).
     assert_eq!(auth::canonical_capabilities(&[]), vec![0u8]);
-    assert_eq!(
-        auth::canonical_capabilities(&[7]),
-        vec![1u8, 0, 0, 0, 7]
-    );
+    assert_eq!(auth::canonical_capabilities(&[7]), vec![1u8, 0, 0, 0, 7]);
     // The single-id list from control.negotiate-unknown-capability-ignored: 01 00000007.
-    assert_eq!(auth::canonical_capabilities(&[1, 2]), vec![2u8, 0, 0, 0, 1, 0, 0, 0, 2]);
+    assert_eq!(
+        auth::canonical_capabilities(&[1, 2]),
+        vec![2u8, 0, 0, 0, 1, 0, 0, 0, 2]
+    );
 }
 
 #[test]

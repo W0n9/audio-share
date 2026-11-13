@@ -28,6 +28,7 @@ test-support = []
 # prost codegen of the frozen control schema (protos/wire-protocol-v2/control.proto)
 # — replaces the prototype's hand-written frame codec; workspace uses 0.13.
 prost = { version = "0.13", features = ["std", "derive"], default-features = false }
+wire-protocol-transcript = { path = "../../crates/v2-transport/transcript" }
 # generated code needs bytes for Bytes types (none used today) + derive machinery
 once_cell = "1"
 quinn = { version = "0.11", default-features = false, features = ["rustls-ring", "runtime-tokio", "log"] }

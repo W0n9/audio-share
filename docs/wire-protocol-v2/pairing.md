@@ -8,6 +8,7 @@ Feature: wire-protocol-v2 · Ticket: `.scratch/wire-protocol-v2/issues/04-threat
 
 - This document is **accepted** (maintainer adjudication 2026-11-12; sign-off table in §12). It is the pairing/key-lifecycle reference for v2.0.
 - Binding requirements come from the design baseline [`.scratch/wire-protocol-v2/spec.md`](../../.scratch/wire-protocol-v2/spec.md) (cited as "design baseline §…"), notably §Security and Pairing Model. The accepted transport posture is ADR-0004 ([`../adr/0004-wire-protocol-v2-transport.md`](../adr/0004-wire-protocol-v2-transport.md)).
+- Language-neutral uses of **Client** name the **Protocol Client** role from `GLOSSARY.md`, implemented by the Android Client.
 - Protobuf message numbering, error-code values, and field-number assignments are frozen in `docs/wire-protocol-v2/spec.md` (ticket 03). This document references that path only; the structures below are defined at the semantic level and carry no wire-field numbers.
 - The key words MUST, SHOULD, and MAY are to be interpreted as described in RFC 2119. Uncited MUST/SHOULD statements are proposals of this document with the same sign-off status as §12.
 
@@ -35,7 +36,7 @@ Pairing, authentication, version/capability negotiation, and configuration alway
 | Identity | Algorithm | Held where | Used for |
 |---|---|---|---|
 | Server identity key | Ed25519 | Server data directory, PKCS#8 PEM file (§10.2) | Self-signed TLS certificate; SPKI pin derivation; possession proven in every TLS 1.3 handshake (CertificateVerify) |
-| Client identity key | ECDSA P-256 (SHA-256) | Android Keystore where available (§10.1) | Application-layer signed-challenge authorization over the encrypted control stream (§9); persisted as an authorized identity by the Server (§8) |
+| Protocol Client identity key | ECDSA P-256 (SHA-256) | Android Keystore where available (§10.1) | Application-layer signed-challenge authorization over the encrypted control stream (§9); persisted as an authorized identity by the Server (§8) |
 
 Rationale for the split: the Server identity key must match the SPKI-pinning and rustls certificate path proven in the prototype (Ed25519 certificate via rcgen/rustls; prototype report §4); the Client identity key must live in Android Keystore across the whole supported range, and Keystore EC P-256 signing is available from API 26 (the binding minimum; ADR-0004 decision 5), whereas Keystore Ed25519 requires newer APIs. The v2.0 boundary holds regardless: Keystore keys need NOT act as rustls TLS client-certificate keys — authorization is an application-layer check over the encrypted control stream (design baseline §Security and Pairing Model — Identity and Authorization). There is no mutual TLS in v2.0.
 
@@ -385,7 +386,7 @@ Binding rule (design baseline §Key Lifecycle and Local Administration): **revoc
 |---|---|
 | `server-identity.pem` | Never backed up automatically; never included in config export or diagnostics. Manual backup is permitted and MUST be warned about: the file is the Server identity — treat it like a password. Losing it is an identity reset; all Clients re-pair (§8.3) — the designed recovery path |
 | `clients.json` | Low sensitivity (public keys + metadata). Backup restores the list of paired devices; stale entries simply fail auth |
-| Client identity key | Non-exportable by design (§10.1); no backup exists |
+| Protocol Client identity key | Non-exportable by design (§10.1); no backup exists |
 
 ## 11. Administration surfaces
 
@@ -420,7 +421,7 @@ Signed off by maintainer adjudication 2026-11-12; see tickets 03/04 Comments.
 | ID | Decision | Proposed value | Where | Maintainer sign-off |
 |---|---|---|---|---|
 | PR-1 | Server identity key | Ed25519, self-signed certificate; pin = SHA-256(SPKI DER) | §2, §6.1 | ✅ accepted (2026-11-12) |
-| PR-2 | Client identity key | ECDSA P-256 + SHA-256, Android Keystore (StrongBox when available), non-exportable; software fallback marked in the record | §2, §10.1 | ✅ accepted (2026-11-12) |
+| PR-2 | Protocol Client identity key | ECDSA P-256 + SHA-256, Android Keystore (StrongBox when available), non-exportable; software fallback marked in the record | §2, §10.1 | ✅ accepted (2026-11-12) |
 | PR-3 | QR payload encoding | Text URI `audioshare-pair://p1?…`, QR byte mode, ECC M (L fallback); unknown query fields rejected | §4.1 | ✅ accepted (2026-11-12) |
 | PR-4 | QR fields | `pm` (major), `addr` (host:port hint), `key` (raw 32-byte Ed25519 public key, base64url), `nonce` (16 bytes, base64url) | §4.2 | ✅ accepted (2026-11-12) |
 | PR-5 | Pairing nonce | 128-bit CSPRNG; 10 min lifetime; single-use (burned by the first well-formed PairingRequest); ≤ 8 outstanding; memory-only | §5 | ✅ accepted (2026-11-12) |

@@ -19,13 +19,15 @@ fn expected_control_case_count(manifest: &serde_json::Value) -> usize {
 fn replay_all_control_cases_byte_exactly() {
     let fixtures = FixtureSet::repo_default().expect("fixtures/wire-protocol-v2/ is present");
     let manifest_bytes = std::fs::read(fixtures.root().join("manifest.json")).expect("manifest");
-    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).expect("manifest json");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&manifest_bytes).expect("manifest json");
     let expected = expected_control_case_count(&manifest);
-    assert!(expected >= 41, "manifest lists {expected} control cases; the suite expects the ticket-05 set");
+    assert!(
+        expected >= 41,
+        "manifest lists {expected} control cases; the suite expects the ticket-05 set"
+    );
 
-    let cases = fixtures
-        .control_cases()
-        .expect("fixture cases parse");
+    let cases = fixtures.control_cases().expect("fixture cases parse");
     assert_eq!(
         cases.len(),
         expected,
@@ -99,7 +101,10 @@ fn replay_covers_every_control_category() {
         "limits.preauth-response-128b",
         "limits.pairing-response-320b",
     ] {
-        assert!(ids.contains(&probe), "case {probe} missing from the replay report");
+        assert!(
+            ids.contains(&probe),
+            "case {probe} missing from the replay report"
+        );
     }
 }
 
@@ -121,9 +126,10 @@ fn corrupted_signature_cases_fail_verification() {
         }
         let mut report = ReplayReport::default();
         replay_case(relative, case, &mut report);
-        let confirmed_invalid = report.cases.iter().any(|case_report| {
-            case_report.checks.contains(&"signature-invalid-confirmed")
-        });
+        let confirmed_invalid = report
+            .cases
+            .iter()
+            .any(|case_report| case_report.checks.contains(&"signature-invalid-confirmed"));
         if negative {
             assert!(
                 confirmed_invalid,
@@ -135,7 +141,11 @@ fn corrupted_signature_cases_fail_verification() {
                 !confirmed_invalid,
                 "positive case {} must NOT record signature-invalid-confirmed (checks: {:?})",
                 case.id,
-                report.cases.iter().flat_map(|c| c.checks.iter()).collect::<Vec<_>>()
+                report
+                    .cases
+                    .iter()
+                    .flat_map(|c| c.checks.iter())
+                    .collect::<Vec<_>>()
             );
         }
     }

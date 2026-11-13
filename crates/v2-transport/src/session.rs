@@ -80,7 +80,10 @@ pub struct ConnectionLifecycle {
 impl ConnectionLifecycle {
     /// A fresh connection at CONNECTING (§5.1 entry).
     pub fn new() -> Self {
-        Self { state: LifecycleState::Connecting, termination: None }
+        Self {
+            state: LifecycleState::Connecting,
+            termination: None,
+        }
     }
 
     /// The current state.
@@ -159,15 +162,26 @@ mod tests {
     #[test]
     fn termination_carries_registry_code() {
         assert_eq!(Termination::ServerClosed(ErrorCode::BUSY).code().code, 301);
-        assert_eq!(Termination::ClientClosed(ErrorCode::CLIENT_STOPPING).code().code, 701);
+        assert_eq!(
+            Termination::ClientClosed(ErrorCode::CLIENT_STOPPING)
+                .code()
+                .code,
+            701
+        );
         // Transport loss classifies 601 locally (§5.2 "any: transport lost").
-        assert_eq!(Termination::Lost(ErrorCode::NETWORK_FAILURE).code().code, 601);
+        assert_eq!(
+            Termination::Lost(ErrorCode::NETWORK_FAILURE).code().code,
+            601
+        );
     }
 
     #[test]
     fn lost_without_close_classifies_601() {
         let mut lifecycle = ConnectionLifecycle::new();
         lifecycle.complete(Termination::Lost(ErrorCode::NETWORK_FAILURE));
-        assert_eq!(lifecycle.termination().map(|t| t.code()), Some(ErrorCode::NETWORK_FAILURE));
+        assert_eq!(
+            lifecycle.termination().map(|t| t.code()),
+            Some(ErrorCode::NETWORK_FAILURE)
+        );
     }
 }

@@ -28,6 +28,14 @@ _Avoid_: MFC app, desktop client
 The command-line entry point of Server Core.
 _Avoid_: CLI
 
+**Protocol Client**:
+The player-role peer defined by Wire Protocol specifications, independent of
+its implementation platform. The **Android Client** implements that role
+today. Protocol documents write out this full term (abbreviated **Client**
+inside a document that defines the abbreviation explicitly); they do not
+rename the Android Client app itself.
+_Avoid_: client app, generic backend endpoint
+
 ## Appearance
 
 **Theme**:

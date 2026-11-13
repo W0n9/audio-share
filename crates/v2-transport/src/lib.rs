@@ -37,13 +37,15 @@ pub mod identity;
 pub mod limits;
 /// Hand-written prost transcription of `protos/wire-protocol-v2/control.proto`.
 pub mod schema;
-/// The §5.2 Server session state machine (ticket 07) — pure domain logic.
-pub mod state_machine;
 /// Connection lifecycle state exposed through the domain API (spec §5.1).
 pub mod session;
+/// The §5.2 Server session state machine (ticket 07) — pure domain logic.
+pub mod state_machine;
 /// The quinn endpoint: TLS 1.3, ALPN, 0-RTT off, accept loop, close codes.
 pub mod transport;
 
+#[cfg(feature = "test-support")]
+pub mod test_support;
 /// Golden-vector replay harness for `fixtures/wire-protocol-v2/` (spec §11.1).
 ///
 /// Test-only: the harness is compiled behind the `test-support` feature so

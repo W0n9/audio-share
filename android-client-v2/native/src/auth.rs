@@ -18,24 +18,21 @@
 //! what goes into TLV(4). The Client identity key is ECDSA P-256 (PR-2).
 
 use crate::proto::{frame::Body, AuthProof, Frame};
-#[cfg(test)]
-use prost::Message as _;
 use p256::ecdsa::{
     signature::{Signer, Verifier},
     Signature, SigningKey, VerifyingKey,
 };
+#[cfg(test)]
+use prost::Message as _;
 
 /// TLV(tag, value) = tag(u8) || len(u16, big-endian) || value.
 ///
 /// The length field is a checked `u16`: a value that cannot be represented is
 /// an error rather than a silently truncated transcript.
 pub fn tlv(tag: u8, value: &[u8]) -> Result<Vec<u8>, String> {
-    let len = u16::try_from(value.len())
+    let mut out = Vec::with_capacity(value.len() + 3);
+    wire_protocol_transcript::push_tlv(&mut out, tag, value)
         .map_err(|_| format!("TLV value is {} bytes, max 65535", value.len()))?;
-    let mut out = Vec::with_capacity(3 + value.len());
-    out.push(tag);
-    out.extend_from_slice(&len.to_be_bytes());
-    out.extend_from_slice(value);
     Ok(out)
 }
 
@@ -48,13 +45,15 @@ pub fn auth_context(
     auth_exporter: &[u8],
 ) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
-    out.extend_from_slice(&tlv(1, b"auth")?);
-    out.extend_from_slice(&tlv(2, server_random)?);
-    out.extend_from_slice(&tlv(3, client_public_key)?);
-    out.extend_from_slice(&tlv(4, server_public_key)?);
-    // TLV(5, protocol_major): fixed 4-byte BE — never a varint, never 1 byte.
-    out.extend_from_slice(&tlv(5, &protocol_major.to_be_bytes())?);
-    out.extend_from_slice(&tlv(6, auth_exporter)?);
+    wire_protocol_transcript::append_auth_context(
+        &mut out,
+        server_random,
+        client_public_key,
+        server_public_key,
+        protocol_major,
+        auth_exporter,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(out)
 }
 
@@ -74,7 +73,10 @@ pub fn verify_auth_signature(
     signature: &[u8],
 ) -> Result<(), String> {
     if signature.len() != 64 {
-        return Err(format!("signature must be 64-byte r||s, got {}", signature.len()));
+        return Err(format!(
+            "signature must be 64-byte r||s, got {}",
+            signature.len()
+        ));
     }
     let mut sig = [0u8; 64];
     sig.copy_from_slice(signature);
@@ -103,19 +105,10 @@ pub fn test_client_identity_key() -> SigningKey {
 
 /// SEC1 compressed 33-byte encoding of a P-256 public key (the wire form).
 pub fn sec1_compressed(key: &SigningKey) -> Vec<u8> {
-    key.verifying_key().to_encoded_point(true).as_bytes().to_vec()
-}
-
-/// Build the AuthProof frame for a received AuthChallenge. The identity key
-/// material and the exporter value are session state, supplied by the caller.
-pub fn proof_for_challenge(
-    challenge: &crate::proto::AuthChallenge,
-) -> Result<Frame, String> {
-    // The session layer supplies key + exporter; the machine-level helper
-    // cannot sign without them. This shim exists so control.rs compiles and
-    // is replaced by the session's real signing path.
-    let _ = challenge;
-    Err("not wired".to_string())
+    key.verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .to_vec()
 }
 
 /// Build a complete AuthProof frame from a challenge + session context.
@@ -146,17 +139,13 @@ pub fn build_auth_proof(
 
 // Fixture constants (fixtures/wire-protocol-v2/test-keys.json).
 #[cfg(test)]
-const CLIENT_PUB_HEX: &str =
-    "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
+const CLIENT_PUB_HEX: &str = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
 #[cfg(test)]
-const SERVER_PUB_HEX: &str =
-    "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c";
+const SERVER_PUB_HEX: &str = "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c";
 #[cfg(test)]
-const SERVER_RANDOM_HEX: &str =
-    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+const SERVER_RANDOM_HEX: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 #[cfg(test)]
-const AUTH_EXPORTER_HEX: &str =
-    "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";
+const AUTH_EXPORTER_HEX: &str = "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";
 /// Golden vector control.auth-happy-path, derived.auth_context_hex.
 #[cfg(test)]
 const AUTH_CONTEXT_HEX: &str = "01000461757468020020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03002103d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d04002011b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c05000400000002060020c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";

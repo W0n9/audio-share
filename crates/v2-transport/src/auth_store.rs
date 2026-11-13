@@ -100,9 +100,7 @@ impl StoredClient {
         // point. Decoding validates the point, so the store can never hold a
         // credential that `AuthInit` could not later verify (fail closed).
         if crate::auth::parse_client_public_key(&public_key).is_err() {
-            return Err(
-                "public_key is not a 33-byte SEC1-compressed P-256 point".to_owned()
-            );
+            return Err("public_key is not a 33-byte SEC1-compressed P-256 point".to_owned());
         }
         // client_id is derived, never allocated: first 8 bytes of
         // SHA-256(public_key), lowercase hex (§8.1). Only the canonical
@@ -212,7 +210,10 @@ pub struct AuthorizationStore {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FileFingerprint {
     Missing,
-    Present { len: u64, modified: Option<SystemTime> },
+    Present {
+        len: u64,
+        modified: Option<SystemTime>,
+    },
 }
 
 struct ReloadState {
@@ -224,7 +225,10 @@ struct ReloadState {
 
 impl ReloadState {
     fn initial(fingerprint: Option<FileFingerprint>) -> Self {
-        Self { fingerprint, failed: false }
+        Self {
+            fingerprint,
+            failed: false,
+        }
     }
 }
 
@@ -249,7 +253,12 @@ impl fmt::Debug for AuthorizationStore {
                 &self
                     .clients
                     .read()
-                    .map(|clients| clients.iter().map(|c| c.client_id.clone()).collect::<Vec<_>>())
+                    .map(|clients| {
+                        clients
+                            .iter()
+                            .map(|c| c.client_id.clone())
+                            .collect::<Vec<_>>()
+                    })
                     .unwrap_or_default(),
             )
             .finish()
@@ -300,7 +309,12 @@ impl AuthorizationStore {
     /// Consult the authorization state for this public key (§9.2: at every
     /// authentication, never a cached answer).
     pub fn authorize(&self, public_key: &[u8]) -> Authorization {
-        if self.reload.lock().expect("authorization reload lock").failed {
+        if self
+            .reload
+            .lock()
+            .expect("authorization reload lock")
+            .failed
+        {
             return Authorization::Unavailable;
         }
         let guard = self.clients.read().expect("authorization store lock");
@@ -318,17 +332,28 @@ impl AuthorizationStore {
     /// means every record was removed; a corrupt file fails closed and stays
     /// failed until a later re-read succeeds (pairing.md §9.2/§10.3).
     pub fn reload_if_changed(&self) -> Result<bool, StoreError> {
-        let Some(path) = &self.path else { return Ok(false) };
+        let Some(path) = &self.path else {
+            return Ok(false);
+        };
         let current = fingerprint(path).map_err(|source| StoreError::Io {
             operation: "stat authorization store",
             source,
         })?;
-        if self.reload.lock().expect("authorization reload lock").fingerprint == Some(current) {
+        if self
+            .reload
+            .lock()
+            .expect("authorization reload lock")
+            .fingerprint
+            == Some(current)
+        {
             return Ok(false);
         }
         match current {
             FileFingerprint::Missing => {
-                self.clients.write().expect("authorization store lock").clear();
+                self.clients
+                    .write()
+                    .expect("authorization store lock")
+                    .clear();
                 let mut state = self.reload.lock().expect("authorization reload lock");
                 state.fingerprint = Some(current);
                 state.failed = false;
@@ -359,7 +384,10 @@ impl AuthorizationStore {
                         let mut state = self.reload.lock().expect("authorization reload lock");
                         state.fingerprint = Some(current);
                         state.failed = true;
-                        Err(StoreError::Corrupted { path: path.clone(), reason })
+                        Err(StoreError::Corrupted {
+                            path: path.clone(),
+                            reason,
+                        })
                     }
                 }
             }
@@ -369,12 +397,18 @@ impl AuthorizationStore {
     /// The record for a public key, when one exists.
     pub fn record_for(&self, public_key: &[u8]) -> Option<StoredClient> {
         let guard = self.clients.read().expect("authorization store lock");
-        guard.iter().find(|client| client.public_key == public_key).cloned()
+        guard
+            .iter()
+            .find(|client| client.public_key == public_key)
+            .cloned()
     }
 
     /// Every record (admin surfaces / audit).
     pub fn clients(&self) -> Vec<StoredClient> {
-        self.clients.read().expect("authorization store lock").clone()
+        self.clients
+            .read()
+            .expect("authorization store lock")
+            .clone()
     }
 
     /// Add or replace a record (keyed by public key; the store never holds two
@@ -383,7 +417,10 @@ impl AuthorizationStore {
     pub fn upsert(&self, client: StoredClient) -> Result<(), StoreError> {
         {
             let mut guard = self.clients.write().expect("authorization store lock");
-            match guard.iter_mut().find(|existing| existing.public_key == client.public_key) {
+            match guard
+                .iter_mut()
+                .find(|existing| existing.public_key == client.public_key)
+            {
                 Some(existing) => *existing = client.clone(),
                 None => guard.push(client.clone()),
             }
@@ -407,10 +444,18 @@ impl AuthorizationStore {
             let found = guard
                 .iter()
                 .find(|client| client.public_key == public_key)
-                .ok_or_else(|| StoreError::UnknownClient { public_key: public_key.to_vec() })?
+                .ok_or_else(|| StoreError::UnknownClient {
+                    public_key: public_key.to_vec(),
+                })?
                 .clone();
-            let updated = StoredClient { state: ClientState::Revoked, ..found };
-            if let Some(slot) = guard.iter_mut().find(|client| client.public_key == public_key) {
+            let updated = StoredClient {
+                state: ClientState::Revoked,
+                ..found
+            };
+            if let Some(slot) = guard
+                .iter_mut()
+                .find(|client| client.public_key == public_key)
+            {
                 *slot = updated.clone();
             }
             updated
@@ -427,7 +472,9 @@ impl AuthorizationStore {
 
     /// Atomic write + one backup generation (§10.3). Memory-only stores skip.
     fn persist(&self) -> Result<(), StoreError> {
-        let Some(path) = &self.path else { return Ok(()) };
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
         let pairing_dir = path.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(pairing_dir).map_err(|source| StoreError::Io {
             operation: "create pairing directory",
@@ -459,7 +506,8 @@ impl AuthorizationStore {
 }
 
 fn parse_store_text(text: &str) -> Result<Vec<StoredClient>, String> {
-    let file: StoreFile = serde_json::from_str(text).map_err(|error| format!("not valid JSON: {error}"))?;
+    let file: StoreFile =
+        serde_json::from_str(text).map_err(|error| format!("not valid JSON: {error}"))?;
     if file.version != 1 {
         return Err(format!("unsupported store version {}", file.version));
     }
@@ -483,8 +531,9 @@ fn parse_store_text(text: &str) -> Result<Vec<StoredClient>, String> {
 #[cfg(unix)]
 fn tighten_dir(dir: &Path) -> Result<(), StoreError> {
     use std::os::unix::fs::PermissionsExt as _;
-    fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).map_err(|source| {
-        StoreError::Io { operation: "restrict pairing directory", source }
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).map_err(|source| StoreError::Io {
+        operation: "restrict pairing directory",
+        source,
     })
 }
 

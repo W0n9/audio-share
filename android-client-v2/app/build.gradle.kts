@@ -76,6 +76,7 @@ dependencies {
     // artifact (android.jar's stubs throw in unit tests); kotlin("test")
     // provides the kotlin.test assertions.
     testImplementation(libs.junit)
+    testImplementation("io.mockk:mockk:1.13.16")
     testImplementation("org.json:json:20240303")
     testImplementation(kotlin("test"))
 }
