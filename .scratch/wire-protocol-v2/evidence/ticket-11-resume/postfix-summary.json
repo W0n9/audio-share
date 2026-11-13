@@ -1,0 +1,29 @@
+{
+  "workspace": {
+    "passed": 465,
+    "failed": 0,
+    "ignored": 4
+  },
+  "native_default": {
+    "passed": 102,
+    "failed": 0,
+    "ignored": 0
+  },
+  "native_test_support": {
+    "passed": 102,
+    "failed": 0,
+    "ignored": 0
+  },
+  "jvm": {
+    "passed": 36,
+    "failed": 0
+  },
+  "default_release": "PASS without testSupport/deviceTests",
+  "device": {
+    "rebind": "PASS 9/9 connections",
+    "recreate": "PASS 11/11 connections",
+    "lock": "PASS 13/13 connections",
+    "stop": "PASS CLOSED/foreground removed/701"
+  },
+  "frozen_v034": "PASS; original host persisted and playback stopped"
+}

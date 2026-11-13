@@ -1,5 +1,5 @@
-//! Read-only production capture injection for the v2 control plane.
-//! v1 retains its negotiated, immutable format; no v2 media is sent here.
+//! v2 控制平面的只读生产 capture 注入。
+//! v1 保持协商后的 immutable 格式；这里不发送 v2 媒体。
 
 use std::sync::Arc;
 
@@ -7,7 +7,7 @@ use audio_share_core::capture::CaptureObserver;
 use audio_share_core::protocol::AudioFormat;
 use v2_transport::driver::{CaptureSnapshot, CaptureStateSource};
 
-/// Supply the Server Core capture state to the v2 session layer.
+/// 将 Server Core 的真实 capture 状态提供给 v2 会话层。
 pub fn v2_capture_source(capture: CaptureObserver) -> Arc<CaptureStateSource> {
     let snapshot = v2_capture_snapshot(&capture.format());
     Arc::new(move || {
@@ -17,8 +17,8 @@ pub fn v2_capture_source(capture: CaptureObserver) -> Arc<CaptureStateSource> {
     })
 }
 
-/// Map the negotiated format to v2's PCM configuration. Invalid geometry
-/// leaves capture absent (501); this phase has no active v2 media stream.
+/// 将协商后的格式映射为 v2 PCM 配置；无效几何信息保持 capture absent（501）。
+/// 本阶段没有活动 v2 媒体流。
 pub fn v2_capture_snapshot(format: &AudioFormat) -> CaptureSnapshot {
     use audio_share_core::protocol::Encoding;
     use v2_transport::schema::{Codec, Configuration, PcmParameters, SampleFormat};

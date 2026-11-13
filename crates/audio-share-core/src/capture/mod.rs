@@ -130,8 +130,7 @@ pub struct CaptureSession {
 }
 
 impl CaptureSession {
-    /// Own an already-started backend thread and its cancellation signal.
-    /// The backend must negotiate `format` before returning this session.
+    /// 接管已启动的 backend 线程及取消信号；返回会话前必须协商 `format`。
     pub fn from_thread(
         format: AudioFormat,
         signal: Arc<StopSignal>,
@@ -144,8 +143,7 @@ impl CaptureSession {
         }
     }
 
-    /// A read-only observation of the immutable format and thread lifetime.
-    /// Observing never joins, restarts, or otherwise changes capture.
+    /// 只读观察 immutable 格式与线程生命周期，不 join、重启或改变 capture。
     pub fn observer(&self) -> CaptureObserver {
         CaptureObserver {
             format: self.format.clone(),
@@ -189,9 +187,8 @@ impl std::fmt::Debug for CaptureSession {
     }
 }
 
-/// Read-only Server Core capture state. The format remains available after
-/// the backend thread ends (ADR-0003); liveness is observed from the actual
-/// thread, not from the Server process or a startup flag.
+/// Server Core 的只读 capture 状态；backend 线程结束后仍保留格式（ADR-0003）。
+/// 可用性来自实际线程，而非 Server 进程或启动标志。
 #[derive(Clone, Debug)]
 pub struct CaptureObserver {
     format: AudioFormat,
@@ -199,13 +196,13 @@ pub struct CaptureObserver {
 }
 
 impl CaptureObserver {
-    /// The actual immutable format negotiated at startup.
+    /// 启动时协商的实际 immutable 格式。
     pub fn format(&self) -> AudioFormat {
         self.format.clone()
     }
 
-    /// Whether the backend thread is still running. False after completion,
-    /// panic, or session teardown; this does not claim an active v2 stream.
+    /// backend 线程是否仍运行；完成、panic 或会话清理后为 false，
+    /// 不代表存在活动 v2 媒体流。
     pub fn is_running(&self) -> bool {
         self.thread
             .lock()
@@ -229,7 +226,7 @@ pub struct StopSignal {
 }
 
 impl StopSignal {
-    /// Request cancellation and wake a waiting backend thread.
+    /// 请求取消并唤醒等待中的 backend 线程。
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
         // Locking before notifying prevents a waiter that checked the flag just
@@ -241,7 +238,7 @@ impl StopSignal {
         self.wake.notify_all();
     }
 
-    /// Whether session teardown has requested cancellation.
+    /// 会话清理是否已请求取消。
     pub fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::SeqCst)
     }

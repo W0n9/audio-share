@@ -235,9 +235,8 @@ impl ServerHandle {
         (*self.format).clone()
     }
 
-    /// Read-only capture observation for other protocol adapters. Capture
-    /// completion leaves the Server running with its immutable format; this
-    /// observer never changes v1 behavior or recovers capture (ADR-0003).
+    /// 为其他协议 adapter 提供只读 capture 观察；capture 结束后 Server 保持运行
+    /// 并保留 immutable 格式，不改变 v1 行为，也不恢复 capture（ADR-0003）。
     pub fn capture_observer(&self) -> CaptureObserver {
         self.capture
             .as_ref()

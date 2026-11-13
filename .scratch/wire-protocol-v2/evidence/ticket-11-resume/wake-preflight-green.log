@@ -1,0 +1,22 @@
+Command: python3 -I .scratch/wire-protocol-v2/evidence/check-wake-cli.py "$PWD"（屏幕准备修复后）
+
+{
+  "host_stub_only": true,
+  "real_adb_or_device_used": false,
+  "results": [
+    {
+      "scenario": "normal strict wake",
+      "exit": 0,
+      "wake_attempts": 2,
+      "dismiss_attempts": 2,
+      "status": "PASS"
+    },
+    {
+      "scenario": "strict failure plus best-effort cleanup",
+      "exit": 1,
+      "wake_attempts": 3,
+      "dismiss_attempts": 2,
+      "status": "PASS"
+    }
+  ]
+}

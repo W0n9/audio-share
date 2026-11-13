@@ -93,8 +93,8 @@ class ClientSession(
             lifecycle = null
             unregisterNetworkCallback()
             val current = handle.getAndSet(0)
-            // Invalidate state before native teardown. Reads already in flight
-            // cannot publish, and queued creates/reconnects have an old lifetime.
+            // 先使状态来源失效，再清理 native；进行中的旧读不能发布，
+            // 已排队的创建/重连任务也属于旧生命周期。
             stateSource?.close()
             stateSource = null
             current
@@ -120,7 +120,7 @@ class ClientSession(
 
     // ---- session lifecycle with backoff ------------------------------------
 
-    /** Caller holds lifecycleLock; a handle alone is not an event identity. */
+    /** 调用者持有 lifecycleLock；数值 handle 不能独自标识事件来源。 */
     private fun ownsSessionLocked(lifetime: Any, source: SessionStateRelay.Source, h: Long): Boolean =
         running.get() && lifecycle === lifetime && stateSource === source && handle.get() == h
 
@@ -155,7 +155,7 @@ class ClientSession(
                 }
             }
             if (connected == null) {
-                // STOP or a different attempt won while createSession ran.
+                // createSession 执行期间，STOP 或其他尝试已取得所有权。
                 ClientNative.destroy(h)
                 return@execute
             }
@@ -202,7 +202,7 @@ class ClientSession(
                     val state = source.poll { ClientNative.getState(myHandle) ?: "" }
                     if (state.isEmpty() && !source.isCurrent()) break
                     if (state == "READY") {
-                        // §6.3: only the current session resets its backoff.
+                        // §6.3：仅当前会话可以重置 backoff。
                         synchronized(lifecycleLock) {
                             if (ownsSessionLocked(lifetime, source, myHandle)) backoffAttempts.set(0)
                         }
@@ -280,7 +280,7 @@ class ClientSession(
                     return
                 }
                 if (tryRebind(h, network)) return
-                // Rebind can race STOP/reconnect; teardown only its source.
+                // rebind 可与 STOP/重连交错；只清理本次来源。
                 teardownForReconnect("network change (rebind fallback)", h, source, lifetime)
             }
 
