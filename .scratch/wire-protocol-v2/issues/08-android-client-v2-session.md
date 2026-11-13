@@ -49,3 +49,7 @@
 - 完整握手联调（与 06/07 Server 的真机交叉验证）按票面 Note 归 09。
 
 至此 08 的 DoD 全项完成，Status → `resolved`。冒烟所用 APK 构建于 `ticket/08-android-client-v2`（`1fb9de5`，已合入集成分支 `f727ba6`，与本条同源代码）。
+
+### 2026-11-13 — 201-flag adjudication resolved
+
+The maintainer ruled the vector, not §4.2, was wrong: `control/error-201-pairing-declined.json` now encodes the §6.2 registry default `requires_repairing=true` (`12 05 08 c9 01 18 01`, frame length 19), matching its proof-invalid sibling. Both replay harnesses (native + Kotlin) read the flag from the fixture; no harness-side exception remains.
