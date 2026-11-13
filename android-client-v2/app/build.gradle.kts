@@ -24,6 +24,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0-v2"
+        testInstrumentationRunner = "dev.audioshare.v2.ControlSessionInstrumentation"
         ndk {
             // arm64 real-device scope for this ticket
             abiFilters += "arm64-v8a"
@@ -42,8 +43,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // 测试 APK 是独立的 API 使用者，R8 必须保留它消费的本地 Binder seam。
+            if (providers.gradleProperty("deviceTests").map(String::toBoolean).getOrElse(false)) {
+                proguardFiles("proguard-device-tests.pro")
+            }
         }
     }
+
+    // 设备回归必须覆盖经过 R8 压缩的真实 release APK。
+    testBuildType = "release"
 
     kotlin {
         jvmToolchain(17)

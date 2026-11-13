@@ -1,0 +1,15 @@
+Command: python3 -I android-client-v2/scripts/service-device-test.py --test recreate --config "$PUBLIC_CONFIG" --output "$RESULT_FILE"
+Context: 实际测试构建与 RED/GREEN 阶段见 README.md；公钥/pin 脱敏。
+
+INSTRUMENTATION_STATUS: stream=AWAITING_ACTIVITY
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: stream=NATIVE_READY
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+OK (1 test)
+
+INSTRUMENTATION_CODE: -1
+
+Server connection count at READY/final: 26/26
