@@ -17,6 +17,7 @@ import org.json.JSONObject
  */
 class ControlSessionService : Service() {
     private var session: ClientSession? = null
+    private var sessionSource: SessionStateRelay.Source? = null
     private val relay = SessionStateRelay()
     private val binder = ControlBinder(this)
 
@@ -25,7 +26,7 @@ class ControlSessionService : Service() {
     fun setStateListener(listener: ((String) -> Unit)?) = relay.setListener(listener)
 
     /** 即使会话已清理，也保留最后的关闭状态。 */
-    fun stateSnapshot(): String = session?.stateSnapshot() ?: relay.snapshot()
+    fun stateSnapshot(): String = relay.snapshot()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
@@ -34,9 +35,10 @@ class ControlSessionService : Service() {
         }
         startForegroundCompat()
         if (session == null && intent != null && intent.hasValidConfiguration()) {
+            val source = relay.beginSession().also { sessionSource = it }
             session = ClientSession(this, object : ClientSession.Listener {
                 override fun onStats(json: JSONObject) = Unit
-                override fun onStateChange(state: String) { relay.publish(state) }
+                override fun onStateChange(state: String) { source.publish(state) }
                 override fun onLog(line: String) = Unit
             }).also {
                 it.bindHintEnabled = intent.getBooleanExtra("bindHint", false)
@@ -83,13 +85,21 @@ class ControlSessionService : Service() {
     }
 
     private fun stopSession() {
+        sessionSource?.close()
+        sessionSource = null
         session?.stop()
         session = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
-    override fun onDestroy() { session?.stop(); session = null; super.onDestroy() }
+    override fun onDestroy() {
+        sessionSource?.close()
+        sessionSource = null
+        session?.stop()
+        session = null
+        super.onDestroy()
+    }
 
     companion object {
         const val ACTION_START = "dev.audioshare.v2.CONTROL_START"
