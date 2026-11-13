@@ -127,6 +127,8 @@ fn machine_on(store: std::sync::Arc<AuthorizationStore>) -> StateMachine {
             }),
             capture_active: true,
             capture_healthy: true,
+            stream_instance_id: 1,
+            next_frame_timestamp: 0,
             max_auth_failures_per_connection: 5,
             // Golden-vector replay constants (test-keys.json): the pinned
             // challenge randomness and the TLS-Exporter stand-in.
@@ -854,6 +856,79 @@ fn ready_capture_unhealthy_subscribe_is_501_retryable() {
     assert!(
         matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::Error(e)) if e.request_id == 3 && e.status.code == 501 && e.status.retryable)
+    );
+}
+
+#[test]
+fn ready_capture_absent_subscribe_is_501_retryable() {
+    // §5.2: "capture unhealthy or absent" -> Error(501, retryable=true), no
+    // state change. Absent = no current Configuration (capture never injected
+    // or never produced a Transfer Format) even though `capture_healthy`
+    // defaults to true.
+    let store = store_with_client();
+    let mut machine = StateMachine::new(
+        ServerConfig {
+            current_configuration: None,
+            capture_active: false,
+            capture_healthy: true,
+            ..machine(&store).config().clone()
+        },
+        &std::sync::Arc::new(clone_store(&store)),
+    );
+    authenticate(&mut machine);
+    machine.handle(Event::Frame {
+        frame: Box::new(negotiate(2, &[])),
+        source: unhex(CLIENT_PUB),
+    });
+    let out = machine.handle(Event::Frame {
+        frame: Box::new(subscribe(3)),
+        source: unhex(CLIENT_PUB),
+    });
+    assert_eq!(machine.state(), ServerState::Ready);
+    assert_eq!(out.len(), 1, "non-fatal, no SubscribeResponse");
+    assert!(
+        matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
+        Some(frame::Body::Error(e)) if e.request_id == 3 && e.status.code == 501 && e.status.retryable)
+    );
+    // No state change: a retry is still 501, not 402 "already subscribed".
+    let again = machine.handle(Event::Frame {
+        frame: Box::new(subscribe(4)),
+        source: unhex(CLIENT_PUB),
+    });
+    assert!(
+        matches!(again[0].frame.as_ref().and_then(|f| f.body.as_ref()),
+        Some(frame::Body::Error(e)) if e.status.code == 501)
+    );
+}
+
+#[test]
+fn ready_subscribe_stream_started_comes_from_stream_state() {
+    // §5.2: StreamStarted carries the active instance, current generation and
+    // next-frame timestamp — from stream state, not constants.
+    let store = store_with_client();
+    let mut machine = StateMachine::new(
+        ServerConfig {
+            capture_active: true,
+            stream_instance_id: 7,
+            next_frame_timestamp: 123_456,
+            ..machine(&store).config().clone()
+        },
+        &std::sync::Arc::new(clone_store(&store)),
+    );
+    authenticate(&mut machine);
+    machine.handle(Event::Frame {
+        frame: Box::new(negotiate(2, &[])),
+        source: unhex(CLIENT_PUB),
+    });
+    let out = machine.handle(Event::Frame {
+        frame: Box::new(subscribe(3)),
+        source: unhex(CLIENT_PUB),
+    });
+    assert_eq!(out.len(), 2);
+    assert!(
+        matches!(out[1].frame.as_ref().and_then(|f| f.body.as_ref()),
+        Some(frame::Body::StreamStarted(s))
+            if s.stream_instance_id == 7 && s.config_generation == 1 && s.initial_timestamp == 123_456)
     );
 }
 

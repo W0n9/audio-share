@@ -20,12 +20,13 @@ use p256::ecdsa::{Signature, SigningKey};
 use v2_transport::auth::build_auth_context;
 use v2_transport::auth_store::{AuthorizationStore, ClientState, StoredClient};
 use v2_transport::codes::{ErrorCode, ALPN_PROTOCOL};
-use v2_transport::driver::{SessionServer, AUTH_EXPORTER_LABEL};
+use v2_transport::driver::{CaptureSnapshot, SessionServer, AUTH_EXPORTER_LABEL};
 use v2_transport::framing::{check_length_prefix, decode_body, encode_frame, LengthCheck};
 use v2_transport::identity::{IdentityConfig, ServerIdentity};
 use v2_transport::limits::{CapacityGuard, Limits};
 use v2_transport::schema::{
-    frame, AuthInit, AuthProof, AuthResult, Frame, Negotiate, Status, Subscribe,
+    frame, AuthInit, AuthProof, AuthResult, Configuration, Frame, Negotiate, PcmParameters,
+    RequestConfiguration, Status, Subscribe,
 };
 use v2_transport::transport::{Transport, TransportConfig};
 
@@ -301,17 +302,103 @@ async fn auth_happy_path_reaches_ready_over_quic() {
         other => panic!("expected NegotiateResponse, got {other:?}"),
     }
 
-    // §5.2 READY: Subscribe is served with a SubscribeResponse (no capture
-    // is wired yet, so no StreamStarted push is expected).
+    // §5.2 READY: with no capture injected the Server cannot serve media, so
+    // Subscribe is refused non-fatally with Error(501, retryable=true).
     send_frame(&mut send, &subscribe(3)).await;
     match read_frame(&mut recv).await.body {
+        Some(frame::Body::Error(error)) => {
+            assert_eq!(error.request_id, 3);
+            assert_eq!(error.status.code, 501);
+            assert!(error.status.retryable);
+        }
+        other => panic!("expected Error(501), got {other:?}"),
+    }
+
+    connection.close(quinn::VarInt::from_u32(701), b"");
+    server.transport.stop();
+}
+
+#[tokio::test]
+async fn injected_capture_state_publishes_configuration_and_stream_started() {
+    // Production wiring seam: a capture-state source feeds Subscribe,
+    // RequestConfiguration and StreamStarted (§5.2) without media sending.
+    let configuration = Configuration {
+        config_generation: 3,
+        codec: v2_transport::schema::Codec::Pcm as i32,
+        pcm: Some(PcmParameters {
+            sample_rate: 44_100,
+            channels: 2,
+            sample_format: v2_transport::schema::SampleFormat::S16Le as i32,
+        }),
+    };
+    let published = configuration.clone();
+    let server = TestServer::start(store_with_client(), Limits::defaults(), move |server| {
+        let snapshot = CaptureSnapshot {
+            configuration: Some(published.clone()),
+            healthy: true,
+            stream_active: true,
+            stream_instance_id: 9,
+            next_frame_timestamp: 777,
+        };
+        server.capture_source = Some(Arc::new(move || snapshot.clone()));
+    })
+    .await;
+    let connection = connect(server.address).await;
+    let (mut send, mut recv) = connection.open_bi().await.expect("control stream");
+    authenticate(
+        &connection,
+        &mut send,
+        &mut recv,
+        server.identity.public_key_raw(),
+        1,
+    )
+    .await;
+    send_frame(&mut send, &negotiate(2, 2, &[])).await;
+    assert!(matches!(
+        read_frame(&mut recv).await.body,
+        Some(frame::Body::NegotiateResponse(_))
+    ));
+    // READY entry: unsolicited ConfigurationPublished (request_id 0).
+    match read_frame(&mut recv).await.body {
+        Some(frame::Body::ConfigurationPublished(push)) => {
+            assert_eq!(push.request_id, 0);
+            assert_eq!(push.configuration, Some(configuration.clone()));
+        }
+        other => panic!("expected ConfigurationPublished, got {other:?}"),
+    }
+    send_frame(
+        &mut send,
+        &Frame {
+            body: Some(frame::Body::RequestConfiguration(RequestConfiguration {
+                request_id: 5,
+            })),
+        },
+    )
+    .await;
+    match read_frame(&mut recv).await.body {
+        Some(frame::Body::ConfigurationPublished(push)) => {
+            assert_eq!(push.request_id, 5);
+            assert_eq!(push.configuration, Some(configuration.clone()));
+        }
+        other => panic!("expected ConfigurationPublished, got {other:?}"),
+    }
+    send_frame(&mut send, &subscribe(6)).await;
+    match read_frame(&mut recv).await.body {
         Some(frame::Body::SubscribeResponse(response)) => {
-            assert_eq!(response.request_id, 3);
+            assert_eq!(response.request_id, 6);
             assert_eq!(status_code(&response.status), 0);
+            assert_eq!(response.configuration, Some(configuration));
         }
         other => panic!("expected SubscribeResponse, got {other:?}"),
     }
-
+    match read_frame(&mut recv).await.body {
+        Some(frame::Body::StreamStarted(started)) => {
+            assert_eq!(started.stream_instance_id, 9);
+            assert_eq!(started.config_generation, 3);
+            assert_eq!(started.initial_timestamp, 777);
+        }
+        other => panic!("expected StreamStarted, got {other:?}"),
+    }
     connection.close(quinn::VarInt::from_u32(701), b"");
     server.transport.stop();
 }
