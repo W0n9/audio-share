@@ -25,3 +25,8 @@ predicates = "3"
 protocol-harness = { path = "../../tools/protocol-harness" }
 tempfile = "3"
 tokio.workspace = true
+# Real QUIC capture-failure regressions use fresh, in-memory Client keys.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+v2-transport = { path = "../v2-transport", features = ["test-support"] }

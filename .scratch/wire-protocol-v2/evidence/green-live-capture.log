@@ -1,0 +1,8 @@
+   Compiling v2-transport v0.4.1 (/home/w0n9/workspaces/audio-share/.claude/worktrees/agent-ae8d4922334c6e2c4/crates/v2-transport)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.51s
+     Running tests/session_driver.rs (target/debug/deps/session_driver-6840d43459a7572f)
+
+running 1 test
+test ready_capture_failure_refuses_first_subscribe_without_subscribing ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.12s

@@ -51,10 +51,7 @@ public final class ControlSessionInstrumentation extends Instrumentation {
             Bundle progress = new Bundle();
             progress.putString("stream", "AWAITING_ACTIVITY\n");
             sendStatus(0, progress);
-            long launchedBy = System.nanoTime() + 10_000_000_000L;
-            while (currentActivity.get() == null && System.nanoTime() < launchedBy) Thread.sleep(100);
-            activity = currentActivity.get();
-            if (activity == null) throw new AssertionError("Activity 未进入 RESUMED");
+            activity = awaitResumedActivity(10_000, "Activity 未进入 RESUMED");
             assertReady(activity);
             sendProgress("NATIVE_READY");
             String testCase = arguments.getString("case", "ready");
@@ -74,11 +71,7 @@ public final class ControlSessionInstrumentation extends Instrumentation {
                     throw new AssertionError("锁屏期间会话或前台 Service 丢失：" + owner.stateSnapshot());
                 }
                 sendProgress("AWAIT_SCREEN_WAKE");
-                long wakeBy = System.nanoTime() + 10_000_000_000L;
-                while (currentActivity.get() == null && System.nanoTime() < wakeBy) Thread.sleep(100);
-                Activity resumed = currentActivity.get();
-                if (resumed == null) throw new AssertionError("唤醒后 Activity 未恢复");
-                activity = resumed;
+                activity = awaitResumedActivity(10_000, "唤醒后 Activity 未恢复");
                 assertReady(activity);
                 assertBoundServiceReplaysReady();
             } else if ("stop".equals(testCase)) {
@@ -111,6 +104,14 @@ public final class ControlSessionInstrumentation extends Instrumentation {
         }
     }
 
+    private Activity awaitResumedActivity(long timeoutMillis, String failureMessage) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (currentActivity.get() == null && System.nanoTime() < deadline) Thread.sleep(100);
+        Activity activity = currentActivity.get();
+        if (activity == null) throw new AssertionError(failureMessage);
+        return activity;
+    }
+
     private void sendProgress(String message) {
         Bundle status = new Bundle();
         status.putString("stream", message + "\n");
@@ -131,10 +132,8 @@ public final class ControlSessionInstrumentation extends Instrumentation {
         runOnMainSync(new Runnable() {
             @Override public void run() { oldActivity.recreate(); }
         });
-        long resumedBy = System.nanoTime() + 5_000_000_000L;
-        while (currentActivity.get() == null && System.nanoTime() < resumedBy) Thread.sleep(100);
-        Activity recreated = currentActivity.get();
-        if (recreated == null || recreated == oldActivity) throw new AssertionError("Activity 没有完成重建");
+        Activity recreated = awaitResumedActivity(5_000, "Activity 没有完成重建");
+        if (recreated == oldActivity) throw new AssertionError("Activity 没有完成重建");
         assertReady(recreated);
         return recreated;
     }

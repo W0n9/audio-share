@@ -1,0 +1,8 @@
+{
+  "status": "PASS",
+  "target": "aarch64-linux-android",
+  "native_release_features": [
+    "[]"
+  ],
+  "fixture_test_support_compiled": false
+}

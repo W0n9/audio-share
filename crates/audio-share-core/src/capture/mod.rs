@@ -126,10 +126,33 @@ pub struct CaptureSession {
     /// Actual negotiated capture format. Immutable for the session lifetime.
     pub format: AudioFormat,
     signal: Arc<StopSignal>,
-    thread: Option<JoinHandle<()>>,
+    thread: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl CaptureSession {
+    /// Own an already-started backend thread and its cancellation signal.
+    /// The backend must negotiate `format` before returning this session.
+    pub fn from_thread(
+        format: AudioFormat,
+        signal: Arc<StopSignal>,
+        thread: JoinHandle<()>,
+    ) -> Self {
+        Self {
+            format,
+            signal,
+            thread: Arc::new(Mutex::new(Some(thread))),
+        }
+    }
+
+    /// A read-only observation of the immutable format and thread lifetime.
+    /// Observing never joins, restarts, or otherwise changes capture.
+    pub fn observer(&self) -> CaptureObserver {
+        CaptureObserver {
+            format: self.format.clone(),
+            thread: Arc::clone(&self.thread),
+        }
+    }
+
     /// Stop capture, joining the capture thread. Idempotent by construction:
     /// a second call has no thread left to stop.
     pub fn stop(mut self) -> Result<()> {
@@ -137,7 +160,12 @@ impl CaptureSession {
     }
 
     fn stop_inner(&mut self) -> Result<()> {
-        if let Some(thread) = self.thread.take() {
+        let thread = self
+            .thread
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(thread) = thread {
             self.signal.stop();
             thread
                 .join()
@@ -161,6 +189,32 @@ impl std::fmt::Debug for CaptureSession {
     }
 }
 
+/// Read-only Server Core capture state. The format remains available after
+/// the backend thread ends (ADR-0003); liveness is observed from the actual
+/// thread, not from the Server process or a startup flag.
+#[derive(Clone, Debug)]
+pub struct CaptureObserver {
+    format: AudioFormat,
+    thread: Arc<Mutex<Option<JoinHandle<()>>>>,
+}
+
+impl CaptureObserver {
+    /// The actual immutable format negotiated at startup.
+    pub fn format(&self) -> AudioFormat {
+        self.format.clone()
+    }
+
+    /// Whether the backend thread is still running. False after completion,
+    /// panic, or session teardown; this does not claim an active v2 stream.
+    pub fn is_running(&self) -> bool {
+        self.thread
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+    }
+}
+
 /// Cancellation signal shared with the capture thread.
 ///
 /// The flag itself is an atomic so the capture loop can poll it cheaply between
@@ -168,14 +222,15 @@ impl std::fmt::Debug for CaptureSession {
 /// stop. A backend that polls on its own may use [`StopSignal::is_stopped`]
 /// directly without waiting.
 #[derive(Debug, Default)]
-struct StopSignal {
+pub struct StopSignal {
     stopped: AtomicBool,
     wait_lock: Mutex<()>,
     wake: Condvar,
 }
 
 impl StopSignal {
-    fn stop(&self) {
+    /// Request cancellation and wake a waiting backend thread.
+    pub fn stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
         // Locking before notifying prevents a waiter that checked the flag just
         // before the store from missing the wake-up.
@@ -186,12 +241,13 @@ impl StopSignal {
         self.wake.notify_all();
     }
 
-    fn is_stopped(&self) -> bool {
+    /// Whether session teardown has requested cancellation.
+    pub fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::SeqCst)
     }
 
     /// Wait for up to `duration`; returns `false` when capture was stopped.
-    fn wait(&self, duration: Duration) -> bool {
+    pub fn wait(&self, duration: Duration) -> bool {
         if self.is_stopped() {
             return false;
         }
@@ -306,11 +362,7 @@ impl CaptureBackend for SyntheticCapture {
                 }
             })
             .map_err(|error| Error::io("spawn synthetic capture thread", error))?;
-        Ok(CaptureSession {
-            format,
-            signal,
-            thread: Some(thread),
-        })
+        Ok(CaptureSession::from_thread(format, signal, thread))
     }
 }
 

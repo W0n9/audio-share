@@ -1,0 +1,20 @@
+{
+  "host_stub_only": true,
+  "real_adb_or_device_used": false,
+  "results": [
+    {
+      "scenario": "normal strict wake",
+      "exit": 0,
+      "wake_attempts": 1,
+      "dismiss_attempts": 1,
+      "status": "PASS"
+    },
+    {
+      "scenario": "strict failure plus best-effort cleanup",
+      "exit": 1,
+      "wake_attempts": 2,
+      "dismiss_attempts": 1,
+      "status": "PASS"
+    }
+  ]
+}

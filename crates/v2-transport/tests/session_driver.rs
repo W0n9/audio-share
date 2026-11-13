@@ -11,6 +11,7 @@
 //! (`fixtures/wire-protocol-v2/test-keys.json`, pairing.md §11.3).
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -398,6 +399,90 @@ async fn injected_capture_state_publishes_configuration_and_stream_started() {
             assert_eq!(started.initial_timestamp, 777);
         }
         other => panic!("expected StreamStarted, got {other:?}"),
+    }
+    connection.close(quinn::VarInt::from_u32(701), b"");
+    server.transport.stop();
+}
+
+#[tokio::test]
+async fn ready_capture_failure_refuses_first_subscribe_without_subscribing() {
+    let healthy = Arc::new(AtomicBool::new(true));
+    let capture_health = Arc::clone(&healthy);
+    let configuration = Configuration {
+        config_generation: 1,
+        codec: v2_transport::schema::Codec::Pcm as i32,
+        pcm: Some(PcmParameters {
+            sample_rate: 48_000,
+            channels: 2,
+            sample_format: v2_transport::schema::SampleFormat::F32Le as i32,
+        }),
+    };
+    let published = configuration.clone();
+    let server = TestServer::start(store_with_client(), Limits::defaults(), move |server| {
+        server.capture_source = Some(Arc::new(move || CaptureSnapshot {
+            configuration: Some(published.clone()),
+            healthy: capture_health.load(Ordering::SeqCst),
+            ..CaptureSnapshot::absent()
+        }));
+    })
+    .await;
+    let connection = connect(server.address).await;
+    let (mut send, mut recv) = connection.open_bi().await.expect("control stream");
+    let auth = authenticate(
+        &connection,
+        &mut send,
+        &mut recv,
+        server.identity.public_key_raw(),
+        1,
+    )
+    .await;
+    assert_eq!(auth.status.code, 0);
+    send_frame(&mut send, &negotiate(2, 2, &[])).await;
+    assert!(matches!(
+        read_frame(&mut recv).await.body,
+        Some(frame::Body::NegotiateResponse(_))
+    ));
+    assert!(matches!(
+        read_frame(&mut recv).await.body,
+        Some(frame::Body::ConfigurationPublished(_))
+    ));
+
+    // The endpoint fails only after this connection is already READY. Both
+    // requests must be 501: a rejected first Subscribe must not subscribe it.
+    healthy.store(false, Ordering::SeqCst);
+    for request_id in [3, 4] {
+        send_frame(&mut send, &subscribe(request_id)).await;
+        let response = read_frame(&mut recv).await;
+        assert_eq!(
+            error_code(&response),
+            Some(501),
+            "READY capture failure must refuse Subscribe without changing subscription: {response:?}"
+        );
+        match response.body {
+            Some(frame::Body::Error(error)) => {
+                assert_eq!(error.request_id, request_id);
+                assert!(error.status.retryable);
+            }
+            _ => unreachable!("asserted Error(501)"),
+        }
+    }
+    // ADR-0003: failure does not discard the immutable negotiated format or
+    // close the process/session; configuration requests still work.
+    send_frame(
+        &mut send,
+        &Frame {
+            body: Some(frame::Body::RequestConfiguration(RequestConfiguration {
+                request_id: 5,
+            })),
+        },
+    )
+    .await;
+    match read_frame(&mut recv).await.body {
+        Some(frame::Body::ConfigurationPublished(push)) => {
+            assert_eq!(push.request_id, 5);
+            assert_eq!(push.configuration, Some(configuration));
+        }
+        other => panic!("expected immutable ConfigurationPublished, got {other:?}"),
     }
     connection.close(quinn::VarInt::from_u32(701), b"");
     server.transport.stop();

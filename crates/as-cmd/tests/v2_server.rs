@@ -12,7 +12,28 @@ use std::net::{TcpListener, UdpSocket};
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use audio_share_core::capture::{
+    CaptureBackend, CaptureConfig, CaptureSession, Endpoint, FrameSink, StopSignal,
+};
+use audio_share_core::protocol::{AudioFormat, Encoding};
+use audio_share_core::server::{Server, ServerConfig};
+use p256::ecdsa::signature::Signer;
+use p256::ecdsa::{Signature, SigningKey};
+use v2_transport::auth::build_auth_context;
+use v2_transport::auth_store::{AuthorizationStore, ClientState, StoredClient};
+use v2_transport::codes::ALPN_PROTOCOL;
+use v2_transport::driver::{SessionServer, AUTH_EXPORTER_LABEL};
+use v2_transport::framing::{check_length_prefix, decode_body, encode_frame, LengthCheck};
+use v2_transport::identity::{IdentityConfig, ServerIdentity};
+use v2_transport::limits::{CapacityGuard, Limits};
+use v2_transport::schema::{
+    frame, AuthInit, AuthProof, Frame, Negotiate, RequestConfiguration, Subscribe,
+};
+use v2_transport::transport::{Transport, TransportConfig};
 
 fn free_tcp_port() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").expect("pick a free port");
@@ -110,6 +131,268 @@ fn assert_identity_layout(config_dir: &Path) {
         "identity dir must be 0700, got {:o}",
         dir_mode & 0o777
     );
+}
+
+/// The external backend owns its thread. A test-controlled endpoint loss
+/// ends it while the Server Core keeps serving its immutable v1 format.
+struct ControlledCapture {
+    ended: Arc<AtomicBool>,
+}
+
+impl CaptureBackend for ControlledCapture {
+    fn endpoints(&self) -> audio_share_core::error::Result<Vec<Endpoint>> {
+        Ok(vec![Endpoint {
+            id: "controlled".into(),
+            name: "Controlled Endpoint".into(),
+        }])
+    }
+
+    fn default_endpoint(&self) -> audio_share_core::error::Result<Option<Endpoint>> {
+        Ok(self.endpoints()?.into_iter().next())
+    }
+
+    fn start(
+        &self,
+        _: &CaptureConfig,
+        sink: FrameSink,
+    ) -> audio_share_core::error::Result<CaptureSession> {
+        let stop = Arc::new(StopSignal::default());
+        let worker_stop = Arc::clone(&stop);
+        let ended = Arc::clone(&self.ended);
+        let thread = std::thread::spawn(move || {
+            let _sink = sink;
+            while !ended.load(Ordering::SeqCst) && worker_stop.wait(Duration::from_millis(10)) {}
+        });
+        Ok(CaptureSession::from_thread(
+            AudioFormat::new(Encoding::PcmFloat, 2, 48_000),
+            stop,
+            thread,
+        ))
+    }
+}
+
+async fn send_control_frame(send: &mut quinn::SendStream, body: frame::Body) {
+    send.write_all(&encode_frame(&Frame { body: Some(body) }).expect("encode control frame"))
+        .await
+        .expect("send control frame");
+}
+
+async fn read_control_frame(recv: &mut quinn::RecvStream) -> Frame {
+    let mut prefix = [0u8; 4];
+    tokio::time::timeout(Duration::from_secs(5), recv.read_exact(&mut prefix))
+        .await
+        .expect("control prefix timeout")
+        .expect("control prefix");
+    let body_len = match check_length_prefix(prefix) {
+        LengthCheck::Accept { body_len } => body_len,
+        other => panic!("invalid control length: {other:?}"),
+    };
+    let mut body = vec![0; body_len];
+    tokio::time::timeout(Duration::from_secs(5), recv.read_exact(&mut body))
+        .await
+        .expect("control body timeout")
+        .expect("control body");
+    decode_body(&body).expect("control frame")
+}
+
+async fn ready_control_connection(
+    address: std::net::SocketAddr,
+    key: &SigningKey,
+    server_key: &[u8],
+) -> (
+    quinn::Connection,
+    quinn::SendStream,
+    quinn::RecvStream,
+    v2_transport::schema::Configuration,
+) {
+    let connection = v2_transport::test_support::connect_with_alpn(address, ALPN_PROTOCOL)
+        .expect("test endpoint")
+        .await
+        .expect("QUIC handshake");
+    let (mut send, mut recv) = connection.open_bi().await.expect("control stream");
+    let client_key = key
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .to_vec();
+    send_control_frame(
+        &mut send,
+        frame::Body::AuthInit(AuthInit {
+            request_id: 1,
+            client_public_key: client_key.clone(),
+        }),
+    )
+    .await;
+    let random = match read_control_frame(&mut recv).await.body {
+        Some(frame::Body::AuthChallenge(challenge)) => challenge.server_random,
+        _ => panic!("expected AuthChallenge"),
+    };
+    let mut exporter = [0; 32];
+    connection
+        .export_keying_material(&mut exporter, AUTH_EXPORTER_LABEL, b"")
+        .expect("TLS exporter");
+    let signature: Signature = key.sign(&build_auth_context(
+        &random,
+        &client_key,
+        server_key,
+        &exporter,
+    ));
+    send_control_frame(
+        &mut send,
+        frame::Body::AuthProof(AuthProof {
+            request_id: 1,
+            signature: signature.to_vec(),
+        }),
+    )
+    .await;
+    match read_control_frame(&mut recv).await.body {
+        Some(frame::Body::AuthResult(result)) => assert_eq!(result.status.code, 0),
+        _ => panic!("expected AuthResult"),
+    }
+    send_control_frame(
+        &mut send,
+        frame::Body::Negotiate(Negotiate {
+            request_id: 2,
+            protocol_major: 2,
+            protocol_minor: 0,
+            capabilities: vec![],
+        }),
+    )
+    .await;
+    match read_control_frame(&mut recv).await.body {
+        Some(frame::Body::NegotiateResponse(result)) => assert_eq!(result.status.code, 0),
+        _ => panic!("expected NegotiateResponse"),
+    }
+    let configuration = match read_control_frame(&mut recv).await.body {
+        Some(frame::Body::ConfigurationPublished(push)) => {
+            push.configuration.expect("immutable format")
+        }
+        _ => panic!("expected ConfigurationPublished"),
+    };
+    (connection, send, recv, configuration)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn production_capture_thread_exit_refuses_new_and_ready_subscriptions() {
+    let ended = Arc::new(AtomicBool::new(false));
+    let core = Server::start(
+        ServerConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            ..ServerConfig::default()
+        },
+        Arc::new(ControlledCapture {
+            ended: Arc::clone(&ended),
+        }),
+        CaptureConfig::default(),
+    )
+    .await
+    .expect("Server Core");
+    let observer = core.capture_observer();
+    assert!(observer.is_running());
+    let dir = tempfile::tempdir().expect("throwaway identity directory");
+    let identity = ServerIdentity::open(&IdentityConfig {
+        data_dir: dir.path().into(),
+        allow_loose_permissions: false,
+    })
+    .expect("fresh Server identity");
+    // Fresh keys exist only in memory, never copied from any fixture/private file.
+    let keys = [
+        SigningKey::random(&mut rand_core::OsRng),
+        SigningKey::random(&mut rand_core::OsRng),
+    ];
+    let store = Arc::new(AuthorizationStore::in_memory());
+    for (index, key) in keys.iter().enumerate() {
+        store.insert_for_tests(StoredClient {
+            client_id: format!("{:016x}", index + 1),
+            public_key: key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .to_vec(),
+            display_name: format!("Controlled Client {index}"),
+            state: ClientState::Active,
+        });
+    }
+    let mut sessions = SessionServer::new(&identity, store);
+    // This is the exact production injection used by as-cmd, not a replacement
+    // test source that manufactures healthy=false.
+    sessions.capture_source = Some(as_cmd::v2_capture_source(observer.clone()));
+    let sessions = Arc::new(sessions);
+    let transport = Arc::new(
+        Transport::start(
+            TransportConfig {
+                bind: "127.0.0.1:0".parse().unwrap(),
+                limits: Limits::defaults(),
+            },
+            &identity,
+        )
+        .expect("QUIC Server"),
+    );
+    let accepting = Arc::clone(&transport);
+    let accept_task = tokio::spawn(async move {
+        let mut guard = CapacityGuard::new(Limits::defaults());
+        for _ in 0..2 {
+            let accepted = accepting.accept_one(&mut guard).await;
+            let connection = accepted.connection.expect("admitted session");
+            let server = Arc::clone(&sessions);
+            tokio::spawn(async move {
+                server
+                    .serve_connection(connection, accepted.remote_address)
+                    .await
+            });
+        }
+    });
+    for (index, key) in keys.iter().enumerate() {
+        let (connection, mut send, mut recv, configuration) =
+            ready_control_connection(transport.local_addr(), key, identity.public_key_raw()).await;
+        if index == 0 {
+            // Failure is scheduled after the first session is READY. The second
+            // session will be opened only after the backend thread has ended.
+            ended.store(true, Ordering::SeqCst);
+            assert!(
+                wait_until(Duration::from_secs(2), || !observer.is_running()),
+                "backend thread must end"
+            );
+        }
+        for request_id in [3, 4] {
+            send_control_frame(&mut send, frame::Body::Subscribe(Subscribe { request_id })).await;
+            let response = read_control_frame(&mut recv).await;
+            let code = match &response.body {
+                Some(frame::Body::Error(error)) => Some(error.status.code),
+                _ => None,
+            };
+            assert_eq!(code, Some(501), "production capture thread ended: READY/new session {index} must refuse Subscribe: {response:?}");
+            match response.body {
+                Some(frame::Body::Error(error)) => {
+                    assert_eq!(error.request_id, request_id);
+                    assert!(error.status.retryable);
+                }
+                _ => unreachable!("asserted Error(501)"),
+            }
+        }
+        send_control_frame(
+            &mut send,
+            frame::Body::RequestConfiguration(RequestConfiguration { request_id: 5 }),
+        )
+        .await;
+        match read_control_frame(&mut recv).await.body {
+            Some(frame::Body::ConfigurationPublished(push)) => {
+                assert_eq!(push.request_id, 5);
+                assert_eq!(push.configuration, Some(configuration));
+            }
+            _ => panic!("capture failure must not close the READY session"),
+        }
+        connection.close(quinn::VarInt::from_u32(701), b"");
+    }
+    assert_eq!(
+        core.format(),
+        AudioFormat::new(Encoding::PcmFloat, 2, 48_000)
+    );
+    core.stop().await.expect("Server Core stop");
+    assert!(!observer.is_running());
+    transport.stop();
+    accept_task.await.expect("accept loop");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
