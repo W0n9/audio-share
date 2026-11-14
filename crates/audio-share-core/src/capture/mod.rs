@@ -32,6 +32,9 @@ pub mod linux;
 /// unit-tested on the Linux development host.
 pub mod windows;
 
+/// The protocol-independent media view of the shared capture (media tap).
+pub mod media;
+
 /// The encoding requested from a capture backend.
 ///
 /// `Default` asks the endpoint for its native format; the explicit variants

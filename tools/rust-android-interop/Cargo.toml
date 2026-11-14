@@ -1,0 +1,39 @@
+# Ticket 15: Rust Server ↔ Android Client cross-language interop harness.
+#
+# Deliberately its own Cargo workspace outside both the root Server workspace
+# and the Android native workspace. The two subjects are compiled from their
+# real production crates via path dependencies; neither one depends on the
+# other, so this harness is the only place where the two halves can meet on
+# a host without an Android device or a live QUIC socket.
+[workspace]
+
+[package]
+name = "rust-android-interop"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Server-side production crates (root workspace). `test-support` is enabled
+# ONLY in this host harness: it pins the golden-vector challenge/exporter so
+# the two machines can replay the deterministic auth exchange. Production
+# binaries never enable this feature (pairing.md §11.3).
+v2-transport = { path = "../../crates/v2-transport", features = ["test-support"] }
+audio-share-core = { path = "../../crates/audio-share-core" }
+as-cmd = { path = "../../crates/as-cmd" }
+# Android Client's real native core (its own workspace, built for host here).
+# Same rule: the fixture's public test identity key is a test-only input to the
+# harness, never a shipped key. The live-QUIC test uses a fresh random identity.
+audio-share-client-v2-native = { path = "../../android-client-v2/native", features = ["test-support"] }
+prost = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The fixture client identity drives the Android Client's real auth exchange
+# against the Server's real machine. Test material only; never shipped.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+tempfile = "3"

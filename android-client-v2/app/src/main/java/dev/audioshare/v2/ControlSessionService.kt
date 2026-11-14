@@ -12,8 +12,8 @@ import android.os.IBinder
 import org.json.JSONObject
 
 /**
- * Owns the control session across Activity recreation and screen lock.
- * It reserves a foreground media-playback placeholder; no playback exists yet.
+ * Owns the v2 session (control plane + media playback) across Activity
+ * recreation and screen lock, as a foreground media-playback Service.
  */
 class ControlSessionService : Service() {
     private var session: ClientSession? = null
@@ -72,8 +72,8 @@ class ControlSessionService : Service() {
             Notification.Builder(this, CHANNEL_ID)
         } else {
             @Suppress("DEPRECATION") Notification.Builder(this)
-        }.setContentTitle("Audio Share control session")
-            .setContentText("Connection running; media playback is not implemented.")
+        }.setContentTitle("Audio Share")
+            .setContentText("Streaming audio from the Server.")
             .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
             .setOngoing(true)
             .build()

@@ -446,8 +446,8 @@ fn duplicate_subscribe_402_nonfatal_replays_byte_identically() {
     assert_steps_match(case, &mut machine, &events);
     assert_eq!(
         machine.state(),
-        ServerState::Ready,
-        "non-fatal: still READY"
+        ServerState::Playing,
+        "non-fatal: a duplicate Subscribe never leaves PLAYING"
     );
 }
 

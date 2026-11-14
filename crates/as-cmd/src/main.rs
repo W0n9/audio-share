@@ -330,7 +330,7 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
         tracing::info!("v2 transport disabled (--v2-port=0); v1 TCP/UDP unaffected");
         None
     } else {
-        match start_v2_transport(&cli, handle.capture_observer()).await {
+        match start_v2_transport(&cli, handle.capture_observer(), handle.media_tap().clone()).await {
             Ok((transport, accept_task)) => {
                 tracing::info!(
                     "v2 listen success on {}, alpn={}",
@@ -373,6 +373,7 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
 async fn start_v2_transport(
     cli: &Cli,
     capture: CaptureObserver,
+    media_tap: audio_share_core::capture::media::MediaTap,
 ) -> Result<
     (
         std::sync::Arc<v2_transport::transport::Transport>,
@@ -421,7 +422,10 @@ async fn start_v2_transport(
     // the live capture format here; it never sends media in this phase.
     let mut session_server =
         v2_transport::driver::SessionServer::new(&identity, std::sync::Arc::new(store));
-    session_server.capture_source = Some(as_cmd::v2_capture_source(capture));
+    session_server.capture_source = Some(as_cmd::v2_capture_source(capture.clone(), &media_tap));
+    // The v2 media path observes the same raw capture buffers through the
+    // protocol-independent tap; v1 framing, MTU and UDP behavior are untouched.
+    session_server.media_source = Some(as_cmd::capture_media_source(&media_tap, capture));
     let session_server = std::sync::Arc::new(session_server);
 
     let bind = resolve_bind_address("::", cli.v2_port)

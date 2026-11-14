@@ -21,6 +21,7 @@ use tokio::net::{lookup_host, TcpListener, TcpSocket, TcpStream, UdpSocket};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
+use crate::capture::media::{MediaFormat, MediaTap};
 use crate::capture::{CaptureBackend, CaptureConfig, CaptureObserver, CaptureSession};
 use crate::error::{Error, Result};
 use crate::protocol::{
@@ -182,6 +183,10 @@ impl Server {
         );
 
         let (shutdown, _) = watch::channel(false);
+        // The protocol-independent media tap: v2 sessions observe the same raw
+        // PCM the v1 path segments, with a capture-clock position and stream
+        // identity. Nothing here changes v1 framing, MTU, or UDP behavior.
+        let media_tap = MediaTap::new(media_format(&format));
         let context = Arc::new(ServerContext {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             format: Arc::clone(&format),
@@ -189,6 +194,7 @@ impl Server {
             shutdown,
             heartbeat_interval: config.heartbeat_interval,
             heartbeat_timeout: config.heartbeat_timeout,
+            media_tap: Some(media_tap.clone()),
         });
         let handle_tasks = Arc::clone(&context.tasks);
         let handle_shutdown = context.shutdown.clone();
@@ -206,6 +212,7 @@ impl Server {
             shutdown: handle_shutdown,
             capture: Some(session),
             tasks: handle_tasks,
+            media_tap: Some(media_tap),
         })
     }
 }
@@ -222,6 +229,7 @@ pub struct ServerHandle {
     shutdown: watch::Sender<bool>,
     capture: Option<CaptureSession>,
     tasks: Arc<Mutex<JoinSet<()>>>,
+    media_tap: Option<MediaTap>,
 }
 
 impl ServerHandle {
@@ -242,6 +250,14 @@ impl ServerHandle {
             .as_ref()
             .expect("a running Server owns its capture session")
             .observer()
+    }
+
+    /// The protocol-independent media tap for v2 (or any future protocol):
+    /// raw PCM chunks with capture-clock positions, bounded and non-blocking.
+    pub fn media_tap(&self) -> &MediaTap {
+        self.media_tap
+            .as_ref()
+            .expect("a running Server owns its media tap")
     }
 
     /// Stop capture, close every TCP session and the UDP socket, and join all
@@ -342,6 +358,9 @@ struct ServerContext {
     shutdown: watch::Sender<bool>,
     heartbeat_interval: Duration,
     heartbeat_timeout: Duration,
+    /// The v2 media fan-out; `None` only in unit tests of the v1 paths that
+    /// construct a context by hand.
+    media_tap: Option<MediaTap>,
 }
 
 impl ServerContext {
@@ -573,14 +592,26 @@ async fn broadcast_loop(
     let mut shutdown = context.shutdown();
     let mut reported_oversized_format = false;
     let mut reported_send_stall = false;
+    // Why the loop ended: a server stop is a normal stream end; a closed frame
+    // channel means the capture thread exited while the server kept running
+    // (ADR-0003: no automatic recovery).
+    let mut server_stopped = false;
     loop {
         let frame = tokio::select! {
-            _ = shutdown.changed() => break,
+            _ = shutdown.changed() => {
+                server_stopped = true;
+                break;
+            }
             frame = frames.recv() => match frame {
                 Some(frame) => frame,
                 None => break,
             },
         };
+        // v2 observes the raw capture buffer before every v1-specific check:
+        // an empty v1 peer set or a v1 MTU limit must never suppress v2 media.
+        if let Some(tap) = &context.media_tap {
+            tap.publish(&frame);
+        }
         if block_align == 0 || block_align > MAX_PAYLOAD_BYTES {
             // No MTU-sized datagram can carry one sample frame. v0.3.4 could
             // hang or crash here; 0.4.0 sends no PCM (never an oversized
@@ -628,6 +659,30 @@ async fn broadcast_loop(
                 }
             }
         }
+    }
+    // v2 observers learn the stream ended: normal end vs capture failure
+    // (§5.2: 502 / 501). The immutable format stays available either way.
+    if let Some(tap) = &context.media_tap {
+        if server_stopped {
+            tap.end();
+        } else {
+            tap.fail();
+        }
+    }
+}
+
+/// Map the negotiated v1 format onto the protocol-independent media geometry.
+/// A format the capture accepted always has a valid block alignment (checked
+/// in `Server::start`).
+fn media_format(format: &AudioFormat) -> MediaFormat {
+    let bytes_per_sample = format
+        .encoding_kind()
+        .and_then(|encoding| encoding.bytes_per_sample())
+        .unwrap_or(0);
+    MediaFormat {
+        sample_rate: format.sample_rate.max(0) as u32,
+        channels: format.channels.max(0) as u16,
+        bytes_per_sample: bytes_per_sample as u16,
     }
 }
 

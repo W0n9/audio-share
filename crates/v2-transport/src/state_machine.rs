@@ -28,9 +28,7 @@ use crate::auth_store::{Authorization, AuthorizationStore};
 use crate::codes::ErrorCode;
 use crate::schema::{frame, Frame, Status};
 
-/// The §5.1/§5.2 session states this machine drives. (PLAYING is a
-/// READY-∧-streaming data condition of ticket 10+; this machine's READY is
-/// the v2.0-control-plane steady state.)
+/// The §5.1/§5.2 session states this machine drives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ServerState {
     /// Transport handshake done; no app message processed yet.
@@ -41,6 +39,8 @@ pub enum ServerState {
     Negotiating,
     /// Authenticated ∧ negotiated (subscribedness is a data flag).
     Ready,
+    /// READY ∧ subscribed ∧ a stream instance is active (spec §5.1).
+    Playing,
     /// `Close` sent or received; teardown in progress; no new requests.
     Closing,
     /// Terminal — all session state released (§5.4).
@@ -156,6 +156,49 @@ pub enum Event {
         /// The close code carrying the supersede reason (303).
         code: ErrorCode,
     },
+    /// The shared capture's stream lifecycle changed (§5.2 capture rows). The
+    /// driver derives these from the media source; the machine turns them
+    /// into the ordered pushes a subscribed Client must receive.
+    StreamLifecycle(StreamLifecycle),
+}
+
+/// A capture-driven stream transition (§5.2 "capture started/ended/restart/
+/// config change" rows).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamLifecycle {
+    /// A stream instance became active.
+    Started {
+        /// The new instance id.
+        stream_instance_id: u32,
+        /// Generation of the media that follows.
+        config_generation: u32,
+        /// Capture-clock position of the first frame the Client will get.
+        initial_timestamp: u64,
+    },
+    /// The active instance ended. `code` distinguishes 502 STREAM_ENDED from
+    /// 501 CAPTURE_FAILURE.
+    Ended {
+        /// The instance that ended.
+        stream_instance_id: u32,
+        /// §6 code carried by StreamEnded.
+        code: ErrorCode,
+    },
+    /// A capture restart: the old instance ends normally and a new one starts.
+    Restarted {
+        /// The instance that ended.
+        old_stream_instance_id: u32,
+        /// The new instance id.
+        stream_instance_id: u32,
+        /// Generation of the new instance's media.
+        config_generation: u32,
+        /// Capture-clock origin of the new instance.
+        initial_timestamp: u64,
+    },
+    /// A decode-affecting configuration change within the active instance.
+    ConfigChanged {
+        /// The new generation (published as ConfigurationPublished).
+        config_generation: u32,
+    },
 }
 
 /// One machine output, in order.
@@ -254,6 +297,9 @@ pub struct StateMachine {
     pending_client_key: Option<Vec<u8>>,
     /// Supersede decision for the driver (an older session of this identity).
     supersede: Option<SupersedeRequest>,
+    /// The latest §9 PlaybackDiagnostics this Client reported (the only
+    /// playback evidence the Server accepts; never a transport ACK).
+    last_diagnostics: Option<crate::schema::PlaybackDiagnostics>,
 }
 
 impl StateMachine {
@@ -274,6 +320,7 @@ impl StateMachine {
             pending_request_id: None,
             pending_client_key: None,
             supersede: None,
+            last_diagnostics: None,
         }
     }
 
@@ -314,6 +361,11 @@ impl StateMachine {
     /// The current configuration (for constructing derived machines in tests).
     pub fn config(&self) -> &ServerConfig {
         &self.config
+    }
+
+    /// The latest playback diagnostics this Client reported (§9).
+    pub const fn last_playback_diagnostics(&self) -> Option<&crate::schema::PlaybackDiagnostics> {
+        self.last_diagnostics.as_ref()
     }
 
     /// Refresh capture observations before a control request. This does not
@@ -375,6 +427,7 @@ impl StateMachine {
                 outcomes
             }
             Event::RevocationCheck => self.handle_revocation_check(),
+            Event::StreamLifecycle(lifecycle) => self.handle_stream_lifecycle(lifecycle),
             Event::Superseded { code } => {
                 // §5.2: the superseded session emits Close(code) and the
                 // transport closes carrying the code (TM-3 fixed replacement).
@@ -589,10 +642,10 @@ impl StateMachine {
                     body: Some(frame::Body::ConfigurationPublished(push)),
                 })]
             }
-            (ServerState::Ready, Some(frame::Body::PlaybackDiagnostics(_))) => {
-                // §9: diagnostics ride the control stream; the Server treats
-                // Client statistics as the only playback evidence. v2.0's
-                // control plane accepts and records them without a reply.
+            (ServerState::Ready, Some(frame::Body::PlaybackDiagnostics(diagnostics))) => {
+                // §9: diagnostics ride the control stream; they are the only
+                // playback evidence. Accepted silently (no reply).
+                self.last_diagnostics = Some(diagnostics.clone());
                 Vec::new()
             }
             (ServerState::Ready, Some(_)) => {
@@ -602,6 +655,61 @@ impl StateMachine {
                 self.invalid_state_fatal(request_id)
             }
             (ServerState::Ready, None) => self.malformed_fatal(0),
+
+            // -----------------------------------------------------------------
+            // PLAYING rows (§5.2). Only reachable while a stream instance is
+            // active for a subscribed session.
+            // -----------------------------------------------------------------
+            (ServerState::Playing, Some(frame::Body::Subscribe(subscribe))) => {
+                // §5.2 PLAYING: duplicate Subscribe → non-fatal 402, kept.
+                vec![Outcome::frame(Frame {
+                    body: Some(frame::Body::Error(crate::schema::Error {
+                        request_id: subscribe.request_id,
+                        status: Status::registry(ErrorCode::INVALID_STATE.code),
+                    })),
+                })]
+            }
+            (ServerState::Playing, Some(frame::Body::Unsubscribe(unsubscribe))) => {
+                // §5.2 PLAYING: push StreamEnded(502, "unsubscribed") FIRST,
+                // then UnsubscribeResponse(OK). The instance id is the one
+                // this session is playing.
+                self.subscribed = false;
+                self.state = ServerState::Ready;
+                let instance = self.config.capture.stream_instance_id;
+                vec![
+                    Outcome::frame(Frame {
+                        body: Some(frame::Body::StreamEnded(crate::schema::StreamEnded {
+                            stream_instance_id: instance,
+                            code: ErrorCode::STREAM_ENDED.code,
+                            detail: "unsubscribed".to_owned(),
+                        })),
+                    }),
+                    Outcome::frame(Frame {
+                        body: Some(frame::Body::UnsubscribeResponse(
+                            crate::schema::UnsubscribeResponse {
+                                request_id: unsubscribe.request_id,
+                                status: Status::ok(),
+                            },
+                        )),
+                    }),
+                ]
+            }
+            (ServerState::Playing, Some(frame::Body::RequestConfiguration(request))) => {
+                let push = crate::schema::ConfigurationPublished {
+                    request_id: request.request_id,
+                    configuration: self.config.capture.configuration.clone(),
+                };
+                vec![Outcome::frame(Frame {
+                    body: Some(frame::Body::ConfigurationPublished(push)),
+                })]
+            }
+            (ServerState::Playing, Some(frame::Body::PlaybackDiagnostics(diagnostics))) => {
+                // §9: recorded as playback evidence; no reply, never fatal.
+                self.last_diagnostics = Some(diagnostics.clone());
+                Vec::new()
+            }
+            (ServerState::Playing, Some(_)) => self.invalid_state_fatal(request_id),
+            (ServerState::Playing, None) => self.malformed_fatal(0),
 
             // -----------------------------------------------------------------
             // CLOSING / CLOSED: unreachable through handle_frame (it returns
@@ -771,6 +879,107 @@ impl StateMachine {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Capture-driven stream lifecycle (§5.2 READY/PLAYING capture rows).
+    // -------------------------------------------------------------------------
+
+    /// Turn one capture transition into the ordered pushes a subscribed
+    /// Client receives. Media rows only apply after negotiation; before READY
+    /// the machine has no Client to notify and returns nothing.
+    fn handle_stream_lifecycle(&mut self, lifecycle: StreamLifecycle) -> Vec<Outcome> {
+        if !matches!(self.state, ServerState::Ready | ServerState::Playing) {
+            return Vec::new();
+        }
+        match lifecycle {
+            StreamLifecycle::Started {
+                stream_instance_id,
+                config_generation,
+                initial_timestamp,
+            } => {
+                // §5.2 READY "capture started | subscribed → push StreamStarted
+                // | PLAYING"; "not subscribed → no push | READY".
+                if !self.subscribed {
+                    return Vec::new();
+                }
+                self.state = ServerState::Playing;
+                vec![Outcome::frame(Frame {
+                    body: Some(frame::Body::StreamStarted(crate::schema::StreamStarted {
+                        stream_instance_id,
+                        config_generation,
+                        initial_timestamp,
+                    })),
+                })]
+            }
+            StreamLifecycle::Ended {
+                stream_instance_id,
+                code,
+            } => {
+                // §5.2 PLAYING: StreamEnded(502 normal / 501 failure) → READY.
+                // The subscription survives a capture end; only an explicit
+                // Unsubscribe clears it.
+                if self.state != ServerState::Playing {
+                    return Vec::new();
+                }
+                self.state = ServerState::Ready;
+                vec![Outcome::frame(Frame {
+                    body: Some(frame::Body::StreamEnded(crate::schema::StreamEnded {
+                        stream_instance_id,
+                        code: code.code,
+                        detail: String::new(),
+                    })),
+                })]
+            }
+            StreamLifecycle::Restarted {
+                old_stream_instance_id,
+                stream_instance_id,
+                config_generation,
+                initial_timestamp,
+            } => {
+                // §5.2 PLAYING "capture restart (new instance)": StreamEnded(502)
+                // then StreamStarted(new) — in that order.
+                if self.state != ServerState::Playing {
+                    return Vec::new();
+                }
+                vec![
+                    Outcome::frame(Frame {
+                        body: Some(frame::Body::StreamEnded(crate::schema::StreamEnded {
+                            stream_instance_id: old_stream_instance_id,
+                            code: ErrorCode::STREAM_ENDED.code,
+                            detail: String::new(),
+                        })),
+                    }),
+                    Outcome::frame(Frame {
+                        body: Some(frame::Body::StreamStarted(crate::schema::StreamStarted {
+                            stream_instance_id,
+                            config_generation,
+                            initial_timestamp,
+                        })),
+                    }),
+                ]
+            }
+            StreamLifecycle::ConfigChanged { config_generation } => {
+                // §5.2 PLAYING "decode-affecting config change" →
+                // ConfigurationPublished(0). The driver captures the change
+                // because the DATA plane must switch generation too (§7.6).
+                if self.state != ServerState::Playing {
+                    return Vec::new();
+                }
+                let Some(mut configuration) = self.config.capture.configuration.clone() else {
+                    return Vec::new();
+                };
+                configuration.config_generation = config_generation;
+                vec![Outcome::frame(Frame {
+                    body: Some(frame::Body::ConfigurationPublished(
+                        crate::schema::ConfigurationPublished {
+                            request_id: 0,
+                            configuration: Some(configuration),
+                        },
+                    )),
+                })]
+            }
+        }
+    }
+
     fn handle_revocation_check(&mut self) -> Vec<Outcome> {
         // pairing.md §9.2 / TM-9: on an authorization-state change, every
         // session authenticated by an affected identity closes within ≤ 5 s
@@ -879,7 +1088,9 @@ impl StateMachine {
             )),
         })];
         // §5.2 READY Subscribe: "if a stream is active, push StreamStarted
-        // (active instance, current generation, next-frame timestamp)".
+        // (active instance, current generation, next-frame timestamp)" and
+        // the session enters PLAYING; otherwise it stays READY (subscribed)
+        // and a later capture start pushes StreamStarted.
         if self.config.capture.stream_active {
             if let Some(configuration) = &self.config.capture.configuration {
                 outcomes.push(Outcome::frame(Frame {
@@ -889,6 +1100,7 @@ impl StateMachine {
                         initial_timestamp: self.config.capture.next_frame_timestamp,
                     })),
                 }));
+                self.state = ServerState::Playing;
             }
         }
         outcomes

@@ -66,4 +66,40 @@ object ClientNative {
      * teardown + bounded-backoff reconnect.
      */
     external fun rebind(handle: Long, fd: Int): Boolean
+
+    /**
+     * Attach the one direct [java.nio.ByteBuffer] that carries PCM for this
+     * session (ticket 14). Media NEVER crosses JNI per datagram: native writes
+     * into this buffer and Kotlin reads from [ringPosition].
+     *
+     * The buffer must stay alive and untouched for the whole session; a second
+     * attachment is refused. Returns false when the buffer is unusable or a
+     * ring is already attached.
+     */
+    external fun attachMediaRing(handle: Long, buffer: java.nio.ByteBuffer): Boolean
+
+    /** Monotonic bytes written into the media ring, or -1 before PLAYING. */
+    external fun ringPosition(handle: Long): Long
+
+    /**
+     * JSON for the active stream: `instance`, `generation`, `sample_rate`,
+     * `channels`, `sample_format` (wire value), `anchor`, `delivered_frames`.
+     * Empty before PLAYING; Kotlin rebuilds the AudioTrack only when it changes.
+     */
+    external fun mediaFormatJson(handle: Long): String?
+
+    /**
+     * Report what the platform playback API actually accepted (§9): the bytes
+     * successfully written to the AudioTrack since the current instance, the
+     * underrun count, and the current ring fill in milliseconds.
+     *
+     * Received datagrams and ring writes are NOT playback evidence; only this
+     * report contributes to `submitted_position`.
+     */
+    external fun recordPlayback(
+        handle: Long,
+        submittedBytes: Long,
+        underruns: Long,
+        bufferCurrentMs: Int,
+    )
 }

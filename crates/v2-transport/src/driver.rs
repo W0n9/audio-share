@@ -53,7 +53,185 @@ pub const AUTH_EXCHANGE_DEADLINE: Duration = Duration::from_secs(10);
 /// Error(204)+Close(204)+transport-close round.
 pub const REVOCATION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Events the driver injects into a running session besides wire frames.
+/// How often the session layer polls the shared capture (§7.4 media tick).
+const MEDIA_TICK: Duration = Duration::from_millis(10);
+/// Cap on datagrams produced by one media tick, so one tick never monopolizes
+/// the runtime. The §7.4 pacer and the 256-datagram queue bound the rest.
+const MAX_DATAGRAMS_PER_TICK: usize = 64;
+
+/// One session's media task: owns the pump, sends DATAGRAMs, and reports a
+/// fatal transport limitation back to the control loop. Ends when dropped.
+struct MediaTask {
+    handle: tokio::task::JoinHandle<()>,
+    generation: tokio::sync::watch::Sender<u32>,
+}
+
+impl MediaTask {
+    fn spawn(
+        connection: quinn::Connection,
+        mut chunks: tokio::sync::mpsc::Receiver<crate::media_source::MediaChunk>,
+        stream: crate::media_source::StreamState,
+        events: mpsc::UnboundedSender<DriverEvent>,
+    ) -> Self {
+        let (generation, generation_rx) = tokio::sync::watch::channel(stream.config_generation);
+        let handle = tokio::spawn(async move {
+            let mut pump = crate::media_pump::MediaPump::new(stream);
+            // §7.4/§10: encoded media goes into a bounded 256-datagram,
+            // non-waiting per-Client queue before `send_datagram`. A stalled
+            // Client therefore drops the newest media, never blocks capture.
+            let mut queue = crate::send_queue::MediaSendQueue::new();
+            let mut generation_rx = generation_rx;
+            // The receiver starts "changed"; mark the initial value seen so the
+            // first tick does not try to re-apply the generation it already has.
+            generation_rx.borrow_and_update();
+            let mut tick = tokio::time::interval(MEDIA_TICK);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {}
+                    received = chunks.recv() => {
+                        if received.is_none() {
+                            // The capture stream ended; the control loop owns
+                            // the StreamEnded push and tears the task down.
+                            return;
+                        }
+                    }
+                }
+                // Drain every buffered capture chunk (bounded by the pump).
+                loop {
+                    match chunks.try_recv() {
+                        Ok(chunk) => {
+                            if pump.accept(chunk).is_err() {
+                                return;
+                            }
+                        }
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return,
+                    }
+                }
+                if generation_rx.has_changed().unwrap_or(false) {
+                    let latest = *generation_rx.borrow_and_update();
+                    if pump.set_generation(latest).is_err() {
+                        let _ = events.send(DriverEvent::MediaDatagramUnsupported);
+                        return;
+                    }
+                }
+                // §7.3/D2: the limit is queried at send time, never cached.
+                let Some(max_datagram_size) = connection.max_datagram_size() else {
+                    let _ = events.send(DriverEvent::MediaDatagramUnsupported);
+                    return;
+                };
+                let datagrams =
+                    match pump.take_sendable(
+                        std::time::Instant::now(),
+                        max_datagram_size,
+                        MAX_DATAGRAMS_PER_TICK,
+                    ) {
+                        Ok(datagrams) => datagrams,
+                        Err(crate::media_pump::MediaPumpError::DatagramUnsupported) => {
+                            let _ = events.send(DriverEvent::MediaDatagramUnsupported);
+                            return;
+                        }
+                        Err(crate::media_pump::MediaPumpError::MisalignedPcm) => return,
+                    };
+                queue.enqueue(datagrams);
+                // Non-waiting drain: one pop per send, no await, no blocking.
+                // quinn consumes the Bytes on every outcome and does not return
+                // it on error, so keep the Vec to requeue a TooLarge refusal.
+                while let Some(datagram) = queue.pop_front() {
+                    match connection.send_datagram(bytes::Bytes::from(datagram.clone())) {
+                        Ok(()) => {}
+                        Err(quinn::SendDatagramError::TooLarge) => {
+                            // The path limit shrank after the send-time query:
+                            // keep the datagram for the next (smaller) limit.
+                            // §7.4: a send refusal is not a media drop.
+                            queue.push_front(datagram);
+                            break;
+                        }
+                        Err(quinn::SendDatagramError::UnsupportedByPeer)
+                        | Err(quinn::SendDatagramError::Disabled) => {
+                            queue.clear();
+                            let _ = events.send(DriverEvent::MediaDatagramUnsupported);
+                            return;
+                        }
+                        Err(quinn::SendDatagramError::ConnectionLost(_)) => {
+                            queue.clear();
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Self { handle, generation }
+    }
+
+    fn update_generation(&mut self, generation: u32) {
+        // Only a real change notifies the media task (§7.2: identical content
+        // keeps the generation).
+        self.generation.send_if_modified(|current| {
+            if *current == generation {
+                false
+            } else {
+                *current = generation;
+                true
+            }
+        });
+    }
+}
+
+impl Drop for MediaTask {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+/// The §5.2 pushes implied by a capture-status transition.
+fn stream_events(
+    previous: Option<&crate::media_source::MediaStatus>,
+    current: &crate::media_source::MediaStatus,
+) -> Vec<crate::state_machine::StreamLifecycle> {
+    use crate::media_source::MediaStatus;
+    use crate::state_machine::StreamLifecycle;
+    match (previous, current) {
+        (
+            Some(MediaStatus::Active(old)),
+            MediaStatus::Active(new),
+        ) if old.stream_instance_id == new.stream_instance_id => {
+            if old.config_generation == new.config_generation {
+                Vec::new()
+            } else {
+                vec![StreamLifecycle::ConfigChanged {
+                    config_generation: new.config_generation,
+                }]
+            }
+        }
+        (Some(MediaStatus::Active(old)), MediaStatus::Active(new)) => {
+            vec![StreamLifecycle::Restarted {
+                old_stream_instance_id: old.stream_instance_id,
+                stream_instance_id: new.stream_instance_id,
+                config_generation: new.config_generation,
+                initial_timestamp: new.next_frame,
+            }]
+        }
+        (_, MediaStatus::Active(new)) => vec![StreamLifecycle::Started {
+            stream_instance_id: new.stream_instance_id,
+            config_generation: new.config_generation,
+            initial_timestamp: new.next_frame,
+        }],
+        (Some(MediaStatus::Active(old)), MediaStatus::Ended { code }) => {
+            vec![StreamLifecycle::Ended {
+                stream_instance_id: old.stream_instance_id,
+                code: if *code == ErrorCode::CAPTURE_FAILURE.code {
+                    ErrorCode::CAPTURE_FAILURE
+                } else {
+                    ErrorCode::STREAM_ENDED
+                },
+            }]
+        }
+        _ => Vec::new(),
+    }
+}
+
 #[derive(Clone, Debug)]
 enum DriverEvent {
     /// The session registry admitted a newer session of the same identity:
@@ -61,6 +239,8 @@ enum DriverEvent {
     Superseded(ErrorCode),
     /// The Client opened a second stream: Error(402)+Close(402) (§5.2).
     SecondStream,
+    /// The media task found the transport cannot carry datagrams (§7.3 → 602).
+    MediaDatagramUnsupported,
 }
 
 /// One live session in the per-Client registry.
@@ -87,6 +267,12 @@ pub struct SessionServer {
     pub capture: CaptureSnapshot,
     /// 可选实时 capture 来源；设置后在每个控制请求前覆盖 `capture`。
     pub capture_source: Option<Arc<CaptureStateSource>>,
+    /// The shared capture's media (PCM chunks + stream lifecycle). When set,
+    /// a subscribed session receives DATAGRAM media (§7).
+    pub media_source: Option<Arc<dyn crate::media_source::MediaSource>>,
+    /// Latest §9 playback diagnostics per session id — the only playback
+    /// evidence the Server keeps (a QUIC ACK is never proof).
+    diagnostics: Mutex<HashMap<u64, crate::schema::PlaybackDiagnostics>>,
     /// Server-wide limits (spec §10); auth-failure fields feed TM-4/TM-5.
     pub limits: Limits,
     /// Auth-exchange deadline override (tests shorten it).
@@ -121,6 +307,8 @@ impl SessionServer {
             protocol_minor: 0,
             capture: CaptureSnapshot::absent(),
             capture_source: None,
+            media_source: None,
+            diagnostics: Mutex::new(HashMap::new()),
             rate: Mutex::new(AddressRateGuard::new(
                 limits.auth_failure_window,
                 limits.auth_failures_per_window,
@@ -139,6 +327,30 @@ impl SessionServer {
         self.capture_source
             .as_ref()
             .map_or_else(|| self.capture.clone(), |source| source())
+    }
+
+    /// The latest §9 playback diagnostics a session reported (§9: diagnostics
+    /// are the only playback evidence; a QUIC ACK is not decode or playback).
+    pub fn playback_diagnostics(
+        &self,
+        session_id: u64,
+    ) -> Option<crate::schema::PlaybackDiagnostics> {
+        self.diagnostics
+            .lock()
+            .expect("diagnostics lock")
+            .get(&session_id)
+            .cloned()
+    }
+
+    fn record_diagnostics(&self, session_id: u64, diagnostics: crate::schema::PlaybackDiagnostics) {
+        let mut map = self.diagnostics.lock().expect("diagnostics lock");
+        map.insert(session_id, diagnostics);
+        // §10: bounded per-session state only; drop entries for sessions that
+        // no longer exist so a long-lived Server cannot accumulate them.
+        let registry = self.registry.lock().expect("session registry lock");
+        let live: Vec<u64> = registry.values().map(|handle| handle.session_id).collect();
+        drop(registry);
+        map.retain(|id, _| live.contains(id) || *id == session_id);
     }
 
     /// Drive one admitted QUIC connection through the §5.2 control plane
@@ -243,8 +455,63 @@ impl SessionServer {
         // for duplicate in-flight ids.
         let mut outstanding = OutstandingRequests::new(self.limits.max_outstanding_requests);
 
+        // Media (§7). The media task is created only while this session is
+        // PLAYING and dropped the moment it is not; capture transitions become
+        // ordered §5.2 pushes through the machine here.
+        let mut media: Option<MediaTask> = None;
+        let mut last_status = self.media_source.as_ref().map(|source| source.status());
+        let mut media_tick = tokio::time::interval(MEDIA_TICK);
+        media_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
         loop {
             tokio::select! {
+                _ = media_tick.tick(), if self.media_source.is_some() => {
+                    if let Some(source) = self.media_source.as_ref() {
+                        let status = source.status();
+                        if last_status.as_ref() != Some(&status) {
+                            for event in stream_events(last_status.as_ref(), &status) {
+                                let outcomes = machine.handle(Event::StreamLifecycle(event));
+                                if let Some(termination) = self
+                                    .flush(
+                                        &connection,
+                                        &mut send,
+                                        outcomes,
+                                        machine.identity().is_some(),
+                                        &mut closing_code,
+                                        &mut grace,
+                                        &mut grace_armed,
+                                    )
+                                    .await
+                                {
+                                    return self.terminate(&watcher, &machine, registered, termination);
+                                }
+                            }
+                            last_status = Some(status);
+                        }
+                        let playing =
+                            machine.state() == ServerState::Playing && machine.subscribed();
+                        if !playing {
+                            media = None;
+                        } else if media.is_none() {
+                            if let crate::media_source::MediaStatus::Active(stream) = status {
+                                media = Some(MediaTask::spawn(
+                                    connection.clone(),
+                                    source.subscribe(),
+                                    stream,
+                                    event_tx.clone(),
+                                ));
+                            }
+                        } else if let (Some(task), Some(stream)) = (
+                            media.as_mut(),
+                            match status {
+                                crate::media_source::MediaStatus::Active(stream) => Some(stream),
+                                _ => None,
+                            },
+                        ) {
+                            task.update_generation(stream.config_generation);
+                        }
+                    }
+                }
                 read = recv.read(&mut buffer) => {
                     match read {
                         Ok(Some(count)) => {
@@ -362,6 +629,15 @@ impl SessionServer {
                                 if let Some(request_id) = inbound_request_id {
                                     outstanding.complete(request_id);
                                 }
+                                // §9: a Client's PlaybackDiagnostics is the
+                                // only playback evidence; keep the latest per
+                                // session for low-frequency observation.
+                                if let (Some(session_id), Some(diagnostics)) = (
+                                    machine.session_id(),
+                                    machine.last_playback_diagnostics().cloned(),
+                                ) {
+                                    self.record_diagnostics(session_id, diagnostics);
+                                }
                                 let after = machine.auth_failures();
                                 if let Some(code) = machine.take_auth_failure_code() {
                                     // Red line: log the registry code + a
@@ -419,6 +695,9 @@ impl SessionServer {
                     let outcomes = match event {
                         DriverEvent::Superseded(code) => machine.handle(Event::Superseded { code }),
                         DriverEvent::SecondStream => machine.handle(Event::Fatal(ErrorCode::INVALID_STATE)),
+                        DriverEvent::MediaDatagramUnsupported => {
+                            machine.handle(Event::Fatal(ErrorCode::DATAGRAM_UNSUPPORTED))
+                        }
                     };
                     if let Some(termination) = self
                         .flush(

@@ -29,6 +29,16 @@ pub mod codes;
 /// The per-connection driver: QUIC connection + control framing + §5.2 state
 /// machine on one live session (ticket 07).
 pub mod driver;
+/// Media plane: the §7.1 24-byte header and the per-session datagram
+/// packetizer (spec §7). No I/O here — the driver owns pacing and the queue.
+pub mod media;
+/// The media source a session subscribes to (implemented over the shared
+/// capture by the Server's adapter).
+pub mod media_source;
+/// Per-session capture-chunks-to-paced-datagrams pump (no I/O).
+pub mod media_pump;
+/// Per-Client bounded media queue and the §7.4 send-ahead pacer.
+pub mod send_queue;
 /// Control-stream framing: `u32 BE length | Frame` with the §3 validation.
 pub mod framing;
 /// Server identity key lifecycle: Ed25519, PKCS#8 PEM, 0600/0700, fail-closed.
