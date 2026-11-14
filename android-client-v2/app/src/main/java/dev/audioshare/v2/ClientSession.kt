@@ -17,17 +17,26 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.min
 import kotlin.random.Random
 
+/** The production adapter from [MediaPlayer.NativeMedia] to the JNI surface. */
+internal object NativeMediaBridge : MediaPlayer.NativeMedia {
+    override fun getState(handle: Long): String? = ClientNative.getState(handle)
+    override fun attachMediaRing(handle: Long, buffer: java.nio.ByteBuffer): Boolean =
+        ClientNative.attachMediaRing(handle, buffer)
+    override fun ringPosition(handle: Long): Long = ClientNative.ringPosition(handle)
+    override fun mediaFormatJson(handle: Long): String? = ClientNative.mediaFormatJson(handle)
+    override fun recordPlayback(handle: Long, submittedBytes: Long, underruns: Long, bufferCurrentMs: Int) =
+        ClientNative.recordPlayback(handle, submittedBytes, underruns, bufferCurrentMs)
+}
+
 /**
  * Kotlin-side session owner (ticket 08): JNI handle lifecycle, bounded
  * exponential backoff with ±20% jitter, and the ConnectivityManager
  * NetworkCallback migration (rebind with fd handoff, fallback to
  * teardown + backoff reconnect).
  *
- * DEVICE/NETWORK ONLY — exercised on the device path; none of it runs in
- * host JVM tests. Device smoke for this ticket is recorded separately
- * (see the ticket's Comments).
- *
- * Media is not surfaced here: the native ring is a skeleton this ticket.
+ * Ticket 14 adds playback: [MediaPlayer] owns the native ring and the
+ * AudioTrack, attached once per native session and started only while the
+ * session can carry media.
  */
 class ClientSession(
     private val appContext: Context,
@@ -56,6 +65,7 @@ class ClientSession(
     private var lifecycle: Any? = null
     private val currentState = SessionStateRelay(listener::onStateChange)
     private var stateSource: SessionStateRelay.Source? = null
+    private var mediaPlayer: MediaPlayer? = null
 
     /** 最近一次实际 native 状态；停止后保持 CLOSED，不暴露已失效的 handle。 */
     fun stateSnapshot(): String = currentState.snapshot()
@@ -88,6 +98,7 @@ class ClientSession(
     }
 
     fun stop() {
+        val player: MediaPlayer?
         val h = synchronized(lifecycleLock) {
             if (!running.getAndSet(false)) return
             lifecycle = null
@@ -97,8 +108,11 @@ class ClientSession(
             // 已排队的创建/重连任务也属于旧生命周期。
             stateSource?.close()
             stateSource = null
+            // The playback owner must stop before the native session dies.
+            player = stopMediaLocked()
             current
         }
+        player?.stop()
         if (h != 0L) {
             ClientNative.stop(h)
             ClientNative.destroy(h)
@@ -151,6 +165,12 @@ class ClientSession(
                     val source = currentState.beginSession().also { stateSource = it }
                     val bind = if (bindHintEnabled) (activeNetworkAddress ?: "") else ""
                     listener.onLog("connect(host=${configuration.host} port=${configuration.port} bind=$bind)")
+                    // The ring is attached once per native session, before any
+                    // media can arrive; playback starts with the session and
+                    // simply idles until native reports PLAYING.
+                    val player = MediaPlayer(NativeMediaBridge).also { it.attach(h) }
+                    synchronized(lifecycleLock) { mediaPlayer = player }
+                    player.start()
                     source to ClientNative.connect(h, bind)
                 }
             }
@@ -188,6 +208,20 @@ class ClientSession(
             }, delay)
         }
         if (h != 0L) ClientNative.destroy(h)
+        stopMedia()
+    }
+
+    /** Stop and drop the playback owner for the current native session. */
+    private fun stopMedia() {
+        val player = synchronized(lifecycleLock) { stopMediaLocked() }
+        player?.stop()
+    }
+
+    /** Caller holds [lifecycleLock]; returns the detached player to stop outside the lock. */
+    private fun stopMediaLocked(): MediaPlayer? {
+        val current = mediaPlayer
+        mediaPlayer = null
+        return current
     }
 
     private fun startStatsPolling(h: Long, source: SessionStateRelay.Source, lifetime: Any) {
@@ -238,6 +272,7 @@ class ClientSession(
                 }
             } catch (_: InterruptedException) {
             } finally {
+                stopMedia()
                 if (reconnectOnExit) scheduleReconnect(myHandle, source, lifetime)
             }
         }

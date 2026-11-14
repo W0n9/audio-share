@@ -12,11 +12,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use jni::objects::{JClass, JString};
+use jni::objects::{JByteBuffer, JClass, JString};
 use jni::sys::{jboolean, jint, jlong, jstring};
 use jni::JNIEnv;
 
-use crate::session::{Session, SessionConfig};
+use crate::session::{RingAttachment, Session, SessionConfig};
 
 /// Handle registry: Kotlin holds an opaque i64; the map keeps the Arc alive.
 static SESSIONS: std::sync::OnceLock<Mutex<HashMap<i64, Arc<Session>>>> =
@@ -220,4 +220,83 @@ pub extern "system" fn Java_dev_audioshare_v2_ClientNative_rebind(
         session.rebind(fd).map(|_| true)
     })
     .map_or(0, |b| b as jboolean)
+}
+
+/// attachMediaRing(handle, directBuffer): attach the JVM's direct ByteBuffer
+/// as the media ring, ONCE per session (media never crosses JNI per datagram).
+/// Returns false when the buffer is not direct/empty or a ring is attached.
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_attachMediaRing(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    buffer: JByteBuffer,
+) -> jboolean {
+    guard(|| {
+        let session = get_session(handle)?;
+        let base = env
+            .get_direct_buffer_address(&buffer)
+            .map_err(|e| format!("direct buffer: {e}"))?;
+        let capacity = env
+            .get_direct_buffer_capacity(&buffer)
+            .map_err(|e| format!("direct buffer capacity: {e}"))?;
+        if base.is_null() || capacity == 0 {
+            return Err("media ring must be a non-empty direct ByteBuffer".to_owned());
+        }
+        session.attach_ring(RingAttachment { base, capacity })
+    })
+    .map_or(0, |b| b as jboolean)
+}
+
+/// ringPosition(handle): bytes written to the ring so far (-1 without a ring).
+/// Kotlin reads from this monotonic cursor; it resyncs when it falls more
+/// than one buffer behind.
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_ringPosition(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlong {
+    guard(|| {
+        let session = get_session(handle)?;
+        Ok(session.ring_position())
+    })
+    .unwrap_or(-1)
+}
+
+/// mediaFormatJson(handle): the active instance/generation/geometry as JSON,
+/// or null ("") before PLAYING. Kotlin rebuilds the AudioTrack only when the
+/// instance or geometry changes.
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_mediaFormatJson(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    match guard(|| {
+        let session = get_session(handle)?;
+        Ok(session.media_format_json())
+    }) {
+        Ok(s) => jstring_or_empty(env, &s),
+        Err(_) => jstring_or_empty(env, ""),
+    }
+}
+
+/// recordPlayback(handle, submittedBytes, underruns, bufferCurrentMs): the
+/// bytes the AudioTrack actually accepted (and its underruns/fill). This is
+/// the only playback evidence the Client reports (§9).
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordPlayback(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    submitted_bytes: jlong,
+    underruns: jlong,
+    buffer_current_ms: jint,
+) {
+    let _ = guard(|| {
+        let session = get_session(handle)?;
+        session.record_playback(submitted_bytes.max(0) as u64, underruns.max(0) as u64, buffer_current_ms.max(0) as u32);
+        Ok::<(), String>(())
+    });
 }

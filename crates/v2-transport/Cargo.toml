@@ -13,6 +13,9 @@ sha2.workspace = true
 tokio.workspace = true
 tracing = "0.1"
 socket2 = { version = "0.6", features = ["all"] }
+# quinn's `send_datagram` takes a `Bytes`; media datagrams are shared with the
+# QUIC stack without a copy.
+bytes.workspace = true
 
 # Production: the Server verifies Client proofs with ECDSA P-256 (pairing.md
 # PR-9); the authorization store is JSON (pairing.md §8.1).

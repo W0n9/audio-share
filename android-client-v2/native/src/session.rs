@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::control::{ClientMachine, ClientState, CloseInfo};
 use crate::frame::{encode_frame, FrameDecoder};
+use crate::media_session::{MediaSession, PlaybackReport};
 use crate::verify::PinnedSpkiVerifier;
 
 /// Spec §3 / ADR-0004 D1: v2 port (never v1's 65530).
@@ -42,6 +43,14 @@ const RESPONSE_DEADLINE_SECS: u64 = 10;
 /// §3/D3: idle timeout and keep-alive, both sides.
 const IDLE_TIMEOUT_SECS: u64 = 30;
 const KEEP_ALIVE_SECS: u64 = 10;
+/// How often the control loop checks the media cadences (§9 5 s reports; the
+/// §7.6 give-up bound). Short enough to react promptly, long enough to stay
+/// off the hot path.
+const MEDIA_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+/// §9 `buffer_target_ms` reported for M4. M5 owns the jitter-buffer target of
+/// 60 ms; reporting that number before the buffer exists would claim an
+/// intervention this ticket does not implement.
+const BUFFER_TARGET_MS: u32 = 0;
 
 /// Per-request response deadlines (§4.2). Each pending request is armed once,
 /// from the moment it is sent, and is never extended by unrelated reads. A
@@ -105,11 +114,30 @@ pub struct SharedState {
     pub last_error: Mutex<String>,
     /// Control SendStream after the machine sends its first frame.
     pub control_stream: tokio::sync::Mutex<Option<quinn::SendStream>>,
-    /// Connection handle for the datagram pump (media path NOT activated).
+    /// Connection handle for the datagram pump and migration.
     pub conn: Mutex<Option<quinn::Connection>>,
     /// Endpoint kept alive for the connection lifetime (rebind primitive).
     pub endpoint: Mutex<Option<quinn::Endpoint>>,
+    /// The active media delivery state (PLAYING only). Shared with the JNI
+    /// surface so Kotlin's ring cursor and playback reports reach the receiver.
+    pub media: Mutex<Option<Arc<Mutex<MediaSession>>>>,
+    /// The JVM-owned direct ByteBuffer attached once per session. Media never
+    /// crosses JNI per datagram: this is the ring's backing memory.
+    pub ring: Mutex<Option<RingAttachment>>,
 }
+
+/// The native side of the one-time direct-`ByteBuffer` attachment.
+#[derive(Clone, Copy)]
+pub struct RingAttachment {
+    /// Base address of the JVM's direct buffer (valid for the session's life).
+    pub base: *mut u8,
+    /// Writable capacity in bytes.
+    pub capacity: usize,
+}
+
+// The buffer is owned by the JVM for the whole session; native only writes to
+// it. Access is serialized by the media mutex.
+unsafe impl Send for RingAttachment {}
 
 pub struct Session {
     pub config: SessionConfig,
@@ -151,6 +179,8 @@ impl Session {
                 control_stream: tokio::sync::Mutex::new(None),
                 conn: Mutex::new(None),
                 endpoint: Mutex::new(None),
+                media: Mutex::new(None),
+                ring: Mutex::new(None),
             }),
         })
     }
@@ -335,6 +365,12 @@ impl Session {
         let mut watch = ResponseWatch::default();
         let pending = machine.pending_ids();
         watch.observe(tokio::time::Instant::now(), &pending);
+        // Media cadence (§5.3 READY subscribe, §9 5 s diagnostics) and the
+        // §7.6 unknown-configuration give-up clock.
+        let mut media_control = crate::media_control::MediaControl::new();
+        let mut media_tick = tokio::time::interval(MEDIA_POLL);
+        media_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let media_clock = std::time::Instant::now();
         let result: Result<(), String> = 'control: loop {
             let n = tokio::select! {
                 read = rx.read(&mut rx_buf) => {
@@ -352,7 +388,111 @@ impl Session {
                         "response deadline ({RESPONSE_DEADLINE_SECS} s) for request_id {expired_id} → 601"
                     ));
                 }
-                _ = self.shared.shutdown_requested() => break 'control Ok(()),
+                _ = self.shared.shutdown_requested() => {
+                    // §5.3/§9: entering CLOSING sends one best-effort final
+                    // PlaybackDiagnostics before Close(701), then stops. The
+                    // final snapshot must never wait for, or be blocked by,
+                    // the 5 s periodic cadence or an in-flight report.
+                    machine.state = ClientState::Closing;
+                    self.set_state(machine.state.clone());
+                    if let crate::media_control::MediaAction::ReportDiagnostics =
+                        media_control.on_tick(&machine.state, machine.config.is_some(), std::time::Instant::now())
+                    {
+                        let mut tx_guard = self.shared.control_stream.lock().await;
+                        if let Some(tx) = tx_guard.as_mut() {
+                            let _ = self.write_diagnostics(tx).await;
+                        }
+                        drop(tx_guard);
+                        media_control.report_finished();
+                    }
+                    // Close is one-way (§5.4 invariant 4); no echo expected.
+                    let close = crate::control::frames::close_frame(701);
+                    let mut tx_guard = self.shared.control_stream.lock().await;
+                    if let (Some(tx), Ok(bytes)) = (tx_guard.as_mut(), encode_frame(&close)) {
+                        let _ = tx.write_all(&bytes).await;
+                    }
+                    drop(tx_guard);
+                    break 'control Ok(());
+                }
+                datagram = conn.read_datagram() => {
+                    match datagram {
+                        Ok(datagram) => {
+                            let now_ms = media_clock.elapsed().as_millis() as u64;
+                            let current = self.shared.media.lock().unwrap().clone();
+                            let gave_up = if let Some(media) = current {
+                                let mut media = media.lock().unwrap();
+                                let _outcome = media.on_datagram(now_ms, &datagram);
+                                media.gave_up_unknown_config()
+                            } else {
+                                false
+                            };
+                            if gave_up {
+                                // §7.6 step 3: Error(403)+Close(403), then
+                                // transport-close is the acknowledgment.
+                                let verdict = machine.fatal_unsupported_media();
+                                self.set_state(machine.state.clone());
+                                self.write_fatal(&verdict).await?;
+                                break 'control Ok(());
+                            }
+                            continue;
+                        }
+                        Err(error) => {
+                            log::debug!("datagram receive ended: {error}");
+                            break 'control Err(format!("datagram: {error}"));
+                        }
+                    }
+                }
+                _ = media_tick.tick() => {
+                    let now_ms = media_clock.elapsed().as_millis() as u64;
+                    // §7.6 give-up clock advances even without new datagrams.
+                    // The tick returns true exactly when the 2 s bound is
+                    // crossed while the hold is still active, so the session
+                    // emits 403 once and does not wait for another datagram.
+                    let gave_up = if let Some(media) = self.shared.media.lock().unwrap().clone() {
+                        media.lock().unwrap().tick(now_ms)
+                    } else {
+                        false
+                    };
+                    if gave_up {
+                        let verdict = machine.fatal_unsupported_media();
+                        self.set_state(machine.state.clone());
+                        self.write_fatal(&verdict).await?;
+                        break 'control Ok(());
+                    }
+                    match media_control.on_tick(
+                        &machine.state,
+                        machine.config.is_some(),
+                        std::time::Instant::now(),
+                    ) {
+                        crate::media_control::MediaAction::Subscribe => {
+                            let verdict = machine.request_subscribe();
+                            let mut tx_guard = self.shared.control_stream.lock().await;
+                            if let Some(tx) = tx_guard.as_mut() {
+                                send_verdict(tx, &verdict).await?;
+                            }
+                            drop(tx_guard);
+                            self.set_state(machine.state.clone());
+                            let pending = machine.pending_ids();
+                            watch.observe(tokio::time::Instant::now(), &pending);
+                        }
+                        crate::media_control::MediaAction::ReportDiagnostics => {
+                            // §9: send the snapshot on the SAME tick that
+                            // produced it. Previously this branch `continue`d
+                            // and the send only ran after a Server control
+                            // frame arrived — during PLAYING (no control
+                            // traffic) the 5 s report never went out and the
+                            // pending flag never cleared.
+                            let mut tx_guard = self.shared.control_stream.lock().await;
+                            if let Some(tx) = tx_guard.as_mut() {
+                                self.write_diagnostics(tx).await;
+                            }
+                            drop(tx_guard);
+                            media_control.report_finished();
+                        }
+                        crate::media_control::MediaAction::None => {}
+                    }
+                    continue;
+                }
             };
             let frames = match decoder.push(&rx_buf[..n]) {
                 Ok(f) => f,
@@ -381,6 +521,67 @@ impl Session {
                 self.set_state(machine.state.clone());
                 if let Some(event) = event {
                     log::info!("client event: {event:?}");
+                    match event {
+                        crate::control::Event::StreamStarted(anchor) => {
+                            // §5.3: initialize per-instance media state; the
+                            // reliable push is the only epoch authority.
+                            let ring = self.shared.ring.lock().unwrap().map(|attachment| {
+                                // SAFETY: the JVM owns the buffer for the whole
+                                // session; the attachment is set once.
+                                unsafe {
+                                    crate::ring::MediaRing::attach(
+                                        attachment.base,
+                                        attachment.capacity,
+                                    )
+                                }
+                            });
+                            let started = machine.config.as_ref().and_then(|configuration| {
+                                MediaSession::start(
+                                    anchor.stream_instance_id,
+                                    anchor.config_generation,
+                                    anchor.initial_timestamp,
+                                    configuration,
+                                    ring,
+                                )
+                            });
+                            if let Some(media) = started {
+                                *self.shared.media.lock().unwrap() = Some(Arc::new(Mutex::new(media)));
+                            } else {
+                                // §5.3 READY: a configuration this Client cannot
+                                // decode is Error(403)+Close(403).
+                                let verdict = machine.fatal_unsupported_media();
+                                self.set_state(machine.state.clone());
+                                if let crate::control::Verdict::Fatal { code } = verdict {
+                                    let mut tx_guard = self.shared.control_stream.lock().await;
+                                    if let Some(tx) = tx_guard.as_mut() {
+                                        for f in crate::control::frames::fatal_frames(code) {
+                                            tx.write_all(&encode_frame(&f).map_err(|e| e.to_string())?)
+                                                .await
+                                                .map_err(|e| format!("send: {e}"))?;
+                                        }
+                                    }
+                                    self.record_close(crate::control::CloseInfo {
+                                        code,
+                                        remote: false,
+                                    });
+                                    break 'control Ok(());
+                                }
+                            }
+                        }
+                        crate::control::Event::StreamEnded(_) => {
+                            *self.shared.media.lock().unwrap() = None;
+                            media_control.stream_ended();
+                        }
+                        crate::control::Event::ConfigurationPublished(_) => {
+                            let current = self.shared.media.lock().unwrap().clone();
+                            if let (Some(media), Some(configuration)) =
+                                (current, machine.config.as_ref())
+                            {
+                                media.lock().unwrap().apply_configuration(configuration);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 match result {
                     Ok(crate::control::Verdict::Ok) => {}
@@ -454,6 +655,120 @@ impl Session {
 
     pub fn state_name(&self) -> &'static str {
         self.shared.state.lock().unwrap().name()
+    }
+
+    /// Attach the JVM's direct ByteBuffer as the media ring, once per session.
+    pub fn attach_ring(&self, attachment: RingAttachment) -> Result<bool, String> {
+        let mut ring = self.shared.ring.lock().unwrap();
+        if ring.is_some() {
+            return Ok(false);
+        }
+        *ring = Some(attachment);
+        // A session already playing (attach raced with StreamStarted) gets the
+        // ring immediately; otherwise the StreamStarted handler picks it up.
+        if let Some(media) = self.shared.media.lock().unwrap().as_ref() {
+            // SAFETY: the JVM keeps the buffer alive for the whole session.
+            let ring = unsafe { crate::ring::MediaRing::attach(attachment.base, attachment.capacity) };
+            media.lock().unwrap().set_ring(ring);
+        }
+        Ok(true)
+    }
+
+    /// Monotonic count of bytes written into the media ring (-1 if none yet).
+    pub fn ring_position(&self) -> i64 {
+        let media = self.shared.media.lock().unwrap().clone();
+        let Some(media) = media else {
+            return -1;
+        };
+        let media = media.lock().unwrap();
+        media
+            .ring_write_position()
+            .map(|position| i64::try_from(position).unwrap_or(i64::MAX))
+            .unwrap_or(-1)
+    }
+
+    /// The active media format as JSON for the Kotlin playback side, or ""
+    /// before PLAYING. The six keys are the ticket-14 JNI contract — no extra
+    /// fields, no key material, no PCM. Delivered-frame counts stay native
+    /// (receiver statistics), they are not a playback-format fact.
+    pub fn media_format_json(&self) -> String {
+        let media = self.shared.media.lock().unwrap().clone();
+        let Some(media) = media else {
+            return String::new();
+        };
+        let media = media.lock().unwrap();
+        let geometry = media.geometry();
+        format!(
+            "{{\"instance\":{},\"generation\":{},\"sample_rate\":{},\"channels\":{},\"sample_format\":{},\"anchor\":{}}}",
+            media.stream_instance_id(),
+            media.config_generation(),
+            geometry.sample_rate,
+            geometry.channels,
+            geometry.sample_format.wire_value(),
+            media.anchor(),
+        )
+    }
+
+    /// Record the platform playback facts (§9: the only playback evidence).
+    pub fn record_playback(&self, submitted_bytes: u64, underruns: u64, buffer_current_ms: u32) {
+        if let Some(media) = self.shared.media.lock().unwrap().clone() {
+            media.lock().unwrap().record_playback(PlaybackReport {
+                submitted_bytes,
+                underruns,
+                buffer_current_ms,
+            });
+        }
+    }
+
+    /// Build and write ONE §9 diagnostics snapshot from the active media
+    /// session. Extracted so the 5 s tick (which sees no Server control frame)
+    /// and the CLOSING path use the same writer, and so the behaviour is
+    /// testable over a real async stream without running the whole session.
+    /// Returns `true` when a snapshot was produced (even if the write failed —
+    /// statistics failures never block media, §9).
+    async fn write_diagnostics<W>(&self, tx: &mut W) -> bool
+    where
+        W: tokio::io::AsyncWriteExt + Unpin,
+    {
+        let current = self.shared.media.lock().unwrap().clone();
+        let Some(diagnostics) =
+            current.map(|media| media.lock().unwrap().diagnostics(BUFFER_TARGET_MS))
+        else {
+            return false;
+        };
+        let frame = crate::proto::Frame {
+            body: Some(crate::proto::frame::Body::PlaybackDiagnostics(diagnostics)),
+        };
+        let Ok(bytes) = encode_frame(&frame) else {
+            log::warn!("diagnostics encode failed");
+            return true;
+        };
+        // Best-effort: a broken stream does not turn into a session error.
+        let _ = tx.write_all(&bytes).await;
+        true
+    }
+
+    /// Write the §5.2 fatal pair (Error + Close) for a locally raised verdict.
+    async fn write_fatal(&self, verdict: &crate::control::Verdict) -> Result<(), String> {
+        let crate::control::Verdict::Fatal { code } = verdict else {
+            return Ok(());
+        };
+        let code = *code;
+        let mut tx_guard = self.shared.control_stream.lock().await;
+        if let Some(tx) = tx_guard.as_mut() {
+            for frame in crate::control::frames::fatal_frames(code) {
+                let bytes = encode_frame(&frame).map_err(|e| e.to_string())?;
+                tx.write_all(&bytes)
+                    .await
+                    .map_err(|e| format!("send: {e}"))?;
+            }
+        }
+        drop(tx_guard);
+        self.record_close(crate::control::CloseInfo {
+            code,
+            remote: false,
+        });
+        Ok(())
     }
 
     /// JSON stats snapshot (low-frequency JNI surface). No credentials, no
@@ -851,5 +1166,133 @@ mod tests {
         assert_eq!(AUTH_EXPORTER_LABEL, b"EXPORTER audio-share v2 auth");
         assert_eq!(ALPN, b"audio-share/v2");
         assert_eq!(DEFAULT_PORT, 65531);
+    }
+
+    fn playing_session() -> Session {
+        let session = Session::new(test_config()).expect("session");
+        let configuration = crate::proto::Configuration {
+            config_generation: 1,
+            codec: 1,
+            pcm: Some(crate::proto::PcmParameters {
+                sample_rate: 48_000,
+                channels: 2,
+                sample_format: 1,
+            }),
+        };
+        let media = MediaSession::start(4, 1, 96_000, &configuration, None).expect("geometry");
+        *session.shared.media.lock().unwrap() = Some(Arc::new(Mutex::new(media)));
+        session
+    }
+
+    /// §9 regression: a diagnostics report is written on the tick that
+    /// produces it, WITHOUT waiting for any Server control frame. This is the
+    /// defect the Spec-axis review found: the old loop `continue`d past the
+    /// send, so PLAYING sessions (no control traffic) never reported.
+    #[test]
+    fn diagnostics_are_written_without_a_server_control_frame() {
+        let session = playing_session();
+        // Real playback evidence: the platform accepted 64 frames.
+        session.record_playback(8 * 64, 1, 25);
+        // Session owns a multi-thread runtime; run the async writer on it
+        // instead of nesting a second #[tokio::test] runtime.
+        session.runtime.block_on(async {
+            let (mut writer, mut reader) = tokio::io::duplex(4096);
+            assert!(session.write_diagnostics(&mut writer).await);
+            drop(writer);
+
+            let mut bytes = Vec::new();
+            tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut bytes)
+                .await
+                .expect("read diagnostics frame");
+            assert!(!bytes.is_empty(), "one framed message must be written");
+            let frames = FrameDecoder::new()
+                .push(&bytes)
+                .expect("Android decodes its own §9 frame");
+            assert_eq!(frames.len(), 1);
+            match frames[0].body.as_ref().expect("body") {
+                crate::proto::frame::Body::PlaybackDiagnostics(d) => {
+                    assert_eq!(d.stream_instance_id, 4);
+                    assert_eq!(d.config_generation, 1);
+                    assert_eq!(d.underruns, 1);
+                    assert_eq!(d.buffer_current_ms, 25);
+                    assert_eq!(
+                        d.submitted_position, 96_064,
+                        "anchor + platform-accepted frames (§9)"
+                    );
+                }
+                other => panic!("expected PlaybackDiagnostics, got {other:?}"),
+            }
+        });
+    }
+
+    /// A session with no active media produces no diagnostics frame (§9:
+    /// there is nothing to report, and no fabricated snapshot).
+    #[test]
+    fn no_active_media_writes_no_diagnostics() {
+        let session = Session::new(test_config()).expect("session");
+        session.runtime.block_on(async {
+            let (mut writer, _reader) = tokio::io::duplex(64);
+            assert!(!session.write_diagnostics(&mut writer).await);
+        });
+    }
+
+    /// The JNI media surface reports the active instance/generation/geometry
+    /// and nothing before PLAYING.
+    #[test]
+    fn media_format_json_describes_the_active_stream() {
+        let session = Session::new(test_config()).expect("session");
+        assert_eq!(session.media_format_json(), "", "no media before PLAYING");
+        assert_eq!(session.ring_position(), -1, "no ring before PLAYING");
+
+        let session = playing_session();
+        let json = session.media_format_json();
+        assert!(json.contains("\"instance\":4"), "got: {json}");
+        assert!(json.contains("\"generation\":1"), "got: {json}");
+        assert!(json.contains("\"sample_rate\":48000"), "got: {json}");
+        assert!(json.contains("\"channels\":2"), "got: {json}");
+        assert!(json.contains("\"sample_format\":1"), "got: {json}");
+        assert!(json.contains("\"anchor\":96000"), "got: {json}");
+        // Ticket-14 JNI contract: exactly these six keys, no extras.
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        let keys: Vec<&str> = parsed.as_object().expect("object").keys().map(String::as_str).collect();
+        assert_eq!(keys.len(), 6, "no extra fields: {json}");
+        for key in ["instance", "generation", "sample_rate", "channels", "sample_format", "anchor"] {
+            assert!(keys.contains(&key), "missing {key}: {json}");
+        }
+    }
+
+    /// Playback reports reach the active media session and drive the reported
+    /// submitted position (§9: only platform-accepted bytes count).
+    #[test]
+    fn playback_reports_flow_into_the_media_session() {
+        let session = playing_session();
+        session.record_playback(8 * 64, 2, 40);
+        let media = session.shared.media.lock().unwrap().clone().expect("media");
+        let media = media.lock().unwrap();
+        assert_eq!(media.anchor(), 96_000);
+        assert_eq!(media.submitted_position(), 96_064);
+        let mut media = media;
+        let diagnostics = media.diagnostics(0);
+        assert_eq!(diagnostics.underruns, 2);
+        assert_eq!(diagnostics.buffer_current_ms, 40);
+        assert_eq!(diagnostics.submitted_position, 96_064);
+    }
+
+    /// Attaching the ring is a one-time operation (media never crosses JNI per
+    /// datagram, so the buffer identity must not change mid-session).
+    #[test]
+    fn the_media_ring_is_attached_once() {
+        let session = Session::new(test_config()).expect("session");
+        let mut backing = vec![0u8; 1024];
+        let attachment = RingAttachment {
+            base: backing.as_mut_ptr(),
+            capacity: backing.len(),
+        };
+        assert_eq!(session.attach_ring(attachment), Ok(true));
+        assert_eq!(
+            session.attach_ring(attachment),
+            Ok(false),
+            "a second attach must be refused"
+        );
     }
 }

@@ -9,6 +9,17 @@
 
 pub const HEADER_SIZE: usize = 24;
 
+/// The reliable `StreamStarted` anchor (§5.2/§4.4): instance identity, the
+/// generation of the media that follows, and the capture-clock frame position
+/// of the first media frame the receiver will get (0 for a fresh instance,
+/// mid-stream for a late Subscriber).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StreamAnchor {
+    pub stream_instance_id: u32,
+    pub config_generation: u32,
+    pub initial_timestamp: u64,
+}
+
 /// §7.1 flag bits. Bits 2–31 are reserved: senders MUST zero, receivers MUST
 /// ignore (adjudication 2026-11-12) — never malformed.
 pub const FLAG_STREAM_START: u32 = 0x1;

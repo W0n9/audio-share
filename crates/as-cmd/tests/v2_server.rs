@@ -317,7 +317,14 @@ async fn production_capture_thread_exit_refuses_new_and_ready_subscriptions() {
     let mut sessions = SessionServer::new(&identity, store);
     // This is the exact production injection used by as-cmd, not a replacement
     // test source that manufactures healthy=false.
-    sessions.capture_source = Some(as_cmd::v2_capture_source(observer.clone()));
+    sessions.capture_source = Some(as_cmd::v2_capture_source(
+        observer.clone(),
+        core.media_tap(),
+    ));
+    sessions.media_source = Some(as_cmd::capture_media_source(
+        core.media_tap(),
+        observer.clone(),
+    ));
     let sessions = Arc::new(sessions);
     let transport = Arc::new(
         Transport::start(

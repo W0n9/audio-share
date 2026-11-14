@@ -19,6 +19,7 @@ rust-version = "1.90"
 [workspace.dependencies]
 anyhow = "1"
 audio-share-core = { path = "crates/audio-share-core" }
+bytes = "1"
 clap = { version = "4", features = ["derive"] }
 prost = { version = "0.13", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

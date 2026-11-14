@@ -685,7 +685,8 @@ fn ready_subscribe_ok_with_configuration() {
         frame: Box::new(subscribe(3)),
         source: unhex(CLIENT_PUB),
     });
-    assert_eq!(machine.state(), ServerState::Ready);
+    // §5.1: PLAYING = READY ∧ subscribed ∧ an active stream instance.
+    assert_eq!(machine.state(), ServerState::Playing);
     assert!(machine.subscribed());
     assert_eq!(
         out.len(),
@@ -721,7 +722,11 @@ fn ready_duplicate_subscribe_is_nonfatal_402_connection_maintained() {
         frame: Box::new(subscribe(4)),
         source: unhex(CLIENT_PUB),
     });
-    assert_eq!(machine.state(), ServerState::Ready, "no state change");
+    assert_eq!(
+        machine.state(),
+        ServerState::Playing,
+        "a duplicate Subscribe never leaves PLAYING"
+    );
     assert_eq!(out.len(), 1, "non-fatal: no Close");
     assert!(
         matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
@@ -795,10 +800,15 @@ fn ready_unsubscribe_returns_to_unsubscribed_and_allows_resubscribe() {
     assert_eq!(machine.state(), ServerState::Ready);
     assert!(
         !machine.subscribed(),
-        "Unsubscribe must clear READY's subscription"
+        "Unsubscribe must clear the subscription"
     );
+    // §5.2 PLAYING row: StreamEnded(502, "unsubscribed") comes first.
     assert!(
         matches!(out[0].frame.as_ref().and_then(|f| f.body.as_ref()),
+        Some(frame::Body::StreamEnded(e)) if e.code == 502 && e.detail == "unsubscribed")
+    );
+    assert!(
+        matches!(out[1].frame.as_ref().and_then(|f| f.body.as_ref()),
         Some(frame::Body::UnsubscribeResponse(r)) if r.request_id == 4 && r.status.code == 0)
     );
 

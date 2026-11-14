@@ -173,8 +173,9 @@ pub enum Event {
     ConfigurationPublished(u32),
     /// Subscribed (SubscribeResponse OK).
     Subscribed,
-    /// Stream instance active (PLAYING).
-    StreamStarted,
+    /// Stream instance active (PLAYING); carries the reliable anchor so the
+    /// receiver state has one source of truth for instance/generation/clock.
+    StreamStarted(crate::media::StreamAnchor),
     /// Stream instance ended; finalize per-instance statistics (READY).
     StreamEnded(u32),
 }
@@ -537,10 +538,17 @@ impl ClientMachine {
                 self.subscribed = false;
                 (Ok(Verdict::Ok), None)
             }
-            (ClientState::Ready, Body::StreamStarted(_)) => {
+            (ClientState::Ready, Body::StreamStarted(started)) => {
                 if self.subscribed {
                     self.state = ClientState::Playing;
-                    (Ok(Verdict::Ok), Some(Event::StreamStarted))
+                    (
+                        Ok(Verdict::Ok),
+                        Some(Event::StreamStarted(crate::media::StreamAnchor {
+                            stream_instance_id: started.stream_instance_id,
+                            config_generation: started.config_generation,
+                            initial_timestamp: started.initial_timestamp,
+                        })),
+                    )
                 } else {
                     // §5.3 READY row: Server violation → Error(402)+Close(402)
                     (Ok(self.fatal(402)), None)
@@ -548,10 +556,10 @@ impl ClientMachine {
             }
             // ---- PLAYING --------------------------------------------------------
             (ClientState::Playing, Body::StreamEnded(e)) => {
-                // §5.3: finalize instance statistics → READY (§5.4: the only
-                // backward move).
+                // §5.2: capture end/failure returns to READY and the
+                // subscription stays; a later capture start announces a new
+                // instance. Only a user Unsubscribe clears `subscribed`.
                 self.state = ClientState::Ready;
-                self.subscribed = false;
                 (Ok(Verdict::Ok), Some(Event::StreamEnded(e.code)))
             }
             (ClientState::Playing, Body::ConfigurationPublished(p)) => {
@@ -595,6 +603,13 @@ impl ClientMachine {
                 (Ok(self.fatal(402)), None)
             }
         }
+    }
+
+    /// A media-plane condition the Client cannot recover from (§7.6 step 3:
+    /// an unknown configuration stayed unknown past its bound): Error(403) +
+    /// Close(403), then stop.
+    pub fn fatal_unsupported_media(&mut self) -> Verdict {
+        self.fatal(403)
     }
 
     /// Fatal error path: Error(code)+Close(code) outbound then Stop. The
@@ -1302,17 +1317,46 @@ mod tests {
         let mut m = machine_at_ready();
         m.subscribed = true;
         let (v, e) = m.on_frame(&frame(Body::StreamStarted(StreamStarted {
+            stream_instance_id: 7,
+            config_generation: 3,
+            initial_timestamp: 480,
+        })));
+        assert_eq!(v, Ok(Verdict::Ok));
+        assert_eq!(
+            e,
+            Some(Event::StreamStarted(crate::media::StreamAnchor {
+                stream_instance_id: 7,
+                config_generation: 3,
+                initial_timestamp: 480,
+            }))
+        );
+        assert_eq!(m.state, ClientState::Playing);
+    }
+
+    /// §5.2 capture end/failure returns to READY but remains subscribed;
+    /// a later capture start can announce a new instance without re-subscribing.
+    #[test]
+    fn stream_ended_retains_subscription_for_the_next_instance() {
+        let mut m = machine_at_playing();
+        let (v, e) = m.on_frame(&frame(Body::StreamEnded(StreamEnded {
             stream_instance_id: 1,
+            code: 501,
+            detail: String::new(),
+        })));
+        assert_eq!(v, Ok(Verdict::Ok));
+        assert_eq!(e, Some(Event::StreamEnded(501)));
+        assert_eq!(m.state, ClientState::Ready);
+        assert!(m.subscribed, "capture end is not a user unsubscribe");
+        let (v, _) = m.on_frame(&frame(Body::StreamStarted(StreamStarted {
+            stream_instance_id: 2,
             config_generation: 1,
             initial_timestamp: 0,
         })));
         assert_eq!(v, Ok(Verdict::Ok));
-        assert_eq!(e, Some(Event::StreamStarted));
         assert_eq!(m.state, ClientState::Playing);
     }
 
     /// §5.2 non-fatal 402 (duplicate Subscribe) keeps the connection: the
-    /// machine sees the paired Error only (no Close) → advisory, no change.
     #[test]
     fn nonfatal_error_keeps_connection() {
         let mut m = machine_at_playing();
@@ -1333,7 +1377,9 @@ mod tests {
         assert_eq!(m.state, ClientState::Playing, "connection maintained");
     }
 
-    /// §5.3 PLAYING: StreamEnded(501/502) → READY; subscribed flag cleared.
+    /// §5.2/§5.3 PLAYING: StreamEnded(501/502) → READY; the subscription is a
+    /// data condition that survives a capture end (§5.1) — only an
+    /// UnsubscribeResponse clears it.
     #[test]
     fn stream_ends_moves_back_to_ready() {
         for code in [501u32, 502] {
@@ -1346,7 +1392,7 @@ mod tests {
             assert_eq!(v, Ok(Verdict::Ok), "code {code}");
             assert_eq!(e, Some(Event::StreamEnded(code)));
             assert_eq!(m.state, ClientState::Ready);
-            assert!(!m.subscribed);
+            assert!(m.subscribed, "code {code}: capture end is not an unsubscribe");
         }
     }
 

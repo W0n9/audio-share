@@ -21,6 +21,8 @@ pub mod fixture;
 pub mod frame;
 pub mod jni;
 pub mod media;
+pub mod media_control;
+pub mod media_session;
 pub mod ring;
 pub mod session;
 pub mod verify;
