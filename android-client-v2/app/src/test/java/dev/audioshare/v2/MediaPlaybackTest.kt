@@ -118,4 +118,36 @@ class MediaPlaybackTest {
             bufferCurrentMs: Int,
         ) = Unit
     }
+
+    // ENCODING_PCM_FLOAT tracks reject byte[] writes (AudioTrack returns
+    // ERROR_INVALID_OPERATION), so the float path is a necessary conversion:
+    // little-endian f32 bytes in, the same sample values out, whole floats
+    // only.
+    @Test
+    fun pcm_float_bytes_convert_to_the_same_samples() {
+        val samples = floatArrayOf(1.0f, -2.5f, 0.0f, 0.125f)
+        val bytes = java.nio.ByteBuffer.allocate(samples.size * 4)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .also { buffer -> samples.forEach { buffer.putFloat(it) } }
+            .array()
+
+        val decoded = pcmBytesToFloats(bytes, bytes.size)
+
+        assertEquals(samples.toList(), decoded.toList())
+    }
+
+    @Test
+    fun pcm_float_conversion_ignores_a_partial_trailing_sample() {
+        val bytes = java.nio.ByteBuffer.allocate(6)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .putFloat(0.5f)
+            .put(0x01)
+            .put(0x02)
+            .array()
+
+        val decoded = pcmBytesToFloats(bytes, bytes.size)
+
+        assertEquals(1, decoded.size, "a partial float tail is not a sample")
+        assertEquals(0.5f, decoded[0])
+    }
 }

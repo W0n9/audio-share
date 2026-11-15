@@ -236,7 +236,14 @@ impl MediaReceiver {
         let idx = u64::from(seq) % REORDER_WINDOW;
         let w = (idx / 64) as usize;
         let lap = (u64::from(seq) / REORDER_WINDOW) as u32;
-        self.seen_lap[w] = lap;
+        // Re-tagging a word for a new lap must discard the previous lap's
+        // bits. Keeping them would make every sequence of this lap that shares
+        // the word look already-seen, and a stream that runs past one window
+        // (8192 datagrams, ~22 s) would be dropped as duplicates en masse.
+        if self.seen_lap[w] != lap {
+            self.seen_lap[w] = lap;
+            self.seen_bits[w] = 0;
+        }
         self.seen_bits[w] |= 1 << (idx % 64);
     }
 }
@@ -494,5 +501,36 @@ mod tests {
         let mut r = MediaReceiver::new();
         r.note_stale_generation();
         assert_eq!(r.unknown_config_drops, 1);
+    }
+
+    /// The dedup bitmap must survive its own lap: the window is 8192
+    /// sequences wide, and a stream runs far past that (a 48 kHz stream
+    /// covers it in ~22 s at the M4 send rate). Re-tagging a bitmap word for
+    /// the new lap must discard the previous lap's bits — otherwise every
+    /// sequence after the first lap is misread as an already-seen duplicate
+    /// and playback starves.
+    #[test]
+    fn dedup_survives_the_reorder_window_lapping() {
+        let mut r = MediaReceiver::new();
+        let total = 3 * REORDER_WINDOW + 64;
+        let mut duplicates = 0;
+        for seq in 0..total {
+            let header = MediaHeader {
+                stream_instance_id: 1,
+                config_generation: 1,
+                sequence: seq as u32,
+                timestamp: seq * 8,
+                flags: 0,
+            };
+            if r.observe(&header) == ObserveVerdict::Duplicate {
+                duplicates += 1;
+            }
+        }
+        assert_eq!(
+            duplicates, 0,
+            "in-order media past the dedup window must never look duplicated"
+        );
+        assert_eq!(r.cumulative_received, total);
+        assert_eq!(r.cumulative_lost, 0);
     }
 }
