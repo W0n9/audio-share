@@ -90,10 +90,19 @@ impl MediaTask {
                 tokio::select! {
                     _ = tick.tick() => {}
                     received = chunks.recv() => {
-                        if received.is_none() {
+                        match received {
                             // The capture stream ended; the control loop owns
                             // the StreamEnded push and tears the task down.
-                            return;
+                            None => return,
+                            // §7.4: a buffer that arrives while this task is
+                            // parked on `select!` is media, not a wake-up
+                            // signal. Dropping it here would starve the pump to
+                            // the few buffers left in the channel backlog.
+                            Some(chunk) => {
+                                if pump.accept(chunk).is_err() {
+                                    return;
+                                }
+                            }
                         }
                     }
                 }

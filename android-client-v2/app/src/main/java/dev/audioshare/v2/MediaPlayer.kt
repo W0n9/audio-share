@@ -5,6 +5,8 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.util.Log
 import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -77,16 +79,54 @@ interface AudioSink {
                 return null
             }
             track.play()
-            return AudioTrackSink(track, bytesPerSample * channels)
+            return AudioTrackSink(track, bytesPerSample * channels, encoding == AudioFormat.ENCODING_PCM_FLOAT)
         }
     }
 }
 
+/**
+ * Reinterpret little-endian PCM f32 bytes as samples.
+ *
+ * `AudioTrack.write(byte[], ...)` refuses `ENCODING_PCM_FLOAT` tracks, so the
+ * float path hands the platform samples instead of bytes. A trailing partial
+ * sample is dropped: capture guarantees frame alignment, and a half float is
+ * not audio.
+ */
+internal fun pcmBytesToFloats(bytes: ByteArray, length: Int): FloatArray {
+    val usable = minOf(length, bytes.size)
+    val samples = FloatArray(usable / FLOAT_BYTES)
+    if (samples.isEmpty()) return samples
+    val view = ByteBuffer.wrap(bytes, 0, usable).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+    view.get(samples)
+    return samples
+}
+
+/** Bytes per f32 sample. */
+private const val FLOAT_BYTES = 4
+
 /** The production sink: a streaming [AudioTrack]. */
-class AudioTrackSink(private val track: AudioTrack, override val frameBytes: Int) : AudioSink {
+class AudioTrackSink(
+    private val track: AudioTrack,
+    override val frameBytes: Int,
+    private val floatEncoding: Boolean,
+) : AudioSink {
     override fun write(bytes: ByteArray, length: Int): Int {
-        val accepted = track.write(bytes, 0, length, AudioTrack.WRITE_NON_BLOCKING)
-        return if (accepted > 0) accepted else 0
+        // ENCODING_PCM_FLOAT tracks reject byte[] writes outright
+        // (ERROR_INVALID_OPERATION), so F32 media must be offered as floats.
+        // The accepted count comes back in floats and is reported in bytes,
+        // because §9 accounts the platform's accepted bytes.
+        return if (floatEncoding) {
+            val samples = pcmBytesToFloats(bytes, length)
+            if (samples.isEmpty()) {
+                0
+            } else {
+                val written = track.write(samples, 0, samples.size, AudioTrack.WRITE_NON_BLOCKING)
+                if (written > 0) written * FLOAT_BYTES else 0
+            }
+        } else {
+            val written = track.write(bytes, 0, length, AudioTrack.WRITE_NON_BLOCKING)
+            if (written > 0) written else 0
+        }
     }
 
     override fun underruns(): Long = track.underrunCount.toLong()

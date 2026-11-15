@@ -887,3 +887,148 @@ async fn deleting_the_record_ends_the_live_session_and_rejects_reconnects() {
     );
     server.transport.stop();
 }
+
+// ---------------------------------------------------------------------------
+// §7 media delivery through the driver's media task.
+//
+// The interop harness drives `MediaPump::take_sendable` directly, so it can
+// never observe the driver's own receive loop. This test closes that gap: a
+// real-time capture source feeds `MediaTask`, and the Client counts the audio
+// the connection actually delivers.
+// ---------------------------------------------------------------------------
+
+/// One 10 ms stereo-f32 buffer at 48 kHz, like the production synthetic
+/// capture's cadence (a capture buffer per interval, in real time).
+const MEDIA_CHUNK_FRAMES: usize = 480;
+
+/// A capture source that emits real-time PCM chunks for a fixed stream.
+struct RealtimeMediaSource {
+    stream: v2_transport::media_source::StreamState,
+}
+
+impl v2_transport::media_source::MediaSource for RealtimeMediaSource {
+    fn status(&self) -> v2_transport::media_source::MediaStatus {
+        v2_transport::media_source::MediaStatus::Active(self.stream)
+    }
+
+    fn subscribe(&self) -> tokio::sync::mpsc::Receiver<v2_transport::media_source::MediaChunk> {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let stream = self.stream;
+        let chunk_bytes = MEDIA_CHUNK_FRAMES * stream.format.frame_bytes();
+        tokio::spawn(async move {
+            let mut start = stream.next_frame;
+            let mut cadence = tokio::time::interval(Duration::from_millis(10));
+            cadence.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                cadence.tick().await;
+                let chunk = v2_transport::media_source::MediaChunk {
+                    pcm: vec![0u8; chunk_bytes],
+                    start_frame: start,
+                    end_frame: start + MEDIA_CHUNK_FRAMES as u64,
+                    stream_instance_id: stream.stream_instance_id,
+                    config_generation: stream.config_generation,
+                };
+                start += MEDIA_CHUNK_FRAMES as u64;
+                if tx.send(chunk).await.is_err() {
+                    return;
+                }
+            }
+        });
+        rx
+    }
+}
+
+#[tokio::test]
+async fn subscribed_client_receives_media_in_real_time_not_a_trickle() {
+    let configuration = Configuration {
+        config_generation: 1,
+        codec: v2_transport::schema::Codec::Pcm as i32,
+        pcm: Some(PcmParameters {
+            sample_rate: 48_000,
+            channels: 2,
+            sample_format: v2_transport::schema::SampleFormat::F32Le as i32,
+        }),
+    };
+    let published = configuration.clone();
+    let server = TestServer::start(store_with_client(), Limits::defaults(), move |server| {
+        server.capture_source = Some(Arc::new(move || CaptureSnapshot {
+            configuration: Some(published.clone()),
+            healthy: true,
+            stream_active: true,
+            stream_instance_id: 4,
+            next_frame_timestamp: 0,
+        }));
+        server.media_source = Some(Arc::new(RealtimeMediaSource {
+            stream: v2_transport::media_source::StreamState {
+                stream_instance_id: 4,
+                config_generation: 1,
+                next_frame: 0,
+                format: v2_transport::media_source::StreamFormat {
+                    sample_rate: 48_000,
+                    channels: 2,
+                    bytes_per_sample: 4,
+                },
+            },
+        }));
+    })
+    .await;
+    let connection = connect(server.address).await;
+    let (mut send, mut recv) = connection.open_bi().await.expect("control stream");
+    authenticate(
+        &connection,
+        &mut send,
+        &mut recv,
+        server.identity.public_key_raw(),
+        1,
+    )
+    .await;
+    send_frame(&mut send, &negotiate(2, 2, &[])).await;
+    assert!(matches!(
+        read_frame(&mut recv).await.body,
+        Some(frame::Body::NegotiateResponse(_))
+    ));
+    assert!(matches!(
+        read_frame(&mut recv).await.body,
+        Some(frame::Body::ConfigurationPublished(_))
+    ));
+    send_frame(&mut send, &subscribe(3)).await;
+    assert!(matches!(
+        read_frame(&mut recv).await.body,
+        Some(frame::Body::SubscribeResponse(_))
+    ));
+    assert!(matches!(
+        read_frame(&mut recv).await.body,
+        Some(frame::Body::StreamStarted(_))
+    ));
+
+    // Count the audio the Client actually receives over a 2 s window. The
+    // §7.4 send-ahead window adds at most 100 ms, so real-time delivery
+    // yields ~96 000 frames; a source whose buffers are accepted but never
+    // pumped yields a small fraction of that.
+    const WINDOW: Duration = Duration::from_secs(2);
+    const FRAME_BYTES: u64 = 8; // f32 stereo
+    let deadline = tokio::time::Instant::now() + WINDOW;
+    let mut frames = 0u64;
+    let mut datagrams = 0u64;
+    loop {
+        let received = tokio::time::timeout_at(deadline, connection.read_datagram()).await;
+        match received {
+            Ok(Ok(datagram)) => {
+                datagrams += 1;
+                let payload = datagram.len().saturating_sub(24);
+                frames += (payload as u64) / FRAME_BYTES;
+            }
+            Ok(Err(error)) => panic!("datagram receive failed: {error}"),
+            Err(_) => break,
+        }
+    }
+    let realtime_frames = 2 * 48_000u64;
+    assert!(
+        frames * 10 >= realtime_frames * 6,
+        "media stalled: {frames} frames in 2 s ({datagrams} datagrams) = {}% of real-time",
+        frames * 100 / realtime_frames
+    );
+
+    connection.close(quinn::VarInt::from_u32(701), b"");
+    server.transport.stop();
+}
