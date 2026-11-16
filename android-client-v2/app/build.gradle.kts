@@ -11,6 +11,10 @@ plugins {
 
 val ndkDir = providers.environmentVariable("ANDROID_HOME").orElse(
     providers.environmentVariable("ANDROID_NDK_HOME")
+).orElse(
+    // IDE/Gradle sync may not inherit ANDROID_HOME; use the conventional
+    // per-user SDK location as a last resort.
+    providers.environmentVariable("HOME").map { "$it/Android/Sdk" }
 ).map { "$it/ndk/27.2.12479018" }
 
 // Real-device scope stays arm64-v8a by default. `-PandroidAbi=x86_64` selects
@@ -161,13 +165,17 @@ val stripNative by tasks.registering(Exec::class) {
     val dest = jniLibsDir.resolve("libaudio_share_client_v2_native.so")
     inputs.file(so)
     outputs.file(dest)
-    commandLine(
-        "bash", "-c",
-        "mkdir -p ${jniLibsDir.absolutePath} && " +
-            "cp ${so.absolutePath} ${dest.absolutePath} && " +
-            "${ndkDir.get()}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip " +
-            "${dest.absolutePath}"
-    )
+    // Resolve ndkDir at execution time so Gradle sync/configuration does not
+    // fail when the SDK environment is absent.
+    doFirst {
+        commandLine(
+            "bash", "-c",
+            "mkdir -p ${jniLibsDir.absolutePath} && " +
+                "cp ${so.absolutePath} ${dest.absolutePath} && " +
+                "${ndkDir.get()}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip " +
+                "${dest.absolutePath}"
+        )
+    }
 }
 
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
