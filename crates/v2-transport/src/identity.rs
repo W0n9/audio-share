@@ -176,19 +176,7 @@ impl ServerIdentity {
                     });
                 }
             }
-            let rng = ring::rand::SystemRandom::new();
-            let document = Ed25519KeyPair::generate_pkcs8(&rng)
-                .map_err(|_| IdentityError::Io {
-                    operation: "generate Ed25519 identity key",
-                    source: io::Error::other("ring key generation failed"),
-                })?
-                .as_ref()
-                .to_vec();
-            let key_pair = Ed25519KeyPair::from_pkcs8(&document)
-                .expect("ring accepts the PKCS#8 document it just produced");
-            let identity = Self::from_key_pair(key_pair, document.clone(), key_path.clone());
-            atomic_write_with_backup(&key_path, &pkcs8_to_pem(&document))?;
-            Ok(identity)
+            Self::generate_and_persist(&key_path)
         }
     }
 
@@ -218,6 +206,12 @@ impl ServerIdentity {
             )?;
         }
         let key_path = identity_dir.join(IDENTITY_KEY_FILE);
+        Self::generate_and_persist(&key_path)
+    }
+
+    /// Generate a fresh Ed25519 key, wrap it, and atomically persist it with
+    /// one backup generation. Shared by first-start creation and reset.
+    fn generate_and_persist(key_path: &Path) -> Result<Self, IdentityError> {
         let rng = ring::rand::SystemRandom::new();
         let document = Ed25519KeyPair::generate_pkcs8(&rng)
             .map_err(|_| IdentityError::Io {
@@ -228,8 +222,8 @@ impl ServerIdentity {
             .to_vec();
         let key_pair = Ed25519KeyPair::from_pkcs8(&document)
             .expect("ring accepts the PKCS#8 document it just produced");
-        let identity = Self::from_key_pair(key_pair, document.clone(), key_path.clone());
-        atomic_write_with_backup(&key_path, &pkcs8_to_pem(&document))?;
+        let identity = Self::from_key_pair(key_pair, document.clone(), key_path.to_path_buf());
+        atomic_write_with_backup(key_path, &pkcs8_to_pem(&document))?;
         Ok(identity)
     }
 

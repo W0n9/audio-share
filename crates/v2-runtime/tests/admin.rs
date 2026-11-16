@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use p256::ecdsa::SigningKey;
-use v2_runtime::admin::{ClientStateView, CorePairingAdmin, PairingAdmin, PairingMode};
+use v2_runtime::admin::{ClientStateView, CorePairingAdmin, PairingAdmin, RequestedPairingMode};
 use v2_transport::auth_store::{Authorization, AuthorizationStore};
 use v2_transport::pairing::{self, ApprovalRequest, PairingCore};
 use v2_transport::schema::PairingMode as WirePairingMode;
@@ -35,7 +35,7 @@ fn client_key() -> Vec<u8> {
 fn approval(request_id: u64, core: &PairingCore, accepted: Arc<AtomicBool>) {
     core.request_approval(
         ApprovalRequest {
-            request_id,
+            approval_id: request_id,
             client_id: "0011223344556677".to_owned(),
             display_name: "Pixel 8".to_owned(),
             mode: WirePairingMode::Qr,
@@ -51,9 +51,9 @@ fn approval(request_id: u64, core: &PairingCore, accepted: Arc<AtomicBool>) {
 #[test]
 fn qr_begin_returns_a_parseable_payload_and_an_svg() {
     let (admin, core, _store) = admin();
-    let invitation = admin.begin(PairingMode::Qr).expect("begin QR");
+    let invitation = admin.begin(RequestedPairingMode::Qr).expect("begin QR");
 
-    assert_eq!(invitation.mode, PairingMode::Qr);
+    assert_eq!(invitation.mode, RequestedPairingMode::Qr);
     assert_eq!(invitation.fingerprint, core.fingerprint());
     assert!(invitation.expires_in_secs > 0);
     let uri = invitation.qr_uri.as_deref().expect("QR URI");
@@ -71,8 +71,8 @@ fn qr_begin_returns_a_parseable_payload_and_an_svg() {
 #[test]
 fn sas_begin_opens_the_window_without_a_qr() {
     let (admin, core, _store) = admin();
-    let invitation = admin.begin(PairingMode::Sas).expect("begin SAS");
-    assert_eq!(invitation.mode, PairingMode::Sas);
+    let invitation = admin.begin(RequestedPairingMode::Sas).expect("begin SAS");
+    assert_eq!(invitation.mode, RequestedPairingMode::Sas);
     assert!(invitation.qr_uri.is_none());
     assert!(invitation.qr_svg.is_none());
     assert!(core.sas_window_open());
@@ -91,7 +91,7 @@ fn pending_approvals_are_listed_and_approve_routes_to_the_core() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].display_name, "Pixel 8");
     assert_eq!(pending[0].sas.as_deref(), Some("123 456"));
-    assert_eq!(pending[0].mode, PairingMode::Qr);
+    assert_eq!(pending[0].mode, RequestedPairingMode::Qr);
 
     assert!(admin.approve(41));
     assert!(accepted.load(Ordering::SeqCst));

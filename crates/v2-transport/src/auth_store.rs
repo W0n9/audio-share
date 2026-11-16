@@ -248,34 +248,7 @@ pub struct StoreLock {
 impl StoreLock {
     /// Block until the exclusive lock is held.
     pub fn acquire(data_dir: &Path) -> Result<Self, StoreError> {
-        let pairing_dir = data_dir.join("pairing");
-        fs::create_dir_all(&pairing_dir).map_err(|source| StoreError::Io {
-            operation: "create pairing directory",
-            source,
-        })?;
-        tighten_dir(&pairing_dir)?;
-        let path = pairing_dir.join(LOCK_FILE);
-        let mut options = fs::OpenOptions::new();
-        options.create(true).read(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
-        let file = options.open(&path).map_err(|source| StoreError::Io {
-            operation: "open authorization lock",
-            source,
-        })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|source| {
-                StoreError::Io {
-                    operation: "restrict authorization lock",
-                    source,
-                }
-            })?;
-        }
+        let (path, file) = open_lock_file(data_dir)?;
         file.lock().map_err(|source| StoreError::Io {
             operation: "acquire authorization lock",
             source,
@@ -283,10 +256,60 @@ impl StoreLock {
         Ok(Self { path, _file: file })
     }
 
+    /// Try to take the exclusive lock without blocking.
+    ///
+    /// `Ok(None)` means another Core/admin operation holds it. Offline admin
+    /// uses this so a running Server produces a clear "stop the Server first"
+    /// error instead of an indefinite wait (pairing.md §10.3).
+    pub fn try_acquire(data_dir: &Path) -> Result<Option<Self>, StoreError> {
+        let (path, file) = open_lock_file(data_dir)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self { path, _file: file })),
+            Err(fs::TryLockError::WouldBlock) => Ok(None),
+            Err(fs::TryLockError::Error(source)) => Err(StoreError::Io {
+                operation: "acquire authorization lock",
+                source,
+            }),
+        }
+    }
+
     /// The lock file path (diagnostics).
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+/// Open (and permission-tighten) the lock file for a Core/admin operation.
+fn open_lock_file(data_dir: &Path) -> Result<(PathBuf, fs::File), StoreError> {
+    let pairing_dir = data_dir.join("pairing");
+    fs::create_dir_all(&pairing_dir).map_err(|source| StoreError::Io {
+        operation: "create pairing directory",
+        source,
+    })?;
+    tighten_dir(&pairing_dir)?;
+    let path = pairing_dir.join(LOCK_FILE);
+    let mut options = fs::OpenOptions::new();
+    options.create(true).read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let file = options.open(&path).map_err(|source| StoreError::Io {
+        operation: "open authorization lock",
+        source,
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|source| {
+            StoreError::Io {
+                operation: "restrict authorization lock",
+                source,
+            }
+        })?;
+    }
+    Ok((path, file))
 }
 
 /// The in-memory view over `clients.json` (§8.1). The running Server Core owns

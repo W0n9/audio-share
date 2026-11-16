@@ -230,7 +230,9 @@ fn qr_happy_path_verifies_then_waits_for_local_approval() {
         "one request is surfaced exactly once"
     );
 
-    let out = machine.handle(Event::PairingApproved { request_id: 1 });
+    let out = machine.handle(Event::PairingApproved {
+        approval_id: approval.approval_id,
+    });
     assert_eq!(out.len(), 1);
     match body(&out[0]) {
         frame::Body::PairingResult(result) => {
@@ -273,7 +275,12 @@ fn declined_approval_is_201_and_close_with_nothing_persisted() {
         }),
         "192.168.1.20",
     ));
-    let out = machine.handle(Event::PairingDeclined { request_id: 1 });
+    let approval = machine
+        .take_pairing_approval_request()
+        .expect("verified pairing surfaces an approval request");
+    let out = machine.handle(Event::PairingDeclined {
+        approval_id: approval.approval_id,
+    });
     assert_eq!(out.len(), 2, "{out:?}");
     match body(&out[0]) {
         frame::Body::PairingResult(result) => {
@@ -431,6 +438,122 @@ fn pairing_deadline_is_206_and_close() {
 }
 
 #[test]
+fn ninth_concurrent_pairing_admission_is_rate_limited_with_302() {
+    let clock = TestClock::new();
+    let core = core_with_nonce(clock);
+    core.begin_sas();
+    // Eight other live exchanges already hold the pairing capacity.
+    let _permits: Vec<_> = (0..8)
+        .map(|_| core.admit_request(&request_sas()).expect("admission"))
+        .collect();
+    let mut machine = machine(config(Arc::clone(&core)));
+    let out = machine.handle(frame_event(
+        frame::Body::PairingRequest(request_sas()),
+        "192.168.1.20",
+    ));
+    assert_eq!(out.len(), 1, "{out:?}");
+    match body(&out[0]) {
+        frame::Body::Close(close) => assert_eq!(close.code, 302),
+        other => panic!("expected Close(302), got {other:?}"),
+    }
+    assert_eq!(machine.state(), ServerState::Closing);
+}
+
+#[test]
+fn pairing_deadline_removes_the_pending_admin_card() {
+    let clock = TestClock::new();
+    let core = core_with_nonce(clock);
+    let mut machine = machine(config(Arc::clone(&core)));
+    machine.handle(frame_event(
+        frame::Body::PairingRequest(request_qr()),
+        "192.168.1.20",
+    ));
+    machine.handle(frame_event(
+        frame::Body::PairingConfirm(PairingConfirm {
+            request_id: 1,
+            binding_echo: unhex(QR_BINDING),
+            client_proof: unhex(QR_PROOF),
+        }),
+        "192.168.1.20",
+    ));
+    let approval = machine
+        .take_pairing_approval_request()
+        .expect("verified pairing surfaces an approval");
+    core.request_approval(approval, Box::new(|_| {}));
+    assert_eq!(core.pending_approvals().len(), 1);
+
+    let out = machine.handle(Event::PairingDeadline);
+    match body(&out[0]) {
+        frame::Body::Error(error) => assert_eq!(error.status.code, 206),
+        other => panic!("expected Error(206), got {other:?}"),
+    }
+    assert!(
+        core.pending_approvals().is_empty(),
+        "the GUI must stop showing a timed-out pairing card"
+    );
+}
+
+#[test]
+fn pairing_deadline_releases_the_capacity_permit() {
+    use pairing::PairingError;
+
+    let clock = TestClock::new();
+    let core = core_with_nonce(clock);
+    core.begin_sas();
+    let mut machine = machine(config(Arc::clone(&core)));
+    machine.handle(frame_event(
+        frame::Body::PairingRequest(request_sas()),
+        "192.168.1.20",
+    ));
+    // The machine's pending exchange holds one slot; fill the other seven.
+    let held: Vec<_> = (0..7)
+        .map(|_| core.admit_request(&request_sas()).expect("admission"))
+        .collect();
+    assert!(matches!(
+        core.admit_request(&request_sas()),
+        Err(PairingError::ConcurrentLimit)
+    ));
+
+    // The deadline drops the pending exchange and with it the RAII permit.
+    machine.handle(Event::PairingDeadline);
+    assert!(
+        core.admit_request(&request_sas()).is_ok(),
+        "a timed-out exchange must release its pairing slot"
+    );
+    drop(held);
+}
+
+#[test]
+fn transport_loss_removes_the_pending_admin_card() {
+    let clock = TestClock::new();
+    let core = core_with_nonce(clock);
+    let mut machine = machine(config(Arc::clone(&core)));
+    machine.handle(frame_event(
+        frame::Body::PairingRequest(request_qr()),
+        "192.168.1.20",
+    ));
+    machine.handle(frame_event(
+        frame::Body::PairingConfirm(PairingConfirm {
+            request_id: 1,
+            binding_echo: unhex(QR_BINDING),
+            client_proof: unhex(QR_PROOF),
+        }),
+        "192.168.1.20",
+    ));
+    let approval = machine
+        .take_pairing_approval_request()
+        .expect("verified pairing surfaces an approval");
+    core.request_approval(approval, Box::new(|_| {}));
+    assert_eq!(core.pending_approvals().len(), 1);
+
+    let _ = machine.handle(Event::TransportLost);
+    assert!(
+        core.pending_approvals().is_empty(),
+        "a dead connection must not leave an approvable card"
+    );
+}
+
+#[test]
 fn five_pairing_failures_from_one_address_close_302() {
     let clock = TestClock::new();
     let core = core_with_nonce(clock);
@@ -496,7 +619,9 @@ fn sas_window_pairs_without_a_nonce_and_derives_the_fixture_sas() {
     ));
     let approval = machine.take_pairing_approval_request().expect("approval");
     assert_eq!(approval.sas.as_deref(), Some("900 067"));
-    let out = machine.handle(Event::PairingApproved { request_id: 1 });
+    let out = machine.handle(Event::PairingApproved {
+        approval_id: approval.approval_id,
+    });
     match body(&out[0]) {
         frame::Body::PairingResult(result) => assert_eq!(result.status.code, 0),
         other => panic!("expected PairingResult(OK), got {other:?}"),

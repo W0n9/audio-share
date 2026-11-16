@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
-use v2_runtime::admin::{PairingAdmin, PairingMode};
+use v2_runtime::admin::{PairingAdmin, RequestedPairingMode};
 use v2_runtime::{RuntimeConfig, V2Runtime};
 use v2_transport::auth;
 use v2_transport::codes::{ErrorCode, ALPN_PROTOCOL};
@@ -64,7 +64,9 @@ async fn revoking_through_the_admin_surface_closes_the_active_session() {
     .await
     .expect("runtime");
     let admin = runtime.admin();
-    admin.begin(PairingMode::Sas).expect("open SAS window");
+    admin
+        .begin(RequestedPairingMode::Sas)
+        .expect("open SAS window");
 
     // Approve the verified pairing exactly as the operator would in the GUI.
     let mut approvals = runtime.pairing().subscribe_approvals();
@@ -72,7 +74,7 @@ async fn revoking_through_the_admin_surface_closes_the_active_session() {
     let approver = tokio::spawn(async move {
         if let Ok(request) = approvals.recv().await {
             assert!(request.sas.is_some(), "the operator sees the SAS");
-            assert!(approving.approve(request.request_id));
+            assert!(approving.approve(request.approval_id));
         }
     });
 
