@@ -74,6 +74,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // The test-support harness is reached by Class.forName; keep its
+            // name only in explicitly flagged builds.
+            if (testSupport) {
+                proguardFiles("proguard-test-support.pro")
+            }
             // 测试 APK 是独立的 API 使用者，R8 必须保留它消费的本地 Binder seam。
             if (providers.gradleProperty("deviceTests").map(String::toBoolean).getOrElse(false)) {
                 proguardFiles("proguard-device-tests.pro")
@@ -99,6 +104,13 @@ android {
             // frozen .proto the Rust side does (never a copy).
             proto {
                 srcDir("$rootDir/../protos/wire-protocol-v2")
+            }
+            // TEST-SUPPORT ONLY: the adb-extras lifecycle harness. Without
+            // -PtestSupport the class is absent from the source set, so a
+            // production build has no extras-addressing path at all.
+            if (testSupport) {
+                java.srcDir("src/testSupport/java")
+                kotlin.srcDir("src/testSupport/java")
             }
         }
     }

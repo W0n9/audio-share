@@ -194,6 +194,13 @@ class ClientSession(
                     val player = MediaPlayer(NativeMediaBridge).also { it.attach(h) }
                     synchronized(lifecycleLock) { mediaPlayer = player }
                     player.start()
+                    if (configuration.pairing != null) {
+                        // Pairing results must be captured even when the
+                        // Server closes right after PairingResult (as-cmd pair
+                        // exits by design), so this watcher does not depend on
+                        // the state source or the 250 ms stats poll.
+                        startPairingWatcher(h)
+                    }
                     source to ClientNative.connect(h, bind)
                 }
             }
@@ -212,8 +219,49 @@ class ClientSession(
                 scheduleReconnect(h, source, lifetime)
                 return@execute
             }
-            startStatsPolling(h, source, lifetime, pairing = configuration.pairing != null)
+            startStatsPolling(h, source, lifetime)
         }
+    }
+
+    /**
+     * Dedicated pairing-state/credential watcher. Native pairing state is a
+     * one-shot result that must survive transport teardown: `as-cmd pair`
+     * closes the connection immediately after `PairingResult(OK)`, so relying
+     * on the state relay (which is invalidated by reconnect) would lose the
+     * credential.
+     */
+    private fun startPairingWatcher(h: Long) {
+        val watcher = Thread {
+            var credentialSeen = false
+            var failed = false
+            while (true) {
+                val pairingJson = ClientNative.getPairingState(h)
+                if (!pairingJson.isNullOrEmpty()) {
+                    listener.onPairingState(pairingJson)
+                    failed = pairingJson.contains("\"phase\":\"FAILED\"")
+                }
+                val credential = ClientNative.getCredentialSummary(h)
+                if (!credential.isNullOrEmpty()) {
+                    if (!credentialSeen) {
+                        credentialSeen = true
+                        listener.onCredential(credential)
+                    }
+                    break
+                }
+                val state = ClientNative.getState(h) ?: ""
+                if (state.isEmpty() && pairingJson.isNullOrEmpty()) break
+                if (failed) break
+                if (state.isNotEmpty() && state != "IDLE" &&
+                    state != "AUTHENTICATING" && state != "NEGOTIATING" &&
+                    state != "READY" && state != "PLAYING" && pairingJson.isNullOrEmpty()
+                ) {
+                    break
+                }
+                Thread.sleep(25)
+            }
+        }
+        watcher.name = "v2-pairing-watch"
+        watcher.start()
     }
 
     /**
@@ -234,7 +282,7 @@ class ClientSession(
                 configuration.host,
                 configuration.port,
                 pairing.mode,
-                configuration.pinnedSpkiHex,
+                configuration.serverSpkiSha256Hex,
                 configuration.serverPublicKeyHex,
                 pairing.nonceHex,
                 pairing.displayName,
@@ -247,7 +295,7 @@ class ClientSession(
             return ClientNative.createSession(
                 configuration.host,
                 configuration.port,
-                configuration.pinnedSpkiHex,
+                configuration.serverSpkiSha256Hex,
                 configuration.serverPublicKeyHex,
                 configuration.clientName,
             )
@@ -260,7 +308,7 @@ class ClientSession(
         return ClientNative.createAuthSession(
             configuration.host,
             configuration.port,
-            configuration.pinnedSpkiHex,
+            configuration.serverSpkiSha256Hex,
             configuration.serverPublicKeyHex,
             configuration.clientName,
             signer,
@@ -316,11 +364,9 @@ class ClientSession(
         h: Long,
         source: SessionStateRelay.Source,
         lifetime: Any,
-        pairing: Boolean,
     ) {
         val poller = Thread {
             val myHandle = h
-            var credentialSeen = false
             // §6.3: only retryable closes (and transport loss with no Close,
             // close_code null) reconnect. Pairing/admin/security closes surface
             // to the user and must not auto-retry.
@@ -333,17 +379,6 @@ class ClientSession(
                         // §6.3：仅当前会话可以重置 backoff。
                         synchronized(lifecycleLock) {
                             if (ownsSessionLocked(lifetime, source, myHandle)) backoffAttempts.set(0)
-                        }
-                    }
-                    if (pairing) {
-                        val pairingJson = ClientNative.getPairingState(myHandle)
-                        if (!pairingJson.isNullOrEmpty() && source.isCurrent()) {
-                            listener.onPairingState(pairingJson)
-                        }
-                        val credential = ClientNative.getCredentialSummary(myHandle)
-                        if (!credentialSeen && !credential.isNullOrEmpty() && source.isCurrent()) {
-                            credentialSeen = true
-                            listener.onCredential(credential)
                         }
                     }
                     val statsJson = ClientNative.getStats(myHandle)
@@ -532,7 +567,7 @@ class ClientSession(
 data class SessionConfiguration(
     val host: String,
     val port: Int,
-    val pinnedSpkiHex: String,
+    val serverSpkiSha256Hex: String,
     val serverPublicKeyHex: String,
     val clientName: String,
     /** The Client identity signer (Keystore in production). */

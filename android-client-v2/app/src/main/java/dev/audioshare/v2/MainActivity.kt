@@ -48,27 +48,20 @@ class MainActivity : Activity() {
             logView.text = "Pairing is required. Start pairing from the app UI."
             return
         }
-        // TEST-SUPPORT ONLY: the adb-extras lifecycle harness. With
-        // BuildConfig.TEST_SUPPORT == false this method is unreachable and R8
-        // removes the extras-addressing path from production builds.
-        if (!startTestSupportSession()) {
+        // TEST-SUPPORT ONLY: reflectively load the harness compiled only with
+        // -PtestSupport=true. Production has no extras path in this class.
+        if (!tryTestSupportSession()) {
             logView.text = "config missing: pass host/pinnedSpki/serverKey extras (test config)"
             return
         }
     }
 
-    private fun startTestSupportSession(): Boolean {
-        val host = intent.getStringExtra("host") ?: ""
-        val pin = intent.getStringExtra("pinnedSpki") ?: ""
-        val serverKey = intent.getStringExtra("serverKey") ?: ""
-        if (host.isEmpty() || pin.isEmpty() || serverKey.isEmpty()) return false
-        val startIntent = serviceIntent.apply {
-            action = ControlSessionService.ACTION_START
-            putExtras(intent)
-        }
-        startService(startIntent)
-        bound = bindService(startIntent, connection, Context.BIND_AUTO_CREATE)
-        return true
+    private fun tryTestSupportSession(): Boolean = try {
+        Class.forName("dev.audioshare.v2.TestSupportHarness")
+            .getMethod("startActivitySession", Activity::class.java)
+            .invoke(null, this) as Boolean
+    } catch (_: Throwable) {
+        false
     }
 
     private val connectionIntent by lazy { serviceIntent.apply { action = ControlSessionService.ACTION_START } }
