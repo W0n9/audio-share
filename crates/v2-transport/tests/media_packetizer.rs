@@ -127,9 +127,7 @@ fn config_change_flag_marks_the_first_datagram_of_a_new_generation() {
 fn sequence_wraps_mod_u32_and_timestamps_advance_by_frames() {
     let mut packetizer = MediaPacketizer::new(9, 1, 8);
     packetizer.seek(0xffff_ffff, 7).expect("seek");
-    let datagrams = packetizer
-        .packetize(&[0u8; 32], 40)
-        .expect("two datagrams");
+    let datagrams = packetizer.packetize(&[0u8; 32], 40).expect("two datagrams");
     assert_eq!(
         MediaHeader::parse(&datagrams[0]).unwrap().0.sequence,
         0xffff_ffff

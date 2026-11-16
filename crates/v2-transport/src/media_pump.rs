@@ -100,7 +100,12 @@ impl MediaPump {
         if frame_bytes == 0 {
             return 0;
         }
-        (self.pending.iter().map(|chunk| chunk.pcm.len()).sum::<usize>() / frame_bytes) as u64
+        (self
+            .pending
+            .iter()
+            .map(|chunk| chunk.pcm.len())
+            .sum::<usize>()
+            / frame_bytes) as u64
     }
 
     /// Accept one capture buffer. Non-blocking and bounded: beyond
@@ -354,9 +359,7 @@ mod tests {
     fn a_late_subscriber_starts_at_the_announced_anchor() {
         let mut pump = MediaPump::new(stream(1, 1));
         pump.accept(chunk(1, 1, 96_000, 960)).expect("accept");
-        let sent = pump
-            .take_sendable(Instant::now(), 1_192, 8)
-            .expect("send");
+        let sent = pump.take_sendable(Instant::now(), 1_192, 8).expect("send");
         let first = MediaHeader::parse(&sent[0]).expect("header").0;
         assert_eq!(first.timestamp, 96_000);
         assert_eq!(
@@ -380,16 +383,12 @@ mod tests {
         let mut pump = MediaPump::new(stream(1, 1));
         pump.accept(chunk(1, 1, 0, 960)).expect("accept");
         pump.accept(chunk(1, 1, 120, 960)).expect("accept");
-        let sent = pump
-            .take_sendable(Instant::now(), 1_192, 64)
-            .expect("send");
+        let sent = pump.take_sendable(Instant::now(), 1_192, 64).expect("send");
         let frames: Vec<u64> = sent
             .iter()
             .map(|d| MediaHeader::parse(d).expect("header").0.timestamp)
             .collect();
-        let expected: Vec<u64> = (0..sent.len() as u64)
-            .map(|i| i * 120)
-            .collect();
+        let expected: Vec<u64> = (0..sent.len() as u64).map(|i| i * 120).collect();
         assert_eq!(frames, expected);
         assert_eq!(pump.next_frame(), 240);
     }
