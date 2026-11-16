@@ -66,7 +66,7 @@ final class PairingContract {
                 runPairingCase(instrumentation, null, arguments.getString("uri"));
                 break;
             case "reload":
-                runStoredConnectCase(instrumentation, null, null);
+                runStoredConnectCase(instrumentation, null, arguments.getString("pin"));
                 break;
             case "revoked":
                 runStoredConnectCase(instrumentation, 204, arguments.getString("pin"));
@@ -188,7 +188,8 @@ final class PairingContract {
             awaitLiveState(20_000);
             List<CredentialRecord> records = service.credentials();
             if (records.isEmpty()) throw new AssertionError("no stored credential");
-            sendProgress(instrumentation, "RELOAD_OK pin=" + records.get(0).getServerSpkiSha256Hex().substring(0, 16));
+            String used = pin != null ? pin : records.get(0).getServerSpkiSha256Hex();
+            sendProgress(instrumentation, "RELOAD_OK pin=" + used.substring(0, 16));
             service.disconnect();
             return;
         }
