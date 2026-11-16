@@ -13,6 +13,16 @@ val ndkDir = providers.environmentVariable("ANDROID_HOME").orElse(
     providers.environmentVariable("ANDROID_NDK_HOME")
 ).map { "$it/ndk/27.2.12479018" }
 
+// Real-device scope stays arm64-v8a by default. `-PandroidAbi=x86_64` selects
+// the Android emulator ABI for development/CI only — emulator results are not
+// real-device acceptance evidence (roadmap §7.3).
+val androidAbi = providers.gradleProperty("androidAbi").orElse("arm64-v8a").get()
+val cargoTarget = when (androidAbi) {
+    "arm64-v8a" -> "aarch64-linux-android"
+    "x86_64" -> "x86_64-linux-android"
+    else -> throw GradleException("Unsupported -PandroidAbi=$androidAbi (use arm64-v8a or x86_64)")
+}
+
 android {
     namespace = "dev.audioshare.v2"
     compileSdk = 35
@@ -26,8 +36,8 @@ android {
         versionName = "0.1.0-v2"
         testInstrumentationRunner = "dev.audioshare.v2.ControlSessionInstrumentation"
         ndk {
-            // arm64 real-device scope for this ticket
-            abiFilters += "arm64-v8a"
+            // arm64-v8a is the real-device scope; x86_64 is the emulator ABI.
+            abiFilters += androidAbi
         }
     }
 
@@ -61,6 +71,8 @@ android {
         getByName("main") {
             // generated dir under build/ so `clean` starts without a stale
             // native lib in source dirs
+            // Keep the ABI subdirectory layout (<dir>/<abi>/lib*.so); abiFilters
+            // selects which ABI is packaged.
             jniLibs.srcDir("build/generated/jniLibs")
             // ONE schema, two ends: the Kotlin codegen compiles the same
             // frozen .proto the Rust side does (never a copy).
@@ -112,10 +124,9 @@ protobuf {
 // native/.cargo/config.toml — cargo-ndk is NOT used), then NDK llvm-strip into
 // jniLibs. Skipped with -PnoNative=true.
 
-val cargoTarget = "aarch64-linux-android"
 val nativeDir = rootProject.projectDir.resolve("native")
 val cargoOut = nativeDir.resolve("target/${cargoTarget}/release")
-val jniLibsDir = projectDir.resolve("build/generated/jniLibs/arm64-v8a")
+val jniLibsDir = projectDir.resolve("build/generated/jniLibs/$androidAbi")
 
 // TEST-ONLY. The fixture client identity key is compiled into the native
 // library only when `-PtestSupport=true` is passed explicitly. Default
