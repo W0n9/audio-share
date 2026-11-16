@@ -38,9 +38,11 @@ data class PairingUi(
     val isFailed: Boolean get() = phase == "FAILED"
 
     /**
-     * The SAS is a human comparison, never an automatic one: Confirm is only
-     * valid when the code the user read on the Server normalizes to the code
-     * this Client derived.
+     * The SAS is a human comparison, never an automatic one: in SAS mode
+     * Confirm is only valid when the code the user read on the Server
+     * normalizes to the code this Client derived. QR mode is already bound to
+     * the Server identity by the payload pin (pairing.md §6.1), so the QR
+     * path stays one action and Confirm does not require typing the code.
      */
     val sasMatches: Boolean
         get() {
@@ -48,6 +50,9 @@ data class PairingUi(
             val entered = SasCode.normalize(sasInput) ?: return false
             return expected == entered
         }
+
+    val canConfirm: Boolean
+        get() = mode == "qr" || sasMatches
 }
 
 /** Complete UI state; the reducer is pure and Android-free. */
@@ -164,10 +169,10 @@ object AppReducer {
 
         UiEvent.ConfirmPairing -> {
             val pairing = state.pairing
-            if (pairing != null && pairing.isAwaitingConfirmation && pairing.sasMatches) {
+            if (pairing != null && pairing.isAwaitingConfirmation && pairing.canConfirm) {
                 Reduction(state, AppCommand.ConfirmPairing)
             } else {
-                val next = if (pairing != null && pairing.isAwaitingConfirmation) {
+                val next = if (pairing != null && pairing.isAwaitingConfirmation && !pairing.canConfirm) {
                     pairing.copy(message = "The code does not match the one shown on the Server.")
                 } else {
                     pairing

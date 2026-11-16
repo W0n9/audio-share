@@ -210,17 +210,25 @@ private fun PairingScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
                         modifier = Modifier.fillMaxWidth().testTag("pairing-sas"),
                     )
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = pairing.sasInput,
-                        onValueChange = { onEvent(UiEvent.SasInputChanged(it)) },
-                        label = { Text("Enter the code shown on the Server") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("pairing-sas-input"),
-                    )
-                    if (pairing.sasInput.isNotEmpty() && !pairing.sasMatches) {
+                    if (pairing.mode == "sas") {
+                        OutlinedTextField(
+                            value = pairing.sasInput,
+                            onValueChange = { onEvent(UiEvent.SasInputChanged(it)) },
+                            label = { Text("Enter the code shown on the Server") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("pairing-sas-input"),
+                        )
+                        if (pairing.sasInput.isNotEmpty() && !pairing.sasMatches) {
+                            Text(
+                                "The codes do not match.",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    } else {
                         Text(
-                            "The codes do not match.",
-                            color = MaterialTheme.colorScheme.error,
+                            "The QR code already verified the Server identity. " +
+                                "Compare the code and fingerprint, then confirm.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -234,7 +242,7 @@ private fun PairingScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     Button(
                         onClick = { onEvent(UiEvent.ConfirmPairing) },
-                        enabled = pairing.sasMatches,
+                        enabled = pairing.canConfirm,
                         modifier = Modifier.fillMaxWidth().testTag("confirm-pairing"),
                     ) {
                         Text("Confirm pairing")

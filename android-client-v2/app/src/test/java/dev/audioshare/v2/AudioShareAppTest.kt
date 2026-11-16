@@ -167,6 +167,24 @@ class AudioShareAppTest {
     }
 
     @Test
+    fun qr_pairing_can_be_confirmed_without_typing_a_code() {
+        start(
+            AppState(
+                screen = AppScreen.PAIRING,
+                address = "10.0.2.2:65531",
+                pairing = PairingUi(
+                    mode = "qr",
+                    phase = "AWAITING_CONFIRMATION",
+                    sas = "123 456",
+                    fingerprint = "AAAA1111 BBBB2222",
+                ),
+            )
+        )
+        compose.onNodeWithTag("confirm-pairing").performScrollTo().assertIsEnabled().performClick()
+        assertTrue(events.contains(UiEvent.ConfirmPairing))
+    }
+
+    @Test
     fun about_screen_states_the_beta_version_limits_and_v1_warning() {
         start(AppState(screen = AppScreen.ABOUT))
         compose.onNodeWithTag("about-version").assertTextContains("0.2.0-beta", substring = true)
