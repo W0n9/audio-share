@@ -2,6 +2,7 @@
 
 import org.gradle.api.tasks.Exec
 import com.google.protobuf.gradle.proto
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -18,15 +19,62 @@ val ndkDir = providers.environmentVariable("ANDROID_HOME").orElse(
     providers.environmentVariable("HOME").map { "$it/Android/Sdk" }
 ).map { "$it/ndk/27.2.12479018" }
 
-// Real-device scope stays arm64-v8a by default. `-PandroidAbi=x86_64` selects
-// the Android emulator ABI for development/CI only — emulator results are not
-// real-device acceptance evidence (roadmap §7.3).
-val androidAbi = providers.gradleProperty("androidAbi").orElse("arm64-v8a").get()
-val cargoTarget = when (androidAbi) {
-    "arm64-v8a" -> "aarch64-linux-android"
-    "x86_64" -> "x86_64-linux-android"
-    else -> throw GradleException("Unsupported -PandroidAbi=$androidAbi (use arm64-v8a or x86_64)")
+// ABI selection. The production default stays arm64-v8a (real devices).
+// The beta release builds ONE universal APK containing both arm64-v8a and
+// x86_64 with `-PandroidAbis=arm64-v8a,x86_64`; `-PandroidAbi=x86_64`
+// remains supported for emulator development.
+val abiToCargoTarget = mapOf(
+    "arm64-v8a" to "aarch64-linux-android",
+    "x86_64" to "x86_64-linux-android",
+)
+val abiRequest = providers.gradleProperty("androidAbis")
+    .orElse(providers.gradleProperty("androidAbi"))
+    .getOrElse("arm64-v8a")
+val androidAbis = abiRequest.split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+require(androidAbis.isNotEmpty()) { "No Android ABI selected" }
+androidAbis.forEach { abi ->
+    require(abiToCargoTarget.containsKey(abi)) {
+        "Unsupported ABI '$abi' (use arm64-v8a and/or x86_64)"
+    }
 }
+
+// ---- release signing --------------------------------------------------------
+// Credentials come from the environment or from a repository-external
+// properties file; no secret is ever read from the repository.
+//
+//   AUDIO_SHARE_KEYSTORE_FILE
+//   AUDIO_SHARE_KEYSTORE_PASSWORD
+//   AUDIO_SHARE_KEY_ALIAS
+//   AUDIO_SHARE_KEY_PASSWORD
+//
+// or a properties file named by AUDIO_SHARE_KEYSTORE_PROPERTIES /
+// -PreleaseKeystoreProperties=... containing storeFile, storePassword,
+// keyAlias, and keyPassword. The default candidate is outside the repo:
+//   $HOME/.cache/audio-share-beta-keys/keystore.properties
+// Without credentials the release APK stays unsigned; it never falls back to
+// the debug key.
+val releaseKeystorePropertiesFile: File? =
+    providers.gradleProperty("releaseKeystoreProperties").orNull?.let { file(it) }
+        ?: providers.environmentVariable("AUDIO_SHARE_KEYSTORE_PROPERTIES").orNull?.let { file(it) }
+        ?: providers.environmentVariable("HOME").orNull
+            ?.let { file("$it/.cache/audio-share-beta-keys/keystore.properties") }
+val releaseKeystoreProperties = Properties().apply {
+    if (releaseKeystorePropertiesFile?.isFile == true) {
+        releaseKeystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+fun signingValue(envName: String, key: String): String? =
+    providers.environmentVariable(envName).orNull
+        ?: releaseKeystoreProperties.getProperty(key)?.takeIf { it.isNotBlank() }
+val releaseStoreFile = signingValue("AUDIO_SHARE_KEYSTORE_FILE", "storeFile")?.let { file(it) }
+val releaseStorePassword = signingValue("AUDIO_SHARE_KEYSTORE_PASSWORD", "storePassword")
+val releaseKeyAlias = signingValue("AUDIO_SHARE_KEY_ALIAS", "keyAlias")
+val releaseKeyPassword = signingValue("AUDIO_SHARE_KEY_PASSWORD", "keyPassword")
+val hasReleaseSigning =
+    releaseStoreFile?.isFile == true &&
+        !releaseStorePassword.isNullOrBlank() &&
+        !releaseKeyAlias.isNullOrBlank() &&
+        !releaseKeyPassword.isNullOrBlank()
 
 // TEST-ONLY. The fixture client identity key is compiled into the native
 // library only when `-PtestSupport=true` is passed explicitly. Default
@@ -41,6 +89,21 @@ android {
     namespace = "dev.audioshare.v2"
     compileSdk = 35
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                // minSdk 26: APK Signature Scheme v2/v3 are sufficient.
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "dev.audioshare.v2"
         // ticket 08 gate: Android 8 / API 26 baseline, same as the prototype
@@ -53,7 +116,8 @@ android {
         testInstrumentationRunner = "dev.audioshare.v2.ControlSessionInstrumentation"
         ndk {
             // arm64-v8a is the real-device scope; x86_64 is the emulator ABI.
-            abiFilters += androidAbi
+            // The beta universal APK carries both when -PandroidAbis is set.
+            abiFilters += androidAbis
         }
         // TEST_SUPPORT gates every test-only identity/addressing code path
         // (adb extras and the native fixture identity). Production releases
@@ -76,11 +140,12 @@ android {
     buildTypes {
         release {
             // R8 on: proves the ProGuard rules the integration would need.
-            // No release keystore in this line: debug-signed release so
-            // `assembleRelease` yields an installable APK.
+            // Release builds require the dedicated keystore; they never fall
+            // back to the debug key. Without credentials this variant stays
+            // unsigned (packageRelease below fails with guidance).
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -190,49 +255,72 @@ protobuf {
 // ---- cargo wiring -----------------------------------------------------------
 // Same shape as the prototype's: cargo + NDK clang (direct linker config in
 // native/.cargo/config.toml — cargo-ndk is NOT used), then NDK llvm-strip into
-// jniLibs. Skipped with -PnoNative=true.
+// jniLibs. One build+strip pair is registered per selected ABI. The jniLibs
+// source root stays build/generated/jniLibs so AGP sees the standard
+// <abi>/lib*.so layout. Skipped with -PnoNative=true.
 
 val nativeDir = rootProject.projectDir.resolve("native")
-val cargoOut = nativeDir.resolve("target/${cargoTarget}/release")
-val jniLibsDir = projectDir.resolve("build/generated/jniLibs/$androidAbi")
+val jniLibsRoot = projectDir.resolve("build/generated/jniLibs")
+val nativeLibName = "libaudio_share_client_v2_native.so"
 
-val buildNative by tasks.registering(Exec::class) {
-    onlyIf { !project.hasProperty("noNative") }
-    workingDir = nativeDir
-    environment("ANDROID_HOME", providers.environmentVariable("ANDROID_HOME").orElse("").get())
-    val cargoArgs = mutableListOf(
-        "cargo", "build", "--release", "--target", cargoTarget,
-    )
-    if (testSupport) {
-        cargoArgs += listOf("--features", "test-support")
-    }
-    commandLine(cargoArgs)
-    inputs.property("testSupport", testSupport)
-    outputs.file(cargoOut.resolve("libaudio_share_client_v2_native.so"))
-    inputs.dir(nativeDir.resolve("src"))
-    inputs.file(nativeDir.resolve("Cargo.toml"))
-}
+val nativeStripTasks = androidAbis.map { abi ->
+    val cargoTarget = abiToCargoTarget.getValue(abi)
+    val taskSuffix = abi.replace("-", "").replace("_", "")
+    val cargoOut = nativeDir.resolve("target/$cargoTarget/release")
 
-val stripNative by tasks.registering(Exec::class) {
-    onlyIf { !project.hasProperty("noNative") }
-    dependsOn(buildNative)
-    val so = cargoOut.resolve("libaudio_share_client_v2_native.so")
-    val dest = jniLibsDir.resolve("libaudio_share_client_v2_native.so")
-    inputs.file(so)
-    outputs.file(dest)
-    // Resolve ndkDir at execution time so Gradle sync/configuration does not
-    // fail when the SDK environment is absent.
-    doFirst {
-        commandLine(
-            "bash", "-c",
-            "mkdir -p ${jniLibsDir.absolutePath} && " +
-                "cp ${so.absolutePath} ${dest.absolutePath} && " +
-                "${ndkDir.get()}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip " +
-                "${dest.absolutePath}"
+    val buildNative = tasks.register<Exec>("buildNative$taskSuffix") {
+        onlyIf { !project.hasProperty("noNative") }
+        workingDir = nativeDir
+        environment("ANDROID_HOME", providers.environmentVariable("ANDROID_HOME").orElse("").get())
+        val cargoArgs = mutableListOf(
+            "cargo", "build", "--release", "--target", cargoTarget,
         )
+        if (testSupport) {
+            cargoArgs += listOf("--features", "test-support")
+        }
+        commandLine(cargoArgs)
+        inputs.property("testSupport", testSupport)
+        outputs.file(cargoOut.resolve(nativeLibName))
+        inputs.dir(nativeDir.resolve("src"))
+        inputs.file(nativeDir.resolve("Cargo.toml"))
+    }
+
+    tasks.register<Exec>("stripNative$taskSuffix") {
+        onlyIf { !project.hasProperty("noNative") }
+        dependsOn(buildNative)
+        val so = cargoOut.resolve(nativeLibName)
+        val dest = jniLibsRoot.resolve("$abi/$nativeLibName")
+        inputs.file(so)
+        outputs.file(dest)
+        // Resolve ndkDir at execution time so Gradle sync/configuration does
+        // not fail when the SDK environment is absent.
+        doFirst {
+            commandLine(
+                "bash", "-c",
+                "mkdir -p ${dest.parentFile.absolutePath} && " +
+                    "cp ${so.absolutePath} ${dest.absolutePath} && " +
+                    "${ndkDir.get()}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip " +
+                    "${dest.absolutePath}"
+            )
+        }
     }
 }
 
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
-    dependsOn(stripNative)
+    dependsOn(nativeStripTasks)
+}
+
+// Release APKs must be signed by the dedicated beta keystore. Fail packaging
+// with an actionable message instead of silently producing an unsigned or
+// debug-signed artifact.
+tasks.matching { it.name == "packageRelease" }.configureEach {
+    doFirst {
+        if (!hasReleaseSigning) {
+            throw GradleException(
+                "Release signing is not configured. Set AUDIO_SHARE_KEYSTORE_FILE " +
+                    "(or AUDIO_SHARE_KEYSTORE_PROPERTIES) and the matching password/alias " +
+                    "variables. Release builds no longer fall back to the debug key."
+            )
+        }
+    }
 }
