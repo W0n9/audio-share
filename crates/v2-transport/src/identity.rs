@@ -385,9 +385,17 @@ fn check_directory_permissions(path: &Path, allow_loose: bool) -> Result<(), Ide
     Ok(())
 }
 
-/// Atomic write discipline (pairing.md §10.3): temp file → fsync → rename
-/// over the target, keeping the previous version as `<name>.bak` (one backup
-/// generation). Applied to every identity/pairing write.
+/// Atomic write discipline (pairing.md §10.3): write the replacement to a
+/// temp file, fsync it, keep the previous contents as `<name>.bak` (one
+/// backup generation), then rename the temp over the target. Applied to every
+/// identity/pairing write.
+///
+/// The live target is never removed or renamed away before the replacement is
+/// published. The earlier sequence renamed `path` to `.bak` first, which left
+/// a window in which concurrent readers (the authorization store's 2 s reload
+/// poll, or the pre-`AuthInit`/`AuthProof` reload) saw `Missing` and cleared
+/// the in-memory authorization table. A pending write must never look like an
+/// operator deletion (pairing.md §9.2/§10.3).
 pub(crate) fn atomic_write_with_backup(path: &Path, contents: &str) -> Result<(), IdentityError> {
     let directory = path.parent().unwrap_or_else(|| Path::new("."));
     // Keep the full file name plus `.bak` (clients.json → clients.json.bak),
@@ -396,18 +404,14 @@ pub(crate) fn atomic_write_with_backup(path: &Path, contents: &str) -> Result<()
         .file_name()
         .map(|name| path.with_file_name(format!("{}.bak", name.to_string_lossy())))
         .unwrap_or_else(|| path.with_extension("bak"));
-    if path.exists() {
-        fs::rename(path, &backup).map_err(|source| IdentityError::Io {
-            operation: "rotate identity key backup",
-            source,
-        })?;
-    }
     let temp = directory.join(format!(
         ".{}.tmp",
         path.file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| "identity".to_owned())
     ));
+    // 1. Write and fsync the complete replacement while the live target is
+    //    untouched. A failure here (or a crash) changes nothing.
     {
         let mut file = fs::File::create(&temp).map_err(|source| IdentityError::Io {
             operation: "create identity temp file",
@@ -434,6 +438,49 @@ pub(crate) fn atomic_write_with_backup(path: &Path, contents: &str) -> Result<()
             source,
         })?;
     }
+    // 2. Preserve the previous generation without removing the live target.
+    //    A hard link keeps the old inode atomically; filesystems without hard
+    //    links fall back to a copy. The backup keeps the 0600 discipline of
+    //    the file it copies.
+    if path.exists() {
+        // Drop the previous backup generation, then link the current target
+        // into place. `hard_link` keeps the old inode atomically; filesystems
+        // without hard links fall back to a copy. The live target is not
+        // touched either way.
+        match fs::remove_file(&backup) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(IdentityError::Io {
+                    operation: "rotate identity key backup",
+                    source,
+                })
+            }
+        }
+        if fs::hard_link(path, &backup).is_err() {
+            fs::copy(path, &backup).map_err(|source| IdentityError::Io {
+                operation: "rotate identity key backup",
+                source,
+            })?;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&backup, fs::Permissions::from_mode(0o600)).map_err(|source| {
+                IdentityError::Io {
+                    operation: "restrict identity backup permissions",
+                    source,
+                }
+            })?;
+        }
+    }
+    // 3. Publish. On Unix `rename(2)` atomically replaces the target, so no
+    //    reader can observe a missing file. On Windows Rust's
+    //    `std::fs::rename` maps to `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`:
+    //    it also replaces without first unlinking the target, but Windows
+    //    offers no transactional rename guarantee, so the replacement is
+    //    best-effort rather than strictly atomic. Windows Server behaviour is
+    //    NOT RUN for ticket 27.
     fs::rename(&temp, path).map_err(|source| IdentityError::Io {
         operation: "publish identity key",
         source,
