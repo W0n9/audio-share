@@ -15,6 +15,7 @@
 //! serialization stays as the test evidence).
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::WebPkiSupportedAlgorithms;
@@ -180,32 +181,64 @@ fn extract_spki_der(cert_der: &[u8]) -> Result<Vec<u8>, PinError> {
 
 /// The verifier: accepts exactly one SPKI sha256, delegates signature checks
 /// to the ring provider's algorithm table.
+///
+/// SAS pairing is TOFU-with-verification (pairing.md §6.1/§7): the Client has
+/// no pin for that one connection and accepts the presented certificate while
+/// recording its SPKI hash, so the pin can be persisted after the user
+/// compares the SAS/fingerprint. `None` is deliberately distinct from "a pin
+/// that did not match": a mismatch is an error (205), whereas unpinned is a
+/// first-contact mode that records what it saw.
 #[derive(Debug)]
 pub struct PinnedSpkiVerifier {
-    pin: SpkiPin,
+    pin: Option<SpkiPin>,
     algorithms: WebPkiSupportedAlgorithms,
     /// Set once a presented certificate's SPKI differs from the pin, so the
     /// session can classify 205 by type instead of matching an error string.
     mismatch: AtomicBool,
+    /// The SPKI sha256 of the certificate actually presented (set on the
+    /// first successful/unpinned verification).
+    observed: Mutex<Option<[u8; 32]>>,
 }
 
 impl PinnedSpkiVerifier {
     pub fn new(pinned_spki_sha256_hex: &str) -> Result<Self, PinError> {
         Ok(PinnedSpkiVerifier {
-            pin: SpkiPin::from_hex(pinned_spki_sha256_hex)?,
-            algorithms: rustls::crypto::ring::default_provider().signature_verification_algorithms,
+            pin: Some(SpkiPin::from_hex(pinned_spki_sha256_hex)?),
+            algorithms: rustcrypto_algorithms(),
             mismatch: AtomicBool::new(false),
+            observed: Mutex::new(None),
         })
     }
 
-    pub fn pin(&self) -> &SpkiPin {
-        &self.pin
+    /// First-contact mode for SAS pairing: accept any certificate, record the
+    /// presented SPKI hash, and never report a pin mismatch.
+    pub fn unpinned_accepting() -> Self {
+        PinnedSpkiVerifier {
+            pin: None,
+            algorithms: rustcrypto_algorithms(),
+            mismatch: AtomicBool::new(false),
+            observed: Mutex::new(None),
+        }
+    }
+
+    pub fn pin(&self) -> Option<&SpkiPin> {
+        self.pin.as_ref()
+    }
+
+    /// The presented certificate's SPKI sha256, once a handshake has verified
+    /// a certificate in either mode.
+    pub fn observed_pin(&self) -> Option<[u8; 32]> {
+        *self.observed.lock().unwrap()
     }
 
     /// Whether the last observed certificate failed the SPKI pin.
     pub fn pin_mismatch(&self) -> bool {
         self.mismatch.load(Ordering::SeqCst)
     }
+}
+
+fn rustcrypto_algorithms() -> WebPkiSupportedAlgorithms {
+    rustls::crypto::ring::default_provider().signature_verification_algorithms
 }
 
 impl ServerCertVerifier for PinnedSpkiVerifier {
@@ -219,16 +252,22 @@ impl ServerCertVerifier for PinnedSpkiVerifier {
     ) -> Result<ServerCertVerified, TlsError> {
         let got = SpkiPin::of_certificate(end_entity.as_ref())
             .map_err(|e| TlsError::General(e.to_string()))?;
-        if got == self.pin {
-            Ok(ServerCertVerified::assertion())
-        } else {
-            // never log pins or key material detail beyond the mismatch fact;
-            // the typed flag lets the session classify this locally as 205
-            // (no fallback, no retry without user action)
-            self.mismatch.store(true, Ordering::SeqCst);
-            Err(TlsError::General(
-                "server SPKI does not match pinned identity".to_string(),
-            ))
+        *self.observed.lock().unwrap() = Some(got.0);
+        match self.pin.as_ref() {
+            Some(pin) if &got == pin => Ok(ServerCertVerified::assertion()),
+            Some(_) => {
+                // never log pins or key material detail beyond the mismatch fact;
+                // the typed flag lets the session classify this locally as 205
+                // (no fallback, no retry without user action)
+                self.mismatch.store(true, Ordering::SeqCst);
+                Err(TlsError::General(
+                    "server SPKI does not match pinned identity".to_string(),
+                ))
+            }
+            None => {
+                // SAS first contact: accept, record, never set `mismatch`.
+                Ok(ServerCertVerified::assertion())
+            }
         }
     }
 
@@ -332,9 +371,10 @@ mod tests {
         let (key, cert) = self_signed_cert();
         let pin = SpkiPin::of_certificate(&cert).unwrap();
         let v = PinnedSpkiVerifier {
-            pin,
-            algorithms: rustls::crypto::ring::default_provider().signature_verification_algorithms,
+            pin: Some(pin),
+            algorithms: rustcrypto_algorithms(),
             mismatch: AtomicBool::new(false),
+            observed: Mutex::new(None),
         };
         let res = v.verify_server_cert(
             &CertificateDer::from(cert),
@@ -354,9 +394,10 @@ mod tests {
         let (_, cert_a) = self_signed_cert();
         let pin_a = SpkiPin::of_certificate(&cert_a).unwrap();
         let v = PinnedSpkiVerifier {
-            pin: pin_a,
-            algorithms: rustls::crypto::ring::default_provider().signature_verification_algorithms,
+            pin: Some(pin_a),
+            algorithms: rustcrypto_algorithms(),
             mismatch: AtomicBool::new(false),
+            observed: Mutex::new(None),
         };
         let (_, cert_b) = self_signed_cert();
         let res = v.verify_server_cert(
@@ -377,9 +418,10 @@ mod tests {
         let (_, cert) = self_signed_cert();
         let pin = SpkiPin::of_certificate(&cert).unwrap();
         let v = PinnedSpkiVerifier {
-            pin,
-            algorithms: rustls::crypto::ring::default_provider().signature_verification_algorithms,
+            pin: Some(pin),
+            algorithms: rustcrypto_algorithms(),
             mismatch: AtomicBool::new(false),
+            observed: Mutex::new(None),
         };
         let res = v.verify_server_cert(
             &CertificateDer::from(vec![0x30, 0x03, 0x02, 0x01, 0x00]),
@@ -390,5 +432,43 @@ mod tests {
         );
         assert!(res.is_err());
         assert!(!v.pin_mismatch(), "a malformed cert is not a pin mismatch");
+    }
+
+    /// SAS pairing (pairing.md §6.1): first contact accepts the presented
+    /// certificate and records its SPKI hash so it can be pinned after the
+    /// human compares the SAS/fingerprint. This is NOT a mismatch.
+    #[test]
+    fn unpinned_verifier_accepts_and_records_the_presented_spki() {
+        let (_, cert) = self_signed_cert();
+        let expected = SpkiPin::of_certificate(&cert).unwrap();
+        let v = PinnedSpkiVerifier::unpinned_accepting();
+        let res = v.verify_server_cert(
+            &CertificateDer::from(cert),
+            &[],
+            &ServerName::try_from("audio-share.test").unwrap(),
+            &[],
+            UnixTime::now(),
+        );
+        assert!(res.is_ok(), "SAS first contact must accept: {res:?}");
+        assert!(!v.pin_mismatch(), "unpinned is not a pin mismatch");
+        assert!(v.pin().is_none());
+        assert_eq!(v.observed_pin(), Some(expected.0));
+    }
+
+    /// The pinned verifier also exposes the observed pin (equal to the pin).
+    #[test]
+    fn pinned_verifier_records_the_observed_spki() {
+        let (_, cert) = self_signed_cert();
+        let pin = SpkiPin::of_certificate(&cert).unwrap();
+        let v = PinnedSpkiVerifier::new(&pin.to_hex()).unwrap();
+        let res = v.verify_server_cert(
+            &CertificateDer::from(cert),
+            &[],
+            &ServerName::try_from("audio-share.test").unwrap(),
+            &[],
+            UnixTime::now(),
+        );
+        assert!(res.is_ok(), "pinned cert must verify: {res:?}");
+        assert_eq!(v.observed_pin(), Some(pin.0));
     }
 }

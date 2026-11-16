@@ -3,7 +3,9 @@
 use std::time::{Duration, Instant};
 
 use audio_share_client_v2_native::control::ClientState;
-use audio_share_client_v2_native::media_control::{MediaAction, MediaControl, DIAGNOSTICS_INTERVAL};
+use audio_share_client_v2_native::media_control::{
+    MediaAction, MediaControl, DIAGNOSTICS_INTERVAL,
+};
 
 #[test]
 fn ready_with_configuration_subscribes_once() {
@@ -45,11 +47,7 @@ fn playing_reports_every_five_seconds_but_not_while_one_is_pending() {
     );
     // A send is pending: the next cycle is skipped, never queued.
     assert_eq!(
-        control.on_tick(
-            &ClientState::Playing,
-            true,
-            start + DIAGNOSTICS_INTERVAL
-        ),
+        control.on_tick(&ClientState::Playing, true, start + DIAGNOSTICS_INTERVAL),
         MediaAction::None
     );
     control.report_finished();

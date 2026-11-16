@@ -27,6 +27,15 @@ val cargoTarget = when (androidAbi) {
     else -> throw GradleException("Unsupported -PandroidAbi=$androidAbi (use arm64-v8a or x86_64)")
 }
 
+// TEST-ONLY. The fixture client identity key is compiled into the native
+// library only when `-PtestSupport=true` is passed explicitly. Default
+// release builds carry no test identity/signing path (production identities
+// come from v2 pairing). E2E builds: ./gradlew assembleRelease
+// -PtestSupport=true
+val testSupport = providers.gradleProperty("testSupport")
+    .map(String::toBoolean)
+    .getOrElse(false)
+
 android {
     namespace = "dev.audioshare.v2"
     compileSdk = 35
@@ -43,6 +52,14 @@ android {
             // arm64-v8a is the real-device scope; x86_64 is the emulator ABI.
             abiFilters += androidAbi
         }
+        // TEST_SUPPORT gates every test-only identity/addressing code path
+        // (adb extras and the native fixture identity). Production releases
+        // are built without -PtestSupport and have this false.
+        buildConfigField("boolean", "TEST_SUPPORT", testSupport.toString())
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
@@ -57,6 +74,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // The test-support harness is reached by Class.forName; keep its
+            // name only in explicitly flagged builds.
+            if (testSupport) {
+                proguardFiles("proguard-test-support.pro")
+            }
             // 测试 APK 是独立的 API 使用者，R8 必须保留它消费的本地 Binder seam。
             if (providers.gradleProperty("deviceTests").map(String::toBoolean).getOrElse(false)) {
                 proguardFiles("proguard-device-tests.pro")
@@ -82,6 +104,13 @@ android {
             // frozen .proto the Rust side does (never a copy).
             proto {
                 srcDir("$rootDir/../protos/wire-protocol-v2")
+            }
+            // TEST-SUPPORT ONLY: the adb-extras lifecycle harness. Without
+            // -PtestSupport the class is absent from the source set, so a
+            // production build has no extras-addressing path at all.
+            if (testSupport) {
+                java.srcDir("src/testSupport/java")
+                kotlin.srcDir("src/testSupport/java")
             }
         }
     }
@@ -131,15 +160,6 @@ protobuf {
 val nativeDir = rootProject.projectDir.resolve("native")
 val cargoOut = nativeDir.resolve("target/${cargoTarget}/release")
 val jniLibsDir = projectDir.resolve("build/generated/jniLibs/$androidAbi")
-
-// TEST-ONLY. The fixture client identity key is compiled into the native
-// library only when `-PtestSupport=true` is passed explicitly. Default
-// release builds carry no test identity/signing path (production identities
-// come from v2 pairing, phase 6). E2E builds: ./gradlew assembleRelease
-// -PtestSupport=true
-val testSupport = providers.gradleProperty("testSupport")
-    .map(String::toBoolean)
-    .getOrElse(false)
 
 val buildNative by tasks.registering(Exec::class) {
     onlyIf { !project.hasProperty("noNative") }
