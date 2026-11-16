@@ -6,8 +6,15 @@
 [target.aarch64-linux-android]
 linker = "/home/w0n9/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
 
+# x86_64 is the Android emulator ABI (development/CI only; arm64-v8a remains the
+# real-device scope). Same API-26 wrapper so minSdk behaviour matches arm64.
+[target.x86_64-linux-android]
+linker = "/home/w0n9/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang"
+
 # cc-rs (ring's asm/C build script) needs the cross C compiler + archiver too;
 # the NDK ships only API-suffixed clang wrappers, so name them explicitly.
 [env]
 CC_aarch64_linux_android = "/home/w0n9/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
 AR_aarch64_linux_android = "/home/w0n9/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+CC_x86_64_linux_android = "/home/w0n9/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang"
+AR_x86_64_linux_android = "/home/w0n9/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
