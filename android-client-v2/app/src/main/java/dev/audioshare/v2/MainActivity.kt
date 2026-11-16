@@ -41,20 +41,34 @@ class MainActivity : Activity() {
         layout.addView(logView)
         setContentView(layout)
 
-        val host = intent.getStringExtra("host") ?: ""
-        val pin = intent.getStringExtra("pinnedSpki") ?: ""
-        val serverKey = intent.getStringExtra("serverKey") ?: ""
-        if (host.isEmpty() || pin.isEmpty() || serverKey.isEmpty()) {
+        if (!BuildConfig.TEST_SUPPORT) {
+            // Production builds have no adb-extras addressing path. The
+            // pairing/playing UI is delivered by ticket 21; this placeholder
+            // must never configure a session from injected test material.
+            logView.text = "Pairing is required. Start pairing from the app UI."
+            return
+        }
+        // TEST-SUPPORT ONLY: the adb-extras lifecycle harness. With
+        // BuildConfig.TEST_SUPPORT == false this method is unreachable and R8
+        // removes the extras-addressing path from production builds.
+        if (!startTestSupportSession()) {
             logView.text = "config missing: pass host/pinnedSpki/serverKey extras (test config)"
             return
         }
+    }
 
+    private fun startTestSupportSession(): Boolean {
+        val host = intent.getStringExtra("host") ?: ""
+        val pin = intent.getStringExtra("pinnedSpki") ?: ""
+        val serverKey = intent.getStringExtra("serverKey") ?: ""
+        if (host.isEmpty() || pin.isEmpty() || serverKey.isEmpty()) return false
         val startIntent = serviceIntent.apply {
             action = ControlSessionService.ACTION_START
             putExtras(intent)
         }
         startService(startIntent)
         bound = bindService(startIntent, connection, Context.BIND_AUTO_CREATE)
+        return true
     }
 
     private val connectionIntent by lazy { serviceIntent.apply { action = ControlSessionService.ACTION_START } }
