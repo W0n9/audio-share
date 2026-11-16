@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/audio-share-core",
     "crates/as-cmd",
+    "crates/v2-runtime",
     "crates/v2-transport",
     "gui/src-tauri",
     "tools/pipewire-spike",

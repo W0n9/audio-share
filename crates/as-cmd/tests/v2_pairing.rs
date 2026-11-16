@@ -146,9 +146,10 @@ async fn pair_sas(connection: &quinn::Connection, key: &SigningKey) -> PairingRe
     response
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn as_cmd_pair_accept_persists_the_client_and_exits() {
-    let _port_lock = PortLock::acquire();
+/// Run one real `as-cmd pair --sas --accept` process and complete the SAS
+/// handshake. `pair_sas` asserts that the Client observes `PairingResult(OK)`;
+/// a 503/transport close fails here.
+async fn run_pair_accept_once(iteration: usize) -> (tempfile::TempDir, SigningKey, String) {
     let temp = tempfile::tempdir().expect("tempdir");
     let port = free_udp_port();
     let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_as-cmd"))
@@ -166,7 +167,7 @@ async fn as_cmd_pair_accept_persists_the_client_and_exits() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn as-cmd pair");
+        .unwrap_or_else(|error| panic!("iteration {iteration}: spawn as-cmd pair: {error}"));
 
     let address: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
     let connection = connect_with_retry(address).await;
@@ -176,19 +177,33 @@ async fn as_cmd_pair_accept_persists_the_client_and_exits() {
 
     let output = tokio::time::timeout(Duration::from_secs(10), child.wait_with_output())
         .await
-        .expect("as-cmd pair exits after pairing")
-        .expect("wait for as-cmd");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+        .unwrap_or_else(|_| panic!("iteration {iteration}: as-cmd pair did not exit"))
+        .unwrap_or_else(|error| panic!("iteration {iteration}: wait for as-cmd: {error}"));
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     assert!(
         output.status.success(),
-        "pair exited with {:?}\nstdout:\n{stdout}\nstderr:\n{}",
+        "iteration {iteration}: pair exited with {:?}\nstdout:\n{stdout}\nstderr:\n{}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(stdout.contains("Pairing mode: SAS"), "{stdout}");
-    assert!(stdout.contains("Server fingerprint:"), "{stdout}");
-    assert!(stdout.contains("Pairing code:"), "{stdout}");
-    assert!(stdout.contains("Paired: CLI Test Phone"), "{stdout}");
+    for expected in [
+        "Pairing mode: SAS",
+        "Server fingerprint:",
+        "Pairing code:",
+        "Paired: CLI Test Phone",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "iteration {iteration}: missing {expected:?}\nstdout:\n{stdout}"
+        );
+    }
+    (temp, key, stdout)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn as_cmd_pair_accept_persists_the_client_and_exits() {
+    let _port_lock = PortLock::acquire();
+    let (temp, key, _stdout) = run_pair_accept_once(0).await;
 
     let store = v2_transport::auth_store::AuthorizationStore::open(temp.path())
         .expect("authorization store");
@@ -211,6 +226,18 @@ async fn as_cmd_pair_accept_persists_the_client_and_exits() {
             std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn as_cmd_pair_accept_never_races_the_success_result() {
+    // Regression for the 503/transport-close race: the one-shot CLI must not
+    // stop the runtime until the driver has written PairingResult(OK). Twenty
+    // consecutive live pairings must each observe the success result.
+    let _port_lock = PortLock::acquire();
+    for iteration in 0..20 {
+        let (temp, _key, _stdout) = run_pair_accept_once(iteration).await;
+        drop(temp);
     }
 }
 

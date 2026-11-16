@@ -13,6 +13,7 @@
   import Icon from "./lib/Icon.svelte";
   import ServerView from "./views/ServerView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
+  import PairingDialog from "./views/PairingDialog.svelte";
 
   let unlistenState: UnlistenFn | undefined;
   let unlistenSecond: UnlistenFn | undefined;
@@ -25,7 +26,7 @@
     // `listen()` resolves to an unlisten function; calling it before the
     // Promise settles would leak the listener, so handle the disposal race.
     void onServerStateChanged((status) => {
-      server.status = status;
+      server.applyStatus(status);
     }).then((unlisten) => {
       if (disposed) unlisten();
       else unlistenState = unlisten;
@@ -126,4 +127,6 @@
   {:else}
     <SettingsView />
   {/if}
+
+  <PairingDialog />
 </div>

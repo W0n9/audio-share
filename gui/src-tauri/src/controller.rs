@@ -8,21 +8,42 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use audio_share_core::capture::{CaptureBackend, Endpoint};
 use audio_share_core::config::{self, DEFAULT_ENDPOINT};
 use audio_share_core::server::{Server, ServerHandle};
+use v2_runtime::admin::{ClientStateView, ClientView, PairingAdmin, PendingRequestView};
 
 use crate::logging;
-use crate::model::{ApplicationSettings, ServerState, ServerStatus, Settings};
+use crate::model::{
+    ApplicationSettings, ClientInfo, PairingInvitation, PairingRequestInfo, PairingStatus,
+    ServerState, ServerStatus, Settings, V2Status,
+};
+use crate::v2::{PairingModeArg, V2Runtime, V2StartInputs, V2Starter, DEFAULT_V2_PORT};
 
 /// Called after every published status change, outside the controller lock.
 pub type StatusListener = Arc<dyn Fn(&ServerStatus) + Send + Sync>;
+
+struct ActiveInvitation {
+    mode: String,
+    qr_uri: Option<String>,
+    qr_svg: Option<String>,
+    fingerprint: String,
+    expires_at: Instant,
+}
 
 struct ControllerState {
     settings: Settings,
     status: ServerStatus,
     handle: Option<ServerHandle>,
+    /// The shared v2 runtime, present only while v1 is running and v2 started.
+    v2: Option<Arc<dyn V2Runtime>>,
+    /// The Pairing Core adapter owned by the running v2 runtime.
+    v2_admin: Option<Arc<dyn PairingAdmin>>,
+    /// The invitation created by the last `pairing_begin`; nonces expire on
+    /// their own, closing the dialog does not consume them (pairing.md §5).
+    invitation: Option<ActiveInvitation>,
 }
 
 /// Owns the running server, the persisted settings, and the displayed status.
@@ -30,6 +51,9 @@ pub struct ServerController {
     state: Mutex<ControllerState>,
     listener: Mutex<Option<StatusListener>>,
     config_path: Option<PathBuf>,
+    /// Installed by the Tauri shell; tests inject a fake stater.
+    v2_starter: Mutex<Option<V2Starter>>,
+    v2_port: Mutex<u16>,
 }
 
 impl ServerController {
@@ -43,15 +67,39 @@ impl ServerController {
         Self::build(settings, Some(config_path))
     }
 
+    /// Create a controller that also starts the shared v2 runtime by default.
+    pub fn with_config_and_v2(
+        settings: Settings,
+        config_path: PathBuf,
+        starter: V2Starter,
+        v2_port: u16,
+    ) -> Self {
+        let controller = Self::with_config(settings, config_path);
+        controller.enable_v2(starter, v2_port);
+        controller
+    }
+
+    /// Install the v2 starter and port. Called before the first start; tests
+    /// use this to inject a fake runtime.
+    pub fn enable_v2(&self, starter: V2Starter, v2_port: u16) {
+        *lock(&self.v2_starter) = Some(starter);
+        *lock(&self.v2_port) = v2_port;
+    }
+
     fn build(settings: Settings, config_path: Option<PathBuf>) -> Self {
         Self {
             state: Mutex::new(ControllerState {
                 settings,
                 status: ServerStatus::stopped(),
                 handle: None,
+                v2: None,
+                v2_admin: None,
+                invitation: None,
             }),
             listener: Mutex::new(None),
             config_path,
+            v2_starter: Mutex::new(None),
+            v2_port: Mutex::new(DEFAULT_V2_PORT),
         }
     }
 
@@ -200,7 +248,53 @@ impl ServerController {
 
         match Server::start(server_config, backend, capture_config).await {
             Ok(handle) => {
-                let status = ServerStatus::running(handle.local_addr().to_string());
+                // v1 is up. Start the shared v2 runtime on the same capture.
+                // A v2 failure is reported independently and never stops v1.
+                let starter = lock(&self.v2_starter).clone();
+                let (v2_status, v2_runtime, v2_admin) = match starter {
+                    None => (V2Status::disabled(), None, None),
+                    Some(starter) => {
+                        let data_dir = self
+                            .config_path
+                            .as_ref()
+                            .map(|path| v2_runtime::data_dir_for_config(path))
+                            .unwrap_or_else(|| PathBuf::from("."));
+                        let inputs = V2StartInputs {
+                            data_dir,
+                            allow_loose_permissions: false,
+                            port: *lock(&self.v2_port),
+                            capture: handle.capture_observer(),
+                            media_tap: handle.media_tap().clone(),
+                        };
+                        match starter(inputs).await {
+                            Ok(runtime) => {
+                                let admin = runtime.admin();
+                                logging::info(format!(
+                                    "v2 runtime running on {} (fingerprint {})",
+                                    runtime.local_addr(),
+                                    admin.fingerprint()
+                                ));
+                                (
+                                    V2Status::running(
+                                        runtime.local_addr().to_string(),
+                                        admin.fingerprint(),
+                                    ),
+                                    Some(runtime),
+                                    Some(admin),
+                                )
+                            }
+                            Err(message) => {
+                                logging::error(format!(
+                                    "v2 runtime failed to start (v1 stays running): {message}"
+                                ));
+                                (V2Status::failed(message), None, None)
+                            }
+                        }
+                    }
+                };
+
+                let mut status = ServerStatus::running(handle.local_addr().to_string());
+                status.v2 = v2_status;
                 logging::info(format!(
                     "server running on {}",
                     status.address.as_deref().unwrap_or("unknown")
@@ -208,6 +302,9 @@ impl ServerController {
                 let persisted = {
                     let mut state = lock(&self.state);
                     state.handle = Some(handle);
+                    state.v2 = v2_runtime;
+                    state.v2_admin = v2_admin;
+                    state.invitation = None;
                     state.status = status.clone();
                     state.settings.running = true;
                     state.settings.clone()
@@ -228,8 +325,12 @@ impl ServerController {
     }
 
     /// Stop the running server, publishing Stopping and then Stopped.
+    ///
+    /// v2 is stopped first (closing the QUIC endpoint and any pairing dialog),
+    /// then v1; the reverse order would leave v2 accepting on a server the UI
+    /// already reports as stopping.
     pub async fn stop(&self) -> Result<ServerStatus, String> {
-        let (handle, stopping) = {
+        let (handle, v2, admin, stopping) = {
             let mut state = lock(&self.state);
             match state.status.state {
                 ServerState::Running => {}
@@ -250,10 +351,22 @@ impl ServerController {
                 self.publish(&status);
                 return Err("server is not running".to_owned());
             };
-            state.status = ServerStatus::stopping(state.status.address.clone());
-            (handle, state.status.clone())
+            let v2 = state.v2.take();
+            let admin = state.v2_admin.take();
+            state.invitation = None;
+            let mut stopping = ServerStatus::stopping(state.status.address.clone());
+            stopping.v2 = state.status.v2.clone();
+            state.status = stopping.clone();
+            (handle, v2, admin, stopping)
         };
         logging::info("server stopping");
+        if let Some(admin) = &admin {
+            admin.cancel();
+        }
+        if let Some(v2) = v2 {
+            v2.stop();
+            logging::info("v2 listener stopped before v1");
+        }
         self.publish(&stopping);
 
         match handle.stop().await {
@@ -278,6 +391,125 @@ impl ServerController {
                 self.publish(&status);
                 Err(message)
             }
+        }
+    }
+
+    /// The pairing dialog's polled state: invitation, pending requests, and
+    /// the independent v2 status. Always succeeds; when v2 is unavailable the
+    /// `v2` block explains why and the dialog stays inert.
+    pub fn pairing_status(&self) -> PairingStatus {
+        let now = Instant::now();
+        let (v2, admin, invitation) = {
+            let mut state = lock(&self.state);
+            let v2 = state.status.v2.clone();
+            let admin = state.v2_admin.clone();
+            let invitation = match state.invitation.as_ref() {
+                Some(active) if active.expires_at > now => Some(PairingInvitation {
+                    mode: active.mode.clone(),
+                    qr_uri: active.qr_uri.clone(),
+                    qr_svg: active.qr_svg.clone(),
+                    fingerprint: active.fingerprint.clone(),
+                    expires_in_secs: active.expires_at.saturating_duration_since(now).as_secs(),
+                }),
+                Some(_) => {
+                    // Expired nonces/windows are left to expire by the core;
+                    // the dialog simply stops presenting them (pairing.md §5).
+                    state.invitation = None;
+                    None
+                }
+                None => None,
+            };
+            (v2, admin, invitation)
+        };
+        let pending = admin
+            .map(|admin| admin.pending())
+            .unwrap_or_default()
+            .into_iter()
+            .map(pending_info)
+            .collect::<Vec<_>>();
+        PairingStatus {
+            active: invitation.is_some() || !pending.is_empty(),
+            invitation,
+            pending,
+            v2,
+        }
+    }
+
+    /// Begin a pairing invitation from the GUI dialog.
+    pub fn pairing_begin(&self, mode: PairingModeArg) -> Result<PairingStatus, String> {
+        let admin = self.pairing_admin()?;
+        let view = admin
+            .begin(mode.into())
+            .map_err(|error| format!("cannot begin pairing: {error}"))?;
+        let expires_at = Instant::now() + Duration::from_secs(view.expires_in_secs.max(1));
+        lock(&self.state).invitation = Some(ActiveInvitation {
+            mode: mode_name(view.mode),
+            qr_uri: view.qr_uri,
+            qr_svg: view.qr_svg,
+            fingerprint: view.fingerprint,
+            expires_at,
+        });
+        Ok(self.pairing_status())
+    }
+
+    /// Close the pairing dialog's invitation and pending approvals.
+    ///
+    /// Per pairing.md §5, outstanding QR nonces are *not* consumed by closing
+    /// the dialog; they expire on their own. The core's cancel only closes the
+    /// SAS admission window and drops undecided approvals.
+    pub fn pairing_cancel(&self) -> Result<PairingStatus, String> {
+        let admin = self.pairing_admin()?;
+        admin.cancel();
+        lock(&self.state).invitation = None;
+        Ok(self.pairing_status())
+    }
+
+    /// Approve one pending pairing by request id.
+    pub fn pairing_approve(&self, request_id: u64) -> Result<PairingStatus, String> {
+        let admin = self.pairing_admin()?;
+        if !admin.approve(request_id) {
+            return Err("that pairing request is no longer pending".to_owned());
+        }
+        Ok(self.pairing_status())
+    }
+
+    /// Decline one pending pairing by request id.
+    pub fn pairing_decline(&self, request_id: u64) -> Result<PairingStatus, String> {
+        let admin = self.pairing_admin()?;
+        if !admin.decline(request_id) {
+            return Err("that pairing request is no longer pending".to_owned());
+        }
+        Ok(self.pairing_status())
+    }
+
+    /// The paired-device list (active and revoked records).
+    pub fn clients_list(&self) -> Result<Vec<ClientInfo>, String> {
+        let admin = self.pairing_admin()?;
+        Ok(admin.clients().into_iter().map(client_info).collect())
+    }
+
+    /// Revoke one Client. The driver's authorization poll closes an affected
+    /// active session within `REVOCATION_POLL_INTERVAL` (pairing.md §9.2).
+    pub fn clients_revoke(&self, client_id: &str) -> Result<ClientInfo, String> {
+        let admin = self.pairing_admin()?;
+        admin
+            .revoke(client_id)
+            .map(client_info)
+            .map_err(|error| format!("cannot revoke client: {error}"))
+    }
+
+    /// The running Pairing Core adapter, or a readable reason it is absent.
+    fn pairing_admin(&self) -> Result<Arc<dyn PairingAdmin>, String> {
+        let state = lock(&self.state);
+        if state.status.state != ServerState::Running {
+            return Err("start the server before pairing devices".to_owned());
+        }
+        match &state.v2_admin {
+            Some(admin) => Ok(Arc::clone(admin)),
+            None => Err(match &state.status.v2.last_error {
+                Some(error) => format!("v2 is not available: {error}"),
+                None => "v2 is disabled".to_owned(),
+            }),
         }
     }
 
@@ -312,9 +544,41 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn mode_name(mode: v2_runtime::admin::PairingMode) -> String {
+    match mode {
+        v2_runtime::admin::PairingMode::Qr => "qr".to_owned(),
+        v2_runtime::admin::PairingMode::Sas => "sas".to_owned(),
+    }
+}
+
+fn pending_info(request: PendingRequestView) -> PairingRequestInfo {
+    PairingRequestInfo {
+        request_id: request.request_id,
+        client_id: request.client_id,
+        display_name: request.display_name,
+        mode: mode_name(request.mode),
+        address: request.address,
+        sas: request.sas,
+    }
+}
+
+fn client_info(client: ClientView) -> ClientInfo {
+    ClientInfo {
+        client_id: client.client_id,
+        display_name: client.display_name,
+        state: match client.state {
+            ClientStateView::Active => "active".to_owned(),
+            ClientStateView::Revoked => "revoked".to_owned(),
+        },
+        created_at: client.created_at,
+        last_seen_at: client.last_seen_at,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use audio_share_core::capture::{
@@ -325,8 +589,188 @@ mod tests {
     use audio_share_core::Error;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
+    use v2_runtime::admin::{
+        ClientStateView, ClientView, InvitationView, PairingAdmin, PairingMode, PendingRequestView,
+    };
 
     use super::*;
+    use crate::v2::{PairingModeArg, V2Runtime};
+
+    #[derive(Debug, Default)]
+    struct FakeAdminState {
+        calls: Vec<String>,
+        pending: Vec<PendingRequestView>,
+        clients: Vec<ClientView>,
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct FakeAdmin {
+        state: Arc<Mutex<FakeAdminState>>,
+    }
+
+    impl FakeAdmin {
+        fn new(state: Arc<Mutex<FakeAdminState>>) -> Self {
+            Self { state }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            lock(&self.state).calls.clone()
+        }
+    }
+
+    impl PairingAdmin for FakeAdmin {
+        fn begin(&self, mode: PairingMode) -> Result<InvitationView, String> {
+            lock(&self.state).calls.push(format!("begin:{mode:?}"));
+            let view = InvitationView {
+                mode,
+                qr_uri: (mode == PairingMode::Qr).then(|| {
+                    "audioshare-pair://p1?pm=2&addr=127.0.0.1:65531&key=x&nonce=y".to_owned()
+                }),
+                qr_svg: (mode == PairingMode::Qr).then(|| "<svg/>".to_owned()),
+                fingerprint: "FP".to_owned(),
+                expires_in_secs: 600,
+            };
+            Ok(view)
+        }
+
+        fn cancel(&self) {
+            lock(&self.state).calls.push("cancel".to_owned());
+        }
+
+        fn pending(&self) -> Vec<PendingRequestView> {
+            lock(&self.state).pending.clone()
+        }
+
+        fn approve(&self, request_id: u64) -> bool {
+            lock(&self.state)
+                .calls
+                .push(format!("approve:{request_id}"));
+            let mut state = lock(&self.state);
+            match state
+                .pending
+                .iter()
+                .position(|request| request.request_id == request_id)
+            {
+                Some(index) => {
+                    state.pending.remove(index);
+                    true
+                }
+                None => false,
+            }
+        }
+
+        fn decline(&self, request_id: u64) -> bool {
+            lock(&self.state)
+                .calls
+                .push(format!("decline:{request_id}"));
+            let mut state = lock(&self.state);
+            match state
+                .pending
+                .iter()
+                .position(|request| request.request_id == request_id)
+            {
+                Some(index) => {
+                    state.pending.remove(index);
+                    true
+                }
+                None => false,
+            }
+        }
+
+        fn clients(&self) -> Vec<ClientView> {
+            lock(&self.state).calls.push("clients".to_owned());
+            lock(&self.state).clients.clone()
+        }
+
+        fn revoke(&self, client_id: &str) -> Result<ClientView, String> {
+            lock(&self.state).calls.push(format!("revoke:{client_id}"));
+            let mut state = lock(&self.state);
+            let Some(client) = state
+                .clients
+                .iter_mut()
+                .find(|client| client.client_id == client_id)
+            else {
+                return Err("unknown client".to_owned());
+            };
+            client.state = ClientStateView::Revoked;
+            Ok(client.clone())
+        }
+
+        fn fingerprint(&self) -> String {
+            "FP".to_owned()
+        }
+    }
+
+    #[derive(Debug)]
+    struct FakeRuntime {
+        admin: Arc<dyn PairingAdmin>,
+        stopped: Arc<AtomicBool>,
+    }
+
+    impl V2Runtime for FakeRuntime {
+        fn local_addr(&self) -> SocketAddr {
+            "127.0.0.1:65531".parse().unwrap()
+        }
+
+        fn admin(&self) -> Arc<dyn PairingAdmin> {
+            Arc::clone(&self.admin)
+        }
+
+        fn stop(&self) {
+            self.stopped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn ok_starter(runtime: Arc<FakeRuntime>) -> V2Starter {
+        Arc::new(move |_inputs| {
+            let runtime = Arc::clone(&runtime);
+            Box::pin(async move { Ok(runtime as Arc<dyn V2Runtime>) })
+        })
+    }
+
+    fn failing_starter(message: &str) -> V2Starter {
+        let message = message.to_owned();
+        Arc::new(move |_inputs| {
+            let message = message.clone();
+            Box::pin(async move { Err(message) })
+        })
+    }
+
+    fn fake_v2() -> (
+        FakeAdmin,
+        Arc<Mutex<FakeAdminState>>,
+        V2Starter,
+        Arc<AtomicBool>,
+    ) {
+        let admin_state = Arc::new(Mutex::new(FakeAdminState {
+            clients: vec![ClientView {
+                client_id: "0011223344556677".to_owned(),
+                display_name: "Pixel 8".to_owned(),
+                state: ClientStateView::Active,
+                created_at: "2026-11-16T10:00:00Z".to_owned(),
+                last_seen_at: "2026-11-16T10:00:00Z".to_owned(),
+            }],
+            ..FakeAdminState::default()
+        }));
+        let admin = FakeAdmin::new(Arc::clone(&admin_state));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let runtime = Arc::new(FakeRuntime {
+            admin: Arc::new(admin.clone()),
+            stopped: Arc::clone(&stopped),
+        });
+        (admin, admin_state, ok_starter(runtime), stopped)
+    }
+
+    fn pending_request() -> PendingRequestView {
+        PendingRequestView {
+            request_id: 7,
+            client_id: "0011223344556677".to_owned(),
+            display_name: "Pixel 8".to_owned(),
+            mode: PairingMode::Qr,
+            address: "192.168.1.44:50000".to_owned(),
+            sas: Some("123 456".to_owned()),
+        }
+    }
 
     fn test_settings() -> Settings {
         Settings {
@@ -862,5 +1306,213 @@ mod tests {
         // No listener installed: publishing must not panic.
         let controller = ServerController::new(test_settings());
         controller.publish(&ServerStatus::stopped());
+    }
+
+    #[tokio::test]
+    async fn start_brings_up_v2_and_stop_closes_it_first() {
+        let (admin, _state, starter, stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+
+        let status = controller.start(synthetic()).await.expect("start");
+        assert_eq!(status.state, ServerState::Running);
+        assert_eq!(status.v2.state, crate::model::V2State::Running);
+        assert_eq!(status.v2.address.as_deref(), Some("127.0.0.1:65531"));
+        assert_eq!(status.v2.fingerprint.as_deref(), Some("FP"));
+        assert_eq!(status.v2.last_error, None);
+
+        let paired = controller.pairing_begin(PairingModeArg::Qr).expect("begin");
+        assert!(paired.active);
+        assert!(admin.calls().iter().any(|call| call == "begin:Qr"));
+
+        controller.stop().await.expect("stop");
+        assert!(
+            stopped.load(Ordering::SeqCst),
+            "stop must close the v2 runtime"
+        );
+        assert_eq!(
+            controller.status().v2.state,
+            crate::model::V2State::Disabled
+        );
+    }
+
+    #[tokio::test]
+    async fn a_v2_start_failure_keeps_v1_running_and_reports_separately() {
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(failing_starter("bind refused"), 0);
+
+        let status = controller
+            .start(synthetic())
+            .await
+            .expect("v1 still starts");
+        assert_eq!(status.state, ServerState::Running);
+        assert_eq!(status.v2.state, crate::model::V2State::Error);
+        assert_eq!(status.v2.last_error.as_deref(), Some("bind refused"));
+        assert_eq!(
+            status.last_error, None,
+            "a v2 error must not masquerade as a v1 error"
+        );
+        assert_eq!(controller.status(), status);
+
+        let error = controller
+            .pairing_begin(PairingModeArg::Qr)
+            .expect_err("pairing needs v2");
+        assert!(error.contains("bind refused"), "error was {error}");
+        controller.stop().await.expect("stop");
+    }
+
+    #[test]
+    fn pairing_is_refused_until_the_server_runs() {
+        let controller = ServerController::new(test_settings());
+        let error = controller
+            .pairing_begin(PairingModeArg::Qr)
+            .expect_err("stopped controller");
+        assert!(error.contains("start the server"), "error was {error}");
+        let status = controller.pairing_status();
+        assert!(!status.active);
+        assert!(status.pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pairing_begin_status_approve_and_decline_route_to_the_core() {
+        let (admin, admin_state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+
+        let status = controller
+            .pairing_begin(PairingModeArg::Qr)
+            .expect("begin QR");
+        assert!(status.active);
+        let invitation = status.invitation.expect("invitation");
+        assert_eq!(invitation.mode, "qr");
+        assert!(invitation.qr_uri.is_some());
+        assert_eq!(invitation.qr_svg.as_deref(), Some("<svg/>"));
+        assert_eq!(invitation.fingerprint, "FP");
+        assert!(invitation.expires_in_secs > 0);
+        assert!(admin.calls().iter().any(|call| call == "begin:Qr"));
+
+        lock(&admin_state).pending.push(pending_request());
+        let status = controller.pairing_status();
+        assert!(status.active);
+        assert_eq!(status.pending.len(), 1);
+        assert_eq!(status.pending[0].display_name, "Pixel 8");
+        assert_eq!(status.pending[0].sas.as_deref(), Some("123 456"));
+        assert_eq!(status.pending[0].client_id, "0011223344556677");
+
+        let status = controller.pairing_approve(7).expect("approve");
+        assert!(status.pending.is_empty());
+        assert!(admin.calls().iter().any(|call| call == "approve:7"));
+
+        let error = controller
+            .pairing_approve(7)
+            .expect_err("approval is single-use");
+        assert!(error.contains("no longer pending"), "error was {error}");
+
+        lock(&admin_state).pending.push(PendingRequestView {
+            request_id: 8,
+            ..pending_request()
+        });
+        let status = controller.pairing_decline(8).expect("decline");
+        assert!(status.pending.is_empty());
+        assert!(admin.calls().iter().any(|call| call == "decline:8"));
+
+        controller.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn pairing_cancel_clears_the_dialog_invitation() {
+        let (_admin, _state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+        assert!(
+            controller
+                .pairing_begin(PairingModeArg::Sas)
+                .expect("begin SAS")
+                .active
+        );
+
+        let status = controller.pairing_cancel().expect("cancel");
+        assert!(!status.active);
+        assert!(status.invitation.is_none());
+
+        controller.stop().await.expect("stop");
+        assert!(!controller.pairing_status().active);
+    }
+
+    #[tokio::test]
+    async fn pairing_status_hides_expired_invitations() {
+        let (admin, _state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+        {
+            let mut state = lock(&controller.state);
+            state.v2_admin = Some(Arc::new(admin));
+            state.invitation = Some(ActiveInvitation {
+                mode: "qr".to_owned(),
+                qr_uri: Some("audioshare-pair://p1?…".to_owned()),
+                qr_svg: None,
+                fingerprint: "FP".to_owned(),
+                expires_at: Instant::now() - Duration::from_secs(1),
+            });
+        }
+
+        let status = controller.pairing_status();
+        assert!(!status.active, "an expired invitation is not presented");
+        assert!(status.invitation.is_none());
+        controller.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn clients_list_and_revoke_route_to_the_shared_core() {
+        let (admin, _state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+
+        let clients = controller.clients_list().expect("list");
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients[0].display_name, "Pixel 8");
+        assert_eq!(clients[0].state, "active");
+
+        let revoked = controller
+            .clients_revoke("0011223344556677")
+            .expect("revoke");
+        assert_eq!(revoked.client_id, "0011223344556677");
+        assert_eq!(revoked.state, "revoked");
+        assert!(admin
+            .calls()
+            .iter()
+            .any(|call| call == "revoke:0011223344556677"));
+
+        let error = controller
+            .clients_revoke("deadbeefdeadbeef")
+            .expect_err("unknown client");
+        assert!(error.contains("unknown client"), "error was {error}");
+        controller.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn device_commands_are_refused_after_stop() {
+        let (_admin, _state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+        controller.stop().await.expect("stop");
+
+        for error in [
+            controller
+                .clients_list()
+                .expect_err("list after stop")
+                .to_string(),
+            controller
+                .pairing_cancel()
+                .expect_err("cancel after stop")
+                .to_string(),
+        ] {
+            assert!(error.contains("start the server"), "error was {error}");
+        }
     }
 }

@@ -795,6 +795,12 @@ impl PairingCore {
 
     /// Persist a successful pairing through [`AuthorizationStore::upsert`]
     /// (the production path; never `insert_for_tests`).
+    ///
+    /// This method only writes the record. The success broadcast is a separate
+    /// step ([`Self::notify_paired`]) so the driver can fire it *after* the
+    /// `PairingResult` frame has been written to the control stream: a one-shot
+    /// consumer (such as `as-cmd pair`) can then stop the Server without
+    /// racing the success result.
     pub fn persist_client(
         &self,
         public_key: &[u8],
@@ -826,8 +832,15 @@ impl PairingCore {
             last_seen_at: now,
         };
         self.store.upsert(client.clone())?;
-        let _ = self.paired_tx.send(client.clone());
         Ok(client)
+    }
+
+    /// Announce a persisted pairing to local admin surfaces.
+    ///
+    /// Call this only after the `PairingResult(OK)` frame for that pairing has
+    /// been written successfully; a failed write must not notify anyone.
+    pub fn notify_paired(&self, client: StoredClient) {
+        let _ = self.paired_tx.send(client);
     }
 
     /// List authorized clients (admin surface).
