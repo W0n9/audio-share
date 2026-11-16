@@ -28,6 +28,27 @@ internal object NativeMediaBridge : MediaPlayer.NativeMedia {
         ClientNative.recordPlayback(handle, submittedBytes, underruns, bufferCurrentMs)
 }
 
+/** What the ConnectivityManager `onAvailable` callback should do. */
+internal enum class AvailabilityAction {
+    /** No native handle yet: the queued start/reconnect attempt owns the connect. */
+    IN_FLIGHT_OWNS_START,
+
+    /** Handle exists but the QUIC endpoint is not stored yet (handshake in flight). */
+    AWAIT_ENDPOINT,
+
+    /** Live connection: migrate it with the network-change rebind. */
+    REBIND,
+}
+
+/** Ticket 23: pure startup/migration decision shared with the JVM tests. */
+internal object SessionStartupPolicy {
+    fun availabilityAction(handle: Long, endpointConnected: Boolean): AvailabilityAction = when {
+        handle == 0L -> AvailabilityAction.IN_FLIGHT_OWNS_START
+        !endpointConnected -> AvailabilityAction.AWAIT_ENDPOINT
+        else -> AvailabilityAction.REBIND
+    }
+}
+
 /**
  * Kotlin-side session owner (ticket 08): JNI handle lifecycle, bounded
  * exponential backoff with ±20% jitter, and the ConnectivityManager
@@ -309,10 +330,21 @@ class ClientSession(
                     stateSource?.let { it to handle.get() }
                 } ?: return
                 val (source, h) = current
-                if (h == 0L) {
-                    // no live session to migrate: normal reconnect path
-                    scheduleReconnect(0, source, lifetime)
-                    return
+                when (SessionStartupPolicy.availabilityAction(h, h != 0L && nativeEndpointConnected(h))) {
+                    AvailabilityAction.IN_FLIGHT_OWNS_START -> {
+                        // 注册回调会立即投递当前网络。此时启动/重连任务已在队列中，
+                        // 额外 scheduleReconnect 会关闭来源并制造第二条连接。
+                        listener.onLog("network available before a native session; in-flight start owns it")
+                        return
+                    }
+                    AvailabilityAction.AWAIT_ENDPOINT -> {
+                        // handle 已存在但 QUIC endpoint 尚未写入（握手进行中）。
+                        // 此刻 rebind 必定返回 "no endpoint (not connected)"，
+                        // 其 teardown 回退会杀掉正在进行的握手。
+                        listener.onLog("network available before the QUIC endpoint exists; skipping rebind")
+                        return
+                    }
+                    AvailabilityAction.REBIND -> Unit
                 }
                 if (tryRebind(h, network)) return
                 // rebind 可与 STOP/重连交错；只清理本次来源。
@@ -332,6 +364,19 @@ class ClientSession(
         connectivityManager.registerNetworkCallback(request, callback)
         registeredCallback = callback
         networkCallbackRegistered = true
+    }
+
+    /**
+     * True only after the native run has stored the QUIC endpoint (the
+     * `connected` stat is set immediately after it). rebind() before that
+     * point fails with "no endpoint (not connected)".
+     */
+    private fun nativeEndpointConnected(h: Long): Boolean = try {
+        val stats = ClientNative.getStats(h)
+        !stats.isNullOrEmpty() && JSONObject(stats).optBoolean("connected", false)
+    } catch (e: Exception) {
+        Log.w(TAG, "read connected stat: ${e.message}")
+        false
     }
 
     /**
