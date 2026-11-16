@@ -17,6 +17,9 @@ tokio.workspace = true
 tracing = "0.1"
 tracing-subscriber = "0.3"
 v2-transport = { path = "../v2-transport" }
+# Shared v2 Server runtime (identity, Pairing Core, QUIC listener, capture
+# adapters) so the CLI and the GUI cannot diverge.
+v2-runtime = { path = "../v2-runtime" }
 # Terminal QR rendering for `as-cmd pair` (pure Rust, no default features).
 qrcodegen = "1.8"
 
