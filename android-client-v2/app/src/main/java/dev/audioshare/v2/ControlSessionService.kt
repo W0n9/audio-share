@@ -3,9 +3,12 @@ package dev.audioshare.v2
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.drawable.Icon
+import android.media.session.MediaSession
 import android.os.Build
 import android.os.Binder
 import android.os.IBinder
@@ -66,6 +69,9 @@ class ControlSessionService : Service(), SessionController {
 
     /** Context for the in-flight pairing, used when the credential arrives. */
     private var pairingContext: PairingContext? = null
+
+    /** Platform media session carried by the foreground notification. */
+    private var mediaSession: MediaSession? = null
 
     @Volatile
     private var lastErrorCode: Int? = null
@@ -382,20 +388,66 @@ class ControlSessionService : Service(), SessionController {
                 CHANNEL_ID, "Audio Share session", NotificationManager.IMPORTANCE_LOW,
             ))
         }
-        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val contentIntent = PendingIntent.getActivity(
+            this,
+            REQUEST_OPEN,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            pendingFlags,
+        )
+        // The lock-screen/notification Stop uses the same ACTION_STOP semantics
+        // as the in-app Stop button; no separate shutdown path exists.
+        val stopIntent = PendingIntent.getService(
+            this,
+            REQUEST_STOP,
+            Intent(this, ControlSessionService::class.java).setAction(ACTION_STOP),
+            pendingFlags,
+        )
+        val action = Notification.Action.Builder(
+            Icon.createWithResource(this, android.R.drawable.ic_media_pause),
+            "Stop",
+            stopIntent,
+        ).build()
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
             @Suppress("DEPRECATION") Notification.Builder(this)
         }.setContentTitle("Audio Share")
-            .setContentText("Streaming audio from the Server.")
+            .setContentText("Media session active. Audio plays while the screen is locked.")
             .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
             .setOngoing(true)
-            .build()
+            .setCategory(Notification.CATEGORY_TRANSPORT)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setContentIntent(contentIntent)
+            .addAction(action)
+            .setStyle(
+                Notification.MediaStyle()
+                    .setMediaSession(mediaSessionToken(contentIntent))
+                    .setShowActionsInCompactView(0)
+            )
+        val notification = builder.build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         } else {
             @Suppress("DEPRECATION") startForeground(NOTIFICATION_ID, notification)
         }
+    }
+
+    private fun mediaSessionToken(contentIntent: PendingIntent): MediaSession.Token {
+        val session = mediaSession ?: MediaSession(this, "AudioShareV2").also {
+            it.setSessionActivity(contentIntent)
+            it.isActive = true
+            mediaSession = it
+        }
+        return session.sessionToken
+    }
+
+    private fun releaseMediaSession() {
+        mediaSession?.isActive = false
+        mediaSession?.release()
+        mediaSession = null
     }
 
     private fun stopForegroundCompat() {
@@ -406,12 +458,14 @@ class ControlSessionService : Service(), SessionController {
         teardownSession()
         pairingRelay.clear()
         pairingContext = null
+        releaseMediaSession()
         stopForegroundCompat()
         stopSelf()
     }
 
     override fun onDestroy() {
         teardownSession()
+        releaseMediaSession()
         super.onDestroy()
     }
 
@@ -433,6 +487,8 @@ class ControlSessionService : Service(), SessionController {
         private const val MODE_SAS = 2
         private const val CHANNEL_ID = "v2_control_session"
         private const val NOTIFICATION_ID = 42
+        private const val REQUEST_OPEN = 1
+        private const val REQUEST_STOP = 2
     }
 }
 

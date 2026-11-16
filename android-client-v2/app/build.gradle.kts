@@ -6,6 +6,7 @@ import com.google.protobuf.gradle.proto
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.protobuf)
 }
 
@@ -45,8 +46,10 @@ android {
         // ticket 08 gate: Android 8 / API 26 baseline, same as the prototype
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-v2"
+        // Beta release: applicationId dev.audioshare.v2 so the beta coexists
+        // with the v1 app (ticket 21 acceptance).
+        versionCode = 2
+        versionName = "0.2.0-beta"
         testInstrumentationRunner = "dev.audioshare.v2.ControlSessionInstrumentation"
         ndk {
             // arm64-v8a is the real-device scope; x86_64 is the emulator ABI.
@@ -60,6 +63,14 @@ android {
 
     buildFeatures {
         buildConfig = true
+        compose = true
+    }
+
+    testOptions {
+        unitTests {
+            // Robolectric screen tests need the merged manifest and resources.
+            isIncludeAndroidResources = true
+        }
     }
 
     buildTypes {
@@ -125,6 +136,22 @@ android {
 dependencies {
     implementation(libs.google.protobuf.kotlin.lite)
 
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material3)
+
+    // QR scanning without Google Play Services: ZXing decodes frames from a
+    // CameraX ImageAnalysis pipeline wrapped in an AndroidView.
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+    implementation(libs.zxing.core)
+
     // Unit tests: the fixture replay harness. org.json comes from the real
     // artifact (android.jar's stubs throw in unit tests); kotlin("test")
     // provides the kotlin.test assertions.
@@ -132,6 +159,14 @@ dependencies {
     testImplementation("io.mockk:mockk:1.13.16")
     testImplementation("org.json:json:20240303")
     testImplementation(kotlin("test"))
+    // Compose screen tests run on the JVM under Robolectric so the custom
+    // release-build Instrumentation runner stays untouched.
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
 protobuf {
