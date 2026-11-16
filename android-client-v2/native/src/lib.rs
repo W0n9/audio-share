@@ -23,8 +23,10 @@ pub mod jni;
 pub mod media;
 pub mod media_control;
 pub mod media_session;
+pub mod pairing;
 pub mod ring;
 pub mod session;
+pub mod signer;
 pub mod verify;
 
 /// prost-generated module for the frozen schema (package audio.share.v2).

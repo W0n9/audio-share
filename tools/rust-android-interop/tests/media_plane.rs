@@ -39,7 +39,9 @@ fn fixture_coordinates(id: &str) -> (u32, u64) {
     let fixture = media_fixture(id);
     let step = &fixture["steps"][0];
     (
-        step["decoded"]["stream_instance_id"].as_u64().expect("instance") as u32,
+        step["decoded"]["stream_instance_id"]
+            .as_u64()
+            .expect("instance") as u32,
         step["decoded"]["timestamp"].as_u64().expect("timestamp"),
     )
 }
@@ -60,10 +62,7 @@ fn pump(instance: u32) -> MediaPump {
 /// Reassemble the golden payloads into one capture buffer, let the REAL Server
 /// pump packetize them at the given send-time limit, and assert the resulting
 /// bytes are the frozen vector's bytes.
-fn pump_golden_datagrams(
-    id: &str,
-    max_datagram_size: usize,
-) -> (u32, Vec<Vec<u8>>, Vec<Vec<u8>>) {
+fn pump_golden_datagrams(id: &str, max_datagram_size: usize) -> (u32, Vec<Vec<u8>>, Vec<Vec<u8>>) {
     let (instance, start_frame) = fixture_coordinates(id);
     let fixture = media_fixture(id);
     let expected: Vec<Vec<u8>> = media_datagrams(&fixture)
@@ -91,8 +90,15 @@ fn pump_golden_datagrams(
     let produced = pump
         .take_sendable(Instant::now(), max_datagram_size, expected.len())
         .expect("packetize");
-    assert_eq!(produced.len(), expected.len(), "one datagram per fixture step");
-    assert_eq!(produced, expected, "Server bytes are the golden vector: {id}");
+    assert_eq!(
+        produced.len(),
+        expected.len(),
+        "one datagram per fixture step"
+    );
+    assert_eq!(
+        produced, expected,
+        "Server bytes are the golden vector: {id}"
+    );
     (instance, expected, produced)
 }
 
@@ -160,7 +166,10 @@ fn server_interop_floor_datagram_is_delivered_by_android() {
     assert_eq!(produced[0].len(), 1200);
 
     let (_backing, mut media) = android_session(instance, 0);
-    assert_eq!(media.on_datagram(0, &produced[0]), DatagramOutcome::Delivered);
+    assert_eq!(
+        media.on_datagram(0, &produced[0]),
+        DatagramOutcome::Delivered
+    );
     assert_eq!(media.delivered_frames(), 147);
     assert_eq!(media.diagnostics(0).cumulative_received, 1);
 }
@@ -174,8 +183,15 @@ fn reduced_path_limit_still_interoperates_with_android() {
 
     let (_backing, mut media) = android_session(instance, 0);
     for datagram in &produced {
-        assert!(datagram.len() <= 1165, "every datagram respects the current limit");
-        assert_eq!((datagram.len() - HEADER_SIZE) % FRAME_BYTES, 0, "whole frames");
+        assert!(
+            datagram.len() <= 1165,
+            "every datagram respects the current limit"
+        );
+        assert_eq!(
+            (datagram.len() - HEADER_SIZE) % FRAME_BYTES,
+            0,
+            "whole frames"
+        );
         assert_eq!(media.on_datagram(0, datagram), DatagramOutcome::Delivered);
     }
     assert_eq!(media.delivered_frames(), 284, "142 + 142 frames");
@@ -212,7 +228,9 @@ fn android_generation_protection_matches_server_mid_stream_change() {
         .expect("gen1 sent");
     // The Server advances the generation (CONFIG_CHANGE on the next datagram)
     // and refuses capture buffers of the old generation.
-    server_pump.set_generation(2).expect("decode-affecting change");
+    server_pump
+        .set_generation(2)
+        .expect("decode-affecting change");
 
     let (_backing, mut media) = android_session(1, 1_200);
     // A datagram of the future generation is held, never decoded.
@@ -234,7 +252,10 @@ fn android_generation_protection_matches_server_mid_stream_change() {
 
     // A late gen-1 datagram is dropped, never decoded with gen 2.
     let stale = unhex(&golden[2].0);
-    assert_eq!(media.on_datagram(0, &stale), DatagramOutcome::StaleGeneration);
+    assert_eq!(
+        media.on_datagram(0, &stale),
+        DatagramOutcome::StaleGeneration
+    );
     assert_eq!(media.delivered_frames(), 30);
     let diagnostics = media.diagnostics(0);
     assert_eq!(diagnostics.config_generation, 2);
@@ -288,7 +309,10 @@ fn late_subscriber_anchor_and_real_playback_position_round_trip() {
         .take_sendable(Instant::now(), 1_192, 8)
         .expect("send");
     let first = MediaHeader::parse(&datagrams[0]).unwrap().0;
-    assert_eq!(first.timestamp, ANCHOR, "Server starts at the announced anchor");
+    assert_eq!(
+        first.timestamp, ANCHOR,
+        "Server starts at the announced anchor"
+    );
     assert_eq!(first.sequence, 0);
 
     let (_backing, mut media) = android_session(1, ANCHOR);
@@ -354,10 +378,12 @@ fn server_sequence_wrap_is_folded_by_android() {
     let diagnostics = media.diagnostics(0);
     assert_eq!(diagnostics.cumulative_received, 2);
     assert_eq!(diagnostics.cumulative_duplicates, 0);
-    assert_eq!(diagnostics.cumulative_lost, 0, "wrap is in-order, not a loss burst");
     assert_eq!(
-        diagnostics.extended_highest_sequence,
-        0x1_0000_0000,
+        diagnostics.cumulative_lost, 0,
+        "wrap is in-order, not a loss burst"
+    );
+    assert_eq!(
+        diagnostics.extended_highest_sequence, 0x1_0000_0000,
         "RFC 3550 A.1 folds the cycle"
     );
 
@@ -365,9 +391,13 @@ fn server_sequence_wrap_is_folded_by_android() {
     // one datagram first so STREAM_START (a per-instance hint) is not set on
     // this mid-stream vector; both golden headers carry flags 0.
     let mut packetizer = MediaPacketizer::new(instance, GENERATION, FRAME_BYTES);
-    packetizer.packetize(&[0u8; 8], 104).expect("consume STREAM_START");
+    packetizer
+        .packetize(&[0u8; 8], 104)
+        .expect("consume STREAM_START");
     packetizer.seek(0xffff_ffff, start_frame).expect("seek");
-    let produced = packetizer.packetize(&[0u8; 160], 104).expect("two datagrams");
+    let produced = packetizer
+        .packetize(&[0u8; 160], 104)
+        .expect("two datagrams");
     assert_eq!(produced.len(), 2);
     assert_eq!(
         produced[0][..HEADER_SIZE],
@@ -385,8 +415,14 @@ fn server_sequence_wrap_is_folded_by_android() {
 
     // (3) Server-produced wrap → the same Android receiver folds it too.
     let (_backing, mut media) = android_session(instance, start_frame);
-    assert_eq!(media.on_datagram(0, &produced[0]), DatagramOutcome::Delivered);
-    assert_eq!(media.on_datagram(0, &produced[1]), DatagramOutcome::Delivered);
+    assert_eq!(
+        media.on_datagram(0, &produced[0]),
+        DatagramOutcome::Delivered
+    );
+    assert_eq!(
+        media.on_datagram(0, &produced[1]),
+        DatagramOutcome::Delivered
+    );
     let diagnostics = media.diagnostics(0);
     assert_eq!(diagnostics.extended_highest_sequence, 0x1_0000_0000);
     assert_eq!(diagnostics.cumulative_lost, 0);

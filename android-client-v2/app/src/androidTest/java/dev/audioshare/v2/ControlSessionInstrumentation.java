@@ -57,6 +57,24 @@ public final class ControlSessionInstrumentation extends Instrumentation {
     }
 
     @Override public void onStart() {
+        // Ticket 20 pairing/Keystore cases run without an Activity. They use
+        // the same custom runner (the only one AGP declares) and report the
+        // same OK/FAIL stream to the host harness.
+        String earlyCase = arguments.getString("case", "ready");
+        if (PairingContract.isPairingCase(earlyCase)) {
+            Bundle pairingResult = new Bundle();
+            int pairingCode = Activity.RESULT_CANCELED;
+            try {
+                PairingContract.run(this, arguments, earlyCase);
+                pairingResult.putString("stream", "\nOK (1 test)\n");
+                pairingCode = Activity.RESULT_OK;
+            } catch (Throwable failure) {
+                pairingResult.putString("stream", "\nFAIL: " + failure + "\n");
+            } finally {
+                finish(pairingCode, pairingResult);
+            }
+            return;
+        }
         Activity activity = null;
         Bundle result = new Bundle();
         int code = Activity.RESULT_CANCELED;
