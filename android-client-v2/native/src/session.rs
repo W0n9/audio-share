@@ -23,6 +23,10 @@ use std::sync::{Arc, Mutex};
 use crate::control::{ClientMachine, ClientState, CloseInfo};
 use crate::frame::{encode_frame, FrameDecoder};
 use crate::media_session::{MediaSession, PlaybackReport};
+use crate::pairing::{
+    ClientPairingMode, PairedCredential, PairingExporter, PairingInfo, PairingPhase, SharedExporter,
+};
+use crate::signer::SharedSigner;
 use crate::verify::PinnedSpkiVerifier;
 
 /// Spec §3 / ADR-0004 D1: v2 port (never v1's 65530).
@@ -38,6 +42,8 @@ pub const ALPN: &[u8] = b"audio-share/v2";
 pub const AUTH_EXPORTER_LABEL: &[u8] = b"EXPORTER audio-share v2 auth";
 /// §3: auth exchange deadline (absolute: AuthInit → AuthResult).
 const AUTH_DEADLINE_SECS: u64 = 10;
+/// pairing.md §5: the complete pairing exchange deadline (10 minutes).
+const PAIRING_DEADLINE_SECS: u64 = 10 * 60;
 /// §4.2: per-request response deadline.
 const RESPONSE_DEADLINE_SECS: u64 = 10;
 /// §3/D3: idle timeout and keep-alive, both sides.
@@ -90,18 +96,58 @@ impl ResponseWatch {
     }
 }
 
-/// Session configuration. The pin is the test-only pre-provisioned Server
-/// identity pin for this ticket (hex, 64 chars).
+/// How this session proves its identity.
+pub enum SessionIdentity {
+    /// Paired reconnection: pinned Server SPKI + stored Server key + the
+    /// Client identity signer (Keystore in production).
+    Auth {
+        /// The stored pin (64 hex chars).
+        pinned_spki_hex: String,
+        /// The stored raw 32-byte Ed25519 Server identity key.
+        server_public_key: Vec<u8>,
+        /// The Client identity (non-exportable in production).
+        signer: SharedSigner,
+    },
+    /// QR pairing: pinned Server SPKI + nonce; sends `PairingRequest`.
+    PairQr {
+        /// Pin derived from the QR key.
+        pinned_spki_hex: String,
+        /// The QR key (raw 32-byte Ed25519).
+        server_public_key: Vec<u8>,
+        /// The single-use 16-byte nonce.
+        nonce: Vec<u8>,
+        /// Display name offered to the Server (≤ 63 bytes).
+        display_name: String,
+        /// The Client identity signer.
+        signer: SharedSigner,
+    },
+    /// SAS pairing: first contact without a pin (TOFU + human comparison).
+    PairSas {
+        /// Display name offered to the Server (≤ 63 bytes).
+        display_name: String,
+        /// The Client identity signer.
+        signer: SharedSigner,
+    },
+}
+
+impl SessionIdentity {
+    fn is_pairing(&self) -> bool {
+        matches!(
+            self,
+            SessionIdentity::PairQr { .. } | SessionIdentity::PairSas { .. }
+        )
+    }
+}
+
+/// Session configuration.
 pub struct SessionConfig {
     pub host: String,
     pub port: u16,
-    pub pinned_spki_hex: String,
-    /// Raw 32-byte Ed25519 Server identity public key (auth transcript TLV(4));
-    /// from the same pre-provisioned test configuration as the pin.
-    pub server_public_key: Vec<u8>,
-    /// Client display name (≤ 63 bytes UTF-8, pairing.md §6.2) — used by
-    /// pairing; this ticket keeps it for the JNI surface only.
+    /// Client display name (≤ 63 bytes UTF-8, pairing.md §6.2). Used by the
+    /// test-support convenience session; pairing modes carry their own name.
     pub client_name: String,
+    /// How the session establishes/proves its identity.
+    pub identity: SessionIdentity,
 }
 
 pub struct SharedState {
@@ -124,6 +170,15 @@ pub struct SharedState {
     /// The JVM-owned direct ByteBuffer attached once per session. Media never
     /// crosses JNI per datagram: this is the ring's backing memory.
     pub ring: Mutex<Option<RingAttachment>>,
+    /// Pairing display material / phase (no secrets beyond SAS/fingerprint,
+    /// which are user-visible display material and are never logged).
+    pub pairing: Mutex<Option<PairingInfo>>,
+    /// The credential to persist after `PairingResult(OK)`.
+    pub credential: Mutex<Option<PairedCredential>>,
+    /// Requests a user-confirmed pairing from the control loop.
+    confirm_tx: tokio::sync::mpsc::Sender<()>,
+    /// The control loop takes this once at start.
+    confirm_rx: Mutex<Option<tokio::sync::mpsc::Receiver<()>>>,
 }
 
 /// The native side of the one-time direct-`ByteBuffer` attachment.
@@ -167,6 +222,7 @@ impl Session {
             .enable_all()
             .build()
             .map_err(|e| format!("tokio runtime: {e}"))?;
+        let (confirm_tx, confirm_rx) = tokio::sync::mpsc::channel(4);
         Ok(Session {
             config,
             runtime,
@@ -181,6 +237,10 @@ impl Session {
                 endpoint: Mutex::new(None),
                 media: Mutex::new(None),
                 ring: Mutex::new(None),
+                pairing: Mutex::new(None),
+                credential: Mutex::new(None),
+                confirm_tx,
+                confirm_rx: Mutex::new(Some(confirm_rx)),
             }),
         })
     }
@@ -267,10 +327,17 @@ impl Session {
         bind_local_address: Option<std::net::IpAddr>,
     ) -> Result<(), RunError> {
         let socket = self.make_client_socket(bind_local_address)?;
-        let pin_verifier = Arc::new(
-            PinnedSpkiVerifier::new(&self.config.pinned_spki_hex)
-                .map_err(|e| format!("pin: {e}"))?,
-        );
+        let pin_verifier = Arc::new(match &self.config.identity {
+            // SAS first contact is TOFU-with-verification: no pin yet, but the
+            // presented SPKI is recorded so it can be persisted after pairing.
+            SessionIdentity::PairSas { .. } => PinnedSpkiVerifier::unpinned_accepting(),
+            SessionIdentity::Auth {
+                pinned_spki_hex, ..
+            }
+            | SessionIdentity::PairQr {
+                pinned_spki_hex, ..
+            } => PinnedSpkiVerifier::new(pinned_spki_hex).map_err(|e| format!("pin: {e}"))?,
+        });
         let crypto = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(pin_verifier.clone())
@@ -333,28 +400,94 @@ impl Session {
         self.shared.connected.store(true, Ordering::Release);
         log::info!("QUIC established");
 
-        // one reliable bidirectional control stream, opened by the Client
-        // immediately after the handshake (spec §3)
+        // One reliable bidirectional control stream, opened by the Client
+        // immediately after the handshake (spec §3).
         let (mut tx, mut rx) = conn.open_bi().await.map_err(|e| format!("open_bi: {e}"))?;
 
-        // register the auth context (server key + exporter), then send AuthInit
-        let exporter = {
-            let mut out = vec![0u8; 32];
-            conn.export_keying_material(&mut out, AUTH_EXPORTER_LABEL, &[])
-                .map_err(|_| "exporter: not available".to_string())?;
-            out
-        };
-        let key = session_identity_key()?;
-        let client_public_key = crate::auth::sec1_compressed(&key);
+        // The two identity paths: paired reconnection sends AuthInit; QR/SAS
+        // sends PairingRequest. Pairing uses a per-connection exporter seam so
+        // the pure state machine can derive binding/SAS without quinn.
         let mut machine = ClientMachine::new();
-        machine.set_auth_context(self.config.server_public_key.clone(), exporter, key);
-        let auth_init = machine.auth_init(client_public_key);
-        let v = machine.enter_authenticating(auth_init).map_err(|info| {
-            RunError::Other(format!("auth init rejected locally: {}", info.code))
-        })?;
-        send_verdict(&mut tx, &v).await?;
+        let pairing_exporter: Option<SharedExporter> = if self.config.identity.is_pairing() {
+            Some(Arc::new(QuicPairingExporter { conn: conn.clone() }))
+        } else {
+            None
+        };
+        let verdict = match &self.config.identity {
+            SessionIdentity::Auth {
+                server_public_key,
+                signer,
+                ..
+            } => {
+                let mut exporter = vec![0u8; 32];
+                conn.export_keying_material(&mut exporter, AUTH_EXPORTER_LABEL, &[])
+                    .map_err(|_| "exporter: not available".to_string())?;
+                machine
+                    .set_auth_context(server_public_key.clone(), exporter, Arc::clone(signer))
+                    .map_err(|e| format!("signer: {e}"))?;
+                let client_public_key = signer
+                    .public_key_sec1()
+                    .map_err(|e| format!("signer public key: {e}"))?;
+                let auth_init = machine.auth_init(client_public_key);
+                machine.enter_authenticating(auth_init).map_err(|info| {
+                    RunError::Other(format!("auth init rejected locally: {}", info.code))
+                })?
+            }
+            SessionIdentity::PairQr {
+                server_public_key,
+                nonce,
+                display_name,
+                signer,
+                ..
+            } => {
+                let mut client_random = [0u8; 32];
+                rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut client_random);
+                machine
+                    .begin_pairing(
+                        ClientPairingMode::Qr,
+                        nonce.clone(),
+                        client_random,
+                        display_name.clone(),
+                        Arc::clone(signer),
+                        pairing_exporter.clone().expect("pairing exporter"),
+                        Some(server_public_key.clone()),
+                    )
+                    .map_err(|info| {
+                        RunError::Other(format!("pairing init rejected locally: {}", info.code))
+                    })?
+            }
+            SessionIdentity::PairSas {
+                display_name,
+                signer,
+            } => {
+                let mut client_random = [0u8; 32];
+                rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut client_random);
+                machine
+                    .begin_pairing(
+                        ClientPairingMode::Sas,
+                        Vec::new(),
+                        client_random,
+                        display_name.clone(),
+                        Arc::clone(signer),
+                        pairing_exporter.clone().expect("pairing exporter"),
+                        None,
+                    )
+                    .map_err(|info| {
+                        RunError::Other(format!("pairing init rejected locally: {}", info.code))
+                    })?
+            }
+        };
+        send_verdict(&mut tx, &verdict).await?;
         self.set_state(machine.state.clone());
         *self.shared.control_stream.lock().await = Some(tx);
+        let confirm_rx = self
+            .shared
+            .confirm_rx
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or("confirm channel already taken")?;
+        let mut confirm_rx = confirm_rx;
 
         // ---- control loop ---------------------------------------------------
         let mut decoder = FrameDecoder::new();
@@ -362,6 +495,10 @@ impl Session {
         // Absolute auth deadline: armed once, never rebuilt by a read (§3).
         let auth_deadline =
             tokio::time::Instant::now() + std::time::Duration::from_secs(AUTH_DEADLINE_SECS);
+        // The pairing exchange may wait for a human on both ends; it owns the
+        // 10-minute deadline instead of the 10 s auth deadline (pairing.md §5).
+        let pairing_deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(PAIRING_DEADLINE_SECS);
         let mut watch = ResponseWatch::default();
         let pending = machine.pending_ids();
         watch.observe(tokio::time::Instant::now(), &pending);
@@ -380,8 +517,41 @@ impl Session {
                         Err(e) => break 'control Err(format!("control read: {e}")),
                     }
                 }
-                _ = tokio::time::sleep_until(auth_deadline), if machine.state == ClientState::Authenticating => {
+                _ = tokio::time::sleep_until(auth_deadline), if machine.state == ClientState::Authenticating && machine.pairing_info().is_none() => {
                     break 'control Err(format!("auth exchange deadline ({AUTH_DEADLINE_SECS} s) → 601"));
+                }
+                _ = tokio::time::sleep_until(pairing_deadline), if machine.pairing_info().is_some() => {
+                    if let Some(info) = machine.pairing_info() {
+                        if info.phase != PairingPhase::Complete {
+                            break 'control Err("pairing deadline (10 min) → 206".to_string());
+                        }
+                    }
+                    continue;
+                }
+                confirmed = confirm_rx.recv(), if machine.pairing_info().is_some() => {
+                    if confirmed.is_some() {
+                        match machine.confirm_pairing() {
+                            Ok(v) => {
+                                let mut tx_guard = self.shared.control_stream.lock().await;
+                                if let Some(tx) = tx_guard.as_mut() {
+                                    send_verdict(tx, &v).await?;
+                                }
+                                drop(tx_guard);
+                                self.set_state(machine.state.clone());
+                                *self.shared.pairing.lock().unwrap() =
+                                    machine.pairing_info().cloned();
+                            }
+                            Err(info) => {
+                                self.record_error(format!(
+                                    "pairing confirm rejected locally: {}",
+                                    info.code
+                                ));
+                                self.record_close(info);
+                                break 'control Ok(());
+                            }
+                        }
+                    }
+                    continue;
                 }
                 expired_id = watch.expired() => {
                     break 'control Err(format!(
@@ -519,9 +689,44 @@ impl Session {
                 // states are answered by the machine (never silently ignored).
                 let (result, event) = machine.on_frame(&frame);
                 self.set_state(machine.state.clone());
+                if let Some(info) = machine.pairing_info() {
+                    *self.shared.pairing.lock().unwrap() = Some(info.clone());
+                }
                 if let Some(event) = event {
                     log::info!("client event: {event:?}");
                     match event {
+                        crate::control::Event::PairingReady(info) => {
+                            // Belt and braces: the certificate the TLS layer
+                            // accepted must be the key the Server named in
+                            // PairingResponse. In SAS mode this is the TOFU pin
+                            // we will persist; in QR mode the TLS pin already
+                            // enforced it.
+                            if let (Some(expected), Some(observed)) = (
+                                info.server_spki_sha256_hex.as_ref(),
+                                pin_verifier.observed_pin(),
+                            ) {
+                                let observed_hex = observed
+                                    .iter()
+                                    .map(|b| format!("{b:02x}"))
+                                    .collect::<String>();
+                                if &observed_hex != expected {
+                                    self.record_error(
+                                        "pairing: presented SPKI does not match the Server key"
+                                            .to_string(),
+                                    );
+                                    self.record_close(CloseInfo {
+                                        code: 205,
+                                        remote: false,
+                                    });
+                                    break 'control Ok(());
+                                }
+                            }
+                            *self.shared.pairing.lock().unwrap() = Some(info);
+                        }
+                        crate::control::Event::Paired(credential) => {
+                            *self.shared.credential.lock().unwrap() = Some(credential);
+                            *self.shared.pairing.lock().unwrap() = machine.pairing_info().cloned();
+                        }
                         crate::control::Event::StreamStarted(anchor) => {
                             // §5.3: initialize per-instance media state; the
                             // reliable push is the only epoch authority.
@@ -545,7 +750,8 @@ impl Session {
                                 )
                             });
                             if let Some(media) = started {
-                                *self.shared.media.lock().unwrap() = Some(Arc::new(Mutex::new(media)));
+                                *self.shared.media.lock().unwrap() =
+                                    Some(Arc::new(Mutex::new(media)));
                             } else {
                                 // §5.3 READY: a configuration this Client cannot
                                 // decode is Error(403)+Close(403).
@@ -555,9 +761,11 @@ impl Session {
                                     let mut tx_guard = self.shared.control_stream.lock().await;
                                     if let Some(tx) = tx_guard.as_mut() {
                                         for f in crate::control::frames::fatal_frames(code) {
-                                            tx.write_all(&encode_frame(&f).map_err(|e| e.to_string())?)
-                                                .await
-                                                .map_err(|e| format!("send: {e}"))?;
+                                            tx.write_all(
+                                                &encode_frame(&f).map_err(|e| e.to_string())?,
+                                            )
+                                            .await
+                                            .map_err(|e| format!("send: {e}"))?;
                                         }
                                     }
                                     self.record_close(crate::control::CloseInfo {
@@ -657,6 +865,69 @@ impl Session {
         self.shared.state.lock().unwrap().name()
     }
 
+    /// Confirm a verified pairing (the user pressed "Confirm pairing").
+    ///
+    /// This only queues the confirmation; the control loop builds and sends
+    /// `PairingConfirm` so the machine stays single-owner.
+    pub fn confirm_pairing(&self) -> Result<bool, String> {
+        let phase = self
+            .shared
+            .pairing
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|info| info.phase);
+        if phase != Some(PairingPhase::AwaitingConfirmation) {
+            return Err("no verified pairing is awaiting confirmation".to_string());
+        }
+        self.shared
+            .confirm_tx
+            .try_send(())
+            .map_err(|e| format!("confirm channel: {e}"))?;
+        Ok(true)
+    }
+
+    /// Pairing display material as JSON (no private keys, never logged).
+    /// Empty string when this session is not a pairing session.
+    pub fn pairing_json(&self) -> String {
+        let Some(info) = self.shared.pairing.lock().unwrap().clone() else {
+            return String::new();
+        };
+        let opt = |value: Option<&String>| match value {
+            Some(v) => json_escape(v),
+            None => "null".to_string(),
+        };
+        format!(
+            "{{\"mode\":\"{}\",\"phase\":\"{}\",\"sas\":{},\"fingerprint\":{},\"server_public_key\":{},\"server_spki_sha256\":{},\"client_id\":{},\"display_name\":{},\"error_code\":{}}}",
+            info.mode.as_str(),
+            info.phase.name(),
+            opt(info.sas.as_ref()),
+            opt(info.fingerprint.as_ref()),
+            opt(info.server_public_key_hex.as_ref()),
+            opt(info.server_spki_sha256_hex.as_ref()),
+            opt(info.client_id.as_ref()),
+            opt(info.display_name.as_ref()),
+            info.error_code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "null".to_string()),
+        )
+    }
+
+    /// The credential to persist after `PairingResult(OK)`, as JSON. Empty
+    /// until the Server has persisted this identity.
+    pub fn credential_json(&self) -> String {
+        let Some(credential) = self.shared.credential.lock().unwrap().clone() else {
+            return String::new();
+        };
+        format!(
+            "{{\"server_spki_sha256\":{},\"server_public_key\":{},\"client_id\":{},\"display_name\":{}}}",
+            json_escape(&credential.server_spki_sha256_hex),
+            json_escape(&credential.server_public_key_hex),
+            json_escape(&credential.client_id),
+            json_escape(&credential.display_name),
+        )
+    }
+
     /// Attach the JVM's direct ByteBuffer as the media ring, once per session.
     pub fn attach_ring(&self, attachment: RingAttachment) -> Result<bool, String> {
         let mut ring = self.shared.ring.lock().unwrap();
@@ -668,7 +939,8 @@ impl Session {
         // ring immediately; otherwise the StreamStarted handler picks it up.
         if let Some(media) = self.shared.media.lock().unwrap().as_ref() {
             // SAFETY: the JVM keeps the buffer alive for the whole session.
-            let ring = unsafe { crate::ring::MediaRing::attach(attachment.base, attachment.capacity) };
+            let ring =
+                unsafe { crate::ring::MediaRing::attach(attachment.base, attachment.capacity) };
             media.lock().unwrap().set_ring(ring);
         }
         Ok(true)
@@ -814,19 +1086,35 @@ impl Session {
     }
 }
 
-/// Client identity for the session. The fixture identity exists only behind
-/// the `test-support` feature (E2E APKs); a production build without real
-/// pairing support returns an explicit error instead of silently shipping the
-/// fixed test key.
+/// The test-support identity signer. A production build (no `test-support`)
+/// has no fixture key path at all: production identities always arrive from
+/// Kotlin via the signer upcall.
 #[cfg(any(test, feature = "test-support"))]
-fn session_identity_key() -> Result<p256::ecdsa::SigningKey, String> {
-    Ok(crate::auth::test_client_identity_key())
+pub fn test_support_signer() -> Result<SharedSigner, String> {
+    Ok(Arc::new(crate::signer::SoftwareSigner::new(
+        crate::auth::test_client_identity_key(),
+    )))
 }
 
 #[cfg(not(any(test, feature = "test-support")))]
-fn session_identity_key() -> Result<p256::ecdsa::SigningKey, String> {
-    Err("no client identity: build with `test-support` for the fixture identity;          production pairing identities are provided by pairing (phase 6)"
-        .to_string())
+pub fn test_support_signer() -> Result<SharedSigner, String> {
+    Err("no test identity in this build (enable `test-support` for the fixture key)".to_string())
+}
+
+/// A per-connection TLS-Exporter adapter over quinn. Pairing derives both the
+/// 48-byte binding and the 32-byte SAS seed from this exact handshake.
+struct QuicPairingExporter {
+    conn: quinn::Connection,
+}
+
+impl PairingExporter for QuicPairingExporter {
+    fn export(&self, label: &[u8], context: &[u8], len: usize) -> Result<Vec<u8>, String> {
+        let mut out = vec![0u8; len];
+        self.conn
+            .export_keying_material(&mut out, label, context)
+            .map_err(|_| "TLS exporter unavailable".to_string())?;
+        Ok(out)
+    }
 }
 
 /// Why a run ended locally. Typed so §6.3 classification never depends on
@@ -938,9 +1226,12 @@ mod tests {
         SessionConfig {
             host: "127.0.0.1".to_string(),
             port: 65531,
-            pinned_spki_hex: "00".repeat(32),
-            server_public_key: vec![0x11u8; 32],
             client_name: "test".into(),
+            identity: SessionIdentity::Auth {
+                pinned_spki_hex: "00".repeat(32),
+                server_public_key: vec![0x11u8; 32],
+                signer: crate::signer::test_signer(),
+            },
         }
     }
 
@@ -1254,9 +1545,21 @@ mod tests {
         assert!(json.contains("\"anchor\":96000"), "got: {json}");
         // Ticket-14 JNI contract: exactly these six keys, no extras.
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
-        let keys: Vec<&str> = parsed.as_object().expect("object").keys().map(String::as_str).collect();
+        let keys: Vec<&str> = parsed
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
         assert_eq!(keys.len(), 6, "no extra fields: {json}");
-        for key in ["instance", "generation", "sample_rate", "channels", "sample_format", "anchor"] {
+        for key in [
+            "instance",
+            "generation",
+            "sample_rate",
+            "channels",
+            "sample_format",
+            "anchor",
+        ] {
             assert!(keys.contains(&key), "missing {key}: {json}");
         }
     }

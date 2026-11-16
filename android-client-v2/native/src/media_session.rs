@@ -414,8 +414,7 @@ impl MediaSession {
     }
 
     fn trim_hold(&mut self) {
-        let max_hold_frames =
-            u64::from(self.geometry.sample_rate) * UNKNOWN_CONFIG_MAX_MS / 1_000;
+        let max_hold_frames = u64::from(self.geometry.sample_rate) * UNKNOWN_CONFIG_MAX_MS / 1_000;
         let frame_bytes = self.geometry.frame_bytes().max(1);
         let Some((_, held)) = self.holding.as_mut() else {
             return;

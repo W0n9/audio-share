@@ -21,7 +21,11 @@
 //! Not modeled here (session layer's job): deadlines, backoff/reconnect, the
 //! actual stream I/O.
 
+use crate::pairing::{
+    self, BindingInputs, ClientPairingMode, PairedCredential, PairingInfo, PairingPhase,
+};
 use crate::proto::{frame::Body, Configuration, Frame};
+use crate::signer::SharedSigner;
 
 pub(crate) mod frames {
     //! The one home for Error/Close frame construction. `fatal_frames` keeps
@@ -64,13 +68,19 @@ pub(crate) mod frames {
 /// The session's authentication context (pairing.md §9.1). It is explicit
 /// session state, not thread-local: the machine may be polled from any worker
 /// thread of the multi-threaded runtime.
+///
+/// The identity is held behind [`SharedSigner`] so a non-exportable Android
+/// Keystore key can sign over a JNI upcall; the native crate never owns the
+/// production private key.
 pub struct AuthContext {
     /// Raw 32-byte Ed25519 Server identity public key (auth transcript TLV(4)).
     pub server_public_key: Vec<u8>,
     /// TLS-Exporter bytes for TLV(6) (pairing.md §9.1).
     pub auth_exporter: Vec<u8>,
-    /// Client identity key used to sign the auth_context.
-    pub client_identity: p256::ecdsa::SigningKey,
+    /// Identity key used to sign the auth_context.
+    pub signer: SharedSigner,
+    /// The claimed identity's SEC1 public key (TLV(3)).
+    pub client_public_key: Vec<u8>,
 }
 
 impl std::fmt::Debug for AuthContext {
@@ -79,8 +89,50 @@ impl std::fmt::Debug for AuthContext {
         f.debug_struct("AuthContext")
             .field("server_public_key", &"<redacted>")
             .field("auth_exporter", &"<redacted>")
-            .field("client_identity", &"<redacted>")
+            .field("signer", &"<redacted>")
+            .field("client_public_key", &"<redacted>")
             .finish()
+    }
+}
+
+/// One in-flight pairing exchange (pairing.md §6). Everything here is
+/// connection state; the private key stays behind the signer seam.
+pub struct PairingExchange {
+    /// QR or SAS.
+    pub mode: ClientPairingMode,
+    /// The QR nonce (empty in SAS mode).
+    pub nonce: Vec<u8>,
+    /// The Client's CSPRNG value (32 bytes).
+    pub client_random: [u8; 32],
+    /// Identity signer (Keystore upcall in production).
+    pub signer: SharedSigner,
+    /// The claimed identity's SEC1 public key.
+    pub client_public_key: Vec<u8>,
+    /// The requested display name (≤ 63 bytes).
+    pub requested_display_name: String,
+    /// The offered capabilities (empty in v2.0).
+    pub capabilities: Vec<u32>,
+    /// The per-connection exporter seam.
+    pub exporter: crate::pairing::SharedExporter,
+    /// The request id assigned to `PairingRequest`.
+    pub request_id: u64,
+    /// Display material / outcome surfaced to the UI.
+    pub info: PairingInfo,
+    /// The Client's own binding derivation once the response verifies.
+    pub binding: Option<[u8; 48]>,
+    /// The Server's accepted display name (committed into the binding).
+    pub accepted_display_name: Option<String>,
+    /// The parity of the QR key, if the Client expected one.
+    pub expected_server_public_key: Option<Vec<u8>>,
+}
+
+impl std::fmt::Debug for PairingExchange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairingExchange")
+            .field("mode", &self.mode)
+            .field("phase", &self.info.phase)
+            .field("request_id", &self.request_id)
+            .finish_non_exhaustive()
     }
 }
 
@@ -89,6 +141,8 @@ impl std::fmt::Debug for AuthContext {
 pub enum PendingKind {
     /// AuthInit: AuthChallenge then AuthResult (or PairingResult).
     AuthInit,
+    /// PairingRequest: PairingResponse, then PairingResult after PairingConfirm.
+    Pairing,
     Negotiate,
     Subscribe,
     Unsubscribe,
@@ -178,6 +232,10 @@ pub enum Event {
     StreamStarted(crate::media::StreamAnchor),
     /// Stream instance ended; finalize per-instance statistics (READY).
     StreamEnded(u32),
+    /// A verified `PairingResponse`: SAS/fingerprint are ready for the user.
+    PairingReady(PairingInfo),
+    /// `PairingResult(OK)`: the Server persisted this identity.
+    Paired(PairedCredential),
 }
 
 /// The §5.3 Client state machine.
@@ -194,6 +252,10 @@ pub struct ClientMachine {
     /// Session auth context (key + server key + exporter); explicit state, so
     /// the machine is safe to poll from any runtime worker thread.
     auth: Option<AuthContext>,
+    /// The in-flight pairing exchange, if any.
+    pairing: Option<PairingExchange>,
+    /// The credential exposed after `PairingResult(OK)`.
+    credential: Option<PairedCredential>,
 }
 
 impl std::fmt::Debug for ClientMachine {
@@ -205,6 +267,8 @@ impl std::fmt::Debug for ClientMachine {
             .field("next_request_id", &self.next_request_id)
             .field("pending", &self.pending)
             .field("auth", &self.auth.as_ref().map(|_| "<redacted>"))
+            .field("pairing", &self.pairing)
+            .field("credential", &self.credential.as_ref().map(|_| "<paired>"))
             .finish()
     }
 }
@@ -218,6 +282,8 @@ impl ClientMachine {
             next_request_id: 1,
             pending: std::collections::BTreeMap::new(),
             auth: None,
+            pairing: None,
+            credential: None,
         }
     }
 
@@ -226,13 +292,222 @@ impl ClientMachine {
         &mut self,
         server_public_key: Vec<u8>,
         auth_exporter: Vec<u8>,
-        client_identity: p256::ecdsa::SigningKey,
-    ) {
+        signer: SharedSigner,
+    ) -> Result<(), String> {
+        let client_public_key = signer.public_key_sec1()?;
         self.auth = Some(AuthContext {
             server_public_key,
             auth_exporter,
-            client_identity,
+            signer,
+            client_public_key,
         });
+        Ok(())
+    }
+
+    /// Start a pairing exchange: build and record the `PairingRequest`.
+    ///
+    /// The machine enters AUTHENTICATING (an authentication *or pairing*
+    /// exchange is in progress, spec §5.1) and returns the frame to send.
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_pairing(
+        &mut self,
+        mode: ClientPairingMode,
+        nonce: Vec<u8>,
+        client_random: [u8; 32],
+        display_name: String,
+        signer: SharedSigner,
+        exporter: crate::pairing::SharedExporter,
+        expected_server_public_key: Option<Vec<u8>>,
+    ) -> Result<Verdict, CloseInfo> {
+        if !matches!(self.state, ClientState::Idle) {
+            return Err(CloseInfo {
+                code: 402,
+                remote: false,
+            });
+        }
+        let client_public_key = signer.public_key_sec1().map_err(|_| CloseInfo {
+            code: 601,
+            remote: false,
+        })?;
+        let request_id = self.take_request_id();
+        let request = pairing::pairing_request_frame(
+            request_id,
+            mode,
+            nonce.clone(),
+            client_random,
+            client_public_key.clone(),
+            display_name.clone(),
+        )
+        .map_err(|_| CloseInfo {
+            code: 601,
+            remote: false,
+        })?;
+        self.pending.insert(request_id, PendingKind::Pairing);
+        self.pairing = Some(PairingExchange {
+            mode,
+            nonce,
+            client_random,
+            signer,
+            client_public_key,
+            requested_display_name: display_name,
+            capabilities: Vec::new(),
+            exporter,
+            request_id,
+            info: PairingInfo::awaiting(mode),
+            binding: None,
+            accepted_display_name: None,
+            expected_server_public_key,
+        });
+        self.state = ClientState::Authenticating;
+        Ok(Verdict::Send(request))
+    }
+
+    /// The current pairing display material, if a pairing exchange exists.
+    pub fn pairing_info(&self) -> Option<&PairingInfo> {
+        self.pairing.as_ref().map(|exchange| &exchange.info)
+    }
+
+    /// The credential to persist after `PairingResult(OK)`.
+    pub fn paired_credential(&self) -> Option<&PairedCredential> {
+        self.credential.as_ref()
+    }
+
+    /// Confirm a verified pairing: build `PairingConfirm` with the Client's
+    /// proof of possession (pairing.md §6.3.1).
+    pub fn confirm_pairing(&mut self) -> Result<Verdict, CloseInfo> {
+        let Some(exchange) = self.pairing.as_mut() else {
+            return Err(CloseInfo {
+                code: 402,
+                remote: false,
+            });
+        };
+        if exchange.info.phase != PairingPhase::AwaitingConfirmation {
+            return Err(CloseInfo {
+                code: 402,
+                remote: false,
+            });
+        }
+        let Some(binding) = exchange.binding else {
+            return Err(CloseInfo {
+                code: 402,
+                remote: false,
+            });
+        };
+        let frame =
+            pairing::pairing_confirm_frame(exchange.request_id, &binding, exchange.signer.as_ref())
+                .map_err(|_| CloseInfo {
+                    code: 601,
+                    remote: false,
+                })?;
+        exchange.info.phase = PairingPhase::Confirming;
+        Ok(Verdict::Send(frame))
+    }
+
+    /// Fold a `PairingResponse` (pairing.md §6.2/§6.3).
+    ///
+    /// Every field is verified against what we sent; the Client derives its
+    /// own binding and SAS through the per-connection exporter and MUST NOT
+    /// trust the Server's `binding` without checking it. Any mismatch aborts
+    /// locally (no confirm, nothing persisted).
+    fn handle_pairing_response(
+        &mut self,
+        response: &crate::proto::PairingResponse,
+    ) -> (Result<Verdict, CloseInfo>, Option<Event>) {
+        let Some(exchange) = self.pairing.as_mut() else {
+            return (Ok(self.fatal(402)), None);
+        };
+        let code = response.status.as_ref().map_or(0, |s| s.code);
+        if code != 0 {
+            exchange.info.phase = PairingPhase::Failed;
+            exchange.info.error_code = Some(code);
+            self.state = ClientState::Closed;
+            self.pending.clear();
+            return (Err(CloseInfo { code, remote: true }), None);
+        }
+
+        if let Err(mismatch) = verify_pairing_response(exchange, response) {
+            return self.fail_pairing(mismatch.error_code());
+        }
+
+        let inputs = BindingInputs {
+            mode: exchange.mode,
+            pairing_nonce: &response.pairing_nonce,
+            client_random: &response.client_random,
+            server_random: &response.server_random,
+            client_public_key: &exchange.client_public_key,
+            server_public_key: &response.server_public_key,
+            capabilities: &exchange.capabilities,
+            // The Server commits the *accepted* display name (it may default
+            // or cap the requested one), and echoes it here.
+            client_display_name: &response.display_name,
+        };
+        let (_, binding, sas_seed) =
+            match pairing::derive_binding(exchange.exporter.as_ref(), &inputs) {
+                Ok(derived) => derived,
+                Err(_) => return self.fail_pairing(201),
+            };
+        if binding.as_slice() != response.binding.as_slice() {
+            // The Server's binding is not what this connection/pairing derives:
+            // a transcript disagreement, never trusted silently.
+            return self.fail_pairing(201);
+        }
+        let sas = match pairing::derive_sas_code(&sas_seed) {
+            Ok(code) => pairing::format_sas(code),
+            Err(_) => return self.fail_pairing(201),
+        };
+        let fingerprint = match pairing::server_fingerprint(&response.server_public_key) {
+            Ok(value) => value,
+            Err(_) => return self.fail_pairing(201),
+        };
+        let pin = match pairing::server_pin_hex(&response.server_public_key) {
+            Ok(value) => value,
+            Err(_) => return self.fail_pairing(201),
+        };
+        let client_id = response
+            .client_id
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+
+        exchange.binding = Some(binding);
+        exchange.accepted_display_name = Some(response.display_name.clone());
+        exchange.info = PairingInfo {
+            mode: exchange.mode,
+            phase: PairingPhase::AwaitingConfirmation,
+            sas: Some(sas),
+            fingerprint: Some(fingerprint),
+            server_public_key_hex: Some(
+                response
+                    .server_public_key
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect(),
+            ),
+            server_spki_sha256_hex: Some(pin),
+            client_id: Some(client_id),
+            display_name: Some(response.display_name.clone()),
+            error_code: None,
+        };
+        let info = exchange.info.clone();
+        (Ok(Verdict::Ok), Some(Event::PairingReady(info)))
+    }
+
+    /// Abort the pairing locally with a §6 code; nothing is sent on the wire
+    /// and nothing is persisted.
+    fn fail_pairing(&mut self, code: u32) -> (Result<Verdict, CloseInfo>, Option<Event>) {
+        if let Some(exchange) = self.pairing.as_mut() {
+            exchange.info.phase = PairingPhase::Failed;
+            exchange.info.error_code = Some(code);
+        }
+        self.state = ClientState::Closed;
+        self.pending.clear();
+        (
+            Err(CloseInfo {
+                code,
+                remote: false,
+            }),
+            None,
+        )
     }
 
     /// Number of requests awaiting a response (session deadline bookkeeping).
@@ -241,8 +516,16 @@ impl ClientMachine {
     }
 
     /// Ids of requests awaiting a response, for the per-request deadlines.
+    ///
+    /// The pairing request is excluded: its exchange legitimately waits for a
+    /// human on both ends, and is bounded by the 10-minute pairing deadline
+    /// instead of the 10-second per-request response deadline.
     pub fn pending_ids(&self) -> Vec<u64> {
-        self.pending.keys().copied().collect()
+        self.pending
+            .iter()
+            .filter(|(_, kind)| **kind != PendingKind::Pairing)
+            .map(|(id, _)| *id)
+            .collect()
     }
 
     #[cfg(test)]
@@ -376,6 +659,14 @@ impl ClientMachine {
             return (Ok(self.fatal(401)), None);
         }
 
+        // A PairingResponse we never requested is state-forbidden (402), not a
+        // request-id mismatch: there is no pending pairing request to compare.
+        if let (ClientState::Authenticating, Body::PairingResponse(_)) = (&self.state, body) {
+            if self.pairing.is_none() {
+                return (Ok(self.fatal(402)), None);
+            }
+        }
+
         // §4.2 request/response pairing. A response whose request_id matches
         // no pending request is dropped without state change; one that matches
         // the wrong pending kind is a protocol violation (401).
@@ -387,9 +678,10 @@ impl ClientMachine {
                         return (Ok(self.fatal(401)), None);
                     }
                     Some(_) => {
-                        // AuthChallenge is the first half of AuthInit; keep it
-                        // pending until AuthResult arrives.
-                        if !matches!(body, Body::AuthChallenge(_)) {
+                        // AuthChallenge is the first half of AuthInit and
+                        // PairingResponse the first half of PairingRequest;
+                        // both stay pending until their final result arrives.
+                        if !matches!(body, Body::AuthChallenge(_) | Body::PairingResponse(_)) {
                             self.pending.remove(&request_id);
                         }
                     }
@@ -400,6 +692,16 @@ impl ClientMachine {
             if error.request_id != 0 && self.pending.remove(&error.request_id).is_none() {
                 // A late Error is dropped like any unmatched response.
                 return (Ok(Verdict::Ok), None);
+            }
+        }
+
+        // Pairing responses are handled before the state table: a verified
+        // PairingResponse is not a state transition (the exchange remains
+        // AUTHENTICATING until PairingResult, pairing.md §6.2).
+        if let (ClientState::Authenticating, Body::PairingResponse(response)) = (&self.state, body)
+        {
+            if self.pairing.is_some() {
+                return self.handle_pairing_response(response);
             }
         }
 
@@ -417,13 +719,14 @@ impl ClientMachine {
                         None,
                     );
                 };
-                match crate::auth::build_auth_proof(
+                match crate::auth::build_auth_proof_signed(
                     c.request_id,
                     c.server_random.as_slice(),
                     &auth.server_public_key,
                     2,
                     &auth.auth_exporter,
-                    &auth.client_identity,
+                    auth.signer.as_ref(),
+                    &auth.client_public_key,
                 ) {
                     Ok(f) => (Ok(Verdict::Send(f)), None),
                     Err(_) => (
@@ -467,6 +770,33 @@ impl ClientMachine {
             (ClientState::Authenticating, Body::PairingResult(r)) => {
                 let code = r.status.as_ref().map_or(0, |s| s.code);
                 if code == 0 {
+                    // PairingResult(OK) is only legal after our PairingConfirm.
+                    let Some(exchange) = self.pairing.as_mut() else {
+                        return (Ok(self.fatal(402)), None);
+                    };
+                    if exchange.info.phase != PairingPhase::Confirming {
+                        return (Ok(self.fatal(402)), None);
+                    }
+                    exchange.info.phase = PairingPhase::Complete;
+                    let credential = PairedCredential {
+                        server_spki_sha256_hex: exchange
+                            .info
+                            .server_spki_sha256_hex
+                            .clone()
+                            .unwrap_or_default(),
+                        server_public_key_hex: exchange
+                            .info
+                            .server_public_key_hex
+                            .clone()
+                            .unwrap_or_default(),
+                        client_id: exchange.info.client_id.clone().unwrap_or_default(),
+                        display_name: exchange
+                            .info
+                            .display_name
+                            .clone()
+                            .unwrap_or_else(|| exchange.requested_display_name.clone()),
+                    };
+                    self.credential = Some(credential.clone());
                     self.state = ClientState::Negotiating;
                     let request_id = self.take_request_id();
                     self.pending.insert(request_id, PendingKind::Negotiate);
@@ -478,9 +808,16 @@ impl ClientMachine {
                             capabilities: Vec::new(),
                         })),
                     };
-                    (Ok(Verdict::Send(negotiate)), None)
+                    (
+                        Ok(Verdict::Send(negotiate)),
+                        Some(Event::Paired(credential)),
+                    )
                 } else {
                     // §5.3: surface to user (201 → fresh QR); no automatic retry
+                    if let Some(exchange) = self.pairing.as_mut() {
+                        exchange.info.phase = PairingPhase::Failed;
+                        exchange.info.error_code = Some(code);
+                    }
                     self.state = ClientState::Closed;
                     (Err(CloseInfo { code, remote: true }), None)
                 }
@@ -642,14 +979,81 @@ impl ClientMachine {
     }
 }
 
+/// A `PairingResponse` that does not match what the Client asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PairingResponseMismatch {
+    /// Wrong echo/length/major/capabilities: a broken pairing transcript.
+    Transcript,
+    /// QR mode: the Server key is not the key the QR payload carried.
+    ServerIdentity,
+}
+
+impl PairingResponseMismatch {
+    fn error_code(self) -> u32 {
+        match self {
+            PairingResponseMismatch::Transcript => 201,
+            PairingResponseMismatch::ServerIdentity => 205,
+        }
+    }
+}
+
+/// Check every echoed field of `PairingResponse` (pairing.md §6.2/§6.3).
+fn verify_pairing_response(
+    exchange: &PairingExchange,
+    response: &crate::proto::PairingResponse,
+) -> Result<(), PairingResponseMismatch> {
+    if response.request_id != exchange.request_id {
+        return Err(PairingResponseMismatch::Transcript);
+    }
+    if response.pairing_mode != exchange.mode.wire_value() {
+        return Err(PairingResponseMismatch::Transcript);
+    }
+    match exchange.mode {
+        ClientPairingMode::Qr => {
+            if response.pairing_nonce.as_slice() != exchange.nonce.as_slice() {
+                return Err(PairingResponseMismatch::Transcript);
+            }
+        }
+        ClientPairingMode::Sas => {
+            if !response.pairing_nonce.is_empty() {
+                return Err(PairingResponseMismatch::Transcript);
+            }
+        }
+    }
+    if response.client_random.as_slice() != exchange.client_random.as_slice() {
+        return Err(PairingResponseMismatch::Transcript);
+    }
+    if response.server_random.len() != 32 {
+        return Err(PairingResponseMismatch::Transcript);
+    }
+    if response.protocol_major != 2 {
+        return Err(PairingResponseMismatch::Transcript);
+    }
+    if response.capabilities.as_slice() != exchange.capabilities.as_slice() {
+        return Err(PairingResponseMismatch::Transcript);
+    }
+    if response.server_public_key.len() != 32 {
+        return Err(PairingResponseMismatch::Transcript);
+    }
+    if response.binding.len() != 48 {
+        return Err(PairingResponseMismatch::Transcript);
+    }
+    if let Some(expected) = exchange.expected_server_public_key.as_ref() {
+        if response.server_public_key.as_slice() != expected.as_slice() {
+            return Err(PairingResponseMismatch::ServerIdentity);
+        }
+    }
+    Ok(())
+}
+
 /// The response kind a frame answers and the request_id it echoes. `None`
 /// for requests, pushes (request_id 0), and frames with no request pairing.
 fn response_expectation(body: &Body) -> Option<(u64, PendingKind)> {
     match body {
         Body::AuthChallenge(m) => Some((m.request_id, PendingKind::AuthInit)),
         Body::AuthResult(m) => Some((m.request_id, PendingKind::AuthInit)),
-        Body::PairingResult(m) => Some((m.request_id, PendingKind::AuthInit)),
-        Body::PairingResponse(m) => Some((m.request_id, PendingKind::AuthInit)),
+        Body::PairingResult(m) => Some((m.request_id, PendingKind::Pairing)),
+        Body::PairingResponse(m) => Some((m.request_id, PendingKind::Pairing)),
         Body::NegotiateResponse(m) => Some((m.request_id, PendingKind::Negotiate)),
         Body::SubscribeResponse(m) => Some((m.request_id, PendingKind::Subscribe)),
         Body::UnsubscribeResponse(m) => Some((m.request_id, PendingKind::Unsubscribe)),
@@ -843,8 +1247,9 @@ mod tests {
         m.set_auth_context(
             crate::auth::tests_const_server_pub(),
             crate::auth::tests_const_exporter(),
-            crate::auth::test_client_identity_key(),
-        );
+            crate::signer::test_signer(),
+        )
+        .unwrap();
         m.state = ClientState::Authenticating;
         m.seed_pending(1, PendingKind::AuthInit);
         let (v, _) = m.on_frame(&frame(Body::AuthChallenge(AuthChallenge {
@@ -1028,8 +1433,9 @@ mod tests {
         m.set_auth_context(
             crate::auth::tests_const_server_pub(),
             crate::auth::tests_const_exporter(),
-            crate::auth::test_client_identity_key(),
-        );
+            crate::signer::test_signer(),
+        )
+        .unwrap();
         let init = m.auth_init(crate::auth::sec1_compressed(
             &crate::auth::test_client_identity_key(),
         ));
@@ -1167,8 +1573,9 @@ mod tests {
         m.set_auth_context(
             crate::auth::tests_const_server_pub(),
             crate::auth::tests_const_exporter(),
-            crate::auth::test_client_identity_key(),
-        );
+            crate::signer::test_signer(),
+        )
+        .unwrap();
         m.state = ClientState::Authenticating;
         m.seed_pending(1, PendingKind::AuthInit);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1392,7 +1799,10 @@ mod tests {
             assert_eq!(v, Ok(Verdict::Ok), "code {code}");
             assert_eq!(e, Some(Event::StreamEnded(code)));
             assert_eq!(m.state, ClientState::Ready);
-            assert!(m.subscribed, "code {code}: capture end is not an unsubscribe");
+            assert!(
+                m.subscribed,
+                "code {code}: capture end is not an unsubscribe"
+            );
         }
     }
 
@@ -1512,5 +1922,239 @@ mod tests {
         assert_eq!(ClientState::Playing.name(), "PLAYING");
         assert_eq!(ClientState::Closing.name(), "CLOSING");
         assert_eq!(ClientState::Closed.name(), "CLOSED");
+    }
+
+    // ---- pairing rows (pairing.md §6) -------------------------------------
+
+    use crate::pairing::{self, ClientPairingMode, FnExporter, PairingPhase, SAS_EXPORTER_LABEL};
+    use crate::proto::{PairingResponse, PairingResult};
+    use std::sync::Arc;
+
+    fn unhex(s: &str) -> Vec<u8> {
+        (0..s.len() / 2)
+            .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+            .collect()
+    }
+
+    const SERVER_PUB: &str = "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c";
+    const CLIENT_RANDOM: &str = "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f";
+    const SERVER_RANDOM: &str = "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f";
+    const SAS_BINDING: &str = "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff";
+    const SAS_SEED: &str = "e0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff";
+
+    fn sas_exporter() -> crate::pairing::SharedExporter {
+        Arc::new(FnExporter(|label: &[u8], _ctx: &[u8], len: usize| {
+            if label == SAS_EXPORTER_LABEL {
+                Ok(unhex(SAS_SEED)[..len].to_vec())
+            } else {
+                Ok(unhex(SAS_BINDING)[..len].to_vec())
+            }
+        }))
+    }
+
+    fn sas_machine() -> (ClientMachine, u64) {
+        let mut m = ClientMachine::new();
+        let mut client_random = [0u8; 32];
+        client_random.copy_from_slice(&unhex(CLIENT_RANDOM));
+        let v = m
+            .begin_pairing(
+                ClientPairingMode::Sas,
+                Vec::new(),
+                client_random,
+                "Test Phone".into(),
+                crate::signer::test_signer(),
+                sas_exporter(),
+                None,
+            )
+            .expect("begin pairing");
+        let Verdict::Send(frame) = v else {
+            panic!("expected PairingRequest");
+        };
+        let Some(Body::PairingRequest(request)) = frame.body else {
+            panic!("expected PairingRequest body");
+        };
+        assert_eq!(request.pairing_mode, 2);
+        assert!(request.pairing_nonce.is_empty());
+        assert_eq!(request.protocol_major, 2);
+        assert_eq!(request.client_name, "Test Phone");
+        (m, request.request_id)
+    }
+
+    fn sas_response(request_id: u64) -> PairingResponse {
+        PairingResponse {
+            request_id,
+            status: Some(Status::default()),
+            pairing_mode: 2,
+            pairing_nonce: Vec::new(),
+            client_random: unhex(CLIENT_RANDOM),
+            server_random: unhex(SERVER_RANDOM),
+            server_public_key: unhex(SERVER_PUB),
+            protocol_major: 2,
+            capabilities: Vec::new(),
+            binding: unhex(SAS_BINDING),
+            client_id: vec![0xcf, 0x79, 0x40, 0xb4, 0x74, 0x31, 0x02, 0x46],
+            display_name: "Test Phone".into(),
+        }
+    }
+
+    #[test]
+    fn pairing_response_yields_sas_fingerprint_and_waits_for_confirmation() {
+        let (mut m, request_id) = sas_machine();
+        let (result, event) = m.on_frame(&frame(Body::PairingResponse(sas_response(request_id))));
+        assert_eq!(result.expect("verified response"), Verdict::Ok);
+        let Some(Event::PairingReady(info)) = event else {
+            panic!("expected PairingReady");
+        };
+        assert_eq!(info.phase, PairingPhase::AwaitingConfirmation);
+        assert_eq!(info.sas.as_deref(), Some("900 067"));
+        assert_eq!(
+            info.fingerprint.as_deref(),
+            Some("F75D188F 6CEDD011 BC363699 FFC247B7 C98C9BAA 3500CE48 50722558 2B881847")
+        );
+        assert_eq!(
+            info.server_spki_sha256_hex.as_deref(),
+            Some("f75d188f6cedd011bc363699ffc247b7c98c9baa3500ce48507225582b881847")
+        );
+        assert_eq!(info.client_id.as_deref(), Some("cf7940b474310246"));
+        // The pairing request is not subject to the 10 s response deadline.
+        assert!(m.pending_ids().is_empty());
+    }
+
+    #[test]
+    fn confirm_builds_a_verifiable_pairing_proof() {
+        use p256::ecdsa::signature::Verifier;
+        let (mut m, request_id) = sas_machine();
+        let _ = m.on_frame(&frame(Body::PairingResponse(sas_response(request_id))));
+        let v = m.confirm_pairing().expect("confirm");
+        let Verdict::Send(frame) = v else {
+            panic!("expected PairingConfirm");
+        };
+        let Some(Body::PairingConfirm(confirm)) = frame.body else {
+            panic!("expected PairingConfirm body");
+        };
+        assert_eq!(confirm.binding_echo, unhex(SAS_BINDING));
+        assert_eq!(confirm.client_proof.len(), 64);
+        let input = pairing::pairing_proof_input(&unhex(SAS_BINDING)).unwrap();
+        let sig = p256::ecdsa::Signature::from_slice(&confirm.client_proof).unwrap();
+        crate::auth::test_client_identity_key()
+            .verifying_key()
+            .verify(&input, &sig)
+            .expect("proof must verify");
+        assert_eq!(
+            m.pairing_info().map(|i| i.phase),
+            Some(PairingPhase::Confirming)
+        );
+    }
+
+    #[test]
+    fn pairing_result_ok_exposes_the_credential_and_negotiates() {
+        let (mut m, request_id) = sas_machine();
+        let _ = m.on_frame(&frame(Body::PairingResponse(sas_response(request_id))));
+        let _ = m.confirm_pairing().unwrap();
+        let (result, event) = m.on_frame(&frame(Body::PairingResult(PairingResult {
+            request_id,
+            status: Some(Status::default()),
+        })));
+        let Verdict::Send(frame) = result.expect("paired") else {
+            panic!("expected Negotiate after PairingResult(OK)");
+        };
+        assert!(matches!(frame.body, Some(Body::Negotiate(_))));
+        assert_eq!(m.state, ClientState::Negotiating);
+        let Some(Event::Paired(credential)) = event else {
+            panic!("expected Paired event");
+        };
+        assert_eq!(credential.client_id, "cf7940b474310246");
+        assert_eq!(
+            credential.server_spki_sha256_hex,
+            "f75d188f6cedd011bc363699ffc247b7c98c9baa3500ce48507225582b881847"
+        );
+        assert_eq!(m.paired_credential(), Some(&credential));
+        assert_eq!(
+            m.pairing_info().map(|i| i.phase),
+            Some(PairingPhase::Complete)
+        );
+    }
+
+    #[test]
+    fn pairing_result_error_is_surfaced_without_retry() {
+        let (mut m, request_id) = sas_machine();
+        let _ = m.on_frame(&frame(Body::PairingResponse(sas_response(request_id))));
+        let _ = m.confirm_pairing().unwrap();
+        let (result, _) = m.on_frame(&frame(Body::PairingResult(PairingResult {
+            request_id,
+            status: Some(Status {
+                code: 201,
+                ..Status::default()
+            }),
+        })));
+        assert_eq!(
+            result,
+            Err(CloseInfo {
+                code: 201,
+                remote: true
+            })
+        );
+        assert_eq!(m.state, ClientState::Closed);
+        assert!(m.paired_credential().is_none());
+        assert_eq!(m.pairing_info().and_then(|i| i.error_code), Some(201));
+    }
+
+    #[test]
+    fn binding_mismatch_aborts_locally_with_201() {
+        let (mut m, request_id) = sas_machine();
+        let mut response = sas_response(request_id);
+        response.binding[0] ^= 0x01;
+        let (result, _) = m.on_frame(&frame(Body::PairingResponse(response)));
+        assert_eq!(
+            result,
+            Err(CloseInfo {
+                code: 201,
+                remote: false
+            })
+        );
+        assert_eq!(m.state, ClientState::Closed);
+        assert!(m.confirm_pairing().is_err());
+    }
+
+    #[test]
+    fn qr_server_key_mismatch_aborts_with_205() {
+        let mut m = ClientMachine::new();
+        let mut client_random = [0u8; 32];
+        client_random.copy_from_slice(&unhex(CLIENT_RANDOM));
+        let expected = unhex(SERVER_PUB);
+        let _ = m
+            .begin_pairing(
+                ClientPairingMode::Qr,
+                vec![0x80; 16],
+                client_random,
+                "Test Phone".into(),
+                crate::signer::test_signer(),
+                Arc::new(FnExporter(|_l: &[u8], _c: &[u8], len: usize| {
+                    Ok(vec![0u8; len])
+                })),
+                Some(expected),
+            )
+            .unwrap();
+        let mut response = sas_response(1);
+        response.pairing_mode = 1;
+        response.pairing_nonce = vec![0x80; 16];
+        response.server_public_key = vec![0x22; 32];
+        let (result, _) = m.on_frame(&frame(Body::PairingResponse(response)));
+        assert_eq!(
+            result,
+            Err(CloseInfo {
+                code: 205,
+                remote: false
+            })
+        );
+    }
+
+    #[test]
+    fn unrequested_pairing_response_is_still_402() {
+        let mut m = ClientMachine::new();
+        m.state = ClientState::Authenticating;
+        m.seed_pending(1, PendingKind::AuthInit);
+        let (result, _) = m.on_frame(&frame(Body::PairingResponse(sas_response(1))));
+        assert_eq!(result.expect("fatal"), Verdict::Fatal { code: 402 });
     }
 }

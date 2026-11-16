@@ -46,6 +46,7 @@ dependencies = [
  "prost",
  "prost-build",
  "quinn",
+ "rand_core 0.6.4",
  "rcgen",
  "rustls",
  "rustls-pki-types",

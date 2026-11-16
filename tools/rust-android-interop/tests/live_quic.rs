@@ -103,14 +103,21 @@ async fn start_server(key: &SigningKey) -> RunningServer {
     let store = Arc::new(AuthorizationStore::in_memory());
     store.insert_for_tests(StoredClient {
         client_id: "0000000000000001".to_owned(),
-        public_key: key.verifying_key().to_encoded_point(true).as_bytes().to_vec(),
+        public_key: key
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .to_vec(),
         display_name: CLIENT_NAME.to_owned(),
         state: StoreState::Active,
         created_at: String::new(),
         last_seen_at: String::new(),
     });
     let mut sessions = SessionServer::new(&identity, store);
-    sessions.capture_source = Some(as_cmd::v2_capture_source(observer.clone(), core.media_tap()));
+    sessions.capture_source = Some(as_cmd::v2_capture_source(
+        observer.clone(),
+        core.media_tap(),
+    ));
     sessions.media_source = Some(as_cmd::capture_media_source(core.media_tap(), observer));
     let sessions = Arc::new(sessions);
     let transport = Arc::new(
@@ -140,7 +147,12 @@ async fn start_server(key: &SigningKey) -> RunningServer {
             });
         }
     });
-    RunningServer { core, transport, accept_task, sessions }
+    RunningServer {
+        core,
+        transport,
+        accept_task,
+        sessions,
+    }
 }
 
 /// The Android-side Client: real machine, real framing decoder, one real
@@ -162,19 +174,32 @@ impl AndroidClient {
         .expect("test endpoint")
         .await
         .expect("QUIC handshake");
-        assert!(connection.max_datagram_size().is_some(), "DATAGRAM negotiated");
+        assert!(
+            connection.max_datagram_size().is_some(),
+            "DATAGRAM negotiated"
+        );
         let (send, recv) = connection.open_bi().await.expect("control stream");
         let mut exporter = [0u8; 32];
         connection
             .export_keying_material(&mut exporter, AUTH_EXPORTER_LABEL, b"")
             .expect("TLS exporter");
         let mut machine = ClientMachine::new();
-        machine.set_auth_context(
-            server.sessions.server_public_key.clone(),
-            exporter.to_vec(),
-            key,
-        );
-        Self { connection, send, recv, decoder: FrameDecoder::new(), machine }
+        machine
+            .set_auth_context(
+                server.sessions.server_public_key.clone(),
+                exporter.to_vec(),
+                std::sync::Arc::new(audio_share_client_v2_native::signer::SoftwareSigner::new(
+                    key,
+                )),
+            )
+            .expect("signer context");
+        Self {
+            connection,
+            send,
+            recv,
+            decoder: FrameDecoder::new(),
+            machine,
+        }
     }
 
     /// Feed the machine's outgoing frames onto the real control stream.
@@ -214,7 +239,10 @@ async fn android_client_plays_real_server_media_over_live_quic() {
 
     // ---- real auth exchange: Android signs, Server verifies ----------------
     let init = client.machine.auth_init(sec1_compressed(&key));
-    let init_verdict = client.machine.enter_authenticating(init).expect("enter authenticating");
+    let init_verdict = client
+        .machine
+        .enter_authenticating(init)
+        .expect("enter authenticating");
     client.send_verdict(init_verdict).await;
 
     let challenge = client.recv_frame().await;
@@ -240,7 +268,10 @@ async fn android_client_plays_real_server_media_over_live_quic() {
     let subscribe = client.machine.request_subscribe();
     client.send_verdict(subscribe).await;
     let subscribe_response = client.recv_frame().await;
-    assert_eq!(client.step(subscribe_response).await, Some(Event::Subscribed));
+    assert_eq!(
+        client.step(subscribe_response).await,
+        Some(Event::Subscribed)
+    );
     let stream_started = client.recv_frame().await;
     let anchor = match client.step(stream_started).await {
         Some(Event::StreamStarted(anchor)) => anchor,
@@ -284,13 +315,11 @@ async fn android_client_plays_real_server_media_over_live_quic() {
     let mut delivered = 0usize;
     let mut last: Option<(u32, u64)> = None;
     while delivered < 4 {
-        let datagram = tokio::time::timeout(
-            Duration::from_secs(20),
-            client.connection.read_datagram(),
-        )
-        .await
-        .expect("media datagram timeout")
-        .expect("datagram");
+        let datagram =
+            tokio::time::timeout(Duration::from_secs(20), client.connection.read_datagram())
+                .await
+                .expect("media datagram timeout")
+                .expect("datagram");
         // Independent normative oracle: 24-byte BE header by hand.
         assert!(datagram.len() > 24);
         let instance = u32::from_be_bytes(datagram[0..4].try_into().unwrap());
@@ -308,7 +337,11 @@ async fn android_client_plays_real_server_media_over_live_quic() {
             assert_eq!(flags & 0x1, 0, "STREAM_START once");
         } else {
             assert!(timestamp >= anchor.initial_timestamp, "at/after the anchor");
-            assert_eq!(flags & 0x1, 0x1, "STREAM_START on the instance's first datagram");
+            assert_eq!(
+                flags & 0x1,
+                0x1,
+                "STREAM_START on the instance's first datagram"
+            );
         }
         last = Some((sequence, timestamp));
 
@@ -340,7 +373,11 @@ async fn android_client_plays_real_server_media_over_live_quic() {
         body: Some(AndroidBody::PlaybackDiagnostics(diagnostics)),
     };
     let wire = android_encode(&report).expect("Android encodes diagnostics");
-    client.send.write_all(&wire).await.expect("write diagnostics");
+    client
+        .send
+        .write_all(&wire)
+        .await
+        .expect("write diagnostics");
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let session_id = 1; // first session on this endpoint
@@ -351,7 +388,10 @@ async fn android_client_plays_real_server_media_over_live_quic() {
             assert_eq!(recorded.submitted_position, anchor.initial_timestamp + 256);
             break;
         }
-        assert!(tokio::time::Instant::now() < deadline, "Server must observe the report");
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "Server must observe the report"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
@@ -359,6 +399,8 @@ async fn android_client_plays_real_server_media_over_live_quic() {
     let close = client.machine.user_stop();
     client.send_verdict(close).await;
     assert_eq!(client.machine.state, ClientState::Closed);
-    client.connection.close(quinn::VarInt::from_u32(701), b"client stopping");
+    client
+        .connection
+        .close(quinn::VarInt::from_u32(701), b"client stopping");
     server.stop().await;
 }

@@ -137,6 +137,35 @@ pub fn build_auth_proof(
     })
 }
 
+/// Build a complete AuthProof frame through the identity-signing seam.
+///
+/// The signer may be an Android Keystore upcall; this function only passes the
+/// RAW auth_context bytes so exactly one SHA-256 applies (pairing.md §9.1).
+pub fn build_auth_proof_signed(
+    request_id: u64,
+    server_random: &[u8],
+    server_public_key: &[u8],
+    protocol_major: u32,
+    auth_exporter: &[u8],
+    signer: &dyn crate::signer::IdentitySigner,
+    client_public_key: &[u8],
+) -> Result<Frame, String> {
+    let ctx = auth_context(
+        server_random,
+        client_public_key,
+        server_public_key,
+        protocol_major,
+        auth_exporter,
+    )?;
+    let sig = signer.sign(&ctx)?;
+    Ok(Frame {
+        body: Some(Body::AuthProof(AuthProof {
+            request_id,
+            signature: sig.to_vec(),
+        })),
+    })
+}
+
 // Fixture constants (fixtures/wire-protocol-v2/test-keys.json).
 #[cfg(test)]
 const CLIENT_PUB_HEX: &str = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";

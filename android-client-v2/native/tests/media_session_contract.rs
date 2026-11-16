@@ -62,7 +62,10 @@ fn an_undecodable_geometry_is_refused_not_silently_played() {
     for format in [1, 3] {
         let mut cfg = config(1, 48_000, 2);
         cfg.pcm.as_mut().unwrap().sample_format = format;
-        assert!(MediaSession::start(1, 1, 0, &cfg, None).is_some(), "format {format}");
+        assert!(
+            MediaSession::start(1, 1, 0, &cfg, None).is_some(),
+            "format {format}"
+        );
     }
 }
 
@@ -158,7 +161,11 @@ fn unknown_generation_is_held_then_released_on_configuration() {
 
     media.apply_configuration(&config(2, 48_000, 2));
     assert!(!media.holding_unknown_config());
-    assert_eq!(media.delivered_frames(), 64, "the held datagram is released");
+    assert_eq!(
+        media.delivered_frames(),
+        64,
+        "the held datagram is released"
+    );
 }
 
 /// §7.6: the hold is bounded at 32 datagrams; overflow drops the oldest and
@@ -264,7 +271,8 @@ fn delivered_media_is_written_to_the_native_ring() {
 /// Subscriber's submitted position is anchor-relative, not zero-relative.
 #[test]
 fn the_playback_position_is_anchor_relative() {
-    let mut media = MediaSession::start(3, 1, 96_000, &config(1, 48_000, 2), None).expect("geometry");
+    let mut media =
+        MediaSession::start(3, 1, 96_000, &config(1, 48_000, 2), None).expect("geometry");
     assert_eq!(media.anchor(), 96_000);
     media.record_playback(PlaybackReport {
         submitted_bytes: 8 * 128,
