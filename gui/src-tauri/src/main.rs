@@ -20,12 +20,13 @@ use audio_share_server_gui::help::HelpTopic;
 use audio_share_server_gui::i18n::{self, Locale};
 use audio_share_server_gui::logging;
 use audio_share_server_gui::model::{
-    bootstrap, notice_messages, tray_enabled, ApplicationSettings, Bootstrap, Notice, ServerState,
-    ServerStatus, Settings,
+    bootstrap, notice_messages, tray_enabled, ApplicationSettings, Bootstrap, ClientInfo, Notice,
+    PairingStatus, ServerState, ServerStatus, Settings,
 };
 use audio_share_server_gui::options::GuiOptions;
 use audio_share_server_gui::strings;
 use audio_share_server_gui::update::{self, UpdateCheckResult};
+use audio_share_server_gui::v2::{production_starter, PairingModeArg, DEFAULT_V2_PORT};
 use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -538,6 +539,60 @@ async fn stop_server(app: AppHandle) -> Result<ServerStatus, String> {
     stop_with_app(&app).await
 }
 
+/// Begin a pairing invitation (`qr` or `sas`) through the shared Pairing Core.
+#[tauri::command]
+async fn pairing_begin(
+    state: State<'_, AppState>,
+    mode: PairingModeArg,
+) -> Result<PairingStatus, String> {
+    state.controller.pairing_begin(mode)
+}
+
+/// Close the SAS admission window and drop undecided approvals.
+#[tauri::command]
+async fn pairing_cancel(state: State<'_, AppState>) -> Result<PairingStatus, String> {
+    state.controller.pairing_cancel()
+}
+
+/// Polled by the dialog: invitation, pending requests, and v2 status.
+#[tauri::command]
+async fn pairing_status(state: State<'_, AppState>) -> Result<PairingStatus, String> {
+    Ok(state.controller.pairing_status())
+}
+
+/// Approve one pending pairing.
+#[tauri::command]
+async fn pairing_approve(
+    state: State<'_, AppState>,
+    request_id: u64,
+) -> Result<PairingStatus, String> {
+    state.controller.pairing_approve(request_id)
+}
+
+/// Decline one pending pairing.
+#[tauri::command]
+async fn pairing_decline(
+    state: State<'_, AppState>,
+    request_id: u64,
+) -> Result<PairingStatus, String> {
+    state.controller.pairing_decline(request_id)
+}
+
+/// The paired-device list (active and revoked records).
+#[tauri::command]
+async fn clients_list(state: State<'_, AppState>) -> Result<Vec<ClientInfo>, String> {
+    state.controller.clients_list()
+}
+
+/// Revoke one Client; an affected active v2 session closes within 5 s.
+#[tauri::command]
+async fn clients_revoke(
+    state: State<'_, AppState>,
+    client_id: String,
+) -> Result<ClientInfo, String> {
+    state.controller.clients_revoke(&client_id)
+}
+
 /// Open the documentation that replaces the Windows-only maintenance actions
 /// on Linux. The frontend sends a topic id, never a URL, so the webview cannot
 /// use this command to open arbitrary pages.
@@ -635,7 +690,12 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .manage(AppState {
-            controller: Arc::new(ServerController::with_config(settings, config_path)),
+            controller: Arc::new(ServerController::with_config_and_v2(
+                settings,
+                config_path,
+                production_starter(),
+                DEFAULT_V2_PORT,
+            )),
             options,
             endpoints: Arc::new(Mutex::new(endpoints)),
             notices: Mutex::new(startup_notices),
@@ -651,6 +711,13 @@ fn main() {
             list_endpoints,
             start_server,
             stop_server,
+            pairing_begin,
+            pairing_cancel,
+            pairing_status,
+            pairing_approve,
+            pairing_decline,
+            clients_list,
+            clients_revoke,
             open_help,
             hide_window,
             exit_app,
