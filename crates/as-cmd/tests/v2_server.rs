@@ -312,6 +312,8 @@ async fn production_capture_thread_exit_refuses_new_and_ready_subscriptions() {
                 .to_vec(),
             display_name: format!("Controlled Client {index}"),
             state: ClientState::Active,
+            created_at: String::new(),
+            last_seen_at: String::new(),
         });
     }
     let mut sessions = SessionServer::new(&identity, store);

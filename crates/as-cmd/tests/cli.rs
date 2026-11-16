@@ -182,3 +182,192 @@ fn list_endpoints_without_a_pipewire_daemon_errors_instead_of_crashing() {
         .code(1)
         .stderr(predicate::str::contains("PipeWire"));
 }
+
+// ---------------------------------------------------------------------------
+// Ticket 19: headless v2 pairing/administration verbs. The v0.3.4 flag paths
+// above stay byte-compatible; these tests pin the additive surface.
+// ---------------------------------------------------------------------------
+
+fn isolated_config(temp: &tempfile::TempDir) -> std::path::PathBuf {
+    temp.path().join("config.ini")
+}
+
+fn free_udp_port() -> u16 {
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("free UDP port");
+    socket.local_addr().expect("local address").port()
+}
+
+/// Serialize real-UDP process tests across test binaries (cargo runs targets
+/// in parallel): a released ephemeral port must not be reused while another
+/// `as-cmd pair` child is still binding it.
+struct PortLock {
+    _file: std::fs::File,
+}
+
+impl PortLock {
+    fn acquire() -> Self {
+        let path = std::env::temp_dir().join("audio-share-pair-test-port.lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)
+            .expect("port lock file");
+        file.lock().expect("port lock");
+        Self { _file: file }
+    }
+}
+
+#[test]
+fn help_states_v1_is_unencrypted_and_lists_the_new_verbs() {
+    as_cmd()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("UNENCRYPTED"))
+        .stdout(predicate::str::contains("trusted network"))
+        .stdout(predicate::str::contains("pair"))
+        .stdout(predicate::str::contains("clients"))
+        .stdout(predicate::str::contains("identity"));
+}
+
+#[test]
+fn clients_list_on_an_empty_store_succeeds_and_says_so() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    as_cmd()
+        .args(["clients", "list"])
+        .env("AUDIO_SHARE_CONFIG", isolated_config(&temp))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("no paired clients"));
+}
+
+#[test]
+fn clients_revoke_unknown_id_exits_one_with_a_readable_error() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    as_cmd()
+        .args(["clients", "revoke", "deadbeefdeadbeef"])
+        .env("AUDIO_SHARE_CONFIG", isolated_config(&temp))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("unknown client id"));
+}
+
+#[test]
+fn identity_reset_requires_confirmation_or_yes() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    // EOF on stdin: the warning is printed but nothing is reset.
+    as_cmd()
+        .args(["identity", "reset"])
+        .env("AUDIO_SHARE_CONFIG", isolated_config(&temp))
+        .write_stdin("")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("WARNING"))
+        .stdout(predicate::str::contains("cleared first"))
+        .stderr(predicate::str::contains("cancelled"));
+    assert!(!temp.path().join("identity").exists());
+
+    as_cmd()
+        .args(["identity", "reset", "--yes"])
+        .env("AUDIO_SHARE_CONFIG", isolated_config(&temp))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("identity reset complete"))
+        .stdout(predicate::str::contains("Server fingerprint:"));
+    assert!(temp.path().join("identity/server-identity.pem").is_file());
+}
+
+#[test]
+fn pair_sas_prints_fingerprint_and_times_out_without_a_device() {
+    let _port_lock = PortLock::acquire();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let port = free_udp_port();
+    as_cmd()
+        .args([
+            "pair",
+            "--sas",
+            "--timeout",
+            "1",
+            "--v2-port",
+            &port.to_string(),
+        ])
+        .env("AUDIO_SHARE_CONFIG", isolated_config(&temp))
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Pairing mode: SAS"))
+        .stdout(predicate::str::contains("Server fingerprint:"))
+        .stdout(predicate::str::contains("Pairing code"))
+        .stderr(predicate::str::contains("timed out"));
+}
+
+#[test]
+fn pair_qr_prints_the_uri_and_terminal_qr() {
+    let _port_lock = PortLock::acquire();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let port = free_udp_port();
+    as_cmd()
+        .args([
+            "pair",
+            "--timeout",
+            "1",
+            "--addr",
+            "127.0.0.1:65531",
+            "--v2-port",
+            &port.to_string(),
+        ])
+        .env("AUDIO_SHARE_CONFIG", isolated_config(&temp))
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "Pairing URI: audioshare-pair://p1?",
+        ))
+        .stdout(predicate::str::contains("addr=127.0.0.1:65531"))
+        .stdout(predicate::str::contains("Server fingerprint:"))
+        // Half-block QR art contains at least one of these glyphs.
+        .stdout(predicate::str::contains("█").or(predicate::str::contains("▀")));
+}
+
+#[test]
+fn clients_list_and_revoke_operate_on_the_persisted_store() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let pairing_dir = temp.path().join("pairing");
+    std::fs::create_dir_all(&pairing_dir).expect("pairing dir");
+    std::fs::write(
+        pairing_dir.join("clients.json"),
+        r#"{
+  "version": 1,
+  "clients": [{
+    "client_id": "cf7940b474310246",
+    "public_key": "A9ClKd50dWQawFDHkrQs_weRB8pTENp5U9JZUSFHfA9t",
+    "display_name": "Test Phone",
+    "state": "active",
+    "created_at": "2026-11-16T10:00:00Z",
+    "last_seen_at": "2026-11-16T10:05:00Z"
+  }]
+}"#,
+    )
+    .expect("seed store");
+
+    as_cmd()
+        .args(["clients", "list"])
+        .env("AUDIO_SHARE_CONFIG", isolated_config(&temp))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cf7940b474310246"))
+        .stdout(predicate::str::contains("Test Phone"))
+        .stdout(predicate::str::contains("active"))
+        .stdout(predicate::str::contains("2026-11-16T10:05:00Z"));
+
+    as_cmd()
+        .args(["clients", "revoke", "cf7940b474310246"])
+        .env("AUDIO_SHARE_CONFIG", isolated_config(&temp))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("revoked client cf7940b474310246"));
+
+    let text = std::fs::read_to_string(pairing_dir.join("clients.json")).expect("store");
+    assert!(text.contains("\"state\": \"revoked\""), "{text}");
+    assert!(pairing_dir.join("clients.json.lock").is_file());
+}

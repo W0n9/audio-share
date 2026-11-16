@@ -43,6 +43,30 @@ use crate::transport::{classify_close, CLOSING_GRACE};
 /// the Android client derives the same value from the same TLS connection).
 pub const AUTH_EXPORTER_LABEL: &[u8] = b"EXPORTER audio-share v2 auth";
 
+/// The connection-scoped pairing exporter. quinn's export call is
+/// synchronous, so the pure state machine receives this seam and never
+/// depends on quinn (pairing.md §6.3).
+#[derive(Clone)]
+struct ConnectionExporter {
+    connection: quinn::Connection,
+}
+
+impl std::fmt::Debug for ConnectionExporter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionExporter").finish_non_exhaustive()
+    }
+}
+
+impl crate::pairing::PairingExporter for ConnectionExporter {
+    fn export(&self, label: &[u8], context: &[u8], len: usize) -> Option<Vec<u8>> {
+        let mut output = vec![0u8; len];
+        self.connection
+            .export_keying_material(output.as_mut_slice(), label, context)
+            .ok()?;
+        Some(output)
+    }
+}
+
 /// Auth-exchange deadline: `AuthInit → AuthResult` outcome must complete
 /// inside 10 s (spec §3); the deadline starts at transport establishment and
 /// only applies while the machine is CONNECTING/AUTHENTICATING.
@@ -130,19 +154,18 @@ impl MediaTask {
                     let _ = events.send(DriverEvent::MediaDatagramUnsupported);
                     return;
                 };
-                let datagrams =
-                    match pump.take_sendable(
-                        std::time::Instant::now(),
-                        max_datagram_size,
-                        MAX_DATAGRAMS_PER_TICK,
-                    ) {
-                        Ok(datagrams) => datagrams,
-                        Err(crate::media_pump::MediaPumpError::DatagramUnsupported) => {
-                            let _ = events.send(DriverEvent::MediaDatagramUnsupported);
-                            return;
-                        }
-                        Err(crate::media_pump::MediaPumpError::MisalignedPcm) => return,
-                    };
+                let datagrams = match pump.take_sendable(
+                    std::time::Instant::now(),
+                    max_datagram_size,
+                    MAX_DATAGRAMS_PER_TICK,
+                ) {
+                    Ok(datagrams) => datagrams,
+                    Err(crate::media_pump::MediaPumpError::DatagramUnsupported) => {
+                        let _ = events.send(DriverEvent::MediaDatagramUnsupported);
+                        return;
+                    }
+                    Err(crate::media_pump::MediaPumpError::MisalignedPcm) => return,
+                };
                 queue.enqueue(datagrams);
                 // Non-waiting drain: one pop per send, no await, no blocking.
                 // quinn consumes the Bytes on every outcome and does not return
@@ -202,10 +225,9 @@ fn stream_events(
     use crate::media_source::MediaStatus;
     use crate::state_machine::StreamLifecycle;
     match (previous, current) {
-        (
-            Some(MediaStatus::Active(old)),
-            MediaStatus::Active(new),
-        ) if old.stream_instance_id == new.stream_instance_id => {
+        (Some(MediaStatus::Active(old)), MediaStatus::Active(new))
+            if old.stream_instance_id == new.stream_instance_id =>
+        {
             if old.config_generation == new.config_generation {
                 Vec::new()
             } else {
@@ -250,6 +272,11 @@ enum DriverEvent {
     SecondStream,
     /// The media task found the transport cannot carry datagrams (§7.3 → 602).
     MediaDatagramUnsupported,
+    /// The local operator approved a verified pairing (from the Pairing Core
+    /// decision callback; never a blocking UI call inside `handle`).
+    PairingApproved(u64),
+    /// The local operator declined a verified pairing.
+    PairingDeclined(u64),
 }
 
 /// One live session in the per-Client registry.
@@ -279,6 +306,9 @@ pub struct SessionServer {
     /// The shared capture's media (PCM chunks + stream lifecycle). When set,
     /// a subscribed session receives DATAGRAM media (§7).
     pub media_source: Option<Arc<dyn crate::media_source::MediaSource>>,
+    /// The production Pairing Core shared with the CLI/GUI. `None` refuses
+    /// PairingRequest (201) but auth and media are unaffected.
+    pub pairing: Option<Arc<crate::pairing::PairingCore>>,
     /// Latest §9 playback diagnostics per session id — the only playback
     /// evidence the Server keeps (a QUIC ACK is never proof).
     diagnostics: Mutex<HashMap<u64, crate::schema::PlaybackDiagnostics>>,
@@ -317,6 +347,7 @@ impl SessionServer {
             capture: CaptureSnapshot::absent(),
             capture_source: None,
             media_source: None,
+            pairing: None,
             diagnostics: Mutex::new(HashMap::new()),
             rate: Mutex::new(AddressRateGuard::new(
                 limits.auth_failure_window,
@@ -437,6 +468,12 @@ impl SessionServer {
             // fixture replay supplies the recorded constant.
             auth_exporter: Some(exporter.to_vec()),
             session_id_base,
+            pairing: self.pairing.clone(),
+            pairing_exporter: Some(Arc::new(ConnectionExporter {
+                connection: connection.clone(),
+            })),
+            #[cfg(feature = "test-support")]
+            pairing_server_random_override: None,
         };
         let mut machine = StateMachine::new(config, &self.store);
         let mut reader = FrameReader::default();
@@ -448,6 +485,10 @@ impl SessionServer {
             Instant::now() + self.auth_deadline,
         ));
         let mut auth_deadline_fired = false;
+        // §5.2: an admitted pairing exchange replaces the 10 s auth deadline
+        // with the 10 min pairing deadline.
+        let mut pairing_deadline = Box::pin(tokio::time::sleep(Duration::from_secs(3600)));
+        let mut pairing_deadline_armed = false;
         let mut revocation =
             tokio::time::interval_at(Instant::now() + self.revocation_poll, self.revocation_poll);
         revocation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -473,6 +514,19 @@ impl SessionServer {
         media_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
+            // Arm/disarm the pairing deadline from the machine's state; this
+            // runs after every handled event, so an approved pairing (which
+            // leaves AUTHENTICATING) disarms it immediately.
+            if machine.is_pairing_exchange() {
+                if !pairing_deadline_armed {
+                    pairing_deadline
+                        .as_mut()
+                        .reset(Instant::now() + crate::pairing::PAIRING_DEADLINE);
+                    pairing_deadline_armed = true;
+                }
+            } else {
+                pairing_deadline_armed = false;
+            }
             tokio::select! {
                 _ = media_tick.tick(), if self.media_source.is_some() => {
                     if let Some(source) = self.media_source.as_ref() {
@@ -635,6 +689,28 @@ impl SessionServer {
                                     frame: Box::new(inbound.frame),
                                     source: std::mem::take(&mut source_bytes),
                                 });
+                                // A verified pairing is handed to the local
+                                // operator (GUI/CLI). The decision returns as
+                                // a DriverEvent; the state machine never
+                                // blocks on human input.
+                                if let Some(mut request) = machine.take_pairing_approval_request() {
+                                    if let Some(pairing) = self.pairing.as_ref() {
+                                        request.address = peer.to_string();
+                                        let request_id = request.request_id;
+                                        let decisions = event_tx.clone();
+                                        pairing.request_approval(
+                                            request,
+                                            Box::new(move |approved| {
+                                                let event = if approved {
+                                                    DriverEvent::PairingApproved(request_id)
+                                                } else {
+                                                    DriverEvent::PairingDeclined(request_id)
+                                                };
+                                                let _ = decisions.send(event);
+                                            }),
+                                        );
+                                    }
+                                }
                                 if let Some(request_id) = inbound_request_id {
                                     outstanding.complete(request_id);
                                 }
@@ -658,6 +734,16 @@ impl SessionServer {
                                         source = %masked,
                                         code = code.code,
                                         "v2 session: authentication failed"
+                                    );
+                                }
+                                if let Some(code) = machine.take_pairing_failure_code() {
+                                    // Pairing red line: code + masked source
+                                    // only, never the nonce, SAS, binding, or
+                                    // client_proof.
+                                    tracing::info!(
+                                        source = %masked,
+                                        code = code.code,
+                                        "v2 session: pairing failed"
                                     );
                                 }
                                 if after > before && self.note_auth_failure(source) {
@@ -707,6 +793,12 @@ impl SessionServer {
                         DriverEvent::MediaDatagramUnsupported => {
                             machine.handle(Event::Fatal(ErrorCode::DATAGRAM_UNSUPPORTED))
                         }
+                        DriverEvent::PairingApproved(request_id) => {
+                            machine.handle(Event::PairingApproved { request_id })
+                        }
+                        DriverEvent::PairingDeclined(request_id) => {
+                            machine.handle(Event::PairingDeclined { request_id })
+                        }
                     };
                     if let Some(termination) = self
                         .flush(
@@ -724,7 +816,7 @@ impl SessionServer {
                     }
                     self.sync_registry(&machine, &event_tx, &mut registered);
                 }
-                _ = &mut auth_deadline, if !auth_deadline_fired => {
+                _ = &mut auth_deadline, if !auth_deadline_fired && !machine.is_pairing_exchange() => {
                     auth_deadline_fired = true;
                     let outcomes = machine.handle(Event::AuthDeadline);
                     if let Some(termination) = self
@@ -741,6 +833,32 @@ impl SessionServer {
                     {
                         return self.terminate(&watcher, &machine, registered, termination);
                     }
+                }
+                _ = &mut pairing_deadline, if pairing_deadline_armed => {
+                    pairing_deadline_armed = false;
+                    let outcomes = machine.handle(Event::PairingDeadline);
+                    if let Some(code) = machine.take_pairing_failure_code() {
+                        tracing::info!(
+                            source = %masked,
+                            code = code.code,
+                            "v2 session: pairing failed"
+                        );
+                    }
+                    if let Some(termination) = self
+                        .flush(
+                            &connection,
+                            &mut send,
+                            outcomes,
+                            machine.identity().is_some(),
+                            &mut closing_code,
+                            &mut grace,
+                            &mut grace_armed,
+                        )
+                        .await
+                    {
+                        return self.terminate(&watcher, &machine, registered, termination);
+                    }
+                    self.sync_registry(&machine, &event_tx, &mut registered);
                 }
                 _ = revocation.tick() => {
                     // Reload before the check so a deleted/edited record is
@@ -806,6 +924,13 @@ impl SessionServer {
         termination: Termination,
     ) -> Termination {
         watcher.abort();
+        if let (Some(pairing), Some(request_id)) =
+            (self.pairing.as_ref(), machine.pending_pairing_request_id())
+        {
+            // The exchange ended without a decision: drop the local prompt so
+            // an operator cannot approve a dead connection.
+            pairing.cancel_approval(request_id);
+        }
         self.release(machine, registered);
         termination
     }

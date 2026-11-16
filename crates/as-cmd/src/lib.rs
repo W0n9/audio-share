@@ -18,7 +18,10 @@ use v2_transport::media_source::{MediaChunk, MediaSource, MediaStatus, StreamFor
 /// 格式与线程健康来自 `CaptureObserver`；活动流实例、下一帧位置来自共享
 /// capture 的媒体 tap，保证 `Subscribe` 推送的 `StreamStarted` 与真正发送的
 /// 媒体使用同一份流状态。
-pub fn v2_capture_source(capture: CaptureObserver, media_tap: &MediaTap) -> Arc<CaptureStateSource> {
+pub fn v2_capture_source(
+    capture: CaptureObserver,
+    media_tap: &MediaTap,
+) -> Arc<CaptureStateSource> {
     let snapshot = v2_capture_snapshot(&capture.format());
     let media_tap = media_tap.clone();
     Arc::new(move || {
@@ -142,9 +145,6 @@ impl MediaSource for CaptureMediaSource {
 }
 
 /// 构造生产媒体源。
-pub fn capture_media_source(
-    tap: &MediaTap,
-    capture: CaptureObserver,
-) -> Arc<dyn MediaSource> {
+pub fn capture_media_source(tap: &MediaTap, capture: CaptureObserver) -> Arc<dyn MediaSource> {
     Arc::new(CaptureMediaSource::new(tap.clone(), capture))
 }

@@ -25,9 +25,7 @@ use v2_transport::framing::{check_length_prefix, decode_body, encode_frame, Leng
 use v2_transport::identity::{IdentityConfig, ServerIdentity};
 use v2_transport::limits::{CapacityGuard, Limits};
 use v2_transport::media::HEADER_SIZE;
-use v2_transport::schema::{
-    frame, AuthInit, AuthProof, Frame, Negotiate, Subscribe, Unsubscribe,
-};
+use v2_transport::schema::{frame, AuthInit, AuthProof, Frame, Negotiate, Subscribe, Unsubscribe};
 use v2_transport::transport::{Transport, TransportConfig};
 
 const CLIENT_NAME: &str = "m4 media client";
@@ -169,9 +167,14 @@ async fn start_server(key: &SigningKey) -> RunningServer {
             .to_vec(),
         display_name: CLIENT_NAME.to_owned(),
         state: ClientState::Active,
+        created_at: String::new(),
+        last_seen_at: String::new(),
     });
     let mut sessions = SessionServer::new(&identity, store);
-    sessions.capture_source = Some(as_cmd::v2_capture_source(observer.clone(), core.media_tap()));
+    sessions.capture_source = Some(as_cmd::v2_capture_source(
+        observer.clone(),
+        core.media_tap(),
+    ));
     sessions.media_source = Some(as_cmd::capture_media_source(core.media_tap(), observer));
     let sessions = Arc::new(sessions);
     let transport = Arc::new(
@@ -248,7 +251,11 @@ async fn subscribed_client_receives_real_media_and_can_end_the_stream() {
         "the immutable capture format is generation 1"
     );
 
-    send_control(&mut send, frame::Body::Subscribe(Subscribe { request_id: 3 })).await;
+    send_control(
+        &mut send,
+        frame::Body::Subscribe(Subscribe { request_id: 3 }),
+    )
+    .await;
     match read_control(&mut recv).await.body {
         Some(frame::Body::SubscribeResponse(response)) => {
             assert_eq!(response.request_id, 3);
@@ -350,14 +357,21 @@ async fn subscribed_client_receives_real_media_and_can_end_the_stream() {
 async fn reported_playback_diagnostics_are_observable() {
     let key = new_key();
     let server = start_server(&key).await;
-    let (connection, mut send, mut recv) =
-        authenticate_and_negotiate(server.transport.local_addr(), &key, &server.sessions.server_public_key.clone())
-            .await;
+    let (connection, mut send, mut recv) = authenticate_and_negotiate(
+        server.transport.local_addr(),
+        &key,
+        &server.sessions.server_public_key.clone(),
+    )
+    .await;
     match read_control(&mut recv).await.body {
         Some(frame::Body::ConfigurationPublished(_)) => {}
         other => panic!("expected ConfigurationPublished, got {other:?}"),
     }
-    send_control(&mut send, frame::Body::Subscribe(Subscribe { request_id: 3 })).await;
+    send_control(
+        &mut send,
+        frame::Body::Subscribe(Subscribe { request_id: 3 }),
+    )
+    .await;
     let session_id = match read_control(&mut recv).await.body {
         Some(frame::Body::SubscribeResponse(response)) => {
             assert_eq!(response.status.code, 0);
