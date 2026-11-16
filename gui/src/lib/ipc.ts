@@ -4,11 +4,23 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 /** Lifecycle state published by the Rust controller. */
 export type ServerState = "stopped" | "starting" | "running" | "stopping";
 
+/** Independent v2/QUIC lifecycle state. */
+export type V2State = "disabled" | "starting" | "running" | "error";
+
+/** Independent v2/QUIC status; a v2 error never changes the v1 state. */
+export interface V2Status {
+  state: V2State;
+  address: string | null;
+  fingerprint: string | null;
+  lastError: string | null;
+}
+
 /** Snapshot of the server controller. */
 export interface ServerStatus {
   state: ServerState;
   address: string | null;
   lastError: string | null;
+  v2: V2Status;
 }
 
 /** Capture encoding names shared with `audio_share_core::config`. */
@@ -85,6 +97,46 @@ export interface Endpoint {
   name: string;
 }
 
+/** One paired device in the device list. */
+export interface ClientInfo {
+  clientId: string;
+  displayName: string;
+  state: "active" | "revoked";
+  createdAt: string;
+  lastSeenAt: string;
+}
+
+/** Pairing mode: QR primary (SAS fallback) or SAS only. */
+export type PairingMode = "qr" | "sas";
+
+/** A pairing invitation shown in the dialog. */
+export interface PairingInvitation {
+  mode: PairingMode;
+  qrUri: string | null;
+  qrSvg: string | null;
+  fingerprint: string;
+  /** Seconds until the invitation expires; refreshed by polling. */
+  expiresInSecs: number;
+}
+
+/** One verified pairing awaiting accept/decline. */
+export interface PairingRequestInfo {
+  requestId: number;
+  clientId: string;
+  displayName: string;
+  mode: PairingMode;
+  address: string;
+  sas: string | null;
+}
+
+/** The polled pairing dialog state. */
+export interface PairingStatus {
+  active: boolean;
+  invitation: PairingInvitation | null;
+  pending: PairingRequestInfo[];
+  v2: V2Status;
+}
+
 /** One-time data fetched before the shell mounts. */
 export interface Bootstrap {
   version: string;
@@ -115,6 +167,16 @@ export const api = {
   listEndpoints: () => invoke<Endpoint[]>("list_endpoints"),
   start: () => invoke<ServerStatus>("start_server"),
   stop: () => invoke<ServerStatus>("stop_server"),
+  pairingBegin: (mode: PairingMode) => invoke<PairingStatus>("pairing_begin", { mode }),
+  pairingCancel: () => invoke<PairingStatus>("pairing_cancel"),
+  pairingStatus: () => invoke<PairingStatus>("pairing_status"),
+  pairingApprove: (requestId: number) =>
+    invoke<PairingStatus>("pairing_approve", { requestId }),
+  pairingDecline: (requestId: number) =>
+    invoke<PairingStatus>("pairing_decline", { requestId }),
+  clientsList: () => invoke<ClientInfo[]>("clients_list"),
+  clientsRevoke: (clientId: string) =>
+    invoke<ClientInfo>("clients_revoke", { clientId }),
   hideWindow: () => invoke<void>("hide_window"),
   exit: () => invoke<void>("exit_app"),
   checkUpdate: () => invoke<UpdateCheckResult>("check_update"),

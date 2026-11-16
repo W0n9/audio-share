@@ -77,6 +77,19 @@
 
     <ErrorLine message={error} />
     <ErrorLine message={server.saveError} />
+    {#if server.status.v2.state === "error"}
+      <p class="v2-warning">
+        {t("pairing.v2Unavailable", { message: server.status.v2.lastError ?? "" })}
+      </p>
+    {/if}
+
+    <div class="server-reset pairing-entry">
+      <div class="server-reset-text">
+        <div class="server-reset-label">{t("pairing.title")}</div>
+        <div class="sub">{t("pairing.entryHint")}</div>
+      </div>
+      <button class="link" onclick={() => server.openPairing()}>{t("pairing.open")}</button>
+    </div>
 
     <section class="quick-settings">
       <div class="quick-row">
