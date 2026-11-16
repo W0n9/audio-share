@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
+use audio_share_core::capture::media::MediaTap;
 use audio_share_core::capture::{
     platform_backend, synthetic_backend, CaptureBackend, CaptureConfig, CaptureObserver,
 };
@@ -32,10 +33,11 @@ use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, MakeWriter};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
+use v2_runtime::admin::PairingMode as AdminPairingMode;
+use v2_runtime::{RuntimeConfig, V2Runtime};
 use v2_transport::auth_store::{AuthorizationStore, StoreLock};
-use v2_transport::identity::{IdentityConfig, ServerIdentity};
-use v2_transport::pairing::{self, PairingCore};
-use v2_transport::transport::{Transport, TransportConfig};
+use v2_transport::identity::IdentityConfig;
+use v2_transport::pairing;
 
 /// Homepage printed by `-v/--version`.
 const HOMEPAGE: &str = "https://github.com/mkckr0/audio-share";
@@ -500,55 +502,42 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
     if cli.v2_port == 0 {
         return Err("pair needs a v2 port; --v2-port=0 disables the v2 transport".to_owned());
     }
-    let data_dir = data_dir();
-    let identity_config = IdentityConfig {
-        data_dir: data_dir.clone(),
-        allow_loose_permissions: cli.allow_loose_key_permissions,
-    };
-    let identity = ServerIdentity::open(&identity_config).map_err(|error| error.to_string())?;
-    let store = Arc::new(AuthorizationStore::open(&data_dir).map_err(|error| error.to_string())?);
-    let core = Arc::new(PairingCore::from_identity(&identity, Arc::clone(&store)));
-    let limits = v2_transport::limits::Limits::defaults();
-    let bind = resolve_bind_address("::", cli.v2_port).await?;
-    let transport = Arc::new(
-        Transport::start(
-            TransportConfig {
-                bind,
-                limits: limits.clone(),
-            },
-            &identity,
-        )
-        .map_err(|error| error.to_string())?,
-    );
+    // Pairing does not serve media, so no capture observer is attached. The
+    // shared runtime still owns the listener, identity, store, and Pairing
+    // Core — exactly what the GUI starts.
+    let runtime = V2Runtime::start(
+        RuntimeConfig {
+            data_dir: data_dir(),
+            allow_loose_permissions: cli.allow_loose_key_permissions,
+            bind_host: "::".to_owned(),
+            port: cli.v2_port,
+            addr_hint: args.addr.clone(),
+        },
+        None,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let core = runtime.pairing();
+    let admin = runtime.admin();
 
-    let mut sessions = v2_transport::driver::SessionServer::new(&identity, store);
-    sessions.pairing = Some(Arc::clone(&core));
-    let sessions = Arc::new(sessions);
-    let accept_task = spawn_v2_accept_loop(Arc::clone(&transport), sessions, limits);
-
-    let port = transport.local_addr().port();
-    let addr_hint = args.addr.clone().unwrap_or_else(|| {
-        let host = default_host()
-            .map(|address| address.to_string())
-            .unwrap_or_else(|| "127.0.0.1".to_owned());
-        format!("{host}:{port}")
-    });
-
+    let invitation = admin
+        .begin(if args.sas_only {
+            AdminPairingMode::Sas
+        } else {
+            AdminPairingMode::Qr
+        })
+        .map_err(|error| error.to_string())?;
     if args.sas_only {
-        core.begin_sas();
         println!("Pairing mode: SAS (no QR; the phone connects manually)");
     } else {
-        let invitation = core.begin_qr(&addr_hint);
-        // The SAS fallback is available in the same foreground session.
-        core.begin_sas();
-        let uri = core
-            .qr_uri(&invitation, &addr_hint)
-            .ok_or_else(|| "cannot build the QR payload".to_owned())?;
         println!("Pairing mode: QR (SAS fallback window is also open)");
+        let uri = invitation
+            .qr_uri
+            .ok_or_else(|| "cannot build the QR payload".to_owned())?;
         println!("Pairing URI: {uri}");
         print_qr(&uri);
     }
-    println!("Server fingerprint: {}", identity.fingerprint());
+    println!("Server fingerprint: {}", runtime.fingerprint());
     println!(
         "Pairing code: shown below when the phone connects (derived from the live connection)."
     );
@@ -613,9 +602,13 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
         }
     };
 
-    core.cancel();
-    transport.stop();
-    let _ = accept_task.await;
+    // The persistence broadcast fires just before the driver writes
+    // PairingResult on the control stream. Give the one-shot CLI a brief grace
+    // so the phone observes the success result rather than a transport close;
+    // the long-running Server (and the GUI) never stops on this event.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    admin.cancel();
+    runtime.stop();
     outcome
 }
 
@@ -651,49 +644,6 @@ fn print_qr(text: &str) {
         println!("{line}");
         y += 2;
     }
-}
-
-/// Spawn the v2 accept loop used by both the long-running Server and the
-/// foreground `pair` command.
-fn spawn_v2_accept_loop(
-    transport: Arc<Transport>,
-    sessions: Arc<v2_transport::driver::SessionServer>,
-    limits: v2_transport::limits::Limits,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut guard = v2_transport::limits::CapacityGuard::new(limits);
-        loop {
-            let accepted = transport.accept_one(&mut guard).await;
-            match accepted.connection {
-                Some(connection) => {
-                    let remote = accepted.remote_address;
-                    let server = Arc::clone(&sessions);
-                    let mut session_guard = guard.clone();
-                    tokio::spawn(async move {
-                        let termination = server.serve_connection(connection, remote).await;
-                        session_guard.session_ended();
-                        let remote = remote
-                            .map(|address| v2_transport::driver::masked_source(address.ip()))
-                            .unwrap_or_else(|| "unknown".to_owned());
-                        tracing::info!(
-                            remote = %remote,
-                            "v2 session ended: {:?}",
-                            termination
-                        );
-                    });
-                }
-                None => {
-                    let stopped = accepted.lifecycle.termination().is_some_and(|termination| {
-                        termination.code().code
-                            == v2_transport::codes::ErrorCode::SERVER_STOPPING.code
-                    });
-                    if stopped {
-                        break;
-                    }
-                }
-            }
-        }
-    })
 }
 
 async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
@@ -752,15 +702,19 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
         tracing::info!("v2 transport disabled (--v2-port=0); v1 TCP/UDP unaffected");
         None
     } else {
-        match start_v2_transport(&cli, handle.capture_observer(), handle.media_tap().clone()).await
+        match start_v2_transport(
+            &cli,
+            Some((handle.capture_observer(), handle.media_tap().clone())),
+        )
+        .await
         {
-            Ok((transport, accept_task)) => {
+            Ok(runtime) => {
                 tracing::info!(
                     "v2 listen success on {}, alpn={}",
-                    transport.local_addr(),
+                    runtime.local_addr(),
                     String::from_utf8_lossy(v2_transport::codes::ALPN_PROTOCOL)
                 );
-                Some((transport, accept_task))
+                Some(runtime)
             }
             Err(reason) => {
                 tracing::error!("v2 transport not enabled: {reason}");
@@ -773,9 +727,8 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
         .await
         .map_err(|error| format!("install Ctrl-C handler: {error}"))?;
     tracing::info!("stopping server");
-    if let Some((transport, accept_task)) = v2 {
-        transport.stop();
-        let _ = accept_task.await;
+    if let Some(runtime) = v2 {
+        runtime.stop();
         tracing::info!("v2 listener stopped");
     }
     handle
@@ -786,52 +739,35 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
     Ok(())
 }
 
-/// Start the v2 transport: load the Ed25519 identity key, bind the QUIC
-/// endpoint, and spawn the accept loop that enforces the §10 resource limits
-/// and logs connection lifecycles.
+/// Start the shared v2 runtime for the long-running Server.
 ///
-/// The identity key lives at `<data dir>/identity/server-identity.pem`
-/// (pairing.md §10.2), where the data dir is the resolved config directory
-/// (the directory that also holds `server.log`).
+/// The runtime loads the Ed25519 identity key, opens the authorization store
+/// (fail-closed on corruption), starts the shared Pairing Core, binds the QUIC
+/// endpoint, and runs the accept loop. `as-cmd` and the GUI use this exact
+/// assembly; a failure is reported so v1 can stay running.
 async fn start_v2_transport(
     cli: &Cli,
-    capture: CaptureObserver,
-    media_tap: audio_share_core::capture::media::MediaTap,
-) -> Result<
-    (
-        std::sync::Arc<v2_transport::transport::Transport>,
-        tokio::task::JoinHandle<()>,
-    ),
-    String,
-> {
-    let paths = paths::paths();
-    let data_dir = paths
-        .config
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let identity_config = v2_transport::identity::IdentityConfig {
-        data_dir: data_dir.clone(),
-        allow_loose_permissions: cli.allow_loose_key_permissions,
-    };
-    let identity = v2_transport::identity::ServerIdentity::open(&identity_config)
-        .map_err(|error| error.to_string())?;
-    tracing::info!(
-        "v2 identity ready: fingerprint={}, key={}",
-        identity.fingerprint(),
-        identity.key_path().display()
-    );
+    capture: Option<(CaptureObserver, MediaTap)>,
+) -> Result<V2Runtime, String> {
     if cli.allow_loose_key_permissions {
         tracing::warn!(
             "v2 identity-key permissions are loose and the override is active (--allow-loose-key-permissions); this is discouraged (pairing.md §10.2)"
         );
     }
-
-    // pairing.md §10.3: the authorization store fails closed. A corrupt
-    // `pairing/clients.json` refuses v2 (v1 and capture stay unaffected)
-    // instead of silently authorizing or regenerating anything.
-    let store = v2_transport::auth_store::AuthorizationStore::open(&data_dir)
-        .map_err(|error| format!("authorization store: {error}"))?;
+    let runtime = V2Runtime::start(
+        RuntimeConfig {
+            data_dir: data_dir(),
+            allow_loose_permissions: cli.allow_loose_key_permissions,
+            bind_host: "::".to_owned(),
+            port: cli.v2_port,
+            addr_hint: None,
+        },
+        capture,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    tracing::info!("v2 identity ready: fingerprint={}", runtime.fingerprint());
+    let store = runtime.pairing().store();
     let authorized = store.clients().len();
     tracing::info!(
         "v2 authorization store ready: {authorized} client record(s), {}",
@@ -841,86 +777,7 @@ async fn start_v2_transport(
             "in-memory"
         }
     );
-    // Read-only capture-state injection (§5.2): the v2 control plane learns
-    // the live capture format here; it never sends media in this phase.
-    let mut session_server =
-        v2_transport::driver::SessionServer::new(&identity, std::sync::Arc::new(store));
-    session_server.capture_source = Some(as_cmd::v2_capture_source(capture.clone(), &media_tap));
-    // The v2 media path observes the same raw capture buffers through the
-    // protocol-independent tap; v1 framing, MTU and UDP behavior are untouched.
-    session_server.media_source = Some(as_cmd::capture_media_source(&media_tap, capture));
-    let session_server = std::sync::Arc::new(session_server);
-
-    let bind = resolve_bind_address("::", cli.v2_port)
-        .await
-        .map_err(|error| format!("resolve v2 bind address: {error}"))?;
-    // One limits configuration drives both admission (the capacity guard) and
-    // the transport's own bounds.
-    let limits = v2_transport::limits::Limits::defaults();
-    let transport = std::sync::Arc::new(
-        v2_transport::transport::Transport::start(
-            v2_transport::transport::TransportConfig {
-                bind,
-                limits: limits.clone(),
-            },
-            &identity,
-        )
-        .map_err(|error| error.to_string())?,
-    );
-
-    // The accept loop owns the capacity guards (TM-1/TM-2); each admitted
-    // connection is driven through the §5.2 session machine (ticket 07), and
-    // the per-connection task releases the session slot when it ends.
-    let accept_transport = std::sync::Arc::clone(&transport);
-    let accept_task = tokio::spawn(async move {
-        let mut guard = v2_transport::limits::CapacityGuard::new(limits);
-        loop {
-            let accepted = accept_transport.accept_one(&mut guard).await;
-            match accepted.connection {
-                Some(connection) => {
-                    let remote = accepted.remote_address;
-                    let server = std::sync::Arc::clone(&session_server);
-                    let mut session_guard = guard.clone();
-                    tokio::spawn(async move {
-                        let termination = server.serve_connection(connection, remote).await;
-                        session_guard.session_ended();
-                        let remote = remote
-                            .map(|address| v2_transport::driver::masked_source(address.ip()))
-                            .unwrap_or_else(|| "unknown".to_owned());
-                        tracing::info!(
-                            remote = %remote,
-                            "v2 session ended: {:?}",
-                            termination
-                        );
-                    });
-                }
-                None => {
-                    let stopped = accepted.lifecycle.termination().is_some_and(|termination| {
-                        termination.code().code
-                            == v2_transport::codes::ErrorCode::SERVER_STOPPING.code
-                    });
-                    if stopped {
-                        break;
-                    }
-                }
-            }
-        }
-    });
-
-    Ok((transport, accept_task))
-}
-
-/// Resolve a bind host (name or IP) and port to a socket address, mirroring
-/// the v1 server's resolution.
-async fn resolve_bind_address(host: &str, port: u16) -> Result<std::net::SocketAddr, String> {
-    // The v2 default is an IPv6 wildcard so one listener can accept IPv4-
-    // mapped and native IPv6 clients. Prefer IPv6 for name resolution too.
-    let host = if host.is_empty() { "::" } else { host };
-    tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|error| format!("{host}:{port}: {error}"))?
-        .min_by_key(std::net::SocketAddr::is_ipv4)
-        .ok_or_else(|| format!("{host}:{port} resolved to no addresses"))
+    Ok(runtime)
 }
 
 /// Parse `[host][:port]`, including raw and bracketed IPv6. A bare flag or
@@ -1174,11 +1031,11 @@ mod tests {
             parse_bind("[::1]:65080").unwrap(),
             ("::1".to_owned(), 65_080)
         );
-        let bind = resolve_bind_address("::", 65531).await.unwrap();
+        let bind = v2_runtime::resolve_bind_address("::", 65531).await.unwrap();
         assert_eq!(bind, "[::]:65531".parse().unwrap());
         assert!(bind.is_ipv6());
         for family in ["::1", "127.0.0.1"] {
-            let bind = resolve_bind_address(family, 0).await.unwrap();
+            let bind = v2_runtime::resolve_bind_address(family, 0).await.unwrap();
             let socket = std::net::UdpSocket::bind(bind).expect("loopback listener");
             assert_eq!(socket.local_addr().unwrap().ip(), bind.ip());
         }

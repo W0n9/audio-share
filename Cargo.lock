@@ -125,6 +125,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "v2-runtime",
  "v2-transport",
 ]
 
@@ -335,6 +336,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "ureq",
+ "v2-runtime",
  "windows",
  "winreg",
 ]
@@ -5221,6 +5223,21 @@ dependencies = [
  "js-sys",
  "serde_core",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "v2-runtime"
+version = "0.4.1"
+dependencies = [
+ "audio-share-core",
+ "p256",
+ "qrcodegen",
+ "quinn",
+ "rand_core 0.6.4",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "v2-transport",
 ]
 
 [[package]]

@@ -2,8 +2,11 @@ import {
   api,
   type ApplicationSettings,
   type Bootstrap,
+  type ClientInfo,
   type Endpoint,
   type Notice,
+  type PairingMode,
+  type PairingStatus,
   type ServerStatus,
   type Settings,
   type Theme,
@@ -14,7 +17,12 @@ import { t } from "./i18n.svelte";
 
 export type View = "main" | "settings";
 
-const EMPTY_STATUS: ServerStatus = { state: "stopped", address: null, lastError: null };
+const EMPTY_STATUS: ServerStatus = {
+  state: "stopped",
+  address: null,
+  lastError: null,
+  v2: { state: "disabled", address: null, fingerprint: null, lastError: null },
+};
 // Pre-bootstrap fallback only; the Rust bootstrap always supplies the real
 // settings. Keep in sync with `audio_share_core::config::DEFAULT_PORT`.
 const DEFAULT_SETTINGS: Settings = {
@@ -58,6 +66,14 @@ class ServerStore {
   saving = $state(false);
   error = $state<string | null>(null);
   saveError = $state<string | null>(null);
+  /** Pairing dialog visibility and polled pairing/device state. */
+  pairingOpen = $state(false);
+  pairing = $state<PairingStatus | null>(null);
+  clients = $state<ClientInfo[]>([]);
+  pairingBusy = $state(false);
+  pairingError = $state<string | null>(null);
+  revokingClientId = $state<string | null>(null);
+  private pairingTimer: ReturnType<typeof setInterval> | null = null;
 
   get version(): string {
     return this.bootstrap?.version ?? "unknown";
@@ -304,6 +320,137 @@ class ServerStore {
     }
   }
 
+  /** Apply a status snapshot; the pairing dialog closes when the server stops. */
+  applyStatus(status: ServerStatus): void {
+    this.status = status;
+    if (status.state !== "running") {
+      this.stopPairingPoll();
+      this.pairing = null;
+      this.clients = [];
+    }
+  }
+
+  /** Open the pairing dialog and start polling (no server command yet). */
+  openPairing(): void {
+    this.pairingOpen = true;
+    this.pairingError = null;
+    void this.refreshPairing();
+    void this.refreshClients();
+    this.startPairingPoll();
+  }
+
+  /**
+   * Close the dialog. Closing does not consume QR nonces; they expire on their
+   * own (pairing.md §5). The explicit Cancel action uses `cancelPairing`.
+   */
+  closePairing(): void {
+    this.pairingOpen = false;
+    this.stopPairingPoll();
+  }
+
+  private startPairingPoll(): void {
+    this.stopPairingPoll();
+    // Poll rather than bridge a broadcast channel: the command surface stays
+    // the single seam, and pending requests appear within one second.
+    this.pairingTimer = setInterval(() => {
+      void this.refreshPairing();
+    }, 1000);
+  }
+
+  private stopPairingPoll(): void {
+    if (this.pairingTimer !== null) {
+      clearInterval(this.pairingTimer);
+      this.pairingTimer = null;
+    }
+  }
+
+  async refreshPairing(): Promise<void> {
+    try {
+      this.pairing = await api.pairingStatus();
+      this.pairingError = null;
+    } catch (error) {
+      this.pairingError = String(error);
+    }
+  }
+
+  async beginPairing(mode: PairingMode): Promise<void> {
+    if (this.pairingBusy) return;
+    this.pairingBusy = true;
+    this.pairingError = null;
+    try {
+      this.pairing = await api.pairingBegin(mode);
+    } catch (error) {
+      this.pairingError = String(error);
+    } finally {
+      this.pairingBusy = false;
+    }
+  }
+
+  async cancelPairing(): Promise<void> {
+    if (this.pairingBusy) return;
+    this.pairingBusy = true;
+    this.pairingError = null;
+    try {
+      this.pairing = await api.pairingCancel();
+    } catch (error) {
+      this.pairingError = String(error);
+    } finally {
+      this.pairingBusy = false;
+    }
+  }
+
+  async approvePairing(requestId: number): Promise<void> {
+    if (this.pairingBusy) return;
+    this.pairingBusy = true;
+    this.pairingError = null;
+    try {
+      this.pairing = await api.pairingApprove(requestId);
+      await this.refreshClients();
+    } catch (error) {
+      this.pairingError = String(error);
+    } finally {
+      this.pairingBusy = false;
+    }
+  }
+
+  async declinePairing(requestId: number): Promise<void> {
+    if (this.pairingBusy) return;
+    this.pairingBusy = true;
+    this.pairingError = null;
+    try {
+      this.pairing = await api.pairingDecline(requestId);
+    } catch (error) {
+      this.pairingError = String(error);
+    } finally {
+      this.pairingBusy = false;
+    }
+  }
+
+  async refreshClients(): Promise<void> {
+    try {
+      this.clients = await api.clientsList();
+    } catch (error) {
+      this.pairingError = String(error);
+    }
+  }
+
+  /** Revoke a device; the server closes its active v2 session within 5 s. */
+  async revokeClient(clientId: string): Promise<void> {
+    if (this.revokingClientId !== null) return;
+    this.revokingClientId = clientId;
+    this.pairingError = null;
+    try {
+      const revoked = await api.clientsRevoke(clientId);
+      this.clients = this.clients.map((client) =>
+        client.clientId === revoked.clientId ? revoked : client,
+      );
+    } catch (error) {
+      this.pairingError = String(error);
+    } finally {
+      this.revokingClientId = null;
+    }
+  }
+
   async hide(): Promise<void> {
     try {
       await api.hideWindow();
@@ -332,7 +479,7 @@ class ServerStore {
     this.busy = true;
     this.error = null;
     try {
-      this.status = await command();
+      this.applyStatus(await command());
     } catch (error) {
       // The Rust side already published a Stopped+lastError snapshot; keep
       // its readable message in the view as well.
