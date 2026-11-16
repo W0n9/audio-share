@@ -432,3 +432,138 @@ fn corrupt_reload_fails_closed_and_recovers() {
         v2_transport::auth_store::Authorization::Authorized(_)
     ));
 }
+
+// ---------------------------------------------------------------------------
+// Ticket 27: replacing `clients.json` must never expose a transient missing
+// file. The old write sequence renamed the live target to `.bak` before
+// writing the replacement, so a concurrent reload could see `Missing`, clear
+// the in-memory table, and answer 202 AUTHORIZATION_UNKNOWN until the next
+// successful reload (pairing.md §10.3: every write is atomic; a missing file
+// means the records were really removed, §9.2).
+// ---------------------------------------------------------------------------
+
+/// A replacement that fails part-way must not remove the live store. The old
+/// sequence moved the target to `.bak` *before* creating the temp file, so a
+/// failure in the temp-file step left `clients.json` missing and the next
+/// reload cleared every authorization. This is the deterministic form of the
+/// same ordering defect: no concurrency or timing is needed to expose it.
+#[test]
+fn failed_replacement_never_hides_or_clears_live_authorizations() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = AuthorizationStore::open(dir.path()).expect("open");
+    store
+        .upsert(client(CLIENT_PUB, "Test Phone"))
+        .expect("first write");
+    let pairing_dir = dir.path().join("pairing");
+    let path = pairing_dir.join("clients.json");
+    let before = std::fs::read(&path).expect("read store");
+
+    // Occupy the temp path with a directory: creating the temp file fails.
+    // Under the old ordering the live target has already been renamed away.
+    let temp = pairing_dir.join(".clients.json.tmp");
+    std::fs::create_dir(&temp).expect("block temp path");
+    let result = store.upsert(client(CLIENT_PUB, "Test Phone Renamed"));
+    assert!(result.is_err(), "the blocked temp path must fail the write");
+
+    // The reader only sees a real deletion when the operator really deleted
+    // the file. A failed replacement must leave both the file and the
+    // in-memory authorizations intact.
+    store
+        .reload_if_changed()
+        .expect("reload after failed write");
+    assert!(
+        matches!(
+            store.authorize(&unhex(CLIENT_PUB)),
+            v2_transport::auth_store::Authorization::Authorized(_)
+        ),
+        "a failed replacement was mistaken for a deleted store and cleared live authorizations"
+    );
+    assert_eq!(
+        std::fs::read(&path).expect("live store still exists"),
+        before,
+        "the live store must not be removed by a failed replacement"
+    );
+
+    std::fs::remove_dir(&temp).expect("unblock temp path");
+}
+
+/// While a replacement is physically in flight, a reload must never observe
+/// the live target as missing. A FIFO at the temp path blocks the writer at a
+/// controlled point inside `upsert` *without* any test hook in production
+/// code; under the old sequence that point is after the live target was
+/// renamed to `.bak`.
+#[cfg(unix)]
+#[test]
+fn reload_during_a_replacement_never_observes_a_missing_store() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Arc::new(AuthorizationStore::open(dir.path()).expect("open"));
+    store
+        .upsert(client(CLIENT_PUB, "Test Phone"))
+        .expect("first write");
+    let pairing_dir = dir.path().join("pairing");
+    let path = pairing_dir.join("clients.json");
+    let temp = pairing_dir.join(".clients.json.tmp");
+
+    // A FIFO blocks `File::create(temp)` until a reader opens it.
+    let temp_c = CString::new(temp.as_os_str().as_bytes()).expect("temp path");
+    let created = unsafe { libc::mkfifo(temp_c.as_ptr(), 0o600) };
+    assert_eq!(created, 0, "mkfifo failed");
+
+    let writer = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || store.upsert(client(CLIENT_PUB, "Test Phone Renamed")))
+    };
+
+    // Old sequence: the target disappears before the writer blocks on the
+    // FIFO, so this window is stable and observable. New sequence: the target
+    // is never touched before the rename-over, so it stays present for the
+    // whole wait.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut observed_missing = false;
+    while Instant::now() < deadline {
+        if !path.exists() {
+            observed_missing = true;
+            break;
+        }
+        if writer.is_finished() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let reload = store.reload_if_changed();
+    let authorization = store.authorize(&unhex(CLIENT_PUB));
+
+    // Unblock the writer so a failing assertion cannot leak a blocked thread.
+    let reader = {
+        let temp = temp.clone();
+        std::thread::spawn(move || {
+            let mut fifo = std::fs::File::open(temp).expect("open fifo read end");
+            let mut sink = std::io::sink();
+            let _ = std::io::copy(&mut fifo, &mut sink);
+        })
+    };
+    let _ = writer.join();
+    let _ = reader.join();
+
+    assert!(
+        !observed_missing,
+        "the live store disappeared while a replacement was in flight; a concurrent reload would clear authorizations"
+    );
+    assert!(
+        reload.is_ok(),
+        "the in-flight replacement must not make the reload fail: {reload:?}"
+    );
+    assert!(
+        matches!(
+            authorization,
+            v2_transport::auth_store::Authorization::Authorized(_)
+        ),
+        "the reader observed the in-flight replacement as a missing/deleted store"
+    );
+}
