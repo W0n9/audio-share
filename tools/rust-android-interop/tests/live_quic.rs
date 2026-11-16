@@ -106,6 +106,8 @@ async fn start_server(key: &SigningKey) -> RunningServer {
         public_key: key.verifying_key().to_encoded_point(true).as_bytes().to_vec(),
         display_name: CLIENT_NAME.to_owned(),
         state: StoreState::Active,
+        created_at: String::new(),
+        last_seen_at: String::new(),
     });
     let mut sessions = SessionServer::new(&identity, store);
     sessions.capture_source = Some(as_cmd::v2_capture_source(observer.clone(), core.media_tap()));
