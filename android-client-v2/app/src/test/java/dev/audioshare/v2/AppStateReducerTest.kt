@@ -121,6 +121,25 @@ class AppStateReducerTest {
     }
 
     @Test
+    fun qr_mode_confirms_without_typing_the_sas_because_the_qr_pinned_the_server() {
+        val awaiting = AppState(
+            screen = AppScreen.PAIRING,
+            address = "10.0.2.2:65531",
+            pairing = PairingUi(
+                mode = "qr",
+                phase = "AWAITING_CONFIRMATION",
+                sas = "123 456",
+                fingerprint = "AAAA1111 BBBB2222",
+            ),
+        )
+        assertTrue(awaiting.pairing!!.canConfirm)
+        assertEquals(
+            AppCommand.ConfirmPairing,
+            AppReducer.reduce(awaiting, UiEvent.ConfirmPairing).command,
+        )
+    }
+
+    @Test
     fun pairing_completion_waits_for_the_credential_before_connecting() {
         val started = AppReducer.reduce(
             AppState(address = "10.0.2.2:65531"),
