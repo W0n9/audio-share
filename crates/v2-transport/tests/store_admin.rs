@@ -162,7 +162,7 @@ fn identity_reset_clears_pairings_before_rotating_the_key() {
 }
 
 #[test]
-fn pairing_core_persist_sets_timestamps_and_notifies() {
+fn pairing_core_persist_sets_timestamps_and_notifies_explicitly() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(AuthorizationStore::open(dir.path()).unwrap());
     let core = pairing::PairingCore::new(
@@ -177,6 +177,11 @@ fn pairing_core_persist_sets_timestamps_and_notifies() {
     assert_eq!(record.created_at.len(), 20);
     assert!(record.created_at.ends_with('Z'));
     assert_eq!(record.last_seen_at.len(), 20);
+    assert!(
+        paired.try_recv().is_err(),
+        "persistence alone must not notify; the driver notifies after PairingResult"
+    );
+    core.notify_paired(record.clone());
     let notified = paired.try_recv().expect("paired notification");
     assert_eq!(notified.client_id, record.client_id);
     // Re-pairing keeps the original created_at while updating last_seen_at.

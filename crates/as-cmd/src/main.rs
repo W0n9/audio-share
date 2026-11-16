@@ -550,6 +550,7 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
     let mut paired = core.subscribe_paired();
     let deadline = tokio::time::sleep(std::time::Duration::from_secs(args.timeout));
     tokio::pin!(deadline);
+    let mut paired_ok = false;
     let outcome = loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -566,6 +567,7 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
                             "Paired: {} ({}) — stored in the authorization store",
                             client.display_name, client.client_id
                         );
+                        paired_ok = true;
                         break Ok(());
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -602,11 +604,16 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
         }
     };
 
-    // The persistence broadcast fires just before the driver writes
-    // PairingResult on the control stream. Give the one-shot CLI a brief grace
-    // so the phone observes the success result rather than a transport close;
-    // the long-running Server (and the GUI) never stops on this event.
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    if paired_ok {
+        // The driver announces a pairing only after writing PairingResult.
+        // Wait for the Client to consume it and close its session before the
+        // endpoint closes, so the success frame is never discarded. This is
+        // an event-driven wait (bounded only for a persistently open Client),
+        // not a fixed delay.
+        let _ = runtime
+            .wait_for_idle(std::time::Duration::from_secs(2))
+            .await;
+    }
     admin.cancel();
     runtime.stop();
     outcome

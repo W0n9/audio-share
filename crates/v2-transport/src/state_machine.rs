@@ -24,7 +24,7 @@
 use std::sync::Arc;
 
 use crate::auth;
-use crate::auth_store::{Authorization, AuthorizationStore};
+use crate::auth_store::{Authorization, AuthorizationStore, StoredClient};
 use crate::codes::ErrorCode;
 use crate::pairing::{
     self, ApprovalRequest, PairingCore, PairingExporter, PAIRING_EXPORTER_LABEL, SAS_EXPORTER_LABEL,
@@ -254,6 +254,11 @@ pub struct Outcome {
     /// When set (and `frame` is None): close the transport directly with this
     /// code, no control frame (§5.2 rows that name only a transport close).
     pub transport_close_code: Option<ErrorCode>,
+    /// A persisted pairing to announce after this outcome's frame (the
+    /// `PairingResult(OK)`) has been written successfully. The driver fires
+    /// the broadcast only then, so a one-shot consumer cannot stop the Server
+    /// before the success result reaches the Client.
+    pub paired_client: Option<StoredClient>,
 }
 
 impl Outcome {
@@ -262,6 +267,7 @@ impl Outcome {
             frame: Some(frame),
             close_code: None,
             transport_close_code: None,
+            paired_client: None,
         }
     }
 
@@ -277,6 +283,7 @@ impl Outcome {
                 }),
                 close_code: None,
                 transport_close_code: None,
+                paired_client: None,
             },
             Outcome {
                 frame: Some(Frame {
@@ -287,6 +294,7 @@ impl Outcome {
                 }),
                 close_code: Some(code),
                 transport_close_code: None,
+                paired_client: None,
             },
         ]
     }
@@ -297,6 +305,7 @@ impl Outcome {
             frame: None,
             close_code: None,
             transport_close_code: Some(code),
+            paired_client: None,
         }
     }
 }
@@ -510,6 +519,7 @@ impl StateMachine {
                     }),
                     close_code: Some(code),
                     transport_close_code: Some(code),
+                    paired_client: None,
                 };
                 self.close(ServerState::Closed);
                 vec![outcome]
@@ -953,6 +963,7 @@ impl StateMachine {
                 }),
                 close_code: Some(ErrorCode::AUTHENTICATION_FAILED),
                 transport_close_code: None,
+                paired_client: None,
             }]
         } else {
             // Non-fatal: the failure is reported in the exchange's response
@@ -1165,20 +1176,26 @@ impl StateMachine {
         let Some(core) = self.config.pairing.clone() else {
             return self.internal_error(request_id);
         };
-        if let Err(error) = core.persist_client(&client_public_key, &display_name) {
-            // §10.3: a store write failure fails closed, never a silent
-            // success. The detail is local only; the wire Error carries none.
-            tracing::error!(error = %error, "v2 pairing: persist failed; failing closed");
-            return self.internal_error(request_id);
-        }
+        let client = match core.persist_client(&client_public_key, &display_name) {
+            Ok(client) => client,
+            Err(error) => {
+                // §10.3: a store write failure fails closed, never a silent
+                // success. The detail is local only; the wire Error carries none.
+                tracing::error!(error = %error, "v2 pairing: persist failed; failing closed");
+                return self.internal_error(request_id);
+            }
+        };
         self.pending_pairing = None;
         self.establish_session(&client_public_key);
-        vec![Outcome::frame(Frame {
+        let mut outcome = Outcome::frame(Frame {
             body: Some(frame::Body::PairingResult(crate::schema::PairingResult {
                 request_id,
                 status: Status::ok(),
             })),
-        })]
+        });
+        // The driver broadcasts this only after the frame above is written.
+        outcome.paired_client = Some(client);
+        vec![outcome]
     }
 
     fn handle_pairing_declined(&mut self, request_id: u64) -> Vec<Outcome> {
@@ -1235,6 +1252,7 @@ impl StateMachine {
             }),
             close_code: Some(ErrorCode::RATE_LIMITED),
             transport_close_code: None,
+            paired_client: None,
         }]
     }
 
@@ -1506,6 +1524,7 @@ impl StateMachine {
                 }),
                 close_code: Some(ErrorCode::PAIRING_REJECTED),
                 transport_close_code: None,
+                paired_client: None,
             },
         ];
         self.pending_pairing = None;

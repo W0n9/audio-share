@@ -953,6 +953,7 @@ impl SessionServer {
                 frame,
                 close_code,
                 transport_close_code,
+                paired_client,
             } = outcome;
             let has_frame = frame.is_some();
             if let Some(frame) = frame {
@@ -982,6 +983,16 @@ impl SessionServer {
                 if let Err(error) = send.write_all(&bytes).await {
                     tracing::debug!(error = %error, "v2 session: control write failed");
                     return Some(Termination::Lost(ErrorCode::NETWORK_FAILURE));
+                }
+            }
+            // The pairing success result (when present) has now been written.
+            // Only here may a one-shot consumer learn about the pairing; a
+            // failed/oversized/encoding-error write returned above without
+            // broadcasting, so no local surface observes a pairing the Client
+            // did not see.
+            if let Some(client) = paired_client {
+                if let Some(core) = &self.pairing {
+                    core.notify_paired(client);
                 }
             }
             if let Some(code) = transport_close_code {
@@ -1092,6 +1103,7 @@ fn rate_limited_outcome() -> Outcome {
         }),
         close_code: Some(ErrorCode::RATE_LIMITED),
         transport_close_code: None,
+        paired_client: None,
     }
 }
 
