@@ -86,7 +86,17 @@ fn subscribers_are_independent() {
     while let Ok(chunk) = first.try_recv() {
         first_frames.push((chunk.start_frame, chunk.end_frame));
     }
-    assert_eq!(first_frames, vec![(0, 100), (100, 200), (200, 300), (300, 400), (400, 500), (500, 600)]);
+    assert_eq!(
+        first_frames,
+        vec![
+            (0, 100),
+            (100, 200),
+            (200, 300),
+            (300, 400),
+            (400, 500),
+            (500, 600)
+        ]
+    );
 
     let mut second_count = 0;
     while let Ok(chunk) = second.try_recv() {
@@ -106,7 +116,10 @@ fn ending_the_stream_closes_subscribers_and_clears_the_snapshot() {
     tap.end();
     assert!(tap.stream().is_none());
     assert!(!tap.is_active());
-    assert!(receiver.try_recv().is_ok(), "already-published chunk stays readable");
+    assert!(
+        receiver.try_recv().is_ok(),
+        "already-published chunk stays readable"
+    );
     assert!(
         matches!(
             receiver.try_recv(),
