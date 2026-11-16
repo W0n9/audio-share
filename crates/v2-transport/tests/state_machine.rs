@@ -104,6 +104,8 @@ fn store_with_client() -> AuthorizationStore {
         public_key: unhex(CLIENT_PUB),
         display_name: "Test Phone".to_owned(),
         state: ClientState::Active,
+        created_at: String::new(),
+        last_seen_at: String::new(),
     });
     store
 }
@@ -141,6 +143,9 @@ fn machine_on(store: std::sync::Arc<AuthorizationStore>) -> StateMachine {
                 "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
             )),
             session_id_base: 1,
+            pairing: None,
+            pairing_exporter: None,
+            pairing_server_random_override: None,
         },
         &store,
     )
@@ -349,6 +354,8 @@ fn valid_proof_revoked_identity_is_204() {
         public_key: unhex(CLIENT_PUB),
         display_name: "Test Phone".to_owned(),
         state: ClientState::Revoked,
+        created_at: String::new(),
+        last_seen_at: String::new(),
     });
     let mut machine = machine(&store);
     machine.handle(Event::Frame {
@@ -435,6 +442,8 @@ fn auth_failure_log_code_matches_the_reason() {
         public_key: unhex(CLIENT_PUB),
         display_name: "Test Phone".to_owned(),
         state: ClientState::Revoked,
+        created_at: String::new(),
+        last_seen_at: String::new(),
     });
     let mut denied = machine(&revoked);
     denied.handle(Event::Frame {
@@ -1161,6 +1170,8 @@ fn deleted_record_is_revoked_on_the_next_check() {
             public_key: unhex(CLIENT_PUB),
             display_name: "Test Phone".to_owned(),
             state: ClientState::Active,
+            created_at: String::new(),
+            last_seen_at: String::new(),
         })
         .expect("persist");
     let store = std::sync::Arc::new(store);

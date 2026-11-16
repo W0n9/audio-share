@@ -24,6 +24,9 @@ use serde::{Deserialize, Serialize};
 /// The store file name inside `<data dir>/pairing/` (pairing.md §10.2).
 pub const CLIENTS_FILE: &str = "clients.json";
 
+/// The exclusive-lock target for headless admin operations (pairing.md §10.3).
+pub const LOCK_FILE: &str = "clients.json.lock";
+
 /// A Client authorization record (pairing.md §8.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredClient {
@@ -36,6 +39,12 @@ pub struct StoredClient {
     pub display_name: String,
     /// `active` or `revoked` (§8.1); revoke keeps the record for audit.
     pub state: ClientState,
+    /// RFC 3339 UTC creation time (§8.1). Empty for legacy version-1 records
+    /// that predate the field; new records always carry it.
+    pub created_at: String,
+    /// RFC 3339 UTC last successful authentication time (§8.1). Empty for
+    /// legacy records.
+    pub last_seen_at: String,
 }
 
 /// The record's authorization state (§8.1).
@@ -62,6 +71,13 @@ struct StoredClientJson {
     display_name: String,
     /// "active" | "revoked".
     state: String,
+    /// RFC 3339 UTC (§8.1). Defaulted so pre-ticket-19 version-1 stores load
+    /// unchanged; every new write carries the field.
+    #[serde(default)]
+    created_at: String,
+    /// RFC 3339 UTC (§8.1); defaulted for the same compatibility reason.
+    #[serde(default)]
+    last_seen_at: String,
 }
 
 /// Canonical `client_id`: first 8 bytes of SHA-256(public_key), lowercase hex
@@ -86,6 +102,8 @@ impl StoredClient {
                 ClientState::Active => "active".to_owned(),
                 ClientState::Revoked => "revoked".to_owned(),
             },
+            created_at: self.created_at.clone(),
+            last_seen_at: self.last_seen_at.clone(),
         }
     }
 
@@ -119,6 +137,17 @@ impl StoredClient {
                 json.display_name.len()
             ));
         }
+        // §8.1 timestamps are RFC 3339 UTC. Legacy stores (and records written
+        // before ticket 19) may omit them; an empty value is accepted, a
+        // non-empty value must have the canonical shape.
+        for (field, value) in [
+            ("created_at", &json.created_at),
+            ("last_seen_at", &json.last_seen_at),
+        ] {
+            if !value.is_empty() && !crate::pairing::is_rfc3339_utc(value) {
+                return Err(format!("{field} {value:?} is not RFC 3339 UTC"));
+            }
+        }
         Ok(Self {
             client_id: derived,
             public_key,
@@ -128,6 +157,8 @@ impl StoredClient {
             } else {
                 ClientState::Revoked
             },
+            created_at: json.created_at,
+            last_seen_at: json.last_seen_at,
         })
     }
 }
@@ -172,6 +203,11 @@ pub enum StoreError {
         /// The key that was not found.
         public_key: Vec<u8>,
     },
+    /// The caller named a `client_id` with no record.
+    UnknownClientId {
+        /// The id that was not found.
+        client_id: String,
+    },
 }
 
 impl fmt::Display for StoreError {
@@ -188,11 +224,70 @@ impl fmt::Display for StoreError {
                 "revoke of an unknown public key ({} bytes)",
                 public_key.len()
             ),
+            Self::UnknownClientId { client_id } => {
+                write!(f, "revoke of unknown client id {client_id:?}")
+            }
         }
     }
 }
 
 impl std::error::Error for StoreError {}
+
+/// An exclusive advisory lock over `clients.json.lock` for headless admin
+/// operations when no Server Core is running (pairing.md §10.3).
+///
+/// Uses the standard library's cross-platform file lock (`File::lock`), so a
+/// second writer blocks instead of corrupting the store. The lock is released
+/// when this value is dropped (including on process exit).
+#[derive(Debug)]
+pub struct StoreLock {
+    path: PathBuf,
+    _file: fs::File,
+}
+
+impl StoreLock {
+    /// Block until the exclusive lock is held.
+    pub fn acquire(data_dir: &Path) -> Result<Self, StoreError> {
+        let pairing_dir = data_dir.join("pairing");
+        fs::create_dir_all(&pairing_dir).map_err(|source| StoreError::Io {
+            operation: "create pairing directory",
+            source,
+        })?;
+        tighten_dir(&pairing_dir)?;
+        let path = pairing_dir.join(LOCK_FILE);
+        let mut options = fs::OpenOptions::new();
+        options.create(true).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let file = options.open(&path).map_err(|source| StoreError::Io {
+            operation: "open authorization lock",
+            source,
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|source| {
+                StoreError::Io {
+                    operation: "restrict authorization lock",
+                    source,
+                }
+            })?;
+        }
+        file.lock().map_err(|source| StoreError::Io {
+            operation: "acquire authorization lock",
+            source,
+        })?;
+        Ok(Self { path, _file: file })
+    }
+
+    /// The lock file path (diagnostics).
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
 
 /// The in-memory view over `clients.json` (§8.1). The running Server Core owns
 /// it; admin surfaces operate this state (pairing.md §11.1).
@@ -415,6 +510,13 @@ impl AuthorizationStore {
     /// records for one key — pairing.md §8.3: replacement is an explicit admin
     /// action, and this is it). Persists atomically.
     pub fn upsert(&self, client: StoredClient) -> Result<(), StoreError> {
+        // §8.1: `client_id` is derived, never caller-supplied. Normalize the
+        // in-memory record too so admin lookups (list/revoke/reset) and the
+        // on-disk form always agree.
+        let client = StoredClient {
+            client_id: canonical_client_id(&client.public_key),
+            ..client
+        };
         {
             let mut guard = self.clients.write().expect("authorization store lock");
             match guard
@@ -462,6 +564,55 @@ impl AuthorizationStore {
         };
         self.persist()?;
         Ok(updated)
+    }
+
+    /// Revoke a record by canonical `client_id` (the key admin surfaces show).
+    pub fn revoke_client(&self, client_id: &str) -> Result<StoredClient, StoreError> {
+        let public_key = self
+            .clients
+            .read()
+            .expect("authorization store lock")
+            .iter()
+            .find(|client| client.client_id == client_id)
+            .map(|client| client.public_key.clone())
+            .ok_or_else(|| StoreError::UnknownClientId {
+                client_id: client_id.to_owned(),
+            })?;
+        self.revoke(&public_key)
+    }
+
+    /// Invalidate every pairing (identity reset / operator clear).
+    ///
+    /// Persists an empty version-1 store; a running Core sees the change on
+    /// its next reload poll and tears down all live sessions (pairing.md §9.2).
+    pub fn clear_all(&self) -> Result<(), StoreError> {
+        self.clients
+            .write()
+            .expect("authorization store lock")
+            .clear();
+        self.persist()
+    }
+
+    /// Record a successful authentication time (§8.1 `last_seen_at`).
+    ///
+    /// Best effort for the auth path: the in-memory value is always updated;
+    /// a persistence failure is returned to the caller for a redacted log.
+    pub fn touch_last_seen(&self, public_key: &[u8], timestamp: &str) -> Result<bool, StoreError> {
+        {
+            let mut guard = self.clients.write().expect("authorization store lock");
+            let Some(client) = guard
+                .iter_mut()
+                .find(|client| client.public_key == public_key)
+            else {
+                return Ok(false);
+            };
+            if client.last_seen_at == timestamp {
+                return Ok(false);
+            }
+            client.last_seen_at = timestamp.to_owned();
+        }
+        self.persist()?;
+        Ok(true)
     }
 
     /// Whether the store was loaded from a file (a memory-only store skips

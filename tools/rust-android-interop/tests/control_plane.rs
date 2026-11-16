@@ -69,6 +69,8 @@ fn server_machine() -> StateMachine {
         public_key: unhex(CLIENT_PUB_HEX),
         display_name: "Test Phone".to_owned(),
         state: StoreState::Active,
+        created_at: String::new(),
+        last_seen_at: String::new(),
     });
     StateMachine::new(
         ServerConfig {
@@ -80,6 +82,9 @@ fn server_machine() -> StateMachine {
             server_random_override: Some(unhex(SERVER_RANDOM_HEX)),
             auth_exporter: Some(unhex(AUTH_EXPORTER_HEX)),
             session_id_base: 1,
+            pairing: None,
+            pairing_exporter: None,
+            pairing_server_random_override: None,
         },
         &Arc::new(store),
     )

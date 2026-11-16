@@ -143,10 +143,12 @@ impl MediaPacer {
             Some(last) => {
                 if now > last {
                     let elapsed = now.saturating_duration_since(last);
-                    let accrued =
-                        elapsed.as_nanos() * u128::from(self.sample_rate) / 1_000_000_000;
+                    let accrued = elapsed.as_nanos() * u128::from(self.sample_rate) / 1_000_000_000;
                     let accrued = u64::try_from(accrued).unwrap_or(u64::MAX);
-                    self.available = self.available.saturating_add(accrued).min(self.window_frames);
+                    self.available = self
+                        .available
+                        .saturating_add(accrued)
+                        .min(self.window_frames);
                     self.last_refill = Some(now);
                 }
             }

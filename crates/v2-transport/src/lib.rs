@@ -29,24 +29,28 @@ pub mod codes;
 /// The per-connection driver: QUIC connection + control framing + §5.2 state
 /// machine on one live session (ticket 07).
 pub mod driver;
-/// Media plane: the §7.1 24-byte header and the per-session datagram
-/// packetizer (spec §7). No I/O here — the driver owns pacing and the queue.
-pub mod media;
-/// The media source a session subscribes to (implemented over the shared
-/// capture by the Server's adapter).
-pub mod media_source;
-/// Per-session capture-chunks-to-paced-datagrams pump (no I/O).
-pub mod media_pump;
-/// Per-Client bounded media queue and the §7.4 send-ahead pacer.
-pub mod send_queue;
 /// Control-stream framing: `u32 BE length | Frame` with the §3 validation.
 pub mod framing;
 /// Server identity key lifecycle: Ed25519, PKCS#8 PEM, 0600/0700, fail-closed.
 pub mod identity;
 /// Resource limits (spec §10 / threat-model §6): guards and rate windows.
 pub mod limits;
+/// Media plane: the §7.1 24-byte header and the per-session datagram
+/// packetizer (spec §7). No I/O here — the driver owns pacing and the queue.
+pub mod media;
+/// Per-session capture-chunks-to-paced-datagrams pump (no I/O).
+pub mod media_pump;
+/// The media source a session subscribes to (implemented over the shared
+/// capture by the Server's adapter).
+pub mod media_source;
+/// Production pairing core (pairing.md §4–§11): QR payload, binding context,
+/// SAS, nonce table, SAS window, pairing-failure limits, local approval, and
+/// persistence through the authorization store.
+pub mod pairing;
 /// Hand-written prost transcription of `protos/wire-protocol-v2/control.proto`.
 pub mod schema;
+/// Per-Client bounded media queue and the §7.4 send-ahead pacer.
+pub mod send_queue;
 /// Connection lifecycle state exposed through the domain API (spec §5.1).
 pub mod session;
 /// The §5.2 Server session state machine (ticket 07) — pure domain logic.

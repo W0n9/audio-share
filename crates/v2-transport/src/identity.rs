@@ -192,6 +192,47 @@ impl ServerIdentity {
         }
     }
 
+    /// Explicitly reset the Server identity (pairing.md §8.3): generate a
+    /// fresh Ed25519 key and atomically replace the existing key file, keeping
+    /// one backup generation.
+    ///
+    /// This is the designed recovery path for a corrupted or lost key and for
+    /// invalidating every old pairing. Authorization records are cleared by
+    /// the caller **before** this call (pairing order in
+    /// [`crate::pairing::reset_identity`]) so a crash between the two writes
+    /// leaves the Server fail-closed.
+    pub fn reset(config: &IdentityConfig) -> Result<Self, IdentityError> {
+        let identity_dir = config.data_dir.join("identity");
+        fs::create_dir_all(&identity_dir).map_err(|source| IdentityError::Io {
+            operation: "create identity directory",
+            source,
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&identity_dir, fs::Permissions::from_mode(0o700)).map_err(
+                |source| IdentityError::Io {
+                    operation: "restrict identity directory",
+                    source,
+                },
+            )?;
+        }
+        let key_path = identity_dir.join(IDENTITY_KEY_FILE);
+        let rng = ring::rand::SystemRandom::new();
+        let document = Ed25519KeyPair::generate_pkcs8(&rng)
+            .map_err(|_| IdentityError::Io {
+                operation: "generate Ed25519 identity key",
+                source: io::Error::other("ring key generation failed"),
+            })?
+            .as_ref()
+            .to_vec();
+        let key_pair = Ed25519KeyPair::from_pkcs8(&document)
+            .expect("ring accepts the PKCS#8 document it just produced");
+        let identity = Self::from_key_pair(key_pair, document.clone(), key_path.clone());
+        atomic_write_with_backup(&key_path, &pkcs8_to_pem(&document))?;
+        Ok(identity)
+    }
+
     fn from_key_pair(key_pair: Ed25519KeyPair, pkcs8_der: Vec<u8>, key_path: PathBuf) -> Self {
         use sha2::Digest as _;
         let mut spki = Vec::with_capacity(ED25519_SPKI_PREFIX.len() + 32);
@@ -560,6 +601,8 @@ mod tests {
                 public_key: public_key.as_bytes().to_vec(),
                 display_name: "Test Phone".into(),
                 state: crate::auth_store::ClientState::Active,
+                created_at: String::new(),
+                last_seen_at: String::new(),
             })
             .expect("persist durable pairing");
         fs::remove_file(&key_path).unwrap();

@@ -17,6 +17,8 @@ tokio.workspace = true
 tracing = "0.1"
 tracing-subscriber = "0.3"
 v2-transport = { path = "../v2-transport" }
+# Terminal QR rendering for `as-cmd pair` (pure Rust, no default features).
+qrcodegen = "1.8"
 
 [dev-dependencies]
 assert_cmd = "2"
