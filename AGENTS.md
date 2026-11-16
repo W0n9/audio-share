@@ -11,3 +11,8 @@ The five default triage role labels (`needs-triage`, `needs-info`, `ready-for-ag
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` at the repo root plus `docs/adr/`. See `docs/agents/domain.md`.
+
+### Evidence policy
+
+Verification results use `PASS` / `FAIL` / `NOT RUN` / `WAIVED` / `EMULATOR`. See `docs/agents/evidence-policy.md`.
+
