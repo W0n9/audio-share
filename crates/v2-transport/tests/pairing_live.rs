@@ -253,6 +253,142 @@ async fn wait_for_pending(core: &PairingCore) -> Vec<pairing::ApprovalRequest> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_concurrent_pairings_with_the_same_request_id_approve_independently() {
+    let server = PairingServer::start(Duration::from_secs(10)).await;
+    let key_a = SigningKey::random(&mut rand_core::OsRng);
+    let key_b = SigningKey::random(&mut rand_core::OsRng);
+    let client_a = client_id_hex(&key_a);
+    let client_b = client_id_hex(&key_b);
+    let invitation_a = server
+        .core
+        .begin_qr(&format!("127.0.0.1:{}", server.address.port()));
+    let invitation_b = server
+        .core
+        .begin_qr(&format!("127.0.0.1:{}", server.address.port()));
+
+    // Both connections use the same wire request_id (1); the pairing core must
+    // still keep two independent local approvals.
+    let (conn_a, mut send_a, mut recv_a) =
+        verified_pairing(&server, invitation_a.nonce, &key_a, "Phone A").await;
+    let (conn_b, mut send_b, mut recv_b) =
+        verified_pairing(&server, invitation_b.nonce, &key_b, "Phone B").await;
+
+    let pending = loop {
+        let pending = server.core.pending_approvals();
+        if pending.len() == 2 {
+            break pending;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    let request_a = pending
+        .iter()
+        .find(|request| request.client_id == client_a)
+        .expect("Phone A pending");
+    let request_b = pending
+        .iter()
+        .find(|request| request.client_id == client_b)
+        .expect("Phone B pending");
+    assert_ne!(request_a.approval_id, request_b.approval_id);
+    assert_ne!(
+        request_a.sas, request_b.sas,
+        "the two connections must not share a SAS"
+    );
+    assert_eq!(request_a.display_name, "Phone A");
+    assert_eq!(request_b.display_name, "Phone B");
+
+    // Approving A stores only A; B stays pending with its own SAS/identity.
+    assert!(server.core.approve(request_a.approval_id));
+    match read_frame(&mut recv_a).await.body {
+        Some(frame::Body::PairingResult(result)) => assert_eq!(result.status.code, 0),
+        other => panic!("expected PairingResult(OK) for A, got {other:?}"),
+    }
+    let stored = server.store.clients();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].client_id, client_a);
+    assert_eq!(stored[0].display_name, "Phone A");
+    let still_pending = server.core.pending_approvals();
+    assert_eq!(still_pending.len(), 1);
+    assert_eq!(still_pending[0].client_id, client_b);
+    assert_eq!(still_pending[0].approval_id, request_b.approval_id);
+
+    assert!(server.core.approve(request_b.approval_id));
+    match read_frame(&mut recv_b).await.body {
+        Some(frame::Body::PairingResult(result)) => assert_eq!(result.status.code, 0),
+        other => panic!("expected PairingResult(OK) for B, got {other:?}"),
+    }
+    assert_eq!(server.store.clients().len(), 2);
+    negotiate(&mut send_b, &mut recv_b).await;
+    negotiate(&mut send_a, &mut recv_a).await;
+    let _ = (conn_a, conn_b);
+}
+
+/// Complete PairingRequest → PairingResponse → PairingConfirm and return the
+/// still-open control stream (the exchange is verified but unapproved).
+async fn verified_pairing(
+    server: &PairingServer,
+    nonce: Vec<u8>,
+    key: &SigningKey,
+    name: &str,
+) -> (quinn::Connection, quinn::SendStream, quinn::RecvStream) {
+    let connection = connect(server.address).await;
+    let (mut send, mut recv) = connection.open_bi().await.expect("control stream");
+    let mut request = pairing_request(PairingMode::Qr, nonce, key);
+    request.client_name = name.to_owned();
+    send_frame(&mut send, frame::Body::PairingRequest(request)).await;
+    let response = match read_frame(&mut recv).await.body {
+        Some(frame::Body::PairingResponse(response)) => response,
+        other => panic!("expected PairingResponse, got {other:?}"),
+    };
+    let confirm = pairing_confirm(&connection, &response, key).await;
+    send_frame(&mut send, frame::Body::PairingConfirm(confirm)).await;
+    (connection, send, recv)
+}
+
+fn client_id_hex(key: &SigningKey) -> String {
+    auth::client_id(&public_key(key))
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn operator_cancel_rejects_a_verified_pairing_with_201_promptly() {
+    let server = PairingServer::start(Duration::from_secs(10)).await;
+    let key = SigningKey::random(&mut rand_core::OsRng);
+    let invitation = server
+        .core
+        .begin_qr(&format!("127.0.0.1:{}", server.address.port()));
+    let (_connection, _send, mut recv) =
+        verified_pairing(&server, invitation.nonce, &key, "Cancelled Phone").await;
+    let pending = wait_for_pending(&server.core).await;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(server.store.clients().len(), 0);
+
+    // Operator closes the pairing dialog: the waiting Client must get
+    // PairingResult(201)+Close(201) now, not after the 10-minute deadline.
+    server.core.cancel();
+    match tokio::time::timeout(Duration::from_secs(2), read_frame(&mut recv))
+        .await
+        .expect("cancel must notify the waiting Client promptly")
+        .body
+    {
+        Some(frame::Body::PairingResult(result)) => {
+            assert_eq!(result.status.code, ErrorCode::PAIRING_REJECTED.code);
+            assert!(result.status.detail.is_empty());
+        }
+        other => panic!("expected PairingResult(201), got {other:?}"),
+    }
+    match read_frame(&mut recv).await.body {
+        Some(frame::Body::Close(close)) => {
+            assert_eq!(close.code, ErrorCode::PAIRING_REJECTED.code)
+        }
+        other => panic!("expected Close(201), got {other:?}"),
+    }
+    assert!(server.core.pending_approvals().is_empty());
+    assert!(server.store.clients().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn qr_pairing_survives_the_auth_deadline_and_persists_after_approval() {
     // The 10 s auth deadline must not kill a pairing exchange: override it to
     // 100 ms and let the exchange outlive it before the proof arrives.
@@ -268,7 +404,7 @@ async fn qr_pairing_survives_the_auth_deadline_and_persists_after_approval() {
             assert_eq!(request.display_name, "Live Test Phone");
             assert_eq!(request.mode, PairingMode::Qr);
             assert!(request.sas.is_some(), "the operator sees the SAS");
-            core.approve(request.request_id);
+            core.approve(request.approval_id);
         }
     });
 
@@ -374,7 +510,7 @@ async fn pairing_holds_persistence_until_approval_then_session_is_usable() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].display_name, "Live Test Phone");
 
-    assert!(server.core.approve(pending[0].request_id));
+    assert!(server.core.approve(pending[0].approval_id));
     match read_frame(&mut recv).await.body {
         Some(frame::Body::PairingResult(result)) => assert_eq!(result.status.code, 0),
         other => panic!("expected PairingResult(OK), got {other:?}"),
@@ -405,7 +541,7 @@ async fn declined_pairing_reports_201_and_persists_nothing() {
     send_frame(&mut send, frame::Body::PairingConfirm(confirm)).await;
     let pending = wait_for_pending(&server.core).await;
     assert_eq!(pending.len(), 1);
-    assert!(server.core.decline(pending[0].request_id));
+    assert!(server.core.decline(pending[0].approval_id));
     match read_frame(&mut recv).await.body {
         Some(frame::Body::PairingResult(result)) => {
             assert_eq!(result.status.code, ErrorCode::PAIRING_REJECTED.code);
@@ -434,7 +570,7 @@ async fn sas_pairing_uses_the_admin_window_and_real_exporter() {
     tokio::spawn(async move {
         if let Ok(request) = approvals.recv().await {
             assert_eq!(request.mode, PairingMode::Sas);
-            core.approve(request.request_id);
+            core.approve(request.approval_id);
         }
     });
 
@@ -470,7 +606,7 @@ async fn unknown_and_revoked_identities_are_refused_live() {
     let core = Arc::clone(&server.core);
     tokio::spawn(async move {
         if let Ok(request) = approvals.recv().await {
-            core.approve(request.request_id);
+            core.approve(request.approval_id);
         }
     });
     let connection = connect(server.address).await;

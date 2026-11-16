@@ -273,7 +273,8 @@ enum DriverEvent {
     /// The media task found the transport cannot carry datagrams (§7.3 → 602).
     MediaDatagramUnsupported,
     /// The local operator approved a verified pairing (from the Pairing Core
-    /// decision callback; never a blocking UI call inside `handle`).
+    /// decision callback; never a blocking UI call inside `handle`). The
+    /// payload is the process-local `approval_id`, not the wire request id.
     PairingApproved(u64),
     /// The local operator declined a verified pairing.
     PairingDeclined(u64),
@@ -696,15 +697,15 @@ impl SessionServer {
                                 if let Some(mut request) = machine.take_pairing_approval_request() {
                                     if let Some(pairing) = self.pairing.as_ref() {
                                         request.address = peer.to_string();
-                                        let request_id = request.request_id;
+                                        let approval_id = request.approval_id;
                                         let decisions = event_tx.clone();
                                         pairing.request_approval(
                                             request,
                                             Box::new(move |approved| {
                                                 let event = if approved {
-                                                    DriverEvent::PairingApproved(request_id)
+                                                    DriverEvent::PairingApproved(approval_id)
                                                 } else {
-                                                    DriverEvent::PairingDeclined(request_id)
+                                                    DriverEvent::PairingDeclined(approval_id)
                                                 };
                                                 let _ = decisions.send(event);
                                             }),
@@ -793,11 +794,11 @@ impl SessionServer {
                         DriverEvent::MediaDatagramUnsupported => {
                             machine.handle(Event::Fatal(ErrorCode::DATAGRAM_UNSUPPORTED))
                         }
-                        DriverEvent::PairingApproved(request_id) => {
-                            machine.handle(Event::PairingApproved { request_id })
+                        DriverEvent::PairingApproved(approval_id) => {
+                            machine.handle(Event::PairingApproved { approval_id })
                         }
-                        DriverEvent::PairingDeclined(request_id) => {
-                            machine.handle(Event::PairingDeclined { request_id })
+                        DriverEvent::PairingDeclined(approval_id) => {
+                            machine.handle(Event::PairingDeclined { approval_id })
                         }
                     };
                     if let Some(termination) = self
@@ -924,12 +925,12 @@ impl SessionServer {
         termination: Termination,
     ) -> Termination {
         watcher.abort();
-        if let (Some(pairing), Some(request_id)) =
-            (self.pairing.as_ref(), machine.pending_pairing_request_id())
+        if let (Some(pairing), Some(approval_id)) =
+            (self.pairing.as_ref(), machine.pending_pairing_approval_id())
         {
             // The exchange ended without a decision: drop the local prompt so
             // an operator cannot approve a dead connection.
-            pairing.cancel_approval(request_id);
+            pairing.cancel_approval(approval_id);
         }
         self.release(machine, registered);
         termination

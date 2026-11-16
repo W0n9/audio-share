@@ -12,8 +12,11 @@ use v2_transport::auth_store::ClientState;
 use v2_transport::pairing::{ApprovalRequest, Invitation, PairingCore};
 
 /// The pairing mode the operator asks for.
+///
+/// Named distinctly from the wire [`v2_transport::schema::PairingMode`] and the
+/// Android `ClientPairingMode` so adapter code cannot mix them up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PairingMode {
+pub enum RequestedPairingMode {
     /// QR primary with the SAS admission window as a fallback (like `as-cmd pair`).
     Qr,
     /// SAS only (no nonce, no QR).
@@ -24,7 +27,7 @@ pub enum PairingMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvitationView {
     /// The mode that opened this invitation.
-    pub mode: PairingMode,
+    pub mode: RequestedPairingMode,
     /// The copyable QR payload URI (QR mode only).
     pub qr_uri: Option<String>,
     /// A self-contained SVG QR rendering (QR mode only).
@@ -38,14 +41,14 @@ pub struct InvitationView {
 /// One verified pairing awaiting the local operator's decision.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingRequestView {
-    /// The pairing exchange's request id.
-    pub request_id: u64,
+    /// The process-local approval handle used by approve/decline.
+    pub approval_id: u64,
     /// The canonical client id (hex).
     pub client_id: String,
     /// The accepted display name.
     pub display_name: String,
     /// QR or SAS.
-    pub mode: PairingMode,
+    pub mode: RequestedPairingMode,
     /// The source address shown to the local operator only.
     pub address: String,
     /// The per-connection SAS (`123 456`), known only after the device connects.
@@ -82,15 +85,17 @@ pub enum ClientStateView {
 /// command thread, and the pairing core never blocks on human input.
 pub trait PairingAdmin: Send + Sync + fmt::Debug {
     /// Open an invitation. QR mode also opens the SAS admission window.
-    fn begin(&self, mode: PairingMode) -> Result<InvitationView, String>;
-    /// Close the SAS window and drop undecided approvals.
+    fn begin(&self, mode: RequestedPairingMode) -> Result<InvitationView, String>;
+    /// Close the SAS window and decline every undecided approval.
     fn cancel(&self);
     /// Every verified-but-undecided pairing.
     fn pending(&self) -> Vec<PendingRequestView>;
-    /// Approve one pending pairing; `false` when the id is not pending.
-    fn approve(&self, request_id: u64) -> bool;
-    /// Decline one pending pairing; `false` when the id is not pending.
-    fn decline(&self, request_id: u64) -> bool;
+    /// Approve one pending pairing by its process-local `approval_id`;
+    /// `false` when the id is not pending.
+    fn approve(&self, approval_id: u64) -> bool;
+    /// Decline one pending pairing by its process-local `approval_id`;
+    /// `false` when the id is not pending.
+    fn decline(&self, approval_id: u64) -> bool;
     /// Every persisted Client record (active and revoked).
     fn clients(&self) -> Vec<ClientView>;
     /// Revoke one Client by canonical `client_id`; keeps the record for audit.
@@ -119,10 +124,7 @@ impl CorePairingAdmin {
         let qr_uri = self.core.qr_uri(invitation, &self.addr_hint);
         let qr_svg = qr_uri.as_deref().and_then(crate::qr::render_svg);
         InvitationView {
-            mode: match invitation.mode {
-                v2_transport::schema::PairingMode::Sas => PairingMode::Sas,
-                _ => PairingMode::Qr,
-            },
+            mode: requested_mode(invitation.mode),
             qr_uri,
             qr_svg,
             fingerprint: self.core.fingerprint(),
@@ -135,16 +137,16 @@ impl CorePairingAdmin {
 }
 
 impl PairingAdmin for CorePairingAdmin {
-    fn begin(&self, mode: PairingMode) -> Result<InvitationView, String> {
+    fn begin(&self, mode: RequestedPairingMode) -> Result<InvitationView, String> {
         let invitation = match mode {
-            PairingMode::Qr => {
+            RequestedPairingMode::Qr => {
                 let invitation = self.core.begin_qr(&self.addr_hint);
                 // The QR dialog is also the camera-less fallback: admit SAS
                 // requests in the same operator-opened window (as-cmd pair).
                 self.core.begin_sas();
                 invitation
             }
-            PairingMode::Sas => self.core.begin_sas(),
+            RequestedPairingMode::Sas => self.core.begin_sas(),
         };
         Ok(self.view(&invitation))
     }
@@ -161,12 +163,12 @@ impl PairingAdmin for CorePairingAdmin {
             .collect()
     }
 
-    fn approve(&self, request_id: u64) -> bool {
-        self.core.approve(request_id)
+    fn approve(&self, approval_id: u64) -> bool {
+        self.core.approve(approval_id)
     }
 
-    fn decline(&self, request_id: u64) -> bool {
-        self.core.decline(request_id)
+    fn decline(&self, approval_id: u64) -> bool {
+        self.core.decline(approval_id)
     }
 
     fn clients(&self) -> Vec<ClientView> {
@@ -187,15 +189,21 @@ impl PairingAdmin for CorePairingAdmin {
 
 fn pending_view(request: ApprovalRequest) -> PendingRequestView {
     PendingRequestView {
-        request_id: request.request_id,
+        approval_id: request.approval_id,
         client_id: request.client_id,
         display_name: request.display_name,
-        mode: match request.mode {
-            v2_transport::schema::PairingMode::Sas => PairingMode::Sas,
-            _ => PairingMode::Qr,
-        },
+        mode: requested_mode(request.mode),
         address: request.address,
         sas: request.sas,
+    }
+}
+
+/// Single schema→admin mirror; an SAS invitation is SAS, everything else is
+/// presented as the QR/mixed request the operator opened.
+fn requested_mode(mode: v2_transport::schema::PairingMode) -> RequestedPairingMode {
+    match mode {
+        v2_transport::schema::PairingMode::Sas => RequestedPairingMode::Sas,
+        _ => RequestedPairingMode::Qr,
     }
 }
 

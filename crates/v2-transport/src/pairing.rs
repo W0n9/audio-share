@@ -20,6 +20,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -50,6 +51,8 @@ pub const NONCE_LEN: usize = 16;
 pub const NONCE_TTL: Duration = Duration::from_secs(10 * 60);
 /// At most this many outstanding nonces; the next evicts the oldest (§5).
 pub const MAX_OUTSTANDING_NONCES: usize = 8;
+/// At most this many concurrent pairing sessions (TM-5, pairing.md §5).
+pub const MAX_CONCURRENT_PAIRINGS: usize = 8;
 /// The admin-opened SAS window lifetime (the pairing deadline, §7.3).
 pub const SAS_WINDOW_TTL: Duration = Duration::from_secs(10 * 60);
 /// Pairing failure limit per source address per sliding window (TM-5).
@@ -396,10 +399,15 @@ pub struct Invitation {
 }
 
 /// A request for the operator's explicit local approval (§5.2).
+///
+/// `approval_id` is a process-local handle; it is what `approve`, `decline`,
+/// `cancel_approval`, and every admin surface use. The wire-level
+/// `request_id` stays inside the state machine and never reaches this type:
+/// two concurrent connections may legitimately both use `request_id = 1`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalRequest {
-    /// The pairing exchange's request id.
-    pub request_id: u64,
+    /// Process-unique local approval handle.
+    pub approval_id: u64,
     /// The canonical client id (hex).
     pub client_id: String,
     /// The accepted display name.
@@ -432,6 +440,8 @@ pub enum PairingError {
     ExporterUnavailable,
     /// The source address exhausted its TM-5 pairing-failure budget.
     RateLimited,
+    /// Eight pairing sessions are already in flight (TM-5 concurrency bound).
+    ConcurrentLimit,
     /// Persistence failed; v2 fails closed.
     Store(StoreError),
     /// Identity provisioning failed.
@@ -449,6 +459,7 @@ impl fmt::Display for PairingError {
             Self::Malformed(reason) => write!(f, "malformed pairing input: {reason}"),
             Self::ExporterUnavailable => write!(f, "TLS exporter unavailable for pairing"),
             Self::RateLimited => write!(f, "pairing failure rate exceeded for this source"),
+            Self::ConcurrentLimit => write!(f, "eight pairing sessions are already in flight"),
             Self::Store(error) => write!(f, "authorization store: {error}"),
             Self::Identity(error) => write!(f, "server identity: {error}"),
         }
@@ -479,6 +490,27 @@ struct PendingApproval {
     decide: Box<dyn FnOnce(bool) + Send>,
 }
 
+/// An RAII slot in the TM-5 concurrent-pairing bound.
+///
+/// The slot is acquired by [`PairingCore::admit_request`] and released when the
+/// owning pending exchange is resolved: approval, decline, deadline, or
+/// connection loss all drop the permit. Holding this value keeps the slot.
+pub struct PairingPermit {
+    active: Arc<AtomicUsize>,
+}
+
+impl fmt::Debug for PairingPermit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PairingPermit").finish_non_exhaustive()
+    }
+}
+
+impl Drop for PairingPermit {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// The production Pairing Core shared by the CLI, GUI, and driver.
 pub struct PairingCore {
     server_public_key: [u8; 32],
@@ -488,6 +520,10 @@ pub struct PairingCore {
     sas_window: Mutex<Option<Instant>>,
     failures: Mutex<AddressRateGuard>,
     approvals: Mutex<HashMap<u64, PendingApproval>>,
+    /// Process-unique approval handles; never derived from the wire.
+    approval_seq: AtomicU64,
+    /// Live pairing sessions holding a TM-5 concurrency slot.
+    active_pairings: Arc<AtomicUsize>,
     approval_tx: broadcast::Sender<ApprovalRequest>,
     paired_tx: broadcast::Sender<StoredClient>,
 }
@@ -541,6 +577,8 @@ impl PairingCore {
                 PAIRING_FAILURES_PER_WINDOW,
             )),
             approvals: Mutex::new(HashMap::new()),
+            approval_seq: AtomicU64::new(0),
+            active_pairings: Arc::new(AtomicUsize::new(0)),
             approval_tx,
             paired_tx,
         }
@@ -610,14 +648,24 @@ impl PairingCore {
         nonces.push_back(NonceEntry { nonce, expires_at });
     }
 
-    /// Close the SAS window and drop any undecided approvals. Nonces are left
-    /// to expire (closing a dialog does not consume them; §5).
+    /// Close the SAS window and decline every undecided approval.
+    ///
+    /// Each pending connection's decision callback is invoked with `false`, so
+    /// a verified Client receives 201+Close(201) immediately instead of
+    /// waiting for the 10-minute pairing deadline. Nonces are left to expire
+    /// (closing a dialog does not consume them; §5).
     pub fn cancel(&self) {
         *self.sas_window.lock().expect("sas window lock") = None;
-        self.approvals
+        let pending: Vec<_> = self
+            .approvals
             .lock()
             .expect("pairing approval lock")
-            .clear();
+            .drain()
+            .map(|(_, pending)| pending)
+            .collect();
+        for pending in pending {
+            (pending.decide)(false);
+        }
     }
 
     /// The QR URI for an invitation.
@@ -634,16 +682,48 @@ impl PairingCore {
     /// A valid nonce is consumed by this first well-formed request regardless
     /// of the pairing's eventual outcome (§5). Structural failures must be
     /// rejected before this call so they never burn a nonce.
-    pub fn admit_request(&self, request: &PairingRequest) -> Result<(), PairingError> {
+    ///
+    /// On success the returned [`PairingPermit`] holds one of the
+    /// [`MAX_CONCURRENT_PAIRINGS`] slots; the caller must keep it alive until
+    /// the pending exchange is resolved. A ninth concurrent admission returns
+    /// [`PairingError::ConcurrentLimit`] (the state machine answers 302).
+    pub fn admit_request(&self, request: &PairingRequest) -> Result<PairingPermit, PairingError> {
+        let permit = self
+            .acquire_pairing_permit()
+            .ok_or(PairingError::ConcurrentLimit)?;
         match PairingMode::try_from(request.pairing_mode) {
-            Ok(PairingMode::Qr) => self.admit_qr(&request.pairing_nonce),
+            Ok(PairingMode::Qr) => self.admit_qr(&request.pairing_nonce)?,
             Ok(PairingMode::Sas) => {
                 if !request.pairing_nonce.is_empty() {
                     return Err(PairingError::Malformed("sas mode must omit pairing_nonce"));
                 }
-                self.admit_sas()
+                self.admit_sas()?;
             }
-            Ok(PairingMode::Unspecified) | Err(_) => Err(PairingError::Mode),
+            Ok(PairingMode::Unspecified) | Err(_) => return Err(PairingError::Mode),
+        }
+        Ok(permit)
+    }
+
+    /// Reserve one of the [`MAX_CONCURRENT_PAIRINGS`] slots without blocking.
+    fn acquire_pairing_permit(&self) -> Option<PairingPermit> {
+        let mut active = self.active_pairings.load(Ordering::Acquire);
+        loop {
+            if active >= MAX_CONCURRENT_PAIRINGS {
+                return None;
+            }
+            match self.active_pairings.compare_exchange_weak(
+                active,
+                active + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    return Some(PairingPermit {
+                        active: Arc::clone(&self.active_pairings),
+                    })
+                }
+                Err(current) => active = current,
+            }
         }
     }
 
@@ -708,34 +788,52 @@ impl PairingCore {
             .is_limited(address, self.clock.now())
     }
 
+    /// Allocate the next process-unique approval handle.
+    ///
+    /// The handle is deliberately independent of the connection's wire
+    /// `request_id`; two concurrent phones may both use `request_id = 1`.
+    pub(crate) fn next_approval_id(&self) -> u64 {
+        self.approval_seq.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
     /// Register a verified-but-unapproved pairing and notify observers.
     ///
-    /// The decision callback is invoked at most once, by [`Self::approve`] or
-    /// [`Self::decline`]; the state machine never blocks on human input.
-    pub fn request_approval(&self, request: ApprovalRequest, decide: Box<dyn FnOnce(bool) + Send>) {
-        let request_id = request.request_id;
+    /// The decision callback is invoked at most once, by [`Self::approve`],
+    /// [`Self::decline`], or [`Self::cancel`]; the state machine never blocks
+    /// on human input. Returns the request's local `approval_id` (assigning
+    /// one when the caller left it at zero).
+    pub fn request_approval(
+        &self,
+        mut request: ApprovalRequest,
+        decide: Box<dyn FnOnce(bool) + Send>,
+    ) -> u64 {
+        if request.approval_id == 0 {
+            request.approval_id = self.next_approval_id();
+        }
+        let approval_id = request.approval_id;
         self.approvals
             .lock()
             .expect("pairing approval lock")
             .insert(
-                request_id,
+                approval_id,
                 PendingApproval {
                     request: request.clone(),
                     decide,
                 },
             );
         // No subscribers is fine: the pending entry remains for an explicit
-        // approve/decline by request id.
+        // approve/decline by approval id.
         let _ = self.approval_tx.send(request);
+        approval_id
     }
 
     /// Approve one pending pairing; `false` when the id is not pending.
-    pub fn approve(&self, request_id: u64) -> bool {
+    pub fn approve(&self, approval_id: u64) -> bool {
         let pending = self
             .approvals
             .lock()
             .expect("pairing approval lock")
-            .remove(&request_id);
+            .remove(&approval_id);
         match pending {
             Some(pending) => {
                 (pending.decide)(true);
@@ -746,12 +844,12 @@ impl PairingCore {
     }
 
     /// Decline one pending pairing; `false` when the id is not pending.
-    pub fn decline(&self, request_id: u64) -> bool {
+    pub fn decline(&self, approval_id: u64) -> bool {
         let pending = self
             .approvals
             .lock()
             .expect("pairing approval lock")
-            .remove(&request_id);
+            .remove(&approval_id);
         match pending {
             Some(pending) => {
                 (pending.decide)(false);
@@ -762,11 +860,11 @@ impl PairingCore {
     }
 
     /// Drop a pending approval without deciding (session ended or timed out).
-    pub fn cancel_approval(&self, request_id: u64) {
+    pub fn cancel_approval(&self, approval_id: u64) {
         self.approvals
             .lock()
             .expect("pairing approval lock")
-            .remove(&request_id);
+            .remove(&approval_id);
     }
 
     /// Every pending approval, for local admin surfaces.
@@ -778,7 +876,7 @@ impl PairingCore {
             .values()
             .map(|pending| pending.request.clone())
             .collect();
-        requests.sort_by_key(|request| request.request_id);
+        requests.sort_by_key(|request| request.approval_id);
         requests
     }
 
@@ -857,7 +955,10 @@ impl PairingCore {
 /// Normalize an accepted display name: an empty name becomes a fixed local
 /// label and an over-long name is truncated on a UTF-8 boundary (pairing.md
 /// §6.2/§8.1 cap 63 bytes).
-fn normalize_display_name(name: &str) -> String {
+///
+/// Shared by the state machine (PairingResponse) and persistence so the
+/// accepted wire value and the stored value can never diverge.
+pub(crate) fn normalize_display_name(name: &str) -> String {
     if name.is_empty() {
         return "Unknown device".to_owned();
     }

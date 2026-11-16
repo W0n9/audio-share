@@ -322,6 +322,37 @@ fn five_pairing_failures_per_sliding_minute_rate_limit_the_address() {
     assert!(!core.is_limited("192.168.1.51".parse().unwrap()));
 }
 
+#[test]
+fn pairing_capacity_is_eight_and_a_released_permit_admits_again() {
+    let core = core_with_clock(ManualClock::new());
+    core.begin_sas();
+    let mut permits = Vec::new();
+    for slot in 0..8 {
+        permits.push(
+            core.admit_request(&sas_request())
+                .unwrap_or_else(|error| panic!("admission {slot} should succeed: {error}")),
+        );
+    }
+    assert!(
+        matches!(
+            core.admit_request(&sas_request()),
+            Err(PairingError::ConcurrentLimit)
+        ),
+        "the 9th concurrent pairing must be rate-limited"
+    );
+
+    // The permit is RAII: releasing one frees exactly one slot.
+    permits.pop();
+    let admitted = core
+        .admit_request(&sas_request())
+        .expect("a released permit admits the next pairing");
+    permits.push(admitted);
+    assert!(matches!(
+        core.admit_request(&sas_request()),
+        Err(PairingError::ConcurrentLimit)
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // Local approval (§5.2; pairing.md §6.3.1).
 // ---------------------------------------------------------------------------
@@ -330,7 +361,7 @@ fn five_pairing_failures_per_sliding_minute_rate_limit_the_address() {
 fn approval_is_an_explicit_decision_and_never_a_side_effect() {
     let core = Arc::new(core_with_clock(ManualClock::new()));
     let request = v2_transport::pairing::ApprovalRequest {
-        request_id: 41,
+        approval_id: 41,
         client_id: "cf7940b474310246".to_owned(),
         display_name: "Test Phone".to_owned(),
         mode: PairingMode::Qr,
@@ -342,7 +373,7 @@ fn approval_is_an_explicit_decision_and_never_a_side_effect() {
     core.request_approval(
         request.clone(),
         Box::new(move |approved| {
-            sink.lock().unwrap().push((request.request_id, approved));
+            sink.lock().unwrap().push((request.approval_id, approved));
         }),
     );
     assert_eq!(core.pending_approvals().len(), 1);
@@ -350,6 +381,104 @@ fn approval_is_an_explicit_decision_and_never_a_side_effect() {
     assert!(core.pending_approvals().is_empty());
     assert_eq!(*decisions.lock().unwrap(), vec![(41, true)]);
 
-    // A missing request id is a no-op, not a panic.
+    // A missing approval id is a no-op, not a panic.
     assert!(!core.approve(99));
+}
+
+#[test]
+fn concurrent_approvals_with_the_same_wire_request_id_are_independent() {
+    let core = Arc::new(core_with_clock(ManualClock::new()));
+    let decisions = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut approval_ids = Vec::new();
+    for (client_id, sas) in [
+        ("0011223344556677", "111 111"),
+        ("8899aabbccddeeff", "222 222"),
+    ] {
+        let sink = Arc::clone(&decisions);
+        let approval_id = core.request_approval(
+            v2_transport::pairing::ApprovalRequest {
+                approval_id: 0,
+                client_id: client_id.to_owned(),
+                display_name: format!("Phone {client_id}"),
+                mode: PairingMode::Qr,
+                address: "192.168.1.20:50000".to_owned(),
+                sas: Some(sas.to_owned()),
+            },
+            Box::new(move |approved| {
+                sink.lock().unwrap().push((client_id.to_owned(), approved));
+            }),
+        );
+        approval_ids.push(approval_id);
+    }
+
+    let pending = core.pending_approvals();
+    assert_eq!(
+        pending.len(),
+        2,
+        "two connections reusing request_id=1 must stay distinct: {pending:?}"
+    );
+    let ids: std::collections::HashSet<u64> =
+        pending.iter().map(|request| request.approval_id).collect();
+    assert_eq!(
+        ids.len(),
+        2,
+        "each pending approval needs a unique local id"
+    );
+    assert_ne!(
+        pending[0].sas, pending[1].sas,
+        "SAS values must not be crossed"
+    );
+
+    // Approving the second leaves the first pending and notifies only its own
+    // connection callback.
+    assert!(core.approve(approval_ids[1]));
+    let remaining = core.pending_approvals();
+    assert_eq!(remaining.len(), 1, "{remaining:?}");
+    assert_eq!(remaining[0].approval_id, approval_ids[0]);
+    assert_eq!(
+        remaining[0].client_id, "0011223344556677",
+        "the surviving approval is the other connection"
+    );
+    assert_eq!(
+        *decisions.lock().unwrap(),
+        vec![("8899aabbccddeeff".to_owned(), true)]
+    );
+}
+
+#[test]
+fn cancel_declines_every_pending_approval_and_closes_the_sas_window() {
+    let core = Arc::new(core_with_clock(ManualClock::new()));
+    core.begin_sas();
+    let decisions = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut approval_ids = Vec::new();
+    for client_id in ["0011223344556677", "8899aabbccddeeff"] {
+        let sink = Arc::clone(&decisions);
+        approval_ids.push(core.request_approval(
+            v2_transport::pairing::ApprovalRequest {
+                approval_id: 0,
+                client_id: client_id.to_owned(),
+                display_name: "Test Phone".to_owned(),
+                mode: PairingMode::Sas,
+                address: "192.168.1.20:50000".to_owned(),
+                sas: Some("123 456".to_owned()),
+            },
+            Box::new(move |approved| {
+                sink.lock().unwrap().push((client_id.to_owned(), approved));
+            }),
+        ));
+    }
+
+    core.cancel();
+    assert!(!core.sas_window_open(), "cancel closes the SAS window");
+    assert!(core.pending_approvals().is_empty());
+    let mut decisions = decisions.lock().unwrap().clone();
+    decisions.sort();
+    assert_eq!(
+        decisions,
+        vec![
+            ("0011223344556677".to_owned(), false),
+            ("8899aabbccddeeff".to_owned(), false),
+        ],
+        "every pending connection must be told the pairing was declined"
+    );
 }
