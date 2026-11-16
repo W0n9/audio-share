@@ -26,7 +26,10 @@ use std::sync::Arc;
 use crate::auth;
 use crate::auth_store::{Authorization, AuthorizationStore};
 use crate::codes::ErrorCode;
-use crate::schema::{frame, Frame, Status};
+use crate::pairing::{
+    self, ApprovalRequest, PairingCore, PairingExporter, PAIRING_EXPORTER_LABEL, SAS_EXPORTER_LABEL,
+};
+use crate::schema::{frame, Frame, PairingMode, Status};
 
 /// The §5.1/§5.2 session states this machine drives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +108,17 @@ pub struct ServerConfig {
     /// its position). Defaults to 1 for a standalone machine; the golden-
     /// vector replay uses it to reproduce the registry's numbering.
     pub session_id_base: u64,
+    /// The shared production Pairing Core. `None` disables production pairing
+    /// (a PairingRequest is then refused 201, the pre-ticket-19 behavior).
+    pub pairing: Option<Arc<PairingCore>>,
+    /// The connection-scoped TLS exporter used to derive `binding` and
+    /// `sas_seed` (pairing.md §6.3). The driver supplies the real quinn
+    /// exporter; tests supply the golden-vector stand-ins.
+    pub pairing_exporter: Option<Arc<dyn PairingExporter>>,
+    /// Test-support only: fixed pairing `server_random` (the golden vector
+    /// pins `4041…`). Distinct from the auth challenge override.
+    #[cfg(feature = "test-support")]
+    pub pairing_server_random_override: Option<Vec<u8>>,
 }
 
 impl ServerConfig {
@@ -115,6 +129,19 @@ impl ServerConfig {
         #[cfg(feature = "test-support")]
         {
             self.server_random_override.clone()
+        }
+        #[cfg(not(feature = "test-support"))]
+        {
+            None
+        }
+    }
+
+    /// Test-support builds may pin the pairing `server_random` independently
+    /// of the auth challenge randomness (the golden vectors differ).
+    fn fixed_pairing_server_random(&self) -> Option<Vec<u8>> {
+        #[cfg(feature = "test-support")]
+        {
+            self.pairing_server_random_override.clone()
         }
         #[cfg(not(feature = "test-support"))]
         {
@@ -147,6 +174,20 @@ pub enum Event {
     Fatal(ErrorCode),
     /// Periodic revocation check (pairing.md §9.2: ≤ 5 s termination).
     RevocationCheck,
+    /// The 10-minute pairing deadline fired (§5.2 → Error(206)+Close(206)).
+    PairingDeadline,
+    /// The local operator approved a verified pairing (§5.2 "approval
+    /// granted" row). Fed by the driver from the Pairing Core decision.
+    PairingApproved {
+        /// The pairing exchange's request id.
+        request_id: u64,
+    },
+    /// The local operator declined a verified pairing (§5.2 "approval
+    /// declined" row): 201 + Close(201), nothing persisted.
+    PairingDeclined {
+        /// The pairing exchange's request id.
+        request_id: u64,
+    },
     /// The session registry decided this session is superseded by a newer
     /// session of the same identity (TM-3; the driver owns the registry and
     /// translates its decision into this event on the OLD machine). The
@@ -269,6 +310,22 @@ pub struct SupersedeRequest {
     pub code: ErrorCode,
 }
 
+/// A pairing exchange admitted by the admission gate. It stays pending until
+/// the Client's proof verifies **and** the local operator approves (§5.2).
+struct PendingPairing {
+    request_id: u64,
+    mode: PairingMode,
+    client_public_key: Vec<u8>,
+    display_name: String,
+    binding: [u8; pairing::BINDING_LEN],
+    sas: Option<String>,
+    /// `binding_echo` + `client_proof` verified; persistence still waits for
+    /// local approval.
+    verified: bool,
+    /// The driver has already handed this request to the local operator.
+    approval_requested: bool,
+}
+
 /// One Server-side session machine (§5.2). Not `Sync`-shared: one per
 /// connection; the session registry (identity → live session) is shared.
 pub struct StateMachine {
@@ -300,6 +357,11 @@ pub struct StateMachine {
     /// The latest §9 PlaybackDiagnostics this Client reported (the only
     /// playback evidence the Server accepts; never a transport ACK).
     last_diagnostics: Option<crate::schema::PlaybackDiagnostics>,
+    /// The admitted pairing exchange awaiting proof + local approval.
+    pending_pairing: Option<PendingPairing>,
+    /// The §6 code of the most recent pairing failure, drained by the driver
+    /// for its redacted failure log (never a nonce, SAS, or proof).
+    last_pairing_failure_code: Option<ErrorCode>,
 }
 
 impl StateMachine {
@@ -321,6 +383,8 @@ impl StateMachine {
             pending_client_key: None,
             supersede: None,
             last_diagnostics: None,
+            pending_pairing: None,
+            last_pairing_failure_code: None,
         }
     }
 
@@ -393,8 +457,11 @@ impl StateMachine {
             Event::Frame { frame, source } => self.handle_frame(frame, source),
             Event::AuthDeadline => {
                 // §5.2 CONNECTING/AUTHENTICATING: auth deadline (10 s) →
-                // transport close carrying 601.
-                if matches!(
+                // transport close carrying 601. A pairing exchange uses the
+                // 10-minute pairing deadline instead (§5.2 AUTHENTICATING).
+                if self.is_pairing_exchange() {
+                    Vec::new()
+                } else if matches!(
                     self.state,
                     ServerState::Connecting | ServerState::Authenticating
                 ) {
@@ -404,6 +471,9 @@ impl StateMachine {
                     Vec::new()
                 }
             }
+            Event::PairingDeadline => self.handle_pairing_deadline(),
+            Event::PairingApproved { request_id } => self.handle_pairing_approved(request_id),
+            Event::PairingDeclined { request_id } => self.handle_pairing_declined(request_id),
             Event::IdleTimeout => {
                 // §5.2 "any": idle timeout → transport close carrying 601.
                 self.close(ServerState::Closed);
@@ -508,44 +578,14 @@ impl StateMachine {
                 // 401 BEFORE pairing admission semantics are consulted (the
                 // fixture cases error-401-pairing-capabilities-over-255 /
                 // error-401-pairing-duplicate-capabilities pin this order).
+                // A malformed request never burns the nonce.
                 if auth::validate_capability_list_bounded(&request.capabilities, u8::MAX as usize)
                     .is_err()
                 {
+                    self.last_pairing_failure_code = Some(ErrorCode::MALFORMED_MESSAGE);
                     return self.malformed_fatal(request.request_id);
                 }
-                // §5.2 CONNECTING PairingRequest row — production pairing is a
-                // later phase; in v2.0-control-plane scope the admission gate
-                // has no live QR/SAS source, so a PairingRequest is refused
-                // 201 + Close(201) (no admission material exists — the
-                // nonce/window tables are empty). Pairing-failure rate limits
-                // (TM-5) apply at the pairing phase.
-                //
-                // Adjudicated 2026-11-13 (ticket 07 Comments): the 201
-                // vector was the bug, not §4.2. error-201-pairing-declined
-                // now encodes the §6.2 registry defaults
-                // (requires_repairing=true, `18 01`), so the sender's
-                // `Status::registry(201)` matches the fixture byte-for-byte
-                // and the sibling proof-invalid case.
-                let outcomes = vec![
-                    Outcome::frame(Frame {
-                        body: Some(frame::Body::PairingResult(crate::schema::PairingResult {
-                            request_id: request.request_id,
-                            status: Status::registry(ErrorCode::PAIRING_REJECTED.code),
-                        })),
-                    }),
-                    Outcome {
-                        frame: Some(Frame {
-                            body: Some(frame::Body::Close(crate::schema::Close {
-                                code: ErrorCode::PAIRING_REJECTED.code,
-                                detail: String::new(),
-                            })),
-                        }),
-                        close_code: Some(ErrorCode::PAIRING_REJECTED),
-                        transport_close_code: None,
-                    },
-                ];
-                self.close(ServerState::Closing);
-                outcomes
+                self.handle_pairing_request(request, &source)
             }
             (ServerState::Connecting, Some(frame::Body::Negotiate(_))) => {
                 // Valid but state-forbidden → 402 (§5.2 CONNECTING split).
@@ -590,10 +630,14 @@ impl StateMachine {
                 // §5.2 AUTHENTICATING AuthInit (retry): fresh challenge.
                 self.handle_auth_init(init.request_id, &init.client_public_key, source)
             }
-            (ServerState::Authenticating, Some(frame::Body::PairingConfirm(_)))
-            | (ServerState::Authenticating, Some(frame::Body::PairingRequest(_))) => {
-                // Pairing exchanges are refused in this phase (see CONNECTING).
-                self.pairing_unavailable(request_id)
+            (ServerState::Authenticating, Some(frame::Body::PairingConfirm(confirm))) => {
+                self.handle_pairing_confirm(confirm, &source)
+            }
+            (ServerState::Authenticating, Some(frame::Body::PairingRequest(_))) => {
+                // A second PairingRequest in one connection is not the pairing
+                // exchange's confirm step; keep the pre-ticket-19 201+Close(201)
+                // refusal (no second nonce is admitted on this connection).
+                self.pairing_rejected(request_id)
             }
             (ServerState::Authenticating, Some(_)) => {
                 // Valid but state-forbidden in AUTHENTICATING → 402.
@@ -804,18 +848,15 @@ impl StateMachine {
         // authentication, never a cached answer).
         match self.store.authorize(&client_public_key) {
             Authorization::Authorized(_) => {
-                self.identity = Some(client_public_key.clone());
+                // §8.1 last_seen_at, best effort: an auth success never fails
+                // because an auxiliary timestamp write failed.
+                let _ = self
+                    .store
+                    .touch_last_seen(&client_public_key, &pairing::rfc3339_now());
                 self.pending_challenge = None;
                 self.pending_request_id = None;
-                self.state = ServerState::Negotiating;
-                // TM-3: supersede an older session of the same identity.
-                let session_id = self.next_session_id;
-                self.next_session_id += 1;
-                self.session_id = Some(session_id);
-                self.supersede = Some(SupersedeRequest {
-                    old_session_id: session_id.saturating_sub(1),
-                    code: ErrorCode::SESSION_SUPERSEDED,
-                });
+                let (session_id, supersede) = self.establish_session(&client_public_key);
+                let _ = supersede;
                 vec![Outcome::frame(Frame {
                     body: Some(frame::Body::AuthResult(crate::schema::AuthResult {
                         request_id,
@@ -843,6 +884,54 @@ impl StateMachine {
     /// malformed). Consumed once so one failure produces one log line.
     pub fn take_auth_failure_code(&mut self) -> Option<ErrorCode> {
         self.last_auth_failure_code.take()
+    }
+
+    /// The §6 code of the most recent pairing failure, for the driver's
+    /// redacted log (201 rejection, 302 rate limit, 401 malformed). One
+    /// failure produces one log line.
+    pub fn take_pairing_failure_code(&mut self) -> Option<ErrorCode> {
+        self.last_pairing_failure_code.take()
+    }
+
+    /// Whether this session is inside a pairing exchange (CONNECTING or
+    /// AUTHENTICATING with an admitted pairing). The driver uses this to
+    /// replace the 10 s auth deadline with the 10 min pairing deadline.
+    pub fn is_pairing_exchange(&self) -> bool {
+        self.pending_pairing.is_some()
+            && matches!(
+                self.state,
+                ServerState::Connecting | ServerState::Authenticating
+            )
+    }
+
+    /// The pending pairing exchange's request id, when one exists.
+    pub fn pending_pairing_request_id(&self) -> Option<u64> {
+        self.pending_pairing
+            .as_ref()
+            .map(|pending| pending.request_id)
+    }
+
+    /// Hand a verified-but-unapproved pairing to the local operator exactly
+    /// once. The driver registers an approval callback and never blocks the
+    /// state machine on human input.
+    pub fn take_pairing_approval_request(&mut self) -> Option<ApprovalRequest> {
+        let pending = self.pending_pairing.as_mut()?;
+        if !pending.verified || pending.approval_requested {
+            return None;
+        }
+        pending.approval_requested = true;
+        let client_id: String = auth::client_id(&pending.client_public_key)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        Some(ApprovalRequest {
+            request_id: pending.request_id,
+            client_id,
+            display_name: pending.display_name.clone(),
+            mode: pending.mode,
+            address: String::new(),
+            sas: pending.sas.clone(),
+        })
     }
 
     fn record_auth_failure(&mut self, code: ErrorCode, request_id: u64) -> Vec<Outcome> {
@@ -877,6 +966,278 @@ impl StateMachine {
                 })),
             })]
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Pairing exchange (spec §5.2 pairing rows; pairing.md §6–§7).
+    // -------------------------------------------------------------------------
+
+    /// Enter NEGOTIATING exactly like a successful `AuthProof` (§5.2), so the
+    /// driver's registry, revocation polling, and 303 supersede all apply to
+    /// a freshly paired session.
+    fn establish_session(&mut self, client_public_key: &[u8]) -> (u64, SupersedeRequest) {
+        self.identity = Some(client_public_key.to_vec());
+        self.state = ServerState::Negotiating;
+        // TM-3: supersede an older session of the same identity.
+        let session_id = self.next_session_id;
+        self.next_session_id += 1;
+        self.session_id = Some(session_id);
+        let supersede = SupersedeRequest {
+            old_session_id: session_id.saturating_sub(1),
+            code: ErrorCode::SESSION_SUPERSEDED,
+        };
+        self.supersede = Some(supersede.clone());
+        (session_id, supersede)
+    }
+
+    fn handle_pairing_request(
+        &mut self,
+        request: crate::schema::PairingRequest,
+        source: &[u8],
+    ) -> Vec<Outcome> {
+        let Some(core) = self.config.pairing.clone() else {
+            // No production Pairing Core wired: preserve the pre-ticket-19
+            // refusal (201 + Close(201), no detail).
+            self.last_pairing_failure_code = Some(ErrorCode::PAIRING_REJECTED);
+            return self.pairing_rejected(request.request_id);
+        };
+        let address = parse_source_address(source);
+        if address.is_some_and(|address| core.is_limited(address)) {
+            self.last_pairing_failure_code = Some(ErrorCode::RATE_LIMITED);
+            return self.pairing_rate_limited();
+        }
+
+        // Structural validation: these are malformed requests (401) and must
+        // not burn the nonce (the capability-list check already ran in the
+        // CONNECTING arm).
+        if auth::parse_client_public_key(&request.client_public_key).is_err()
+            || request.client_random.len() != 32
+            || request.client_name.len() > 63
+        {
+            self.last_pairing_failure_code = Some(ErrorCode::MALFORMED_MESSAGE);
+            return self.malformed_fatal(request.request_id);
+        }
+        let mode = match PairingMode::try_from(request.pairing_mode) {
+            Ok(PairingMode::Qr) => {
+                if request.pairing_nonce.len() != pairing::NONCE_LEN {
+                    self.last_pairing_failure_code = Some(ErrorCode::MALFORMED_MESSAGE);
+                    return self.malformed_fatal(request.request_id);
+                }
+                PairingMode::Qr
+            }
+            Ok(PairingMode::Sas) => {
+                if !request.pairing_nonce.is_empty() {
+                    self.last_pairing_failure_code = Some(ErrorCode::MALFORMED_MESSAGE);
+                    return self.malformed_fatal(request.request_id);
+                }
+                PairingMode::Sas
+            }
+            Ok(PairingMode::Unspecified) | Err(_) => {
+                return self.record_pairing_rejection(request.request_id, &core, address);
+            }
+        };
+        // Admission gate: a valid QR nonce is consumed here, before the major
+        // check and any crypto, regardless of the eventual outcome (§5).
+        if core.admit_request(&request).is_err() {
+            return self.record_pairing_rejection(request.request_id, &core, address);
+        }
+        if request.protocol_major != crate::codes::PROTOCOL_MAJOR {
+            return self.record_pairing_rejection(request.request_id, &core, address);
+        }
+
+        let server_random = self
+            .config
+            .fixed_pairing_server_random()
+            .filter(|random| random.len() == 32)
+            .unwrap_or_else(random_32_bytes);
+        let context = match pairing::binding_context(
+            mode,
+            &request.pairing_nonce,
+            &request.client_random,
+            &server_random,
+            &request.client_public_key,
+            &self.config.server_public_key,
+            &request.capabilities,
+            &accepted_display_name(&request.client_name),
+        ) {
+            Ok(context) => context,
+            Err(_) => {
+                self.last_pairing_failure_code = Some(ErrorCode::MALFORMED_MESSAGE);
+                return self.malformed_fatal(request.request_id);
+            }
+        };
+        let Some(exporter) = self.config.pairing_exporter.clone() else {
+            return self.internal_error(request.request_id);
+        };
+        let Some(binding_bytes) =
+            exporter.export(PAIRING_EXPORTER_LABEL, &context, pairing::BINDING_LEN)
+        else {
+            return self.internal_error(request.request_id);
+        };
+        let Ok(binding) = <[u8; pairing::BINDING_LEN]>::try_from(binding_bytes.as_slice()) else {
+            return self.internal_error(request.request_id);
+        };
+        let sas = exporter
+            .export(SAS_EXPORTER_LABEL, &context, pairing::SAS_SEED_LEN)
+            .and_then(|seed| pairing::derive_sas_code(&seed))
+            .map(pairing::format_sas);
+
+        let display_name = accepted_display_name(&request.client_name);
+        let client_id = auth::client_id(&request.client_public_key).to_vec();
+        self.pending_pairing = Some(PendingPairing {
+            request_id: request.request_id,
+            mode,
+            client_public_key: request.client_public_key.clone(),
+            display_name: display_name.clone(),
+            binding,
+            sas,
+            verified: false,
+            approval_requested: false,
+        });
+        self.state = ServerState::Authenticating;
+        vec![Outcome::frame(Frame {
+            body: Some(frame::Body::PairingResponse(
+                crate::schema::PairingResponse {
+                    request_id: request.request_id,
+                    status: Status::ok(),
+                    pairing_mode: mode as i32,
+                    pairing_nonce: request.pairing_nonce.clone(),
+                    client_random: request.client_random.clone(),
+                    server_random,
+                    server_public_key: self.config.server_public_key.clone(),
+                    protocol_major: crate::codes::PROTOCOL_MAJOR,
+                    capabilities: request.capabilities.clone(),
+                    binding: binding.to_vec(),
+                    client_id,
+                    display_name,
+                },
+            )),
+        })]
+    }
+
+    fn handle_pairing_confirm(
+        &mut self,
+        confirm: crate::schema::PairingConfirm,
+        source: &[u8],
+    ) -> Vec<Outcome> {
+        let Some(core) = self.config.pairing.clone() else {
+            return self.pairing_rejected(confirm.request_id);
+        };
+        let address = parse_source_address(source);
+        let Some(pending) = self.pending_pairing.as_ref() else {
+            return self.record_pairing_rejection(confirm.request_id, &core, address);
+        };
+        if confirm.request_id != pending.request_id {
+            return self.record_pairing_rejection(confirm.request_id, &core, address);
+        }
+        let client_public_key = pending.client_public_key.clone();
+        let binding = pending.binding;
+        // The binding echo must equal this connection's exporter derivation;
+        // the proof must prove possession of the *claimed identity key*
+        // (pairing.md §6.3.1). Both are checked before persistence.
+        let binding_ok =
+            confirm.binding_echo.len() == binding.len() && confirm.binding_echo == binding;
+        let proof_ok =
+            auth::verify_pairing_proof(&client_public_key, &binding, &confirm.client_proof).is_ok();
+        if !binding_ok || !proof_ok {
+            return self.record_pairing_rejection(confirm.request_id, &core, address);
+        }
+        if let Some(pending) = self.pending_pairing.as_mut() {
+            pending.verified = true;
+        }
+        // Persistence and PairingResult wait for Event::PairingApproved.
+        Vec::new()
+    }
+
+    fn handle_pairing_approved(&mut self, request_id: u64) -> Vec<Outcome> {
+        let Some(pending) = self.pending_pairing.as_ref() else {
+            return Vec::new();
+        };
+        if !pending.verified || pending.request_id != request_id {
+            return Vec::new();
+        }
+        let client_public_key = pending.client_public_key.clone();
+        let display_name = pending.display_name.clone();
+        let Some(core) = self.config.pairing.clone() else {
+            return self.internal_error(request_id);
+        };
+        if let Err(error) = core.persist_client(&client_public_key, &display_name) {
+            // §10.3: a store write failure fails closed, never a silent
+            // success. The detail is local only; the wire Error carries none.
+            tracing::error!(error = %error, "v2 pairing: persist failed; failing closed");
+            return self.internal_error(request_id);
+        }
+        self.pending_pairing = None;
+        self.establish_session(&client_public_key);
+        vec![Outcome::frame(Frame {
+            body: Some(frame::Body::PairingResult(crate::schema::PairingResult {
+                request_id,
+                status: Status::ok(),
+            })),
+        })]
+    }
+
+    fn handle_pairing_declined(&mut self, request_id: u64) -> Vec<Outcome> {
+        let Some(pending) = self.pending_pairing.as_ref() else {
+            return Vec::new();
+        };
+        if !pending.verified || pending.request_id != request_id {
+            return Vec::new();
+        }
+        // §5.2: verified proofs + declined approval → 201 + Close(201), no
+        // detail, nothing persisted.
+        self.pending_pairing = None;
+        self.pairing_rejected(request_id)
+    }
+
+    fn handle_pairing_deadline(&mut self) -> Vec<Outcome> {
+        if self.state != ServerState::Authenticating {
+            return Vec::new();
+        }
+        let Some(pending) = self.pending_pairing.take() else {
+            return Vec::new();
+        };
+        // §5.2: 10 min without a pairing result → Error(206)+Close(206).
+        self.last_pairing_failure_code = Some(ErrorCode::PAIRING_PENDING_TIMEOUT);
+        let outcomes = Outcome::fatal(ErrorCode::PAIRING_PENDING_TIMEOUT, pending.request_id);
+        self.close(ServerState::Closing);
+        outcomes
+    }
+
+    /// Count one pairing failure against the connection's source; a source
+    /// over its TM-5 budget is answered Close(302) instead of 201.
+    fn record_pairing_rejection(
+        &mut self,
+        request_id: u64,
+        core: &PairingCore,
+        address: Option<std::net::IpAddr>,
+    ) -> Vec<Outcome> {
+        self.last_pairing_failure_code = Some(ErrorCode::PAIRING_REJECTED);
+        if address.is_some_and(|address| core.note_failure(address)) {
+            self.last_pairing_failure_code = Some(ErrorCode::RATE_LIMITED);
+            return self.pairing_rate_limited();
+        }
+        self.pairing_rejected(request_id)
+    }
+
+    fn pairing_rate_limited(&mut self) -> Vec<Outcome> {
+        self.close(ServerState::Closing);
+        vec![Outcome {
+            frame: Some(Frame {
+                body: Some(frame::Body::Close(crate::schema::Close {
+                    code: ErrorCode::RATE_LIMITED.code,
+                    detail: String::new(),
+                })),
+            }),
+            close_code: Some(ErrorCode::RATE_LIMITED),
+            transport_close_code: None,
+        }]
+    }
+
+    fn internal_error(&mut self, request_id: u64) -> Vec<Outcome> {
+        let outcomes = Outcome::fatal(ErrorCode::INTERNAL_ERROR, request_id);
+        self.close(ServerState::Closing);
+        outcomes
     }
 
     // -------------------------------------------------------------------------
@@ -1122,7 +1483,9 @@ impl StateMachine {
         outcomes
     }
 
-    fn pairing_unavailable(&mut self, request_id: u64) -> Vec<Outcome> {
+    fn pairing_rejected(&mut self, request_id: u64) -> Vec<Outcome> {
+        // §5.2: PairingResult(201)+Close(201), no detail, nothing persisted,
+        // then the transport close carries 201 after the grace (§5.1).
         let outcomes = vec![
             Outcome::frame(Frame {
                 body: Some(frame::Body::PairingResult(crate::schema::PairingResult {
@@ -1141,6 +1504,7 @@ impl StateMachine {
                 transport_close_code: None,
             },
         ];
+        self.pending_pairing = None;
         self.close(ServerState::Closing);
         outcomes
     }
@@ -1173,6 +1537,35 @@ fn frame_request_id(frame: &Frame) -> u64 {
         Some(frame::Body::PairingConfirm(m)) => m.request_id,
         _ => 0,
     }
+}
+
+/// Parse the driver's source-address bytes (it passes the IP's text form) for
+/// the TM-5 per-address pairing-failure guard.
+fn parse_source_address(source: &[u8]) -> Option<std::net::IpAddr> {
+    std::str::from_utf8(source).ok()?.parse().ok()
+}
+
+/// The accepted display name: empty → a fixed local label, over-long names
+/// truncated on a UTF-8 boundary to the §8.1 63-byte cap.
+fn accepted_display_name(name: &str) -> String {
+    if name.is_empty() {
+        return "Unknown device".to_owned();
+    }
+    if name.len() <= 63 {
+        return name.to_owned();
+    }
+    let mut end = 63;
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    name[..end].to_owned()
+}
+
+/// A fresh 32-byte CSPRNG value (pairing `server_random`).
+fn random_32_bytes() -> Vec<u8> {
+    let mut bytes = vec![0u8; 32];
+    getrandom(&mut bytes);
+    bytes
 }
 
 /// Fill bytes from the OS CSPRNG.

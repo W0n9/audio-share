@@ -59,6 +59,8 @@ fn store_with_client() -> AuthorizationStore {
         public_key: client_public_key(&client_key()),
         display_name: "Test Phone".to_owned(),
         state: ClientState::Active,
+        created_at: String::new(),
+        last_seen_at: String::new(),
     });
     store
 }
@@ -782,6 +784,8 @@ async fn deleting_the_record_ends_the_live_session_and_rejects_reconnects() {
             public_key: client_public_key(&client_key()),
             display_name: "Test Phone".to_owned(),
             state: ClientState::Active,
+            created_at: String::new(),
+            last_seen_at: String::new(),
         })
         .expect("persist record");
     let path = dir.path().join("pairing").join("clients.json");

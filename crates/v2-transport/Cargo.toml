@@ -40,6 +40,8 @@ libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 tempfile = "3"
+# Live pairing tests use fresh in-memory client identities.
+rand_core = { version = "0.6", features = ["getrandom"] }
 # Capture the transport's own tracing fields in the redaction tests (the
 # library logs at INFO; a subscriber lets a test read the emitted line).
 tracing-subscriber = "0.3"

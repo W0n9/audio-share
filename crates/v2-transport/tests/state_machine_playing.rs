@@ -51,6 +51,8 @@ fn machine_at(stream_active: bool) -> StateMachine {
         public_key: unhex(CLIENT_PUB),
         display_name: "Test Phone".to_owned(),
         state: StoreState::Active,
+        created_at: String::new(),
+        last_seen_at: String::new(),
     });
     let capture = if stream_active {
         active_snapshot(1, 1, 0)
@@ -74,6 +76,9 @@ fn machine_at(stream_active: bool) -> StateMachine {
                 "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
             )),
             session_id_base: 1,
+            pairing: None,
+            pairing_exporter: None,
+            pairing_server_random_override: None,
         },
         &Arc::new(store),
     )
@@ -190,9 +195,9 @@ fn unsubscribe_in_playing_ends_the_stream_first() {
     let mut machine = playing();
     let out = machine.handle(Event::Frame {
         frame: Box::new(v2_transport::schema::Frame {
-            body: Some(frame::Body::Unsubscribe(v2_transport::schema::Unsubscribe {
-                request_id: 5,
-            })),
+            body: Some(frame::Body::Unsubscribe(
+                v2_transport::schema::Unsubscribe { request_id: 5 },
+            )),
         }),
         source: Vec::new(),
     });
@@ -223,7 +228,10 @@ fn capture_end_returns_to_ready_and_keeps_the_subscription() {
         code: ErrorCode::STREAM_ENDED,
     }));
     assert_eq!(machine.state(), ServerState::Ready);
-    assert!(machine.subscribed(), "capture end is not a user unsubscribe");
+    assert!(
+        machine.subscribed(),
+        "capture end is not a user unsubscribe"
+    );
     match body(out[0].frame.as_ref().and_then(|f| f.body.as_ref())) {
         Some(frame::Body::StreamEnded(ended)) => {
             assert_eq!(ended.stream_instance_id, 1);
@@ -294,11 +302,7 @@ fn capture_restart_ends_then_starts() {
 fn capture_start_reaches_a_client_subscribed_before_the_stream() {
     let mut machine = ready(false);
     let out = subscribe(&mut machine, 3);
-    assert_eq!(
-        out.len(),
-        1,
-        "no StreamStarted while nothing is streaming"
-    );
+    assert_eq!(out.len(), 1, "no StreamStarted while nothing is streaming");
     assert_eq!(machine.state(), ServerState::Ready);
 
     machine.update_capture(active_snapshot(1, 1, 0));
@@ -349,7 +353,10 @@ fn playback_diagnostics_are_recorded_not_replied_to() {
         }),
         source: Vec::new(),
     });
-    assert!(out.is_empty(), "no reply; §9 says statistics never block media");
+    assert!(
+        out.is_empty(),
+        "no reply; §9 says statistics never block media"
+    );
     assert_eq!(machine.last_playback_diagnostics(), Some(&diagnostics));
     assert_eq!(machine.state(), ServerState::Playing);
 }
@@ -400,7 +407,14 @@ fn close_in_playing_is_not_echoed() {
 fn a_config_change_in_playing_publishes_the_new_generation() {
     let mut machine = playing();
     let mut changed = active_snapshot(1, 2, 0);
-    changed.configuration.as_mut().unwrap().pcm.as_mut().unwrap().sample_rate = 96_000;
+    changed
+        .configuration
+        .as_mut()
+        .unwrap()
+        .pcm
+        .as_mut()
+        .unwrap()
+        .sample_rate = 96_000;
     machine.update_capture(changed.clone());
     let out = machine.handle(Event::StreamLifecycle(StreamLifecycle::ConfigChanged {
         config_generation: 2,
@@ -459,9 +473,9 @@ fn stream_messages_carry_only_the_spec_fields() {
     };
     let out = machine.handle(Event::Frame {
         frame: Box::new(v2_transport::schema::Frame {
-            body: Some(frame::Body::Unsubscribe(v2_transport::schema::Unsubscribe {
-                request_id: 4,
-            })),
+            body: Some(frame::Body::Unsubscribe(
+                v2_transport::schema::Unsubscribe { request_id: 4 },
+            )),
         }),
         source: Vec::new(),
     });

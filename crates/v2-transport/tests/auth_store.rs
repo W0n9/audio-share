@@ -17,6 +17,8 @@ fn client(pub_hex: &str, name: &str) -> StoredClient {
         public_key: unhex(pub_hex),
         display_name: name.to_owned(),
         state: ClientState::Active,
+        created_at: String::new(),
+        last_seen_at: String::new(),
     }
 }
 

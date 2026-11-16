@@ -45,6 +45,8 @@ fn store_with_client() -> std::sync::Arc<AuthorizationStore> {
         public_key: unhex(CLIENT_PUB),
         display_name: "Test Phone".to_owned(),
         state: ClientState::Active,
+        created_at: String::new(),
+        last_seen_at: String::new(),
     });
     std::sync::Arc::new(store)
 }
@@ -70,6 +72,9 @@ fn config(_store: &std::sync::Arc<AuthorizationStore>) -> ServerConfig {
         server_random_override: Some(unhex(SERVER_RANDOM)),
         auth_exporter: Some(unhex(AUTH_EXPORTER)),
         session_id_base: 1,
+        pairing: None,
+        pairing_exporter: None,
+        pairing_server_random_override: None,
     }
 }
 
@@ -248,6 +253,8 @@ fn error_204_denied_identity_replays_byte_identically() {
         public_key: unhex(CLIENT_PUB),
         display_name: "Test Phone".to_owned(),
         state: ClientState::Revoked,
+        created_at: String::new(),
+        last_seen_at: String::new(),
     });
     let store = std::sync::Arc::new(store);
     let mut machine = StateMachine::new(config(&store), &store);
