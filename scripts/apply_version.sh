@@ -53,22 +53,36 @@ for manifest in "${workspace_manifests[@]}"; do
     [[ -n "$package" ]] && workspace_packages+=("$package")
 done
 
-cargo_lock_tmp=$(mktemp)
-cp Cargo.lock "$cargo_lock_tmp"
-for package in "${workspace_packages[@]}"; do
-    awk -v pkg="$package" -v ver="$version_name" '
-        $0 == "[[package]]" { in_package = 0 }
-        $0 == "name = \"" pkg "\"" { in_package = 1 }
-        in_package && $0 ~ /^version = "/ {
-            sub(/^version = "[^"]*"/, "version = \"" ver "\"")
-            in_package = 0
-        }
-        { print }
-    ' "$cargo_lock_tmp" > "$cargo_lock_tmp.next"
-    mv "$cargo_lock_tmp.next" "$cargo_lock_tmp"
-done
-cat "$cargo_lock_tmp" > Cargo.lock
-rm -f "$cargo_lock_tmp"
+update_lock_versions() {
+    local lock=$1
+    local tmp package
+    tmp=$(mktemp)
+    cp "$lock" "$tmp"
+    for package in "${workspace_packages[@]}"; do
+        awk -v pkg="$package" -v ver="$version_name" '
+            $0 == "[[package]]" { in_package = 0 }
+            $0 == "name = \"" pkg "\"" { in_package = 1 }
+            in_package && $0 ~ /^version = "/ {
+                sub(/^version = "[^"]*"/, "version = \"" ver "\"")
+                in_package = 0
+            }
+            { print }
+        ' "$tmp" > "$tmp.next"
+        mv "$tmp.next" "$tmp"
+    done
+    cat "$tmp" > "$lock"
+    rm -f "$tmp"
+}
+
+update_lock_versions Cargo.lock
+
+# The cross-language interop harness is a separate workspace, but its lockfile
+# path-depends on these workspace crates. Keep those entries in sync so
+# `cargo --locked` still works there; packages it does not contain are skipped.
+interop_lock=tools/rust-android-interop/Cargo.lock
+if [[ -f "$interop_lock" ]]; then
+    update_lock_versions "$interop_lock"
+fi
 
 # GUI package metadata and lockfile.
 sed -Ebi "0,/^  \"version\": \"[^\"]*\"/s//  \"version\": \"$version_name\"/" gui/package.json
@@ -98,6 +112,12 @@ for package in "${workspace_packages[@]}"; do
         echo "error: Cargo.lock entry for $package does not contain version $version_name" >&2
         exit 1
     }
+    if [[ -f "$interop_lock" ]] && grep -q "^name = \"$package\"$" "$interop_lock"; then
+        grep -A1 "^name = \"$package\"$" "$interop_lock" | grep -q "^version = \"$version_name\"$" || {
+            echo "error: $interop_lock entry for $package does not contain version $version_name" >&2
+            exit 1
+        }
+    fi
 done
 
 popd >/dev/null

@@ -8,17 +8,47 @@ Kotlin app owns the UI and the reconnect policy.
 
 ```sh
 # Default release build: no fixture test identity is compiled in.
+# Default ABI is arm64-v8a (real devices).
 ANDROID_HOME=$HOME/Android/Sdk ./gradlew assembleRelease
+
+# Beta universal APK: arm64-v8a + x86_64 in one signed APK.
+ANDROID_HOME=$HOME/Android/Sdk ./gradlew assembleRelease \
+  -PandroidAbis=arm64-v8a,x86_64
 
 # E2E / device-test build: adds the TEST-ONLY fixture client identity key.
 ANDROID_HOME=$HOME/Android/Sdk ./gradlew assembleRelease -PtestSupport=true
 ```
 
+`-PandroidAbi=x86_64` remains supported for emulator-only development.
 `-PtestSupport=true` enables the native crate's `test-support` feature, which
 provides the fixture client identity/signing path used by the end-to-end
 harness. It is TEST-ONLY. Never ship that configuration: default release
 builds omit the feature, and the production identity comes from v2 pairing
 (phase 6).
+
+## Release signing
+
+Production release APKs are signed with the dedicated beta keystore; they no
+longer fall back to the debug key. Credentials must stay outside the
+repository. Gradle reads either environment variables:
+
+```sh
+export AUDIO_SHARE_KEYSTORE_FILE=/path/outside/repo/audio-share-beta.jks
+export AUDIO_SHARE_KEYSTORE_PASSWORD='...'
+export AUDIO_SHARE_KEY_ALIAS=audio-share-beta
+export AUDIO_SHARE_KEY_PASSWORD='...'
+```
+
+or a properties file containing `storeFile`, `storePassword`, `keyAlias`, and
+`keyPassword`, named by `AUDIO_SHARE_KEYSTORE_PROPERTIES` or
+`-PreleaseKeystoreProperties=...`. The default external candidate is
+`$HOME/.cache/audio-share-beta-keys/keystore.properties`.
+
+`keystore.properties`, `*.jks`, and `*.keystore` are gitignored. Without
+credentials a production `assembleRelease` stays unsigned and fails at
+`packageRelease` with guidance. Explicit `-PtestSupport=true` and/or
+`-PdeviceTests=true` builds are signed with the debug key so test artifacts can
+never carry the customer certificate.
 
 ## Native tests
 
