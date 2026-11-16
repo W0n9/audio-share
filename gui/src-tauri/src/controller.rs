@@ -455,8 +455,9 @@ impl ServerController {
     /// Close the pairing dialog's invitation and pending approvals.
     ///
     /// Per pairing.md §5, outstanding QR nonces are *not* consumed by closing
-    /// the dialog; they expire on their own. The core's cancel only closes the
-    /// SAS admission window and drops undecided approvals.
+    /// the dialog; they expire on their own. The core's cancel closes the SAS
+    /// admission window and declines every undecided approval, so a waiting
+    /// Client receives 201+Close(201) immediately.
     pub fn pairing_cancel(&self) -> Result<PairingStatus, String> {
         let admin = self.pairing_admin()?;
         admin.cancel();
@@ -465,18 +466,18 @@ impl ServerController {
     }
 
     /// Approve one pending pairing by request id.
-    pub fn pairing_approve(&self, request_id: u64) -> Result<PairingStatus, String> {
+    pub fn pairing_approve(&self, approval_id: u64) -> Result<PairingStatus, String> {
         let admin = self.pairing_admin()?;
-        if !admin.approve(request_id) {
+        if !admin.approve(approval_id) {
             return Err("that pairing request is no longer pending".to_owned());
         }
         Ok(self.pairing_status())
     }
 
     /// Decline one pending pairing by request id.
-    pub fn pairing_decline(&self, request_id: u64) -> Result<PairingStatus, String> {
+    pub fn pairing_decline(&self, approval_id: u64) -> Result<PairingStatus, String> {
         let admin = self.pairing_admin()?;
-        if !admin.decline(request_id) {
+        if !admin.decline(approval_id) {
             return Err("that pairing request is no longer pending".to_owned());
         }
         Ok(self.pairing_status())
@@ -544,16 +545,16 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn mode_name(mode: v2_runtime::admin::PairingMode) -> String {
+fn mode_name(mode: v2_runtime::admin::RequestedPairingMode) -> String {
     match mode {
-        v2_runtime::admin::PairingMode::Qr => "qr".to_owned(),
-        v2_runtime::admin::PairingMode::Sas => "sas".to_owned(),
+        v2_runtime::admin::RequestedPairingMode::Qr => "qr".to_owned(),
+        v2_runtime::admin::RequestedPairingMode::Sas => "sas".to_owned(),
     }
 }
 
 fn pending_info(request: PendingRequestView) -> PairingRequestInfo {
     PairingRequestInfo {
-        request_id: request.request_id,
+        approval_id: request.approval_id,
         client_id: request.client_id,
         display_name: request.display_name,
         mode: mode_name(request.mode),
@@ -590,7 +591,8 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
     use v2_runtime::admin::{
-        ClientStateView, ClientView, InvitationView, PairingAdmin, PairingMode, PendingRequestView,
+        ClientStateView, ClientView, InvitationView, PairingAdmin, PendingRequestView,
+        RequestedPairingMode,
     };
 
     use super::*;
@@ -619,14 +621,14 @@ mod tests {
     }
 
     impl PairingAdmin for FakeAdmin {
-        fn begin(&self, mode: PairingMode) -> Result<InvitationView, String> {
+        fn begin(&self, mode: RequestedPairingMode) -> Result<InvitationView, String> {
             lock(&self.state).calls.push(format!("begin:{mode:?}"));
             let view = InvitationView {
                 mode,
-                qr_uri: (mode == PairingMode::Qr).then(|| {
+                qr_uri: (mode == RequestedPairingMode::Qr).then(|| {
                     "audioshare-pair://p1?pm=2&addr=127.0.0.1:65531&key=x&nonce=y".to_owned()
                 }),
-                qr_svg: (mode == PairingMode::Qr).then(|| "<svg/>".to_owned()),
+                qr_svg: (mode == RequestedPairingMode::Qr).then(|| "<svg/>".to_owned()),
                 fingerprint: "FP".to_owned(),
                 expires_in_secs: 600,
             };
@@ -641,15 +643,15 @@ mod tests {
             lock(&self.state).pending.clone()
         }
 
-        fn approve(&self, request_id: u64) -> bool {
+        fn approve(&self, approval_id: u64) -> bool {
             lock(&self.state)
                 .calls
-                .push(format!("approve:{request_id}"));
+                .push(format!("approve:{approval_id}"));
             let mut state = lock(&self.state);
             match state
                 .pending
                 .iter()
-                .position(|request| request.request_id == request_id)
+                .position(|request| request.approval_id == approval_id)
             {
                 Some(index) => {
                     state.pending.remove(index);
@@ -659,15 +661,15 @@ mod tests {
             }
         }
 
-        fn decline(&self, request_id: u64) -> bool {
+        fn decline(&self, approval_id: u64) -> bool {
             lock(&self.state)
                 .calls
-                .push(format!("decline:{request_id}"));
+                .push(format!("decline:{approval_id}"));
             let mut state = lock(&self.state);
             match state
                 .pending
                 .iter()
-                .position(|request| request.request_id == request_id)
+                .position(|request| request.approval_id == approval_id)
             {
                 Some(index) => {
                     state.pending.remove(index);
@@ -763,10 +765,10 @@ mod tests {
 
     fn pending_request() -> PendingRequestView {
         PendingRequestView {
-            request_id: 7,
+            approval_id: 7,
             client_id: "0011223344556677".to_owned(),
             display_name: "Pixel 8".to_owned(),
-            mode: PairingMode::Qr,
+            mode: RequestedPairingMode::Qr,
             address: "192.168.1.44:50000".to_owned(),
             sas: Some("123 456".to_owned()),
         }
@@ -1410,7 +1412,7 @@ mod tests {
         assert!(error.contains("no longer pending"), "error was {error}");
 
         lock(&admin_state).pending.push(PendingRequestView {
-            request_id: 8,
+            approval_id: 8,
             ..pending_request()
         });
         let status = controller.pairing_decline(8).expect("decline");

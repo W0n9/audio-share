@@ -134,8 +134,8 @@ pub struct PairingInvitation {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PairingRequestInfo {
-    /// The pairing exchange's request id.
-    pub request_id: u64,
+    /// The process-local approval handle used by approve/decline.
+    pub approval_id: u64,
     /// Canonical client id (hex).
     pub client_id: String,
     /// Device display name.
@@ -576,7 +576,7 @@ mod tests {
                 expires_in_secs: 42,
             }),
             pending: vec![PairingRequestInfo {
-                request_id: 7,
+                approval_id: 7,
                 client_id: "0011223344556677".to_owned(),
                 display_name: "Pixel 8".to_owned(),
                 mode: "qr".to_owned(),
@@ -588,7 +588,7 @@ mod tests {
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["invitation"]["qrUri"], "audioshare-pair://p1?x");
         assert_eq!(json["invitation"]["expiresInSecs"], 42);
-        assert_eq!(json["pending"][0]["requestId"], 7);
+        assert_eq!(json["pending"][0]["approvalId"], 7);
         assert_eq!(json["pending"][0]["sas"], "123 456");
 
         let client = ClientInfo {

@@ -121,7 +121,7 @@ export interface PairingInvitation {
 
 /** One verified pairing awaiting accept/decline. */
 export interface PairingRequestInfo {
-  requestId: number;
+  approvalId: number;
   clientId: string;
   displayName: string;
   mode: PairingMode;
@@ -170,10 +170,10 @@ export const api = {
   pairingBegin: (mode: PairingMode) => invoke<PairingStatus>("pairing_begin", { mode }),
   pairingCancel: () => invoke<PairingStatus>("pairing_cancel"),
   pairingStatus: () => invoke<PairingStatus>("pairing_status"),
-  pairingApprove: (requestId: number) =>
-    invoke<PairingStatus>("pairing_approve", { requestId }),
-  pairingDecline: (requestId: number) =>
-    invoke<PairingStatus>("pairing_decline", { requestId }),
+  pairingApprove: (approvalId: number) =>
+    invoke<PairingStatus>("pairing_approve", { approvalId }),
+  pairingDecline: (approvalId: number) =>
+    invoke<PairingStatus>("pairing_decline", { approvalId }),
   clientsList: () => invoke<ClientInfo[]>("clients_list"),
   clientsRevoke: (clientId: string) =>
     invoke<ClientInfo>("clients_revoke", { clientId }),

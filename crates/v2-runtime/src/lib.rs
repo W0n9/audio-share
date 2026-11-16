@@ -11,8 +11,8 @@ pub mod qr;
 pub mod runtime;
 
 pub use admin::{
-    ClientStateView, ClientView, CorePairingAdmin, InvitationView, PairingAdmin, PairingMode,
-    PendingRequestView,
+    ClientStateView, ClientView, CorePairingAdmin, InvitationView, PairingAdmin,
+    PendingRequestView, RequestedPairingMode,
 };
 pub use capture::{
     capture_media_source, v2_capture_snapshot, v2_capture_source, CaptureMediaSource,

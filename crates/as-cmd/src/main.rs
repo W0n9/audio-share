@@ -33,7 +33,7 @@ use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, MakeWriter};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
-use v2_runtime::admin::PairingMode as AdminPairingMode;
+use v2_runtime::admin::RequestedPairingMode;
 use v2_runtime::{RuntimeConfig, V2Runtime};
 use v2_transport::auth_store::{AuthorizationStore, StoreLock};
 use v2_transport::identity::IdentityConfig;
@@ -390,10 +390,23 @@ async fn run_command(cli: &Cli, command: Commands) -> Result<(), String> {
     }
 }
 
+/// Take the offline admin lock without blocking. A running Core owns the
+/// store for its lifetime, so the operator is told to stop it (pairing.md
+/// §10.3) instead of hanging behind an exclusive lock.
+fn offline_store_lock(data_dir: &std::path::Path) -> Result<StoreLock, String> {
+    match StoreLock::try_acquire(data_dir).map_err(|error| error.to_string())? {
+        Some(lock) => Ok(lock),
+        None => Err(
+            "the Server is running and owns the authorization store; stop the Server first"
+                .to_owned(),
+        ),
+    }
+}
+
 /// `as-cmd clients list|revoke`: offline admin under the headless lock.
 fn run_clients(action: ClientsAction) -> Result<(), String> {
     let data_dir = data_dir();
-    let _lock = StoreLock::acquire(&data_dir).map_err(|error| error.to_string())?;
+    let _lock = offline_store_lock(&data_dir)?;
     let store = AuthorizationStore::open(&data_dir).map_err(|error| error.to_string())?;
     match action {
         ClientsAction::List => {
@@ -444,13 +457,18 @@ fn run_clients(action: ClientsAction) -> Result<(), String> {
 fn run_identity(cli: &Cli, action: IdentityAction) -> Result<(), String> {
     let IdentityAction::Reset { yes } = action;
     let data_dir = data_dir();
-    let _lock = StoreLock::acquire(&data_dir).map_err(|error| error.to_string())?;
+    let _lock = offline_store_lock(&data_dir)?;
     let store = AuthorizationStore::open(&data_dir).map_err(|error| error.to_string())?;
     println!("WARNING: this generates a new Server identity key.");
     println!("Every paired device is invalidated and must pair again; there is no");
     println!("universal recovery backdoor. Fail-closed order: client records are");
     println!("cleared first, then the identity key is rotated atomically.");
-    if !yes && !confirm_exact("Type 'yes' to reset the Server identity: ", "yes")? {
+    if !yes
+        && !confirm(
+            "Type 'yes' to reset the Server identity: ",
+            accept_identity_reset,
+        )?
+    {
         return Err("identity reset cancelled".to_owned());
     }
     let config = IdentityConfig {
@@ -463,8 +481,9 @@ fn run_identity(cli: &Cli, action: IdentityAction) -> Result<(), String> {
     Ok(())
 }
 
-/// Ask a yes/no question on stdin (blocking read off the async runtime).
-fn confirm(prompt: &str) -> Result<bool, String> {
+/// Ask a question on stdin (blocking read off the async runtime) and apply
+/// the caller's comparison to the trimmed line.
+fn confirm(prompt: &str, accept: impl Fn(&str) -> bool) -> Result<bool, String> {
     print!("{prompt}");
     std::io::stdout()
         .flush()
@@ -473,23 +492,17 @@ fn confirm(prompt: &str) -> Result<bool, String> {
     std::io::stdin()
         .read_line(&mut line)
         .map_err(|error| format!("read confirmation: {error}"))?;
-    Ok(matches!(
-        line.trim().to_ascii_lowercase().as_str(),
-        "y" | "yes"
-    ))
+    Ok(accept(line.trim()))
 }
 
-/// Require an exact token (identity reset uses the full word).
-fn confirm_exact(prompt: &str, expected: &str) -> Result<bool, String> {
-    print!("{prompt}");
-    std::io::stdout()
-        .flush()
-        .map_err(|error| format!("write prompt: {error}"))?;
-    let mut line = String::new();
-    std::io::stdin()
-        .read_line(&mut line)
-        .map_err(|error| format!("read confirmation: {error}"))?;
-    Ok(line.trim().eq_ignore_ascii_case(expected))
+/// The identity reset requires the full word (a plain `y` is not enough).
+fn accept_identity_reset(line: &str) -> bool {
+    line.eq_ignore_ascii_case("yes")
+}
+
+/// The pairing prompt accepts the usual yes spellings, defaulting to no.
+fn accept_pairing(line: &str) -> bool {
+    matches!(line.to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
 /// `as-cmd pair`: a foreground v2 pairing session.
@@ -522,9 +535,9 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
 
     let invitation = admin
         .begin(if args.sas_only {
-            AdminPairingMode::Sas
+            RequestedPairingMode::Sas
         } else {
-            AdminPairingMode::Qr
+            RequestedPairingMode::Qr
         })
         .map_err(|error| error.to_string())?;
     if args.sas_only {
@@ -591,13 +604,13 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
                 let accepted = if args.accept {
                     true
                 } else {
-                    confirm("Accept this device? [y/N]: ")?
+                    confirm("Accept this device? [y/N]: ", accept_pairing)?
                 };
                 if accepted {
-                    core.approve(request.request_id);
+                    core.approve(request.approval_id);
                     println!("Accepted; waiting for the phone to finish pairing...");
                 } else {
-                    core.decline(request.request_id);
+                    core.decline(request.approval_id);
                     println!("Declined; nothing was stored.");
                 }
             }

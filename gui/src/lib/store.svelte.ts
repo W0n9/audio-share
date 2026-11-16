@@ -399,12 +399,12 @@ class ServerStore {
     }
   }
 
-  async approvePairing(requestId: number): Promise<void> {
+  async approvePairing(approvalId: number): Promise<void> {
     if (this.pairingBusy) return;
     this.pairingBusy = true;
     this.pairingError = null;
     try {
-      this.pairing = await api.pairingApprove(requestId);
+      this.pairing = await api.pairingApprove(approvalId);
       await this.refreshClients();
     } catch (error) {
       this.pairingError = String(error);
@@ -413,12 +413,12 @@ class ServerStore {
     }
   }
 
-  async declinePairing(requestId: number): Promise<void> {
+  async declinePairing(approvalId: number): Promise<void> {
     if (this.pairingBusy) return;
     this.pairingBusy = true;
     this.pairingError = null;
     try {
-      this.pairing = await api.pairingDecline(requestId);
+      this.pairing = await api.pairingDecline(approvalId);
     } catch (error) {
       this.pairingError = String(error);
     } finally {

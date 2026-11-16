@@ -15,7 +15,7 @@ use std::time::Duration;
 use audio_share_core::capture::media::MediaTap;
 use audio_share_core::capture::CaptureObserver;
 use tokio::sync::Notify;
-use v2_transport::auth_store::AuthorizationStore;
+use v2_transport::auth_store::{AuthorizationStore, StoreLock};
 use v2_transport::driver::SessionServer;
 use v2_transport::identity::{IdentityConfig, ServerIdentity};
 use v2_transport::limits::{CapacityGuard, Limits};
@@ -70,6 +70,10 @@ impl std::error::Error for RuntimeError {}
 
 /// A running v2 endpoint and its shared Pairing Core.
 pub struct V2Runtime {
+    /// Held for the runtime's lifetime: exactly one Core owns a data dir
+    /// (pairing.md §10.3). Offline admin uses a non-blocking probe and tells
+    /// the operator to stop the Server instead of waiting.
+    _store_lock: StoreLock,
     pairing: Arc<PairingCore>,
     admin: Arc<dyn PairingAdmin>,
     transport: Arc<Transport>,
@@ -101,6 +105,18 @@ impl V2Runtime {
         config: RuntimeConfig,
         capture: Option<(CaptureObserver, MediaTap)>,
     ) -> Result<Self, RuntimeError> {
+        // The running Core owns the data directory for its lifetime. This
+        // closes the external-writer race with `touch_last_seen`, revocation,
+        // and identity reset (pairing.md §10.3).
+        let store_lock = StoreLock::try_acquire(&config.data_dir)
+            .map_err(|error| RuntimeError::Store(error.to_string()))?
+            .ok_or_else(|| {
+                RuntimeError::Store(
+                    "another Audio Share Server Core is already running for this data \
+                     directory; stop the Server first"
+                        .to_owned(),
+                )
+            })?;
         let identity = ServerIdentity::open(&IdentityConfig {
             data_dir: config.data_dir.clone(),
             allow_loose_permissions: config.allow_loose_permissions,
@@ -195,6 +211,7 @@ impl V2Runtime {
         });
 
         Ok(Self {
+            _store_lock: store_lock,
             pairing,
             admin,
             transport,

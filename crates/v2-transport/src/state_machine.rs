@@ -27,7 +27,8 @@ use crate::auth;
 use crate::auth_store::{Authorization, AuthorizationStore, StoredClient};
 use crate::codes::ErrorCode;
 use crate::pairing::{
-    self, ApprovalRequest, PairingCore, PairingExporter, PAIRING_EXPORTER_LABEL, SAS_EXPORTER_LABEL,
+    self, ApprovalRequest, PairingCore, PairingError, PairingExporter, PairingPermit,
+    PAIRING_EXPORTER_LABEL, SAS_EXPORTER_LABEL,
 };
 use crate::schema::{frame, Frame, PairingMode, Status};
 
@@ -179,14 +180,14 @@ pub enum Event {
     /// The local operator approved a verified pairing (§5.2 "approval
     /// granted" row). Fed by the driver from the Pairing Core decision.
     PairingApproved {
-        /// The pairing exchange's request id.
-        request_id: u64,
+        /// The process-local approval handle (never the wire request id).
+        approval_id: u64,
     },
     /// The local operator declined a verified pairing (§5.2 "approval
     /// declined" row): 201 + Close(201), nothing persisted.
     PairingDeclined {
-        /// The pairing exchange's request id.
-        request_id: u64,
+        /// The process-local approval handle (never the wire request id).
+        approval_id: u64,
     },
     /// The session registry decided this session is superseded by a newer
     /// session of the same identity (TM-3; the driver owns the registry and
@@ -323,6 +324,9 @@ pub struct SupersedeRequest {
 /// the Client's proof verifies **and** the local operator approves (§5.2).
 struct PendingPairing {
     request_id: u64,
+    /// Process-local approval handle, assigned when the exchange is surfaced
+    /// to the local operator.
+    approval_id: Option<u64>,
     mode: PairingMode,
     client_public_key: Vec<u8>,
     display_name: String,
@@ -333,6 +337,9 @@ struct PendingPairing {
     verified: bool,
     /// The driver has already handed this request to the local operator.
     approval_requested: bool,
+    /// The TM-5 concurrency slot for this exchange; dropped with the pending
+    /// exchange on approval, decline, deadline, or connection loss.
+    _permit: PairingPermit,
 }
 
 /// One Server-side session machine (§5.2). Not `Sync`-shared: one per
@@ -481,8 +488,8 @@ impl StateMachine {
                 }
             }
             Event::PairingDeadline => self.handle_pairing_deadline(),
-            Event::PairingApproved { request_id } => self.handle_pairing_approved(request_id),
-            Event::PairingDeclined { request_id } => self.handle_pairing_declined(request_id),
+            Event::PairingApproved { approval_id } => self.handle_pairing_approved(approval_id),
+            Event::PairingDeclined { approval_id } => self.handle_pairing_declined(approval_id),
             Event::IdleTimeout => {
                 // §5.2 "any": idle timeout → transport close carrying 601.
                 self.close(ServerState::Closed);
@@ -532,7 +539,25 @@ impl StateMachine {
         if self.state.is_closing_state() && new_state == ServerState::Closing {
             return;
         }
+        // Every terminal path (deadline, Close, transport loss, fatal,
+        // supersede, idle timeout) drops the operator-facing card so a dead
+        // exchange cannot linger in the GUI.
+        self.abandon_pending_pairing();
         self.state = new_state;
+    }
+
+    /// Drop the pending pairing and remove any operator-facing approval entry.
+    ///
+    /// `request_id` is per-connection and not globally unique; the approval
+    /// map is keyed by the process-local `approval_id`.
+    fn abandon_pending_pairing(&mut self) {
+        let Some(pending) = self.pending_pairing.take() else {
+            return;
+        };
+        if let (Some(core), Some(approval_id)) = (self.config.pairing.as_ref(), pending.approval_id)
+        {
+            core.cancel_approval(approval_id);
+        }
     }
 
     fn handle_frame(&mut self, frame: Box<Frame>, source: Vec<u8>) -> Vec<Outcome> {
@@ -914,28 +939,32 @@ impl StateMachine {
             )
     }
 
-    /// The pending pairing exchange's request id, when one exists.
-    pub fn pending_pairing_request_id(&self) -> Option<u64> {
+    /// The pending pairing exchange's process-local approval handle, when the
+    /// exchange has been surfaced to the local operator.
+    pub fn pending_pairing_approval_id(&self) -> Option<u64> {
         self.pending_pairing
             .as_ref()
-            .map(|pending| pending.request_id)
+            .and_then(|pending| pending.approval_id)
     }
 
     /// Hand a verified-but-unapproved pairing to the local operator exactly
     /// once. The driver registers an approval callback and never blocks the
     /// state machine on human input.
     pub fn take_pairing_approval_request(&mut self) -> Option<ApprovalRequest> {
+        let core = self.config.pairing.as_ref()?;
         let pending = self.pending_pairing.as_mut()?;
         if !pending.verified || pending.approval_requested {
             return None;
         }
         pending.approval_requested = true;
+        let approval_id = core.next_approval_id();
+        pending.approval_id = Some(approval_id);
         let client_id: String = auth::client_id(&pending.client_public_key)
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
         Some(ApprovalRequest {
-            request_id: pending.request_id,
+            approval_id,
             client_id,
             display_name: pending.display_name.clone(),
             mode: pending.mode,
@@ -990,7 +1019,7 @@ impl StateMachine {
         // Any in-flight pairing exchange is resolved by this session
         // establishment (a paired session reaches here through approval; an
         // auth retry that succeeded abandons an unverified pairing).
-        self.pending_pairing = None;
+        self.abandon_pending_pairing();
         self.identity = Some(client_public_key.to_vec());
         self.state = ServerState::Negotiating;
         // TM-3: supersede an older session of the same identity.
@@ -1052,10 +1081,17 @@ impl StateMachine {
             }
         };
         // Admission gate: a valid QR nonce is consumed here, before the major
-        // check and any crypto, regardless of the eventual outcome (§5).
-        if core.admit_request(&request).is_err() {
-            return self.record_pairing_rejection(request.request_id, &core, address);
-        }
+        // check and any crypto, regardless of the eventual outcome (§5). The
+        // permit holds one of the eight TM-5 concurrent-pairing slots.
+        let permit = match core.admit_request(&request) {
+            Ok(permit) => permit,
+            Err(PairingError::ConcurrentLimit) => {
+                // TM-5 pairing bound: over → 302, no PairingResult.
+                self.last_pairing_failure_code = Some(ErrorCode::RATE_LIMITED);
+                return self.pairing_rate_limited();
+            }
+            Err(_) => return self.record_pairing_rejection(request.request_id, &core, address),
+        };
         if request.protocol_major != crate::codes::PROTOCOL_MAJOR {
             return self.record_pairing_rejection(request.request_id, &core, address);
         }
@@ -1073,7 +1109,7 @@ impl StateMachine {
             &request.client_public_key,
             &self.config.server_public_key,
             &request.capabilities,
-            &accepted_display_name(&request.client_name),
+            &pairing::normalize_display_name(&request.client_name),
         ) {
             Ok(context) => context,
             Err(_) => {
@@ -1097,10 +1133,11 @@ impl StateMachine {
             .and_then(|seed| pairing::derive_sas_code(&seed))
             .map(pairing::format_sas);
 
-        let display_name = accepted_display_name(&request.client_name);
+        let display_name = pairing::normalize_display_name(&request.client_name);
         let client_id = auth::client_id(&request.client_public_key).to_vec();
         self.pending_pairing = Some(PendingPairing {
             request_id: request.request_id,
+            approval_id: None,
             mode,
             client_public_key: request.client_public_key.clone(),
             display_name: display_name.clone(),
@@ -1108,6 +1145,7 @@ impl StateMachine {
             sas,
             verified: false,
             approval_requested: false,
+            _permit: permit,
         });
         self.state = ServerState::Authenticating;
         vec![Outcome::frame(Frame {
@@ -1164,13 +1202,14 @@ impl StateMachine {
         Vec::new()
     }
 
-    fn handle_pairing_approved(&mut self, request_id: u64) -> Vec<Outcome> {
+    fn handle_pairing_approved(&mut self, approval_id: u64) -> Vec<Outcome> {
         let Some(pending) = self.pending_pairing.as_ref() else {
             return Vec::new();
         };
-        if !pending.verified || pending.request_id != request_id {
+        if !pending.verified || pending.approval_id != Some(approval_id) {
             return Vec::new();
         }
+        let request_id = pending.request_id;
         let client_public_key = pending.client_public_key.clone();
         let display_name = pending.display_name.clone();
         let Some(core) = self.config.pairing.clone() else {
@@ -1185,7 +1224,7 @@ impl StateMachine {
                 return self.internal_error(request_id);
             }
         };
-        self.pending_pairing = None;
+        self.abandon_pending_pairing();
         self.establish_session(&client_public_key);
         let mut outcome = Outcome::frame(Frame {
             body: Some(frame::Body::PairingResult(crate::schema::PairingResult {
@@ -1198,16 +1237,17 @@ impl StateMachine {
         vec![outcome]
     }
 
-    fn handle_pairing_declined(&mut self, request_id: u64) -> Vec<Outcome> {
+    fn handle_pairing_declined(&mut self, approval_id: u64) -> Vec<Outcome> {
         let Some(pending) = self.pending_pairing.as_ref() else {
             return Vec::new();
         };
-        if !pending.verified || pending.request_id != request_id {
+        if !pending.verified || pending.approval_id != Some(approval_id) {
             return Vec::new();
         }
+        let request_id = pending.request_id;
         // §5.2: verified proofs + declined approval → 201 + Close(201), no
         // detail, nothing persisted.
-        self.pending_pairing = None;
+        self.abandon_pending_pairing();
         self.pairing_rejected(request_id)
     }
 
@@ -1218,6 +1258,10 @@ impl StateMachine {
         let Some(pending) = self.pending_pairing.take() else {
             return Vec::new();
         };
+        if let (Some(core), Some(approval_id)) = (self.config.pairing.as_ref(), pending.approval_id)
+        {
+            core.cancel_approval(approval_id);
+        }
         // §5.2: 10 min without a pairing result → Error(206)+Close(206).
         self.last_pairing_failure_code = Some(ErrorCode::PAIRING_PENDING_TIMEOUT);
         let outcomes = Outcome::fatal(ErrorCode::PAIRING_PENDING_TIMEOUT, pending.request_id);
@@ -1527,7 +1571,7 @@ impl StateMachine {
                 paired_client: None,
             },
         ];
-        self.pending_pairing = None;
+        self.abandon_pending_pairing();
         self.close(ServerState::Closing);
         outcomes
     }
@@ -1566,22 +1610,6 @@ fn frame_request_id(frame: &Frame) -> u64 {
 /// the TM-5 per-address pairing-failure guard.
 fn parse_source_address(source: &[u8]) -> Option<std::net::IpAddr> {
     std::str::from_utf8(source).ok()?.parse().ok()
-}
-
-/// The accepted display name: empty → a fixed local label, over-long names
-/// truncated on a UTF-8 boundary to the §8.1 63-byte cap.
-fn accepted_display_name(name: &str) -> String {
-    if name.is_empty() {
-        return "Unknown device".to_owned();
-    }
-    if name.len() <= 63 {
-        return name.to_owned();
-    }
-    let mut end = 63;
-    while !name.is_char_boundary(end) {
-        end -= 1;
-    }
-    name[..end].to_owned()
 }
 
 /// A fresh 32-byte CSPRNG value (pairing `server_random`).
