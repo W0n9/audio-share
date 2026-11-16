@@ -167,12 +167,20 @@ class ControlSessionService : Service(), SessionController {
             }
         }
         startForegroundCompat()
-        // TEST-SUPPORT ONLY: the pre-pairing adb-extras lifecycle harness.
-        if (BuildConfig.TEST_SUPPORT && session == null && intent != null &&
-            intent.hasValidConfiguration()
-        ) {
-            startSession(intent.configuration(), pairing = false)
-            return START_STICKY
+        // TEST-SUPPORT ONLY: reflectively load the adb-extras harness compiled
+        // only with -PtestSupport=true. Production builds have no extras path.
+        if (BuildConfig.TEST_SUPPORT && session == null && intent != null) {
+            val configuration = try {
+                Class.forName("dev.audioshare.v2.TestSupportHarness")
+                    .getMethod("serviceConfiguration", Intent::class.java)
+                    .invoke(null, intent) as SessionConfiguration?
+            } catch (_: Throwable) {
+                null
+            }
+            if (configuration != null) {
+                startSession(configuration, pairing = false)
+                return START_STICKY
+            }
         }
         if (session == null) {
             stopSelf()
@@ -202,7 +210,7 @@ class ControlSessionService : Service(), SessionController {
         val configuration = SessionConfiguration(
             host = payload.host,
             port = payload.port,
-            pinnedSpkiHex = payload.pinHex,
+            serverSpkiSha256Hex = payload.pinHex,
             serverPublicKeyHex = payload.serverPublicKey.toHex(),
             clientName = displayName,
             signer = identity.signer,
@@ -232,7 +240,7 @@ class ControlSessionService : Service(), SessionController {
         val configuration = SessionConfiguration(
             host = host,
             port = port,
-            pinnedSpkiHex = "",
+            serverSpkiSha256Hex = "",
             serverPublicKeyHex = "",
             clientName = displayName,
             signer = identity.signer,
@@ -292,7 +300,7 @@ class ControlSessionService : Service(), SessionController {
         val configuration = SessionConfiguration(
             host = record.host.ifEmpty { addressHost(record.addressHint) },
             port = if (record.port != 0) record.port else addressPort(record.addressHint),
-            pinnedSpkiHex = record.serverSpkiSha256Hex,
+            serverSpkiSha256Hex = record.serverSpkiSha256Hex,
             serverPublicKeyHex = record.serverPublicKeyHex,
             clientName = record.displayName ?: "AudioShare phone",
             signer = identity.signer,
@@ -358,20 +366,6 @@ class ControlSessionService : Service(), SessionController {
         session = null
     }
 
-    private fun Intent.hasValidConfiguration(): Boolean =
-        !getStringExtra(EXTRA_HOST).isNullOrEmpty() &&
-            !getStringExtra(EXTRA_PIN).isNullOrEmpty() &&
-            !getStringExtra(EXTRA_SERVER_KEY).isNullOrEmpty()
-
-    private fun Intent.configuration() = SessionConfiguration(
-        getStringExtra(EXTRA_HOST) ?: "",
-        getIntExtra(EXTRA_PORT, 65531),
-        getStringExtra(EXTRA_PIN) ?: "",
-        getStringExtra(EXTRA_SERVER_KEY) ?: "",
-        getStringExtra(EXTRA_CLIENT_NAME) ?: "smoke-client",
-        useNativeTestIdentity = true,
-    )
-
     private fun deviceDisplayName(): String {
         val model = (Build.MODEL ?: "").trim().ifEmpty { "Android device" }
         val bytes = model.toByteArray(Charsets.UTF_8)
@@ -434,11 +428,6 @@ class ControlSessionService : Service(), SessionController {
         const val EXTRA_PAIRING_URI = "pairingUri"
         const val EXTRA_ADDRESS = "address"
         const val EXTRA_SERVER_PIN = "serverSpki"
-        const val EXTRA_HOST = "host"
-        const val EXTRA_PORT = "port"
-        const val EXTRA_PIN = "pinnedSpki"
-        const val EXTRA_SERVER_KEY = "serverKey"
-        const val EXTRA_CLIENT_NAME = "clientName"
 
         private const val MODE_QR = 1
         private const val MODE_SAS = 2

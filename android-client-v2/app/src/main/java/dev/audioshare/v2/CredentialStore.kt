@@ -106,7 +106,10 @@ class SharedPreferencesCredentialStore(context: Context) : CredentialStore {
             val records = all().filterNot { it.serverSpkiSha256Hex == record.serverSpkiSha256Hex }
                 .toMutableList()
             records.add(record)
-            prefs.edit().putString(KEY, CredentialCodec.encodeList(records)).apply()
+            // commit(), not apply(): the credential must be durable before
+            // the instrumentation/user can kill the process right after
+            // PairingResult(OK).
+            prefs.edit().putString(KEY, CredentialCodec.encodeList(records)).commit()
         }
     }
 
@@ -119,7 +122,7 @@ class SharedPreferencesCredentialStore(context: Context) : CredentialStore {
     override fun delete(serverSpkiSha256Hex: String) {
         synchronized(this) {
             val records = all().filterNot { it.serverSpkiSha256Hex == serverSpkiSha256Hex }
-            prefs.edit().putString(KEY, CredentialCodec.encodeList(records)).apply()
+            prefs.edit().putString(KEY, CredentialCodec.encodeList(records)).commit()
         }
     }
 
