@@ -43,6 +43,7 @@ class ForegroundServiceContractTest {
             "java/dev/audioshare/v2/MainActivity.kt",
             "java/dev/audioshare/v2/AudioShareApp.kt",
             "java/dev/audioshare/v2/AppState.kt",
+            "java/dev/audioshare/v2/SessionCommandExecutor.kt",
             "java/dev/audioshare/v2/UiPreferences.kt",
         ).map(::source)
         val forbidden = listOf(
