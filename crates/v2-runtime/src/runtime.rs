@@ -8,11 +8,13 @@
 use std::fmt;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use audio_share_core::capture::media::MediaTap;
 use audio_share_core::capture::CaptureObserver;
+use tokio::sync::Notify;
 use v2_transport::auth_store::AuthorizationStore;
 use v2_transport::driver::SessionServer;
 use v2_transport::identity::{IdentityConfig, ServerIdentity};
@@ -75,6 +77,10 @@ pub struct V2Runtime {
     local_addr: SocketAddr,
     addr_hint: String,
     fingerprint: String,
+    /// Live per-connection session tasks; a one-shot CLI waits for zero so
+    /// the success result is consumed before the endpoint closes.
+    active_sessions: Arc<AtomicUsize>,
+    idle: Arc<Notify>,
 }
 
 impl fmt::Debug for V2Runtime {
@@ -143,6 +149,10 @@ impl V2Runtime {
 
         let accept_transport = Arc::clone(&transport);
         let sessions = Arc::new(sessions);
+        let active_sessions = Arc::new(AtomicUsize::new(0));
+        let idle = Arc::new(Notify::new());
+        let accept_active = Arc::clone(&active_sessions);
+        let accept_idle = Arc::clone(&idle);
         let accept_task = tokio::spawn(async move {
             let mut guard = CapacityGuard::new(limits);
             loop {
@@ -152,6 +162,9 @@ impl V2Runtime {
                         let remote = accepted.remote_address;
                         let server = Arc::clone(&sessions);
                         let mut session_guard = guard.clone();
+                        accept_active.fetch_add(1, Ordering::SeqCst);
+                        let session_active = Arc::clone(&accept_active);
+                        let session_idle = Arc::clone(&accept_idle);
                         tokio::spawn(async move {
                             let termination = server.serve_connection(connection, remote).await;
                             session_guard.session_ended();
@@ -163,6 +176,9 @@ impl V2Runtime {
                                 "v2 session ended: {:?}",
                                 termination
                             );
+                            if session_active.fetch_sub(1, Ordering::SeqCst) == 1 {
+                                session_idle.notify_waiters();
+                            }
                         });
                     }
                     None => {
@@ -186,6 +202,8 @@ impl V2Runtime {
             local_addr,
             addr_hint,
             fingerprint,
+            active_sessions,
+            idle,
         })
     }
 
@@ -212,6 +230,28 @@ impl V2Runtime {
     /// The §7.4 Server identity fingerprint.
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
+    }
+
+    /// Wait until every accepted session has ended, or `timeout` elapses.
+    ///
+    /// A one-shot `as-cmd pair` uses this after the pairing broadcast: the
+    /// Client has then read `PairingResult(OK)` and closed its connection, so
+    /// closing the endpoint cannot discard the queued success frame. This is
+    /// event-driven, not a fixed delay; the timeout only bounds an
+    /// unexpectedly persistent Client.
+    pub async fn wait_for_idle(&self, timeout: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            // Register before reading the counter so a session that ends
+            // between the check and the await still wakes this waiter.
+            let notified = self.idle.notified();
+            if self.active_sessions.load(Ordering::SeqCst) == 0 {
+                return true;
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                return false;
+            }
+        }
     }
 
     /// Stop accepting and close the endpoint. Idempotent; safe from the GUI
