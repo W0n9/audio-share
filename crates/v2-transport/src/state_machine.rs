@@ -976,6 +976,10 @@ impl StateMachine {
     /// driver's registry, revocation polling, and 303 supersede all apply to
     /// a freshly paired session.
     fn establish_session(&mut self, client_public_key: &[u8]) -> (u64, SupersedeRequest) {
+        // Any in-flight pairing exchange is resolved by this session
+        // establishment (a paired session reaches here through approval; an
+        // auth retry that succeeded abandons an unverified pairing).
+        self.pending_pairing = None;
         self.identity = Some(client_public_key.to_vec());
         self.state = ServerState::Negotiating;
         // TM-3: supersede an older session of the same identity.
