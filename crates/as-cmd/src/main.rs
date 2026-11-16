@@ -24,13 +24,18 @@ use audio_share_core::config::{EncodingSetting, DEFAULT_PORT};
 use audio_share_core::paths;
 use audio_share_core::protocol::{HEARTBEAT_INTERVAL, SESSION_TIMEOUT};
 use audio_share_core::server::{default_host, Server, ServerConfig};
-use clap::{ArgAction, CommandFactory, FromArgMatches, Parser};
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
+use qrcodegen::{QrCode, QrCodeEcc};
 use tracing::Level;
 use tracing_subscriber::filter::{filter_fn, LevelFilter};
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, MakeWriter};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
+use v2_transport::auth_store::{AuthorizationStore, StoreLock};
+use v2_transport::identity::{IdentityConfig, ServerIdentity};
+use v2_transport::pairing::{self, PairingCore};
+use v2_transport::transport::{Transport, TransportConfig};
 
 /// Homepage printed by `-v/--version`.
 const HOMEPAGE: &str = "https://github.com/mkckr0/audio-share";
@@ -110,14 +115,86 @@ struct Cli {
     #[arg(
         long = "v2-port",
         value_name = "port",
-        default_value_t = v2_transport::codes::DEFAULT_V2_PORT
+        default_value_t = v2_transport::codes::DEFAULT_V2_PORT,
+        global = true
     )]
     v2_port: u16,
 
     /// POSIX override (pairing.md §10.2): enable v2 despite loose
     /// identity-key permissions (discouraged; logged). Windows warns only.
-    #[arg(long = "allow-loose-key-permissions")]
+    #[arg(long = "allow-loose-key-permissions", global = true)]
     allow_loose_key_permissions: bool,
+
+    /// Headless v2 pairing and administration (does not start the v1 Server).
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+/// Headless v2 administration verbs. Absent for the v0.3.4-compatible paths.
+#[derive(Debug, Clone, Subcommand)]
+enum Commands {
+    /// Begin a foreground pairing session on the v2 listener.
+    ///
+    /// Pairing is local: run this on the Server computer. This command owns
+    /// the v2 UDP port for the pairing, so stop a running Server first if it
+    /// already holds the port. It does not start the v1 Server.
+    Pair(PairArgs),
+    /// List or revoke paired Clients (offline; takes the headless lock).
+    ///
+    /// Run this while no Server Core is running; the lock also excludes
+    /// concurrent as-cmd admin operations.
+    Clients {
+        /// The client operation.
+        #[command(subcommand)]
+        action: ClientsAction,
+    },
+    /// Server identity operations (offline; takes the headless lock).
+    Identity {
+        /// The identity operation.
+        #[command(subcommand)]
+        action: IdentityAction,
+    },
+}
+
+/// `as-cmd pair` options.
+#[derive(Debug, Clone, clap::Args)]
+struct PairArgs {
+    /// Omit QR output and open only the SAS admission window.
+    #[arg(long = "sas")]
+    sas_only: bool,
+    /// Accept the first verified device without an interactive prompt.
+    #[arg(long = "accept", alias = "yes")]
+    accept: bool,
+    /// Advertised `host:port` in the QR payload (default: detected LAN
+    /// address and the actual v2 port).
+    #[arg(long = "addr", value_name = "host:port")]
+    addr: Option<String>,
+    /// Seconds to wait for a device before exiting.
+    #[arg(long = "timeout", value_name = "seconds", default_value_t = 600)]
+    timeout: u64,
+}
+
+/// `as-cmd clients` verbs.
+#[derive(Debug, Clone, Subcommand)]
+enum ClientsAction {
+    /// List authorized Clients with their audit state.
+    List,
+    /// Revoke one Client by canonical `client_id` (the record is kept).
+    Revoke {
+        /// Canonical 16-hex-character client id.
+        client_id: String,
+    },
+}
+
+/// `as-cmd identity` verbs.
+#[derive(Debug, Clone, Subcommand)]
+enum IdentityAction {
+    /// Generate a new Server identity and invalidate every old pairing.
+    Reset {
+        /// Skip the interactive confirmation.
+        #[arg(long = "yes", alias = "accept")]
+        yes: bool,
+    },
 }
 
 /// The action selected by the flags, in v0.3.4 dispatch order:
@@ -128,6 +205,7 @@ enum Action {
     ListEndpoints,
     ListEncoding,
     StartServer,
+    Command,
 }
 
 #[tokio::main]
@@ -187,7 +265,15 @@ fn help_examples() -> String {
     format!(
         "Example:\n  as-cmd -b\n  as-cmd --bind={default_address}\n  \
          as-cmd --bind={default_address} --encoding=f32 --channels=2 --sample-rate=48000\n  \
-         as-cmd -l\n  as-cmd --list-encoding"
+         as-cmd -l\n  as-cmd --list-encoding\n  \
+         as-cmd pair\n  as-cmd pair --sas\n  \
+         as-cmd clients list\n  as-cmd clients revoke <client_id>\n  \
+         as-cmd identity reset --yes\n\n\
+         Status:\n  \
+         v1 (TCP/UDP -b, the default) is UNENCRYPTED and UNAUTHENTICATED:\n  \
+         use it only on a trusted network.\n  \
+         v2 (QUIC, --v2-port) is encrypted and requires explicit pairing;\n  \
+         --v2-port=0 disables v2 without affecting v1."
     )
 }
 
@@ -195,6 +281,8 @@ fn select_action(cli: &Cli) -> Action {
     if cli.version {
         // Version is handled inside run; it wins over the other flags.
         Action::Help
+    } else if cli.command.is_some() {
+        Action::Command
     } else if cli.list_endpoint {
         Action::ListEndpoints
     } else if cli.list_encoding {
@@ -224,6 +312,13 @@ async fn run(cli: Cli, action: Action) -> Result<(), String> {
             Ok(())
         }
         Action::ListEndpoints => list_endpoints(),
+        Action::Command => {
+            let command = cli
+                .command
+                .clone()
+                .expect("Action::Command is selected only when a subcommand exists");
+            run_command(&cli, command).await
+        }
         Action::StartServer => {
             let (host, port) = parse_bind(cli.bind.as_deref().unwrap_or_default())?;
             start_server(cli, host, port).await
@@ -272,6 +367,333 @@ fn list_endpoints() -> Result<(), String> {
     std::io::stdout()
         .flush()
         .map_err(|error| format!("write endpoint list: {error}"))
+}
+
+/// The Server data directory: the directory holding the resolved config file.
+/// Identity and authorization files live below it (pairing.md §10.2).
+fn data_dir() -> PathBuf {
+    paths::paths()
+        .config
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Dispatch a headless v2 administration command.
+async fn run_command(cli: &Cli, command: Commands) -> Result<(), String> {
+    match command {
+        Commands::Pair(args) => run_pair(cli, args).await,
+        Commands::Clients { action } => run_clients(action),
+        Commands::Identity { action } => run_identity(cli, action),
+    }
+}
+
+/// `as-cmd clients list|revoke`: offline admin under the headless lock.
+fn run_clients(action: ClientsAction) -> Result<(), String> {
+    let data_dir = data_dir();
+    let _lock = StoreLock::acquire(&data_dir).map_err(|error| error.to_string())?;
+    let store = AuthorizationStore::open(&data_dir).map_err(|error| error.to_string())?;
+    match action {
+        ClientsAction::List => {
+            let clients = store.clients();
+            if clients.is_empty() {
+                println!("no paired clients");
+                return Ok(());
+            }
+            println!("client_id\tstate\tdisplay_name\tcreated_at\tlast_seen_at");
+            for client in clients {
+                println!(
+                    "{}\t{}\t{}\t{}\t{}",
+                    client.client_id,
+                    match client.state {
+                        v2_transport::auth_store::ClientState::Active => "active",
+                        v2_transport::auth_store::ClientState::Revoked => "revoked",
+                    },
+                    client.display_name,
+                    if client.created_at.is_empty() {
+                        "-"
+                    } else {
+                        &client.created_at
+                    },
+                    if client.last_seen_at.is_empty() {
+                        "-"
+                    } else {
+                        &client.last_seen_at
+                    },
+                );
+            }
+            Ok(())
+        }
+        ClientsAction::Revoke { client_id } => {
+            let revoked = store
+                .revoke_client(&client_id)
+                .map_err(|error| error.to_string())?;
+            println!(
+                "revoked client {} ({})",
+                revoked.client_id, revoked.display_name
+            );
+            println!("new connections are refused immediately; a live session closes within 5 s");
+            Ok(())
+        }
+    }
+}
+
+/// `as-cmd identity reset [--yes]`: clear pairings, then rotate the key.
+fn run_identity(cli: &Cli, action: IdentityAction) -> Result<(), String> {
+    let IdentityAction::Reset { yes } = action;
+    let data_dir = data_dir();
+    let _lock = StoreLock::acquire(&data_dir).map_err(|error| error.to_string())?;
+    let store = AuthorizationStore::open(&data_dir).map_err(|error| error.to_string())?;
+    println!("WARNING: this generates a new Server identity key.");
+    println!("Every paired device is invalidated and must pair again; there is no");
+    println!("universal recovery backdoor. Fail-closed order: client records are");
+    println!("cleared first, then the identity key is rotated atomically.");
+    if !yes && !confirm_exact("Type 'yes' to reset the Server identity: ", "yes")? {
+        return Err("identity reset cancelled".to_owned());
+    }
+    let config = IdentityConfig {
+        data_dir: data_dir.clone(),
+        allow_loose_permissions: cli.allow_loose_key_permissions,
+    };
+    let identity = pairing::reset_identity(&config, &store).map_err(|error| error.to_string())?;
+    println!("identity reset complete; old pairings invalidated");
+    println!("Server fingerprint: {}", identity.fingerprint());
+    Ok(())
+}
+
+/// Ask a yes/no question on stdin (blocking read off the async runtime).
+fn confirm(prompt: &str) -> Result<bool, String> {
+    print!("{prompt}");
+    std::io::stdout()
+        .flush()
+        .map_err(|error| format!("write prompt: {error}"))?;
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|error| format!("read confirmation: {error}"))?;
+    Ok(matches!(
+        line.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+/// Require an exact token (identity reset uses the full word).
+fn confirm_exact(prompt: &str, expected: &str) -> Result<bool, String> {
+    print!("{prompt}");
+    std::io::stdout()
+        .flush()
+        .map_err(|error| format!("write prompt: {error}"))?;
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|error| format!("read confirmation: {error}"))?;
+    Ok(line.trim().eq_ignore_ascii_case(expected))
+}
+
+/// `as-cmd pair`: a foreground v2 pairing session.
+///
+/// The Server Core is not required to be running: this process owns the v2
+/// listener for the duration of the pairing. `pair` opens both a QR nonce and
+/// the SAS admission window; `pair --sas` opens only the SAS window and omits
+/// QR output. Closing the process cancels the invitation.
+async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
+    if cli.v2_port == 0 {
+        return Err("pair needs a v2 port; --v2-port=0 disables the v2 transport".to_owned());
+    }
+    let data_dir = data_dir();
+    let identity_config = IdentityConfig {
+        data_dir: data_dir.clone(),
+        allow_loose_permissions: cli.allow_loose_key_permissions,
+    };
+    let identity = ServerIdentity::open(&identity_config).map_err(|error| error.to_string())?;
+    let store = Arc::new(AuthorizationStore::open(&data_dir).map_err(|error| error.to_string())?);
+    let core = Arc::new(PairingCore::from_identity(&identity, Arc::clone(&store)));
+    let limits = v2_transport::limits::Limits::defaults();
+    let bind = resolve_bind_address("::", cli.v2_port).await?;
+    let transport = Arc::new(
+        Transport::start(
+            TransportConfig {
+                bind,
+                limits: limits.clone(),
+            },
+            &identity,
+        )
+        .map_err(|error| error.to_string())?,
+    );
+
+    let mut sessions = v2_transport::driver::SessionServer::new(&identity, store);
+    sessions.pairing = Some(Arc::clone(&core));
+    let sessions = Arc::new(sessions);
+    let accept_task = spawn_v2_accept_loop(Arc::clone(&transport), sessions, limits);
+
+    let port = transport.local_addr().port();
+    let addr_hint = args.addr.clone().unwrap_or_else(|| {
+        let host = default_host()
+            .map(|address| address.to_string())
+            .unwrap_or_else(|| "127.0.0.1".to_owned());
+        format!("{host}:{port}")
+    });
+
+    if args.sas_only {
+        core.begin_sas();
+        println!("Pairing mode: SAS (no QR; the phone connects manually)");
+    } else {
+        let invitation = core.begin_qr(&addr_hint);
+        // The SAS fallback is available in the same foreground session.
+        core.begin_sas();
+        let uri = core
+            .qr_uri(&invitation, &addr_hint)
+            .ok_or_else(|| "cannot build the QR payload".to_owned())?;
+        println!("Pairing mode: QR (SAS fallback window is also open)");
+        println!("Pairing URI: {uri}");
+        print_qr(&uri);
+    }
+    println!("Server fingerprint: {}", identity.fingerprint());
+    println!(
+        "Pairing code: shown below when the phone connects (derived from the live connection)."
+    );
+    println!(
+        "Waiting up to {} s for a device; press Ctrl-C to cancel.",
+        args.timeout
+    );
+
+    let mut approvals = core.subscribe_approvals();
+    let mut paired = core.subscribe_paired();
+    let deadline = tokio::time::sleep(std::time::Duration::from_secs(args.timeout));
+    tokio::pin!(deadline);
+    let outcome = loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                println!("\npairing cancelled");
+                break Ok(());
+            }
+            _ = &mut deadline => {
+                break Err("timed out waiting for a device".to_owned());
+            }
+            result = paired.recv() => {
+                match result {
+                    Ok(client) => {
+                        println!(
+                            "Paired: {} ({}) — stored in the authorization store",
+                            client.display_name, client.client_id
+                        );
+                        break Ok(());
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => continue,
+                }
+            }
+            result = approvals.recv() => {
+                let request = match result {
+                    Ok(request) => request,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => continue,
+                };
+                println!(
+                    "\nIncoming device: {} [{}] from {}",
+                    request.display_name, request.client_id, request.address
+                );
+                if let Some(sas) = request.sas.as_deref() {
+                    println!("Pairing code: {sas}");
+                }
+                println!("Compare the code with the phone before accepting.");
+                let accepted = if args.accept {
+                    true
+                } else {
+                    confirm("Accept this device? [y/N]: ")?
+                };
+                if accepted {
+                    core.approve(request.request_id);
+                    println!("Accepted; waiting for the phone to finish pairing...");
+                } else {
+                    core.decline(request.request_id);
+                    println!("Declined; nothing was stored.");
+                }
+            }
+        }
+    };
+
+    core.cancel();
+    transport.stop();
+    let _ = accept_task.await;
+    outcome
+}
+
+/// Render a QR as compact UTF-8 half-block terminal art (4-module quiet zone).
+fn print_qr(text: &str) {
+    let qr = match QrCode::encode_text(text, QrCodeEcc::Medium) {
+        Ok(qr) => qr,
+        Err(error) => {
+            println!("(QR rendering unavailable: {error}; use the URI above)");
+            return;
+        }
+    };
+    const BORDER: i32 = 4;
+    let size = qr.size() + BORDER * 2;
+    let dark = |x: i32, y: i32| {
+        let x = x - BORDER;
+        let y = y - BORDER;
+        x >= 0 && y >= 0 && x < qr.size() && y < qr.size() && qr.get_module(x, y)
+    };
+    let mut y = 0;
+    while y < size {
+        let mut line = String::with_capacity(size as usize * 3);
+        for x in 0..size {
+            let upper = dark(x, y);
+            let lower = y + 1 < size && dark(x, y + 1);
+            line.push(match (upper, lower) {
+                (true, true) => '█',
+                (true, false) => '▀',
+                (false, true) => '▄',
+                (false, false) => ' ',
+            });
+        }
+        println!("{line}");
+        y += 2;
+    }
+}
+
+/// Spawn the v2 accept loop used by both the long-running Server and the
+/// foreground `pair` command.
+fn spawn_v2_accept_loop(
+    transport: Arc<Transport>,
+    sessions: Arc<v2_transport::driver::SessionServer>,
+    limits: v2_transport::limits::Limits,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut guard = v2_transport::limits::CapacityGuard::new(limits);
+        loop {
+            let accepted = transport.accept_one(&mut guard).await;
+            match accepted.connection {
+                Some(connection) => {
+                    let remote = accepted.remote_address;
+                    let server = Arc::clone(&sessions);
+                    let mut session_guard = guard.clone();
+                    tokio::spawn(async move {
+                        let termination = server.serve_connection(connection, remote).await;
+                        session_guard.session_ended();
+                        let remote = remote
+                            .map(|address| v2_transport::driver::masked_source(address.ip()))
+                            .unwrap_or_else(|| "unknown".to_owned());
+                        tracing::info!(
+                            remote = %remote,
+                            "v2 session ended: {:?}",
+                            termination
+                        );
+                    });
+                }
+                None => {
+                    let stopped = accepted.lifecycle.termination().is_some_and(|termination| {
+                        termination.code().code
+                            == v2_transport::codes::ErrorCode::SERVER_STOPPING.code
+                    });
+                    if stopped {
+                        break;
+                    }
+                }
+            }
+        }
+    })
 }
 
 async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
@@ -330,7 +752,8 @@ async fn start_server(cli: Cli, host: String, port: u16) -> Result<(), String> {
         tracing::info!("v2 transport disabled (--v2-port=0); v1 TCP/UDP unaffected");
         None
     } else {
-        match start_v2_transport(&cli, handle.capture_observer(), handle.media_tap().clone()).await {
+        match start_v2_transport(&cli, handle.capture_observer(), handle.media_tap().clone()).await
+        {
             Ok((transport, accept_task)) => {
                 tracing::info!(
                     "v2 listen success on {}, alpn={}",
