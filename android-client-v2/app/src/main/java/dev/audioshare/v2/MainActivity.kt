@@ -1,87 +1,227 @@
 package dev.audioshare.v2
 
-import android.app.Activity
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
-import android.widget.LinearLayout
-import android.widget.TextView
+import android.os.Looper
+import android.os.SystemClock
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.mutableStateOf
 
-class MainActivity : Activity() {
-    private val stateView by lazy { TextView(this) }
-    private val logView by lazy { TextView(this) }
+/**
+ * Beta UI host. It only knows the [SessionController] Binder seam: no JNI,
+ * QUIC, pairing transcript, or Keystore call lives in this class.
+ *
+ * The Service owns the session; this Activity binds for state replay, applies
+ * the pure [AppReducer], and forwards the resulting [AppCommand].
+ */
+class MainActivity : ComponentActivity() {
+    private val state = mutableStateOf(AppState())
+    private val prefs by lazy { SharedPreferencesUiPreferences(this) }
+    private val handler = Handler(Looper.getMainLooper())
+
+    private var controller: SessionController? = null
+    private var bound = false
+    private var hadSavedState = false
+    private var initialized = false
+    private var expectedStop = false
+    private var harnessStarted = false
+    private var credentialPolling = false
+
+    private val notificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* The foreground Service still runs; the notification is suppressed. */ }
 
     private val connection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            val local = binder as ControlBinder
-            local.service.setStateListener { state ->
-                runOnUiThread { stateView.text = state }
-            }
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val service = (binder as? ControlBinder)?.service ?: return
+            controller = service
+            service.setStateListener { native -> runOnUiThread { onNativeState(native) } }
+            service.setPairingListener { snapshot -> runOnUiThread { onPairingSnapshot(snapshot) } }
+            initialize(service)
         }
-        override fun onServiceDisconnected(name: ComponentName?) = Unit
-    }
 
-    private val serviceIntent by lazy { Intent(this, ControlSessionService::class.java) }
-    private var bound = false
+        override fun onServiceDisconnected(name: ComponentName?) {
+            controller = null
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 48, 48, 48)
+        hadSavedState = savedInstanceState != null
+        setContent {
+            AudioShareTheme {
+                AudioShareApp(
+                    state = state.value,
+                    versionName = BuildConfig.VERSION_NAME,
+                    versionCode = BuildConfig.VERSION_CODE,
+                    onEvent = ::dispatch,
+                )
+            }
         }
-        val title = TextView(this).apply { text = "audio-share v2 control session" }
-        stateView.text = "IDLE"
-        logView.text = ""
-        layout.addView(title)
-        layout.addView(stateView)
-        layout.addView(logView)
-        setContentView(layout)
-
-        if (!BuildConfig.TEST_SUPPORT) {
-            // Production builds have no adb-extras addressing path. The
-            // pairing/playing UI is delivered by ticket 21; this placeholder
-            // must never configure a session from injected test material.
-            logView.text = "Pairing is required. Start pairing from the app UI."
-            return
-        }
-        // TEST-SUPPORT ONLY: reflectively load the harness compiled only with
-        // -PtestSupport=true. Production has no extras path in this class.
-        if (!tryTestSupportSession()) {
-            logView.text = "config missing: pass host/pinnedSpki/serverKey extras (test config)"
-            return
+        if (BuildConfig.TEST_SUPPORT && hasHarnessConfiguration()) {
+            // TEST-SUPPORT ONLY: the historic adb-extras lifecycle harness.
+            // Auto-connect is suppressed so the harness owns the only session.
+            harnessStarted = tryTestSupportSession()
         }
     }
 
-    private fun tryTestSupportSession(): Boolean = try {
-        Class.forName("dev.audioshare.v2.TestSupportHarness")
-            .getMethod("startActivitySession", Activity::class.java)
-            .invoke(null, this) as Boolean
-    } catch (_: Throwable) {
-        false
+    override fun onStart() {
+        super.onStart()
+        if (!bound) {
+            bound = bindService(
+                Intent(this, ControlSessionService::class.java),
+                connection,
+                Context.BIND_AUTO_CREATE,
+            )
+        }
     }
-
-    private val connectionIntent by lazy { serviceIntent.apply { action = ControlSessionService.ACTION_START } }
-
-    override fun onStart() { super.onStart(); if (!bound) bound = bindService(connectionIntent, connection, 0) }
 
     override fun onStop() {
         if (bound) {
             unbindService(connection)
             bound = false
+            controller = null
         }
         super.onStop()
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        credentialPolling = false
         if (isFinishing && !isChangingConfigurations) {
             startService(Intent(this, ControlSessionService::class.java).apply {
                 action = ControlSessionService.ACTION_STOP
             })
         }
         super.onDestroy()
+    }
+
+    // ---- binding / startup -------------------------------------------------
+
+    private fun initialize(service: SessionController) {
+        val firstBind = !initialized
+        initialized = true
+        dispatch(UiEvent.StartupLoaded(prefs.lastAddress(), service.credentials()))
+        val snapshot = service.stateSnapshot()
+        if (snapshot.isNotEmpty()) dispatch(UiEvent.SessionStateChanged(snapshot))
+
+        if (firstBind) {
+            requestNotificationPermissionIfNeeded()
+            val credentials = service.credentials()
+            if (!harnessStarted && AutoConnectPolicy.shouldAutoConnect(
+                    savedStatePresent = hadSavedState,
+                    hasCredential = credentials.isNotEmpty(),
+                    serviceState = snapshot,
+                )
+            ) {
+                dispatch(UiEvent.AutoConnectStarted)
+            }
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!granted) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun hasHarnessConfiguration(): Boolean =
+        intent?.getStringExtra("host").orEmpty().isNotEmpty()
+
+    private fun tryTestSupportSession(): Boolean = try {
+        Class.forName("dev.audioshare.v2.TestSupportHarness")
+            .getMethod("startActivitySession", android.app.Activity::class.java)
+            .invoke(null, this) as Boolean
+    } catch (_: Throwable) {
+        false
+    }
+
+    // ---- reducer plumbing --------------------------------------------------
+
+    private fun dispatch(event: UiEvent) {
+        val reduction = AppReducer.reduce(state.value, event)
+        state.value = reduction.state
+        execute(reduction.command)
+        if (event is UiEvent.AddressChanged &&
+            event.text.isNotBlank() &&
+            reduction.state.addressError == null
+        ) {
+            prefs.saveLastAddress(event.text)
+        }
+    }
+
+    private fun execute(command: AppCommand) {
+        val service = controller ?: return
+        when (command) {
+            AppCommand.None -> Unit
+            is AppCommand.BeginQr -> service.beginQrPairing(command.uri)
+            is AppCommand.BeginSas -> service.beginSasPairing(command.address)
+            AppCommand.ConfirmPairing -> service.confirmPairing()
+            AppCommand.CancelPairing -> service.cancelPairing()
+            is AppCommand.ConnectStored -> {
+                expectedStop = false
+                service.connectStored(command.serverSpkiSha256Hex)
+            }
+            AppCommand.Stop -> {
+                expectedStop = true
+                service.disconnect()
+            }
+        }
+    }
+
+    private fun onNativeState(native: String) {
+        dispatch(UiEvent.SessionStateChanged(native))
+        if (native == "CLOSED") {
+            val guidance = if (expectedStop) null else controller?.lastErrorGuidance()
+            expectedStop = false
+            if (guidance != null) dispatch(UiEvent.SessionError(guidance))
+        }
+    }
+
+    private fun onPairingSnapshot(snapshot: PairingSnapshot?) {
+        dispatch(UiEvent.PairingSnapshotChanged(snapshot))
+        if (snapshot?.isComplete == true) awaitCredential(snapshot.serverSpkiSha256Hex)
+    }
+
+    /**
+     * `PairingResult(OK)` persists the credential just after the COMPLETE
+     * snapshot, so connect only once the record is actually in the store.
+     */
+    private fun awaitCredential(pin: String?) {
+        if (credentialPolling) return
+        credentialPolling = true
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        val poll = object : Runnable {
+            override fun run() {
+                val service = controller
+                if (service == null) {
+                    credentialPolling = false
+                    return
+                }
+                val record = if (pin != null) {
+                    service.credentials().firstOrNull { it.serverSpkiSha256Hex == pin }
+                } else {
+                    service.credentials().lastOrNull()
+                }
+                if (record == null && SystemClock.uptimeMillis() < deadline) {
+                    handler.postDelayed(this, 100)
+                    return
+                }
+                credentialPolling = false
+                if (record != null) dispatch(UiEvent.CredentialStored(record))
+            }
+        }
+        handler.post(poll)
     }
 }
