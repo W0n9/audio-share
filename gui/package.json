@@ -1,7 +1,7 @@
 {
   "name": "audio-share-server-gui",
   "private": true,
-  "version": "0.4.1",
+  "version": "0.5.0-beta",
   "type": "module",
   "scripts": {
     "dev": "vite",
