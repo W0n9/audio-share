@@ -51,8 +51,8 @@ androidAbis.forEach { abi ->
 // -PreleaseKeystoreProperties=... containing storeFile, storePassword,
 // keyAlias, and keyPassword. The default candidate is outside the repo:
 //   $HOME/.cache/audio-share-beta-keys/keystore.properties
-// Without credentials the release APK stays unsigned; it never falls back to
-// the debug key.
+// Production builds without credentials stay unsigned and fail at packaging;
+// they never fall back to the debug key. Explicit test builds use debug signing.
 val releaseKeystorePropertiesFile: File? =
     providers.gradleProperty("releaseKeystoreProperties").orNull?.let { file(it) }
         ?: providers.environmentVariable("AUDIO_SHARE_KEYSTORE_PROPERTIES").orNull?.let { file(it) }
@@ -84,6 +84,14 @@ val hasReleaseSigning =
 val testSupport = providers.gradleProperty("testSupport")
     .map(String::toBoolean)
     .getOrElse(false)
+// Device-test APKs carry test-only instrumentation and must never be signed
+// with the customer release key. Both flags switch the release variant to the
+// debug signing config (the same config as the app under test); production
+// builds (no flags) use the dedicated release keystore.
+val deviceTests = providers.gradleProperty("deviceTests")
+    .map(String::toBoolean)
+    .getOrElse(false)
+val testOnlyBuild = testSupport || deviceTests
 
 android {
     namespace = "dev.audioshare.v2"
@@ -140,12 +148,17 @@ android {
     buildTypes {
         release {
             // R8 on: proves the ProGuard rules the integration would need.
-            // Release builds require the dedicated keystore; they never fall
-            // back to the debug key. Without credentials this variant stays
-            // unsigned (packageRelease below fails with guidance).
+            // Production release builds require the dedicated keystore and
+            // never fall back to the debug key. Explicit test builds
+            // (`-PtestSupport` / `-PdeviceTests`) are signed with the debug
+            // key so test artifacts can never carry the customer certificate.
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.findByName("release")
+            signingConfig = if (testOnlyBuild) {
+                signingConfigs.getByName("debug")
+            } else {
+                signingConfigs.findByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -156,7 +169,7 @@ android {
                 proguardFiles("proguard-test-support.pro")
             }
             // 测试 APK 是独立的 API 使用者，R8 必须保留它消费的本地 Binder seam。
-            if (providers.gradleProperty("deviceTests").map(String::toBoolean).getOrElse(false)) {
+            if (deviceTests) {
                 proguardFiles("proguard-device-tests.pro")
             }
         }
@@ -315,7 +328,7 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders"
 // debug-signed artifact.
 tasks.matching { it.name == "packageRelease" }.configureEach {
     doFirst {
-        if (!hasReleaseSigning) {
+        if (!testOnlyBuild && !hasReleaseSigning) {
             throw GradleException(
                 "Release signing is not configured. Set AUDIO_SHARE_KEYSTORE_FILE " +
                     "(or AUDIO_SHARE_KEYSTORE_PROPERTIES) and the matching password/alias " +

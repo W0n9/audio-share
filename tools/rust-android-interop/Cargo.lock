@@ -96,7 +96,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "as-cmd"
-version = "0.4.1"
+version = "0.5.0-beta"
 dependencies = [
  "audio-share-core",
  "clap",
@@ -130,7 +130,7 @@ dependencies = [
 
 [[package]]
 name = "audio-share-core"
-version = "0.4.1"
+version = "0.5.0-beta"
 dependencies = [
  "if-addrs",
  "pipewire",
@@ -1784,7 +1784,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "v2-runtime"
-version = "0.4.1"
+version = "0.5.0-beta"
 dependencies = [
  "audio-share-core",
  "qrcodegen",
@@ -1795,7 +1795,7 @@ dependencies = [
 
 [[package]]
 name = "v2-transport"
-version = "0.4.1"
+version = "0.5.0-beta"
 dependencies = [
  "base64",
  "bytes",
