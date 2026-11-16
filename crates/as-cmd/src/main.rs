@@ -577,6 +577,12 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
                             "Paired: {} ({}) — stored in the authorization store",
                             client.display_name, client.client_id
                         );
+                        // Give the just-sent PairingResult (and the client's
+                        // Negotiate) a moment to flush before stopping the
+                        // transport. Without this grace the success frame can
+                        // race the shutdown close and the phone never learns
+                        // that pairing completed.
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                         break Ok(());
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
