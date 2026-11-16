@@ -72,6 +72,12 @@ class ClientSession(
 
         /** Info/error lines for a log view. */
         fun onLog(line: String)
+
+        /** Pairing display material/phase changed (native JSON). */
+        fun onPairingState(json: String) {}
+
+        /** `PairingResult(OK)` arrived; persist this public credential. */
+        fun onCredential(json: String) {}
     }
 
     companion object {
@@ -92,7 +98,6 @@ class ClientSession(
     fun stateSnapshot(): String = currentState.snapshot()
 
     private var configuration = SessionConfiguration("", 0, "", "", "")
-
     /** Reconnect attempt counter; reset on start(). */
     private val backoffAttempts = AtomicLong(0)
 
@@ -165,10 +170,7 @@ class ClientSession(
                 if (!ownsSessionLocked(lifetime, previousSource, 0)) return@execute
                 this.configuration
             }
-            val h = ClientNative.createSession(
-                configuration.host, configuration.port, configuration.pinnedSpkiHex,
-                configuration.serverPublicKeyHex, configuration.clientName
-            )
+            val h = createNativeSession(configuration)
             if (h == 0L) {
                 synchronized(lifecycleLock) {
                     if (ownsSessionLocked(lifetime, previousSource, 0)) {
@@ -210,8 +212,73 @@ class ClientSession(
                 scheduleReconnect(h, source, lifetime)
                 return@execute
             }
-            startStatsPolling(h, source, lifetime)
+            startStatsPolling(h, source, lifetime, pairing = configuration.pairing != null)
         }
+    }
+
+    /**
+     * Pick the native constructor for this configuration:
+     * - a pairing session sends `PairingRequest`;
+     * - the explicit test-support path keeps the native fixture identity;
+     * - production reconnection passes the Keystore-backed signer.
+     */
+    private fun createNativeSession(configuration: SessionConfiguration): Long {
+        val pairing = configuration.pairing
+        if (pairing != null) {
+            val signer = configuration.signer
+                ?: run {
+                    listener.onLog("pairing requires a ClientSigner")
+                    return 0L
+                }
+            return ClientNative.createPairingSession(
+                configuration.host,
+                configuration.port,
+                pairing.mode,
+                configuration.pinnedSpkiHex,
+                configuration.serverPublicKeyHex,
+                pairing.nonceHex,
+                pairing.displayName,
+                signer,
+            )
+        }
+        if (configuration.useNativeTestIdentity) {
+            // TEST-SUPPORT ONLY: the native library carries the fixture key
+            // only with `-PtestSupport=true`; a production build returns 0.
+            return ClientNative.createSession(
+                configuration.host,
+                configuration.port,
+                configuration.pinnedSpkiHex,
+                configuration.serverPublicKeyHex,
+                configuration.clientName,
+            )
+        }
+        val signer = configuration.signer
+            ?: run {
+                listener.onLog("no ClientSigner for an authenticated session")
+                return 0L
+            }
+        return ClientNative.createAuthSession(
+            configuration.host,
+            configuration.port,
+            configuration.pinnedSpkiHex,
+            configuration.serverPublicKeyHex,
+            configuration.clientName,
+            signer,
+        )
+    }
+
+    /** Confirm a verified pairing; true when the confirmation was queued. */
+    fun confirmPairing(): Boolean {
+        val h = handle.get()
+        return h != 0L && ClientNative.confirmPairing(h)
+    }
+
+    /** The current native pairing JSON, or null when not pairing/unknown. */
+    fun pairingStateJson(): String? {
+        val h = handle.get()
+        if (h == 0L) return null
+        val json = ClientNative.getPairingState(h)
+        return if (json.isNullOrEmpty()) null else json
     }
 
     private fun scheduleReconnect(h: Long, source: SessionStateRelay.Source, lifetime: Any) {
@@ -245,9 +312,15 @@ class ClientSession(
         return current
     }
 
-    private fun startStatsPolling(h: Long, source: SessionStateRelay.Source, lifetime: Any) {
+    private fun startStatsPolling(
+        h: Long,
+        source: SessionStateRelay.Source,
+        lifetime: Any,
+        pairing: Boolean,
+    ) {
         val poller = Thread {
             val myHandle = h
+            var credentialSeen = false
             // §6.3: only retryable closes (and transport loss with no Close,
             // close_code null) reconnect. Pairing/admin/security closes surface
             // to the user and must not auto-retry.
@@ -260,6 +333,17 @@ class ClientSession(
                         // §6.3：仅当前会话可以重置 backoff。
                         synchronized(lifecycleLock) {
                             if (ownsSessionLocked(lifetime, source, myHandle)) backoffAttempts.set(0)
+                        }
+                    }
+                    if (pairing) {
+                        val pairingJson = ClientNative.getPairingState(myHandle)
+                        if (!pairingJson.isNullOrEmpty() && source.isCurrent()) {
+                            listener.onPairingState(pairingJson)
+                        }
+                        val credential = ClientNative.getCredentialSummary(myHandle)
+                        if (!credentialSeen && !credential.isNullOrEmpty() && source.isCurrent()) {
+                            credentialSeen = true
+                            listener.onCredential(credential)
                         }
                     }
                     val statsJson = ClientNative.getStats(myHandle)
@@ -451,6 +535,25 @@ data class SessionConfiguration(
     val pinnedSpkiHex: String,
     val serverPublicKeyHex: String,
     val clientName: String,
+    /** The Client identity signer (Keystore in production). */
+    val signer: ClientSigner? = null,
+    /** Set for a pairing session; null for paired reconnection. */
+    val pairing: PairingStart? = null,
+    /**
+     * TEST-SUPPORT ONLY: use the native fixture identity (`createSession`).
+     * Production service paths never set this.
+     */
+    val useNativeTestIdentity: Boolean = false,
+)
+
+/** The native pairing mode and its session-scoped inputs. */
+data class PairingStart(
+    /** 1 = QR, 2 = SAS (the frozen PairingMode wire values). */
+    val mode: Int,
+    /** The 16-byte QR nonce as hex; empty for SAS. */
+    val nonceHex: String = "",
+    /** The display name offered to the Server (≤ 63 UTF-8 bytes). */
+    val displayName: String,
 )
 
 /** Wire registry value at the Kotlin/JNI boundary; raw integers never define policy. */

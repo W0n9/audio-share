@@ -33,6 +33,60 @@ object ClientNative {
     ): Long
 
     /**
+     * Production paired reconnection. The identity private key stays in
+     * Android Keystore; [signer] is the `dev.audioshare.v2.ClientSigner`
+     * object native code calls back for the public key and raw-context ECDSA
+     * signatures. Returns a handle (>0) or 0.
+     */
+    external fun createAuthSession(
+        host: String,
+        port: Int,
+        pinnedSpkiSha256Hex: String,
+        serverPublicKeyHex: String,
+        clientName: String,
+        signer: ClientSigner,
+    ): Long
+
+    /**
+     * Start a pairing session (mode 1 = QR, 2 = SAS). QR passes the pin
+     * derived from the QR key, the Server key, and the 16-byte nonce; SAS
+     * passes empty strings. The session sends `PairingRequest` instead of
+     * `AuthInit`. Returns a handle (>0) or 0.
+     */
+    external fun createPairingSession(
+        host: String,
+        port: Int,
+        mode: Int,
+        pinnedSpkiSha256Hex: String,
+        serverPublicKeyHex: String,
+        pairingNonceHex: String,
+        displayName: String,
+        signer: ClientSigner,
+    ): Long
+
+    /**
+     * Confirm a verified pairing. Queues `PairingConfirm` with the binding
+     * echo and the Client proof over the raw context. False when no verified
+     * pairing is awaiting confirmation.
+     */
+    external fun confirmPairing(handle: Long): Boolean
+
+    /**
+     * JSON pairing display material: `{mode, phase, sas, fingerprint,
+     * server_public_key, server_spki_sha256, client_id, display_name,
+     * error_code}`. No private keys; SAS/fingerprint are display material.
+     * Empty for a non-pairing session.
+     */
+    external fun getPairingState(handle: Long): String?
+
+    /**
+     * JSON public credential after `PairingResult(OK)`: `{
+     * server_spki_sha256, server_public_key, client_id, display_name}`.
+     * Empty before success.
+     */
+    external fun getCredentialSummary(handle: Long): String?
+
+    /**
      * Start the QUIC session (non-blocking; connect completes on the native
      * side, including AuthInit/AuthProof). [bindLocalAddress] is the
      * network-migration scaffold: the active Android Network's local address,
