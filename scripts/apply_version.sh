@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Apply the version in VERSION to the Rust workspace and Tauri GUI.
 #
-# Android is intentionally not touched: the v0.4.0 release is Server-only and
-# the Android Client remains at its released v0.3.4 version/APK.
+# Android is intentionally not touched: its version (0.2.0-beta / versionCode
+# 2) is owned by android-client-v2/app/build.gradle.kts so the beta APK can
+# coexist with the released v1 app.
+#
+# Prerelease versions such as `0.5.0-beta` are supported. The numeric version
+# code comes from scripts/get_version.sh -c, whose prerelease-aware scheme
+# keeps `0.5.0-beta` distinct from `0.5.0` (500200 vs 500999).
 #
 # Updated files:
 #   Cargo.toml                              [workspace.package] version
@@ -28,30 +33,56 @@ sed -Ebi "s|^version = \"[^\"]*\"|version = \"$version_name\"|" Cargo.toml
 
 # Cargo.lock records each workspace package version explicitly. Update only
 # those entries (third-party pins stay untouched) so `cargo --locked` remains
-# usable after a version bump.
-workspace_manifests=(crates/*/Cargo.toml tools/*/Cargo.toml gui/src-tauri/Cargo.toml)
+# usable after a version bump. Read the member list from the root manifest:
+# tools/rust-android-interop is a separate workspace, so a tools/* glob would
+# incorrectly demand an entry for it in this workspace's Cargo.lock.
+workspace_manifests=()
+while IFS= read -r member; do
+    workspace_manifests+=("$member/Cargo.toml")
+done < <(
+    awk '/^members = \[/,/^\]/' Cargo.toml |
+        sed -n 's/^[[:space:]]*"\([^"]*\)",\{0,1\}$/\1/p'
+)
+[[ ${#workspace_manifests[@]} -gt 0 ]] || {
+    echo "error: could not read workspace members from Cargo.toml" >&2
+    exit 1
+}
 workspace_packages=()
 for manifest in "${workspace_manifests[@]}"; do
     package=$(sed -n 's/^name = "\(.*\)"$/\1/p' "$manifest" | head -n 1)
     [[ -n "$package" ]] && workspace_packages+=("$package")
 done
 
-cargo_lock_tmp=$(mktemp)
-cp Cargo.lock "$cargo_lock_tmp"
-for package in "${workspace_packages[@]}"; do
-    awk -v pkg="$package" -v ver="$version_name" '
-        $0 == "[[package]]" { in_package = 0 }
-        $0 == "name = \"" pkg "\"" { in_package = 1 }
-        in_package && $0 ~ /^version = "/ {
-            sub(/^version = "[^"]*"/, "version = \"" ver "\"")
-            in_package = 0
-        }
-        { print }
-    ' "$cargo_lock_tmp" > "$cargo_lock_tmp.next"
-    mv "$cargo_lock_tmp.next" "$cargo_lock_tmp"
-done
-cat "$cargo_lock_tmp" > Cargo.lock
-rm -f "$cargo_lock_tmp"
+update_lock_versions() {
+    local lock=$1
+    local tmp package
+    tmp=$(mktemp)
+    cp "$lock" "$tmp"
+    for package in "${workspace_packages[@]}"; do
+        awk -v pkg="$package" -v ver="$version_name" '
+            $0 == "[[package]]" { in_package = 0 }
+            $0 == "name = \"" pkg "\"" { in_package = 1 }
+            in_package && $0 ~ /^version = "/ {
+                sub(/^version = "[^"]*"/, "version = \"" ver "\"")
+                in_package = 0
+            }
+            { print }
+        ' "$tmp" > "$tmp.next"
+        mv "$tmp.next" "$tmp"
+    done
+    cat "$tmp" > "$lock"
+    rm -f "$tmp"
+}
+
+update_lock_versions Cargo.lock
+
+# The cross-language interop harness is a separate workspace, but its lockfile
+# path-depends on these workspace crates. Keep those entries in sync so
+# `cargo --locked` still works there; packages it does not contain are skipped.
+interop_lock=tools/rust-android-interop/Cargo.lock
+if [[ -f "$interop_lock" ]]; then
+    update_lock_versions "$interop_lock"
+fi
 
 # GUI package metadata and lockfile.
 sed -Ebi "0,/^  \"version\": \"[^\"]*\"/s//  \"version\": \"$version_name\"/" gui/package.json
@@ -81,6 +112,12 @@ for package in "${workspace_packages[@]}"; do
         echo "error: Cargo.lock entry for $package does not contain version $version_name" >&2
         exit 1
     }
+    if [[ -f "$interop_lock" ]] && grep -q "^name = \"$package\"$" "$interop_lock"; then
+        grep -A1 "^name = \"$package\"$" "$interop_lock" | grep -q "^version = \"$version_name\"$" || {
+            echo "error: $interop_lock entry for $package does not contain version $version_name" >&2
+            exit 1
+        }
+    fi
 done
 
 popd >/dev/null
