@@ -1,6 +1,6 @@
 [package]
 name = "audio-share-server-gui"
-version = "0.4.1"
+version = "0.5.0-beta"
 description = "Audio Share Server GUI"
 authors = ["Audio Share maintainers"]
 edition = "2021"

@@ -11,3 +11,9 @@ __pycache__/
 # Release staging directories (packaging scripts)
 /dist-linux/
 /dist-windows/
+/dist-android/
+
+# Signing material must stay outside the repository.
+keystore.properties
+*.jks
+*.keystore
