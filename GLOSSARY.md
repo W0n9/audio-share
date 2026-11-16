@@ -61,3 +61,17 @@ _Avoid_: stream format, output format
 **Wire Protocol**:
 The contract by which a Server and an Android Client exchange control messages and PCM audio.
 _Avoid_: API, socket protocol
+
+## Release stages
+
+**Beta**:
+A controlled-trial release of the v2 Android Client for external pilot customers, on a directly reachable Server (LAN, VPN, or user-configured port forwarding), with one phone per Server. It is not a daily-driver replacement for v1; known limitations are documented and v1 remains separately available.
+_Avoid_: stable, general availability, v1 replacement
+
+**Experimental**:
+The Server-side status of Wire Protocol v2 before the stable release gate: enabled and runnable by default, but not stable.
+_Avoid_: beta (beta is a Client release; experimental is a protocol status)
+
+**Stable**:
+The Wire Protocol v2 release status reached only after the full acceptance gate, migration guide, and rollback path exist. Not used for Beta.
+_Avoid_: production-ready
