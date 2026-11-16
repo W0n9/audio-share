@@ -23,25 +23,31 @@ parser.add_argument("--serial", required=True, help="adb 设备序列号")
 parser.add_argument("--config", required=True, help="只含 host/port/pinnedSpki/serverKey 的 JSON")
 parser.add_argument("--output", required=True, help="脱敏测试结果文件")
 parser.add_argument("--server-log", help="本次隔离 Server 的日志，用于验证连接复用")
-parser.add_argument("--test", choices=("ready", "rebind", "recreate", "stop", "lock"), default="ready")
+parser.add_argument("--test", choices=("ready", "rebind", "recreate", "recreate-loop", "stop", "lock"),
+                    default="ready")
 args = parser.parse_args()
-if args.test in ("recreate", "lock") and not args.server_log:
-    parser.error("recreate/lock 需要 --server-log，才能验证没有重新建立连接")
+if args.test in ("recreate", "recreate-loop", "lock") and not args.server_log:
+    parser.error("recreate/recreate-loop/lock 需要 --server-log，才能验证没有重新建立连接")
 config = json.loads(Path(args.config).read_text())
 command = ["adb", "-s", args.serial, "shell", "am", "instrument", "-w", "-r", "-e", "case", args.test,
            "dev.audioshare.v2.test/dev.audioshare.v2.ControlSessionInstrumentation"]
 process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-timer = threading.Timer(45, process.kill)
+# 10 次重建循环自带每次 1.2 s 的观察窗口，单独放宽调用方超时。
+timer = threading.Timer(90 if args.test == "recreate-loop" else 45, process.kill)
 timer.start()
 lines = []
 launched = False
 screen_asleep = False
+connections_before = None
 connections_at_ready = None
 assert process.stdout is not None
 try:
     for line in process.stdout:
         lines.append(line)
         if "AWAITING_ACTIVITY" in line and not launched:
+            # 记录启动前的连接数：启动阶段的重连竞态也必须暴露，而不只是 READY 之后。
+            if args.server_log:
+                connections_before = Path(args.server_log).read_text().count("[info] v2 connection accepted")
             # 长时间构建后设备可能已休眠；普通 UI 测试需先唤醒，不处理解锁密码。
             wake_screen(args.serial, strict=True)
             launched = True
@@ -75,8 +81,14 @@ finally:
 output = "".join(lines)
 if args.server_log and connections_at_ready is not None:
     final_connections = Path(args.server_log).read_text().count("[info] v2 connection accepted")
-    output += f"\nServer connection count at READY/final: {connections_at_ready}/{final_connections}\n"
-    if connections_at_ready == 0 or (args.test in ("lock", "recreate") and final_connections != connections_at_ready):
+    before = connections_before if connections_before is not None else connections_at_ready - 1
+    output += (f"\nServer connection count before/at READY/final: "
+               f"{connections_before}/{connections_at_ready}/{final_connections}\n")
+    # 一个测试会话启动时只应新建一条连接；启动期多出的连接就是 onAvailable 竞态。
+    if connections_at_ready != before + 1:
+        output += ("FAIL: 启动阶段建立了 "
+                   f"{connections_at_ready - before} 条连接，期望 1 条\n")
+    if args.test in ("lock", "recreate", "recreate-loop") and final_connections != connections_at_ready:
         output += "FAIL: 连接复用证据缺失或生命周期改变导致新建连接\n"
 for name in ("pinnedSpki", "serverKey"):
     output = output.replace(str(config[name]), "<REDACTED>")
