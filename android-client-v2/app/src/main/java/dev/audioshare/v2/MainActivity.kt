@@ -30,10 +30,10 @@ class MainActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private var controller: SessionController? = null
+    private var commands: SessionCommandExecutor? = null
     private var bound = false
     private var hadSavedState = false
     private var initialized = false
-    private var expectedStop = false
     private var harnessStarted = false
     private var credentialPolling = false
 
@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val service = (binder as? ControlBinder)?.service ?: return
             controller = service
+            commands = SessionCommandExecutor(service)
             service.setStateListener { native -> runOnUiThread { onNativeState(native) } }
             service.setPairingListener { snapshot -> runOnUiThread { onPairingSnapshot(snapshot) } }
             initialize(service)
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
 
         override fun onServiceDisconnected(name: ComponentName?) {
             controller = null
+            commands = null
         }
     }
 
@@ -91,6 +93,7 @@ class MainActivity : ComponentActivity() {
             unbindService(connection)
             bound = false
             controller = null
+            commands = null
         }
         super.onStop()
     }
@@ -162,29 +165,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun execute(command: AppCommand) {
-        val service = controller ?: return
-        when (command) {
-            AppCommand.None -> Unit
-            is AppCommand.BeginQr -> service.beginQrPairing(command.uri)
-            is AppCommand.BeginSas -> service.beginSasPairing(command.address)
-            AppCommand.ConfirmPairing -> service.confirmPairing()
-            AppCommand.CancelPairing -> service.cancelPairing()
-            is AppCommand.ConnectStored -> {
-                expectedStop = false
-                service.connectStored(command.serverSpkiSha256Hex)
-            }
-            AppCommand.Stop -> {
-                expectedStop = true
-                service.disconnect()
-            }
-        }
+        commands?.execute(command)
     }
 
     private fun onNativeState(native: String) {
         dispatch(UiEvent.SessionStateChanged(native))
         if (native == "CLOSED") {
-            val guidance = if (expectedStop) null else controller?.lastErrorGuidance()
-            expectedStop = false
+            val guidance = commands?.guidanceOnClosed()
             if (guidance != null) dispatch(UiEvent.SessionError(guidance))
         }
     }
