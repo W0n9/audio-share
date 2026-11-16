@@ -47,6 +47,135 @@ pub struct ServerStatus {
     pub address: Option<String>,
     /// Last readable failure; cleared when a new start succeeds.
     pub last_error: Option<String>,
+    /// The independent v2/QUIC status. A v2 failure never changes `state`.
+    pub v2: V2Status,
+}
+
+/// Whether the v2 transport is disabled, starting, running, or failed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum V2State {
+    /// No v2 starter is installed or v2 was explicitly disabled.
+    #[default]
+    Disabled,
+    /// The QUIC endpoint is starting.
+    Starting,
+    /// The QUIC endpoint is accepting connections.
+    Running,
+    /// v2 failed to start; v1 is unaffected.
+    Error,
+}
+
+/// The independent v2 status shown beside the v1 lifecycle.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct V2Status {
+    /// v2 lifecycle state.
+    pub state: V2State,
+    /// The actual QUIC listen address while running.
+    pub address: Option<String>,
+    /// The Server SPKI fingerprint while running.
+    pub fingerprint: Option<String>,
+    /// The v2 startup error, kept separate from the v1 `last_error`.
+    pub last_error: Option<String>,
+}
+
+impl V2Status {
+    /// v2 is not configured or was explicitly disabled.
+    pub fn disabled() -> Self {
+        Self::default()
+    }
+
+    /// The QUIC endpoint is starting.
+    pub fn starting() -> Self {
+        Self {
+            state: V2State::Starting,
+            ..Self::default()
+        }
+    }
+
+    /// The QUIC endpoint is accepting on `address`.
+    pub fn running(address: String, fingerprint: String) -> Self {
+        Self {
+            state: V2State::Running,
+            address: Some(address),
+            fingerprint: Some(fingerprint),
+            last_error: None,
+        }
+    }
+
+    /// v2 failed while v1 stayed up.
+    pub fn failed(message: String) -> Self {
+        Self {
+            state: V2State::Error,
+            last_error: Some(message),
+            ..Self::default()
+        }
+    }
+}
+
+/// A pairing invitation as shown in the GUI dialog.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingInvitation {
+    /// `qr` or `sas`.
+    pub mode: String,
+    /// The copyable QR payload URI (QR mode only).
+    pub qr_uri: Option<String>,
+    /// A self-contained SVG QR rendering (QR mode only).
+    pub qr_svg: Option<String>,
+    /// The §7.4 Server SPKI fingerprint.
+    pub fingerprint: String,
+    /// Seconds until the invitation expires (refreshed by polling).
+    pub expires_in_secs: u64,
+}
+
+/// One verified pairing awaiting the operator's accept/decline.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingRequestInfo {
+    /// The pairing exchange's request id.
+    pub request_id: u64,
+    /// Canonical client id (hex).
+    pub client_id: String,
+    /// Device display name.
+    pub display_name: String,
+    /// `qr` or `sas`.
+    pub mode: String,
+    /// The source address shown to the local operator.
+    pub address: String,
+    /// The connection-derived SAS (`123 456`), once the device connects.
+    pub sas: Option<String>,
+}
+
+/// The pairing dialog's complete polled state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingStatus {
+    /// Whether an invitation or pending request is active.
+    pub active: bool,
+    /// The current invitation, if any.
+    pub invitation: Option<PairingInvitation>,
+    /// Verified pairings awaiting approval.
+    pub pending: Vec<PairingRequestInfo>,
+    /// The independent v2 status (surfaced even when pairing is closed).
+    pub v2: V2Status,
+}
+
+/// One paired device in the device list.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientInfo {
+    /// Canonical client id (hex).
+    pub client_id: String,
+    /// Device display name.
+    pub display_name: String,
+    /// `active` or `revoked`.
+    pub state: String,
+    /// RFC 3339 UTC creation time, or empty for a legacy record.
+    pub created_at: String,
+    /// RFC 3339 UTC last-seen time, or empty for a legacy record.
+    pub last_seen_at: String,
 }
 
 impl ServerStatus {
@@ -56,6 +185,7 @@ impl ServerStatus {
             state: ServerState::Stopped,
             address: None,
             last_error: None,
+            v2: V2Status::disabled(),
         }
     }
 
@@ -65,6 +195,7 @@ impl ServerStatus {
             state: ServerState::Starting,
             address: None,
             last_error: None,
+            v2: V2Status::disabled(),
         }
     }
 
@@ -74,6 +205,7 @@ impl ServerStatus {
             state: ServerState::Running,
             address: Some(address),
             last_error: None,
+            v2: V2Status::disabled(),
         }
     }
 
@@ -83,6 +215,7 @@ impl ServerStatus {
             state: ServerState::Stopping,
             address,
             last_error: None,
+            v2: V2Status::disabled(),
         }
     }
 
@@ -92,6 +225,7 @@ impl ServerStatus {
             state: ServerState::Stopped,
             address: None,
             last_error: Some(message),
+            v2: V2Status::disabled(),
         }
     }
 }
@@ -404,12 +538,69 @@ mod tests {
         let json = serde_json::to_value(&running).unwrap();
         assert_eq!(json["state"], "running");
         assert_eq!(json["address"], "10.0.0.2:65530");
+        assert_eq!(json["v2"]["state"], "disabled");
         assert!(json["lastError"].is_null());
 
         let failed = ServerStatus::failed("bind failed".to_owned());
         let json = serde_json::to_value(&failed).unwrap();
         assert_eq!(json["state"], "stopped");
         assert_eq!(json["lastError"], "bind failed");
+    }
+
+    #[test]
+    fn v2_status_serializes_independently_of_the_v1_state() {
+        let mut status = ServerStatus::running("10.0.0.2:65530".to_owned());
+        status.v2 = V2Status::failed("v2 bind refused".to_owned());
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["state"], "running");
+        assert_eq!(json["v2"]["state"], "error");
+        assert_eq!(json["v2"]["lastError"], "v2 bind refused");
+        assert!(json["lastError"].is_null());
+
+        status.v2 = V2Status::running("10.0.0.2:65531".to_owned(), "FP".to_owned());
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["v2"]["state"], "running");
+        assert_eq!(json["v2"]["address"], "10.0.0.2:65531");
+        assert_eq!(json["v2"]["fingerprint"], "FP");
+    }
+
+    #[test]
+    fn pairing_and_client_views_use_the_frontend_field_names() {
+        let status = PairingStatus {
+            active: true,
+            invitation: Some(PairingInvitation {
+                mode: "qr".to_owned(),
+                qr_uri: Some("audioshare-pair://p1?x".to_owned()),
+                qr_svg: Some("<svg/>".to_owned()),
+                fingerprint: "FP".to_owned(),
+                expires_in_secs: 42,
+            }),
+            pending: vec![PairingRequestInfo {
+                request_id: 7,
+                client_id: "0011223344556677".to_owned(),
+                display_name: "Pixel 8".to_owned(),
+                mode: "qr".to_owned(),
+                address: "192.168.1.44:50000".to_owned(),
+                sas: Some("123 456".to_owned()),
+            }],
+            v2: V2Status::running("10.0.0.2:65531".to_owned(), "FP".to_owned()),
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["invitation"]["qrUri"], "audioshare-pair://p1?x");
+        assert_eq!(json["invitation"]["expiresInSecs"], 42);
+        assert_eq!(json["pending"][0]["requestId"], 7);
+        assert_eq!(json["pending"][0]["sas"], "123 456");
+
+        let client = ClientInfo {
+            client_id: "0011223344556677".to_owned(),
+            display_name: "Pixel 8".to_owned(),
+            state: "active".to_owned(),
+            created_at: "2026-11-16T10:00:00Z".to_owned(),
+            last_seen_at: String::new(),
+        };
+        let json = serde_json::to_value(&client).unwrap();
+        assert_eq!(json["clientId"], "0011223344556677");
+        assert_eq!(json["displayName"], "Pixel 8");
     }
 
     #[test]

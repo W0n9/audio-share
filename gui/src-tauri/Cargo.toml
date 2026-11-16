@@ -25,6 +25,9 @@ tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
 audio-share-core.workspace = true
+# Shared v2 Server runtime: identity, Pairing Core, QUIC listener. The GUI and
+# as-cmd assemble v2 exactly here; no pairing logic is duplicated.
+v2-runtime = { path = "../../crates/v2-runtime" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

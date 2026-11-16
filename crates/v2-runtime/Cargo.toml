@@ -1,0 +1,23 @@
+[package]
+name = "v2-runtime"
+description = "Shared Wire Protocol v2 Server runtime: identity, pairing core, QUIC listener, and capture/media adapters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+audio-share-core.workspace = true
+v2-transport = { path = "../v2-transport" }
+tokio.workspace = true
+tracing = "0.1"
+# Offline QR rendering for the Server GUI and `as-cmd pair` output (pure Rust).
+qrcodegen = "1.8"
+
+[dev-dependencies]
+tempfile = "3"
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+# Live-QUIC tests use the test-support client endpoint helper.
+v2-transport = { path = "../v2-transport", features = ["test-support"] }
