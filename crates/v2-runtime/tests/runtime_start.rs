@@ -5,7 +5,7 @@ use std::sync::Arc;
 use audio_share_core::capture::{synthetic_backend, CaptureConfig, EncodingPreference};
 use audio_share_core::protocol::{HEARTBEAT_INTERVAL, SESSION_TIMEOUT};
 use audio_share_core::server::{Server, ServerConfig};
-use v2_runtime::admin::PairingMode;
+use v2_runtime::admin::RequestedPairingMode;
 use v2_runtime::{RuntimeConfig, V2Runtime};
 
 #[tokio::test]
@@ -56,7 +56,10 @@ async fn starts_binds_opens_pairing_and_stops() {
     );
     assert_eq!(runtime.fingerprint(), runtime.admin().fingerprint());
 
-    let invitation = runtime.admin().begin(PairingMode::Qr).expect("begin QR");
+    let invitation = runtime
+        .admin()
+        .begin(RequestedPairingMode::Qr)
+        .expect("begin QR");
     let uri = invitation.qr_uri.expect("QR URI");
     let parsed = v2_transport::pairing::parse_qr_uri(&uri).expect("QR payload parses");
     assert_eq!(parsed.addr_hint, runtime.addr_hint());
@@ -64,6 +67,49 @@ async fn starts_binds_opens_pairing_and_stops() {
     runtime.stop();
     runtime.stop(); // idempotent
     v1.stop().await.expect("stop v1");
+}
+
+#[tokio::test]
+async fn a_second_core_cannot_share_the_data_dir_and_the_lock_releases_on_drop() {
+    use v2_runtime::RuntimeError;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config = || RuntimeConfig {
+        data_dir: dir.path().to_path_buf(),
+        allow_loose_permissions: false,
+        bind_host: "127.0.0.1".to_owned(),
+        port: 0,
+        addr_hint: None,
+    };
+
+    let runtime = V2Runtime::start(config(), None)
+        .await
+        .expect("first runtime");
+    match V2Runtime::start(config(), None).await {
+        Ok(second) => {
+            drop(second);
+            panic!("a second Core must not share the data directory");
+        }
+        Err(error) => {
+            assert!(
+                matches!(error, RuntimeError::Store(_)),
+                "unexpected error: {error:?}"
+            );
+            assert!(
+                error.to_string().contains("stop the Server first"),
+                "error must tell the operator what to do: {error}"
+            );
+        }
+    }
+
+    // Stopping (and dropping) the runtime releases the store lock for the
+    // next Core or an offline admin operation.
+    runtime.stop();
+    drop(runtime);
+    let second = V2Runtime::start(config(), None)
+        .await
+        .expect("the lock is released when the Core stops");
+    drop(second);
 }
 
 #[tokio::test]

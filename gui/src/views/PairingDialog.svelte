@@ -17,12 +17,12 @@
     void server.cancelPairing();
   }
 
-  function approve(requestId: number): void {
-    void server.approvePairing(requestId);
+  function approve(approvalId: number): void {
+    void server.approvePairing(approvalId);
   }
 
-  function decline(requestId: number): void {
-    void server.declinePairing(requestId);
+  function decline(approvalId: number): void {
+    void server.declinePairing(approvalId);
   }
 
   function revoke(clientId: string, displayName: string): void {
@@ -121,7 +121,7 @@
 
         {#if pending.length > 0}
           <div class="pairing-section-title">{t("pairing.pendingTitle")}</div>
-          {#each pending as request (request.requestId)}
+          {#each pending as request (request.approvalId)}
             <div class="pairing-card">
               <div class="pairing-card-title">{request.displayName}</div>
               <div class="pairing-row">
@@ -140,14 +140,14 @@
                 <button
                   class="pairing-primary"
                   disabled={server.pairingBusy}
-                  onclick={() => approve(request.requestId)}
+                  onclick={() => approve(request.approvalId)}
                 >
                   {t("pairing.accept")}
                 </button>
                 <button
                   class="pairing-secondary"
                   disabled={server.pairingBusy}
-                  onclick={() => decline(request.requestId)}
+                  onclick={() => decline(request.approvalId)}
                 >
                   {t("pairing.decline")}
                 </button>

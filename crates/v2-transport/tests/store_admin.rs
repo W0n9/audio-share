@@ -132,6 +132,24 @@ fn headless_lock_is_exclusive_and_0600() {
     worker.join().unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn try_acquire_reports_a_held_lock_without_blocking() {
+    let dir = tempfile::tempdir().unwrap();
+    let held = StoreLock::acquire(dir.path()).expect("first lock");
+    assert!(
+        StoreLock::try_acquire(dir.path())
+            .expect("try acquire")
+            .is_none(),
+        "a held lock is reported, not waited on"
+    );
+    drop(held);
+    let acquired = StoreLock::try_acquire(dir.path())
+        .expect("try acquire after release")
+        .expect("the released lock is available");
+    drop(acquired);
+}
+
 #[test]
 fn identity_reset_clears_pairings_before_rotating_the_key() {
     let dir = tempfile::tempdir().unwrap();

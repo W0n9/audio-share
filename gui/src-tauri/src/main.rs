@@ -548,7 +548,7 @@ async fn pairing_begin(
     state.controller.pairing_begin(mode)
 }
 
-/// Close the SAS admission window and drop undecided approvals.
+/// Close the SAS admission window and decline undecided approvals.
 #[tauri::command]
 async fn pairing_cancel(state: State<'_, AppState>) -> Result<PairingStatus, String> {
     state.controller.pairing_cancel()
@@ -564,18 +564,18 @@ async fn pairing_status(state: State<'_, AppState>) -> Result<PairingStatus, Str
 #[tauri::command]
 async fn pairing_approve(
     state: State<'_, AppState>,
-    request_id: u64,
+    approval_id: u64,
 ) -> Result<PairingStatus, String> {
-    state.controller.pairing_approve(request_id)
+    state.controller.pairing_approve(approval_id)
 }
 
 /// Decline one pending pairing.
 #[tauri::command]
 async fn pairing_decline(
     state: State<'_, AppState>,
-    request_id: u64,
+    approval_id: u64,
 ) -> Result<PairingStatus, String> {
-    state.controller.pairing_decline(request_id)
+    state.controller.pairing_decline(approval_id)
 }
 
 /// The paired-device list (active and revoked records).

@@ -297,7 +297,7 @@ async fn pair(
     assert_eq!(approval.mode, expected_mode(mode));
     assert_eq!(approval.sas.as_deref(), info.sas.as_deref());
     assert!(approval.sas.as_deref().unwrap().contains(' '));
-    assert!(server.core.approve(approval.request_id));
+    assert!(server.core.approve(approval.approval_id));
 
     let result_frame = recv_android(&mut recv, &mut decoder).await;
     let (result, event) = machine.on_frame(&result_frame);
@@ -424,7 +424,7 @@ async fn unknown_identity_is_202_and_revoked_identity_is_204() {
     };
     send_android(&mut send, &confirm).await;
     let approval = wait_for_approval(&server.core).await;
-    assert!(server.core.approve(approval.request_id));
+    assert!(server.core.approve(approval.approval_id));
     let result = recv_android(&mut recv, &mut decoder).await;
     let (_, event) = machine.on_frame(&result);
     assert!(matches!(event, Some(Event::Paired(_))));
@@ -489,7 +489,7 @@ fn android_session_pairing_and_confirm_channel_reach_ready() {
 
     session.confirm_pairing().expect("confirm channel");
     let approval = rt.block_on(wait_for_approval(&server.core));
-    assert!(server.core.approve(approval.request_id));
+    assert!(server.core.approve(approval.approval_id));
 
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !session.credential_json().contains("server_spki_sha256") {

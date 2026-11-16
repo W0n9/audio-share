@@ -14,7 +14,7 @@ use std::sync::Arc;
 use audio_share_core::capture::media::MediaTap;
 use audio_share_core::capture::CaptureObserver;
 use serde::Deserialize;
-use v2_runtime::{PairingAdmin, PairingMode};
+use v2_runtime::{PairingAdmin, RequestedPairingMode};
 
 /// The v2 QUIC default port, parallel to v1's 65530.
 pub use v2_runtime::DEFAULT_V2_PORT;
@@ -94,11 +94,11 @@ pub enum PairingModeArg {
     Sas,
 }
 
-impl From<PairingModeArg> for PairingMode {
+impl From<PairingModeArg> for RequestedPairingMode {
     fn from(mode: PairingModeArg) -> Self {
         match mode {
-            PairingModeArg::Qr => PairingMode::Qr,
-            PairingModeArg::Sas => PairingMode::Sas,
+            PairingModeArg::Qr => RequestedPairingMode::Qr,
+            PairingModeArg::Sas => RequestedPairingMode::Sas,
         }
     }
 }

@@ -255,6 +255,22 @@ fn clients_revoke_unknown_id_exits_one_with_a_readable_error() {
 }
 
 #[test]
+fn offline_admin_reports_a_running_core_instead_of_blocking() {
+    use std::time::Duration;
+    use v2_transport::auth_store::StoreLock;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let _held = StoreLock::acquire(temp.path()).expect("hold the running Core's lock");
+    as_cmd()
+        .args(["clients", "list"])
+        .env("AUDIO_SHARE_CONFIG", isolated_config(&temp))
+        .timeout(Duration::from_secs(10))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("stop the Server first"));
+}
+
+#[test]
 fn identity_reset_requires_confirmation_or_yes() {
     let temp = tempfile::tempdir().expect("tempdir");
     // EOF on stdin: the warning is printed but nothing is reset.
