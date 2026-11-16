@@ -863,8 +863,9 @@ mod tests {
         m.set_auth_context(
             crate::auth::tests_const_server_pub(),
             crate::auth::tests_const_exporter(),
-            crate::auth::test_client_identity_key(),
-        );
+            crate::signer::test_signer(),
+        )
+        .unwrap();
         let init = Frame {
             body: Some(Body::AuthInit(crate::proto::AuthInit {
                 request_id: 1,

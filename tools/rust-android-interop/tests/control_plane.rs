@@ -25,10 +25,8 @@ use v2_transport::state_machine::{
 
 const CLIENT_PUB_HEX: &str = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
 const SERVER_PUB_HEX: &str = "11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c";
-const SERVER_RANDOM_HEX: &str =
-    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
-const AUTH_EXPORTER_HEX: &str =
-    "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";
+const SERVER_RANDOM_HEX: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+const AUTH_EXPORTER_HEX: &str = "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";
 
 fn client_identity() -> p256::ecdsa::SigningKey {
     let d_hex = "87fb33cdf19dc9ec6324570648e8f354d26d5262e4930182382220bec2fdfac7";
@@ -92,17 +90,24 @@ fn server_machine() -> StateMachine {
 
 fn android_machine() -> ClientMachine {
     let mut machine = ClientMachine::new();
-    machine.set_auth_context(
-        unhex(SERVER_PUB_HEX),
-        unhex(AUTH_EXPORTER_HEX),
-        client_identity(),
-    );
+    machine
+        .set_auth_context(
+            unhex(SERVER_PUB_HEX),
+            unhex(AUTH_EXPORTER_HEX),
+            std::sync::Arc::new(audio_share_client_v2_native::signer::SoftwareSigner::new(
+                client_identity(),
+            )),
+        )
+        .expect("auth context");
     machine
 }
 
 /// Encode a Server `Frame` and decode it with the Android Client's real
 /// `FrameDecoder`; assert the wire bytes first when a golden vector pins them.
-fn server_to_android(bytes: &[u8], decoder: &mut FrameDecoder) -> audio_share_client_v2_native::proto::Frame {
+fn server_to_android(
+    bytes: &[u8],
+    decoder: &mut FrameDecoder,
+) -> audio_share_client_v2_native::proto::Frame {
     let frames = decoder.push(bytes).expect("Android framing decoder");
     assert_eq!(frames.len(), 1, "one framed message");
     frames.into_iter().next().unwrap()
@@ -131,12 +136,17 @@ fn server_step(machine: &mut StateMachine, frame: ServerFrame) -> Vec<Vec<u8>> {
 
 /// Feed one decoded Server frame into the Android machine and return the wire
 /// frames the machine wants to send (encoded with the Android encoder).
-fn android_step(machine: &mut ClientMachine, frame: audio_share_client_v2_native::proto::Frame) -> Vec<Vec<u8>> {
+fn android_step(
+    machine: &mut ClientMachine,
+    frame: audio_share_client_v2_native::proto::Frame,
+) -> Vec<Vec<u8>> {
     let (result, _event) = machine.on_frame(&frame);
     let verdict = result.expect("no local close");
     match verdict {
         Verdict::Send(frame) => vec![android_encode(&frame).expect("Android encode")],
-        Verdict::Ok | Verdict::Reject { .. } | Verdict::Fatal { .. } | Verdict::Stop(_) => Vec::new(),
+        Verdict::Ok | Verdict::Reject { .. } | Verdict::Fatal { .. } | Verdict::Stop(_) => {
+            Vec::new()
+        }
     }
 }
 
@@ -154,11 +164,17 @@ fn real_auth_negotiate_subscribe_reaches_playing_on_both_ends() {
     // `auth_init` only builds the frame; `enter_authenticating` is the real
     // state-machine row that records the pending request and changes state.
     let init = android.auth_init(sec1_compressed(&client_identity()));
-    let init_wire = match android.enter_authenticating(init).expect("enter authenticating") {
+    let init_wire = match android
+        .enter_authenticating(init)
+        .expect("enter authenticating")
+    {
         Verdict::Send(frame) => android_encode(&frame).expect("encode AuthInit"),
         other => panic!("expected AuthInit Send, got {other:?}"),
     };
-    assert_eq!(init_wire, unhex(&control_frames(&control_fixture("auth-happy-path"))[0].1));
+    assert_eq!(
+        init_wire,
+        unhex(&control_frames(&control_fixture("auth-happy-path"))[0].1)
+    );
     let init_frame = android_to_server(&init_wire, &mut to_server);
     let challenge_wire = server_step(&mut server, init_frame);
     assert_eq!(challenge_wire.len(), 1, "AuthChallenge only");
@@ -188,7 +204,11 @@ fn real_auth_negotiate_subscribe_reaches_playing_on_both_ends() {
     assert_eq!(negotiate_wire.len(), 1);
     let negotiate = android_to_server(&negotiate_wire[0], &mut to_server);
     let ready_wire = server_step(&mut server, negotiate);
-    assert_eq!(ready_wire.len(), 2, "NegotiateResponse + ConfigurationPublished");
+    assert_eq!(
+        ready_wire.len(),
+        2,
+        "NegotiateResponse + ConfigurationPublished"
+    );
     assert_eq!(server.state(), ServerState::Ready);
 
     for wire in &ready_wire {
@@ -242,7 +262,10 @@ fn stream_lifecycle_diagnostics_and_one_way_close() {
 
     // Drive both real machines to PLAYING using the same wire-only exchange.
     let init = android.auth_init(sec1_compressed(&client_identity()));
-    let init_wire = match android.enter_authenticating(init).expect("enter authenticating") {
+    let init_wire = match android
+        .enter_authenticating(init)
+        .expect("enter authenticating")
+    {
         Verdict::Send(frame) => android_encode(&frame).unwrap(),
         other => panic!("expected AuthInit Send, got {other:?}"),
     };
@@ -279,15 +302,25 @@ fn stream_lifecycle_diagnostics_and_one_way_close() {
     let android_diag = audio_share_client_v2_native::proto::Frame::decode(diag_body.as_slice())
         .expect("Android decodes the golden diagnostics body");
     let diag_wire = android_encode(&android_diag).expect("Android re-encodes diagnostics");
-    assert_eq!(diag_wire, unhex(&control_frames(&golden)[3].1), "golden §9 bytes");
+    assert_eq!(
+        diag_wire,
+        unhex(&control_frames(&golden)[3].1),
+        "golden §9 bytes"
+    );
     let diag_frame = android_to_server(&diag_wire, &mut to_server);
-    assert!(server_step(&mut server, diag_frame).is_empty(), "no reply to diagnostics");
+    assert!(
+        server_step(&mut server, diag_frame).is_empty(),
+        "no reply to diagnostics"
+    );
     let recorded = server
         .last_playback_diagnostics()
         .expect("Server observed the Client-reported diagnostics");
     assert_eq!(recorded.stream_instance_id, 1);
     assert_eq!(recorded.extended_highest_sequence, 63);
-    assert_eq!(recorded.cumulative_lost, -2, "signed sint64 crosses the wire");
+    assert_eq!(
+        recorded.cumulative_lost, -2,
+        "signed sint64 crosses the wire"
+    );
     assert_eq!(recorded.submitted_position, 307_200);
     assert_eq!(recorded.concealed_frames, 1_440);
 
@@ -307,7 +340,10 @@ fn stream_lifecycle_diagnostics_and_one_way_close() {
     assert!(matches!(result, Ok(Verdict::Ok)));
     assert_eq!(event, Some(Event::StreamEnded(502)));
     assert_eq!(android.state, ClientState::Ready);
-    assert!(android.subscribed, "StreamEnded does not clear the subscription");
+    assert!(
+        android.subscribed,
+        "StreamEnded does not clear the subscription"
+    );
 
     // A capture restart with a NEW instance pushes StreamStarted again; the
     // Android Client re-enters PLAYING with the new epoch anchor.
@@ -354,9 +390,15 @@ fn stream_lifecycle_diagnostics_and_one_way_close() {
     let (_, event) = android.on_frame(&first);
     assert_eq!(event, Some(Event::StreamEnded(502)));
     let second = server_to_android(&unsubscribe_wire[1], &mut to_android);
-    assert!(matches!(second.body, Some(AndroidBody::UnsubscribeResponse(_))));
+    assert!(matches!(
+        second.body,
+        Some(AndroidBody::UnsubscribeResponse(_))
+    ));
     android_step(&mut android, second);
-    assert!(!android.subscribed, "only user Unsubscribe clears the subscription");
+    assert!(
+        !android.subscribed,
+        "only user Unsubscribe clears the subscription"
+    );
     assert_eq!(server.state(), ServerState::Ready);
     assert_eq!(android.state, ClientState::Ready);
 
@@ -372,7 +414,10 @@ fn stream_lifecycle_diagnostics_and_one_way_close() {
         "golden Close(701) bytes"
     );
     let close_frame = android_to_server(&close, &mut to_server);
-    assert!(server_step(&mut server, close_frame).is_empty(), "Close is never echoed");
+    assert!(
+        server_step(&mut server, close_frame).is_empty(),
+        "Close is never echoed"
+    );
     assert_eq!(server.state(), ServerState::Closing);
     assert_eq!(android.state, ClientState::Closed);
 }
@@ -389,7 +434,10 @@ fn configuration_change_and_unsupported_media_are_cross_checked() {
 
     // READY (not subscribed): a publication with a new generation is stored.
     let init = android.auth_init(sec1_compressed(&client_identity()));
-    let init_wire = match android.enter_authenticating(init).expect("enter authenticating") {
+    let init_wire = match android
+        .enter_authenticating(init)
+        .expect("enter authenticating")
+    {
         Verdict::Send(frame) => android_encode(&frame).unwrap(),
         other => panic!("expected AuthInit Send, got {other:?}"),
     };
@@ -457,12 +505,19 @@ fn control_framing_is_byte_identical_across_the_two_implementations() {
     let fixture = control_fixture("subscribe-config-diagnostics");
     let frames = control_frames(&fixture);
     // Golden Subscribe / StreamEnded / UnsubscribeResponse bodies.
-    for (index, message) in [(0usize, "subscribe"), (5, "stream_ended"), (6, "unsubscribe_response")] {
+    for (index, message) in [
+        (0usize, "subscribe"),
+        (5, "stream_ended"),
+        (6, "unsubscribe_response"),
+    ] {
         let body = unhex(&frames[index].0);
         let expected = unhex(&frames[index].1);
         let server_frame = ServerFrame::decode(body.as_slice()).expect("Server decodes body");
         let server_wire = server_encode(&server_frame).expect("Server re-encodes");
-        assert_eq!(server_wire, expected, "{message}: both ends match the golden frame");
+        assert_eq!(
+            server_wire, expected,
+            "{message}: both ends match the golden frame"
+        );
 
         // Android's streaming decoder accepts the same bytes split in three.
         let mut decoder = FrameDecoder::new();
