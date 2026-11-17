@@ -1,10 +1,10 @@
 [versions]
-# Mirrors android-app/ (the shared toolchain) — AGP 8.7.3 / Kotlin 2.0.21 /
-# Gradle 8.9; protobuf-kotlin-lite 4.28.2 + plugin 0.9.4 per libs.versions.toml
+# Mirrors android-app/ (the shared toolchain) — AGP 8.13.2 / Kotlin 2.0.21 /
+# Gradle 8.13; protobuf-kotlin-lite 4.28.2 + plugin 0.10.1 per libs.versions.toml
 # there. Two ends, one .proto, one toolchain.
-agp = "8.7.3"
+agp = "8.13.2"
 kotlin = "2.0.21"
-protobufPlugin = "0.9.4"
+protobufPlugin = "0.10.1"
 protobuf = "4.28.2"
 junit = "4.13.2"
 coreKtx = "1.13.1"
