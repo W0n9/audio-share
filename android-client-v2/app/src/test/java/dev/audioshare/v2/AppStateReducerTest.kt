@@ -164,6 +164,40 @@ class AppStateReducerTest {
         assertEquals(204, ended.sessionError?.code)
     }
 
+    @Test
+    fun settings_is_reachable_and_an_outcome_never_pulls_the_user_away() {
+        val settings = AppReducer.reduce(AppState(), UiEvent.ShowSettings)
+        assertEquals(AppScreen.SETTINGS, settings.state.screen)
+        assertEquals(AppCommand.None, settings.command)
+
+        for (outcome in listOf(
+            SessionOutcome.Live(LivePhase.PLAYING),
+            SessionOutcome.Reconnecting(attempt = 2, lastCloseCode = 601),
+            SessionOutcome.Ended(EndReason.UserStop),
+            SessionOutcome.Ended(EndReason.Surfaced(204)),
+        )) {
+            val stayed = AppReducer.reduce(
+                settings.state,
+                UiEvent.SessionOutcomeChanged(outcome),
+            ).state
+            assertEquals(AppScreen.SETTINGS, stayed.screen, "$outcome must not navigate")
+        }
+    }
+
+    @Test
+    fun a_session_outcome_does_not_pull_the_user_off_pairing() {
+        val pairing = AppState(
+            screen = AppScreen.PAIRING,
+            address = "10.0.2.2:65531",
+            pairing = PairingUi(mode = "sas", phase = "AWAITING_CONFIRMATION"),
+        )
+        val stayed = AppReducer.reduce(
+            pairing,
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Live(LivePhase.READY)),
+        ).state
+        assertEquals(AppScreen.PAIRING, stayed.screen)
+    }
+
     // ---- Connect / auto-connect --------------------------------------------
 
     @Test
