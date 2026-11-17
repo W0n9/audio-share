@@ -25,6 +25,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.annotation.StringRes
 import androidx.core.content.ContextCompat
 
 /**
@@ -595,11 +597,38 @@ private fun SasText(sas: String?) {
     )
 }
 
+/**
+ * Direction A SESSION screen (ticket 20): one hero with the current outcome,
+ * one primary action, and errors/reconnection in place. Nothing here navigates
+ * on an outcome; the only exits are the explicit Back to Home action, the
+ * user's Stop, or the error card's Retry (repairing closes go to PAIRING).
+ */
 @Composable
 private fun SessionScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
-    Text(stringResource(R.string.session_title), style = MaterialTheme.typography.headlineSmall)
+    val outcome = state.outcome
+    Text(
+        stringResource(R.string.session_title),
+        style = MaterialTheme.typography.headlineSmall,
+        modifier = Modifier.testTag("session-title"),
+    )
     Spacer(Modifier.height(12.dp))
-    SessionStatus(state)
+
+    when (outcome) {
+        is SessionOutcome.Live -> LiveSessionHero(outcome.phase)
+        is SessionOutcome.Reconnecting -> ReconnectingSessionHero(outcome)
+        is SessionOutcome.Ended -> when (outcome.reason) {
+            EndReason.UserStop -> EndedUserStopHero()
+            is EndReason.Surfaced -> SurfacedSessionHero()
+        }
+
+        // A Connect was accepted but the Service has not published yet. Show
+        // the connecting hero and keep Stop disabled until it owns a session.
+        null -> SessionHero(
+            status = stringResource(R.string.session_phase_connecting_title),
+            body = stringResource(R.string.session_phase_connecting_body),
+        )
+    }
+
     Spacer(Modifier.height(8.dp))
     Text(
         if (state.address.isBlank()) {
@@ -611,7 +640,7 @@ private fun SessionScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
     )
     Spacer(Modifier.height(16.dp))
 
-    when (val outcome = state.outcome) {
+    when (outcome) {
         is SessionOutcome.Live,
         is SessionOutcome.Reconnecting -> {
             // Reconnection is mid-session: Stop stays the only primary action
@@ -624,37 +653,18 @@ private fun SessionScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
             )
         }
 
-        is SessionOutcome.Ended -> when (val reason = outcome.reason) {
-            // Two visibly different terminal presentations (ticket 06/20):
-            // a user Stop is silent; a surfaced close is an error card.
-            EndReason.UserStop -> {
-                Text(
-                    stringResource(R.string.session_stopped_by_user),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.testTag("ended-user-stop"),
-                )
-                Spacer(Modifier.height(8.dp))
-                PrimaryButton(
-                    text = stringResource(R.string.session_connect_again),
-                    onClick = { onEvent(UiEvent.ConnectRequested) },
-                    tag = "connect-again",
-                )
-            }
+        is SessionOutcome.Ended -> when (outcome.reason) {
+            // A user Stop is calm: no error card, no code, just a way to
+            // connect again. A surfaced close is the visually distinct card.
+            EndReason.UserStop -> PrimaryButton(
+                text = stringResource(R.string.session_connect_again),
+                onClick = { onEvent(UiEvent.ConnectRequested) },
+                tag = "connect-again",
+            )
 
-            is EndReason.Surfaced -> {
-                val guidance = ErrorGuidanceBook.forCode(reason.code)
-                    ?: ErrorGuidance(
-                        code = reason.code ?: 0,
-                        name = "SESSION_ENDED",
-                        retryable = true,
-                        requiresRepairing = false,
-                        automaticRetry = false,
-                    )
-                ErrorCard(guidance, onEvent)
-            }
+            is EndReason.Surfaced -> SurfacedErrorCard(state, onEvent)
         }
 
-        // A Connect was accepted but the Service has not published yet.
         null -> PrimaryButton(
             text = stringResource(R.string.session_stop),
             onClick = {},
@@ -670,6 +680,115 @@ private fun SessionScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
     ) {
         Text(stringResource(R.string.session_back_home))
     }
+}
+
+@Composable
+private fun LiveSessionHero(phase: LivePhase) {
+    HeroPulse()
+    Spacer(Modifier.height(12.dp))
+    SessionHero(
+        status = stringResource(phase.titleRes()),
+        body = stringResource(phase.bodyRes()),
+    )
+    if (phase == LivePhase.CONNECTING || phase == LivePhase.AUTHENTICATING) {
+        Spacer(Modifier.height(12.dp))
+        LinearProgressIndicator(
+            modifier = Modifier.fillMaxWidth().testTag("session-progress"),
+        )
+    }
+}
+
+@Composable
+private fun ReconnectingSessionHero(outcome: SessionOutcome.Reconnecting) {
+    HeroPulse()
+    Spacer(Modifier.height(12.dp))
+    SessionHero(
+        status = pluralStringResource(
+            R.plurals.reconnect_attempt,
+            outcome.attempt,
+            outcome.attempt,
+        ),
+        body = stringResource(R.string.session_reconnecting_body),
+    )
+    if (outcome.lastCloseCode != null) {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            stringResource(R.string.session_last_close_code, outcome.lastCloseCode),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag("session-reconnect-code"),
+        )
+    }
+    Spacer(Modifier.height(12.dp))
+    LinearProgressIndicator(
+        modifier = Modifier.fillMaxWidth().testTag("session-progress"),
+    )
+}
+
+@Composable
+private fun EndedUserStopHero() {
+    SessionHero(
+        status = stringResource(R.string.session_stopped_by_user),
+        body = stringResource(R.string.session_ended_user_body),
+        statusTag = "ended-user-stop",
+    )
+}
+
+@Composable
+private fun SurfacedSessionHero() {
+    SessionHero(
+        status = stringResource(R.string.session_ended_surfaced_title),
+        body = stringResource(R.string.session_ended_surfaced_body),
+    )
+}
+
+/**
+ * The hero status is the screen reader announcement for an outcome: assertive
+ * so TalkBack reports phase/reconnect/ended changes without user action.
+ */
+@Composable
+private fun SessionHero(
+    status: String,
+    body: String,
+    statusTag: String = "session-state",
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            status,
+            style = MaterialTheme.typography.headlineSmall,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .semantics { liveRegion = LiveRegionMode.Assertive }
+                .testTag(statusTag),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            body,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.testTag("session-hero-body"),
+        )
+    }
+}
+
+@StringRes
+private fun LivePhase.titleRes(): Int = when (this) {
+    LivePhase.CONNECTING -> R.string.session_phase_connecting_title
+    LivePhase.AUTHENTICATING -> R.string.session_phase_authenticating_title
+    LivePhase.READY -> R.string.session_phase_ready_title
+    LivePhase.PLAYING -> R.string.session_phase_playing_title
+}
+
+@StringRes
+private fun LivePhase.bodyRes(): Int = when (this) {
+    LivePhase.CONNECTING -> R.string.session_phase_connecting_body
+    LivePhase.AUTHENTICATING -> R.string.session_phase_authenticating_body
+    LivePhase.READY -> R.string.session_phase_ready_body
+    LivePhase.PLAYING -> R.string.session_phase_playing_body
 }
 
 @Composable
@@ -820,7 +939,7 @@ private fun SectionTitle(text: String) {
 private fun SessionStatus(state: AppState) {
     val label = when (val outcome = state.outcome) {
         null -> stringResource(R.string.session_not_connected)
-        is SessionOutcome.Live -> outcome.phase.name
+        is SessionOutcome.Live -> stringResource(outcome.phase.titleRes())
         is SessionOutcome.Reconnecting -> pluralStringResource(
             R.plurals.reconnect_attempt,
             outcome.attempt,
@@ -845,51 +964,65 @@ private fun SessionStatus(state: AppState) {
     }
 }
 
+/**
+ * The terminal error presentation for `Ended(Surfaced)`. Copy is resolved from
+ * the code through [ErrorGuidanceResources] (so unknown and null codes still
+ * get the documented generic fallback); the action is Retry, or Pair again
+ * when the guidance requires repairing. `state.sessionError` supplies that
+ * flag and never carries copy.
+ */
 @Composable
-private fun ErrorCard(error: ErrorGuidance, onEvent: (UiEvent) -> Unit) {
-    Spacer(Modifier.height(8.dp))
+private fun SurfacedErrorCard(state: AppState, onEvent: (UiEvent) -> Unit) {
+    val reason = (state.outcome as? SessionOutcome.Ended)?.reason as? EndReason.Surfaced
+        ?: return
+    val code = reason.code
+    val requiresRepairing = state.sessionError?.requiresRepairing == true
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("session-error-card"),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.errorContainer,
             contentColor = MaterialTheme.colorScheme.onErrorContainer,
         ),
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text(
-                stringResource(ErrorGuidanceResources.titleRes(error.code)),
+                stringResource(ErrorGuidanceResources.titleRes(code)),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier
                     .semantics { liveRegion = LiveRegionMode.Assertive }
                     .testTag("error-title"),
             )
+            Spacer(Modifier.height(4.dp))
             Text(
-                stringResource(ErrorGuidanceResources.guidanceRes(error.code)),
+                stringResource(ErrorGuidanceResources.guidanceRes(code)),
                 style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
+                modifier = Modifier
+                    .semantics { liveRegion = LiveRegionMode.Assertive }
+                    .testTag("error-guidance"),
             )
-            if (error.fallbackToV1) {
+            if (code != null) {
+                Spacer(Modifier.height(4.dp))
                 Text(
-                    stringResource(R.string.error_no_v1_fallback),
+                    stringResource(R.string.session_error_code, code),
                     style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("session-error-code"),
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { onEvent(UiEvent.Retry) },
-                    modifier = Modifier.heightIn(min = 48.dp).testTag("retry"),
-                ) {
-                    Text(
-                        stringResource(
-                            if (error.requiresRepairing) {
-                                R.string.error_action_pair_again
-                            } else {
-                                R.string.error_action_retry
-                            },
-                        ),
-                    )
-                }
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { onEvent(UiEvent.Retry) },
+                modifier = Modifier.heightIn(min = 48.dp).testTag("retry"),
+            ) {
+                Text(
+                    stringResource(
+                        if (requiresRepairing) {
+                            R.string.error_action_pair_again
+                        } else {
+                            R.string.error_action_retry
+                        },
+                    ),
+                )
             }
         }
     }
