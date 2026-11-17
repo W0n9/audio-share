@@ -35,7 +35,7 @@ data class QrPairingPayload(
     }
 }
 
-class QrPayloadException(message: String) : Exception(message)
+open class QrPayloadException(message: String) : Exception(message)
 
 /**
  * QR payload parsing and identity derivation (pairing.md §4). Fields may
@@ -137,31 +137,56 @@ object PairingPayload {
      */
     fun validateAddress(value: String): Pair<String, Int> {
         if (value.isEmpty() || value.any { it.isWhitespace() } || value.contains('%')) {
-            throw QrPayloadException("invalid address hint")
+            throw AddressValidationException(
+                AddressError.INVALID_ADDRESS_HINT, "invalid address hint",
+            )
         }
         val (host, portText) = if (value.startsWith("[")) {
             val end = value.indexOf(']')
-            if (end <= 1) throw QrPayloadException("invalid bracketed IPv6")
+            if (end <= 1) {
+                throw AddressValidationException(
+                    AddressError.INVALID_BRACKETED_IPV6, "invalid bracketed IPv6",
+                )
+            }
             val host = value.substring(1, end)
-            if (!host.contains(':')) throw QrPayloadException("bracketed host is not IPv6")
+            if (!host.contains(':')) {
+                throw AddressValidationException(
+                    AddressError.BRACKETED_HOST_NOT_IPV6, "bracketed host is not IPv6",
+                )
+            }
             if (!host.matches(Regex("^[0-9A-Fa-f:.]+$"))) {
-                throw QrPayloadException("invalid IPv6 address")
+                throw AddressValidationException(
+                    AddressError.INVALID_IPV6, "invalid IPv6 address",
+                )
             }
             val suffix = value.substring(end + 1)
-            if (!suffix.startsWith(":")) throw QrPayloadException("missing port")
+            if (!suffix.startsWith(":")) {
+                throw AddressValidationException(AddressError.MISSING_PORT, "missing port")
+            }
             host to suffix.substring(1)
         } else {
             val colon = value.lastIndexOf(':')
-            if (colon <= 0) throw QrPayloadException("missing port")
+            if (colon <= 0) {
+                throw AddressValidationException(AddressError.MISSING_PORT, "missing port")
+            }
             val host = value.substring(0, colon)
-            if (host.contains(':')) throw QrPayloadException("IPv6 must be bracketed")
+            if (host.contains(':')) {
+                throw AddressValidationException(
+                    AddressError.IPV6_MUST_BE_BRACKETED, "IPv6 must be bracketed",
+                )
+            }
             if (!host.matches(Regex("^[A-Za-z0-9.-]+$"))) {
-                throw QrPayloadException("invalid host")
+                throw AddressValidationException(AddressError.INVALID_HOST, "invalid host")
             }
             host to value.substring(colon + 1)
         }
-        val port = portText.toIntOrNull() ?: throw QrPayloadException("invalid port")
-        if (port !in 1..65535) throw QrPayloadException("port must be 1..65535")
+        val port = portText.toIntOrNull()
+            ?: throw AddressValidationException(AddressError.INVALID_PORT, "invalid port")
+        if (port !in 1..65535) {
+            throw AddressValidationException(
+                AddressError.PORT_OUT_OF_RANGE, "port must be 1..65535",
+            )
+        }
         return host to port
     }
 

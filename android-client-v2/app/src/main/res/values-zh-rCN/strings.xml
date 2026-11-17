@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simplified Chinese (zh-CN). Must stay key-for-key aligned with values/strings.xml. -->
+<resources>
+    <!-- Shell -->
+    <string name="app_name">Audio Share</string>
+    <string name="app_label">audio-share v2</string>
+    <string name="action_settings">设置</string>
+    <string name="action_about">关于</string>
+    <string name="action_back">返回</string>
+
+    <!-- HOME -->
+    <string name="home_title">准备好了吗</string>
+    <string name="home_subtitle_unpaired">与你的服务器配对后即可开始收听。</string>
+    <string name="home_subtitle_paired">连接到已在此手机上配对的服务器。</string>
+    <string name="home_paired_server">已配对的服务器</string>
+    <string name="home_paired_badge">已配对</string>
+    <string name="home_connect">连接</string>
+    <string name="home_pair_code">使用配对码</string>
+    <string name="home_pair_new">配对新手机</string>
+    <string name="home_scan_qr">扫描二维码</string>
+    <string name="home_scan_qr_instead">改用扫描二维码</string>
+    <string name="server_address_label">服务器地址</string>
+    <string name="server_address_placeholder">host:port</string>
+
+    <!-- 地址校验 -->
+    <string name="address_error_missing_port">地址必须包含端口，例如 host:47820。</string>
+    <string name="address_error_invalid_port">端口必须是数字。</string>
+    <string name="address_error_port_range">端口必须在 1 到 65535 之间。</string>
+    <string name="address_error_invalid_host">主机名只能包含字母、数字、点和连字符。</string>
+    <string name="address_error_ipv6_bracketed">原始 IPv6 地址必须放在方括号中，例如 [::1]:47820。</string>
+    <string name="address_error_invalid_ipv6">请输入有效的 IPv6 地址。</string>
+    <string name="address_error_bracketed_host_not_ipv6">方括号中的主机必须是 IPv6 地址。</string>
+    <string name="address_error_invalid">请按 host:port 格式输入服务器地址。</string>
+    <string name="address_error_required">请先输入服务器地址。</string>
+    <string name="address_error_no_saved_pairing">没有已保存的配对。请先与服务器配对。</string>
+
+    <!-- 相机权限与配对提示 -->
+    <string name="scan_permission_denied">相机权限被拒绝。请改为粘贴配对链接。</string>
+    <string name="pairing_notice_sas_mismatch">配对码与服务器上显示的不一致。</string>
+    <string name="pairing_notice_invalid_link">这不是有效的 Audio Share 配对链接。</string>
+
+    <!-- SESSION -->
+    <string name="session_title">会话</string>
+    <string name="session_state_prefix">状态：</string>
+    <string name="session_not_connected">未连接</string>
+    <string name="session_server_unset">服务器：未设置</string>
+    <string name="session_server_value">服务器：%1$s</string>
+    <string name="session_stop">停止</string>
+    <string name="session_stopped_by_user">你已停止此会话。</string>
+    <string name="session_connect_again">重新连接</string>
+    <string name="session_outcome_stopped">已停止</string>
+    <string name="session_outcome_ended">已结束</string>
+    <string name="session_back_home">返回主页</string>
+    <plurals name="reconnect_attempt">
+        <item quantity="one">正在重连（第 %1$d 次）</item>
+        <item quantity="other">正在重连（第 %1$d 次）</item>
+    </plurals>
+
+    <!-- 错误卡操作 -->
+    <string name="error_action_retry">重试</string>
+    <string name="error_action_pair_again">重新配对</string>
+    <string name="error_no_v1_fallback">此应用绝不会回退到 v1。</string>
+
+    <!-- ABOUT -->
+    <string name="about_title">关于此测试版</string>
+    <string name="version_label">版本 %1$s（%2$d）</string>
+    <string name="about_known_limitations">已知限制</string>
+    <string name="about_limit_jitter">没有抖动缓冲、丢包隐藏或时钟漂移校正。音质为尽力而为。</string>
+    <string name="about_limit_one_client">每个服务器仅支持一个客户端。不支持多部手机同时连接。</string>
+    <string name="about_limit_diagnostics">不导出诊断信息，不做遥测，也不录制原始音频。</string>
+    <string name="about_v1_title">关于 v1</string>
+    <string name="about_v1_warning">v1 应用发送音频时不加密也不认证。请仅在可信网络中使用 v1。此 v2 测试版是加密且经过认证的客户端；v2 失败绝不会降级到 v1。</string>
+    <string name="about_updates_title">更新</string>
+    <string name="about_updates_body">更新需手动进行。请从 GitHub Release 页面下载新的 APK，并在安装前校验其 SHA-256 校验和。应用内没有更新程序。</string>
+    <string name="about_privacy_title">隐私</string>
+    <string name="about_privacy_body">此测试版不做遥测，也不录制原始音频。</string>
+
+    <!-- SETTINGS -->
+    <string name="settings_title">设置</string>
+    <string name="settings_paired_server">已配对的服务器</string>
+    <string name="settings_server_name">名称</string>
+    <string name="settings_server_address">地址</string>
+    <string name="settings_server_fingerprint">指纹</string>
+    <string name="settings_empty_body">尚未配对任何服务器。</string>
+    <string name="settings_pair_phone">配对此手机</string>
+    <string name="settings_about_link">关于此测试版</string>
+
+    <!-- 前台通知 -->
+    <string name="notification_channel_name">Audio Share 会话</string>
+    <string name="notification_title">Audio Share</string>
+    <string name="notification_body">媒体会话运行中。锁屏时仍会播放音频。</string>
+    <string name="notification_stop">停止</string>
+
+    <!-- 错误指引登记表 -->
+    <string name="error_201_title">配对被拒绝</string>
+    <string name="error_201_guidance">配对失败或邀请已失效。请让服务器重新发起配对，然后使用新的二维码或配对码。服务器仍需接受此设备。</string>
+    <string name="error_202_title">此手机尚未与该服务器配对</string>
+    <string name="error_202_guidance">请重新配对此手机。服务器无法识别此身份。</string>
+    <string name="error_203_title">服务器拒绝了身份验证</string>
+    <string name="error_203_guidance">请重新配对此手机。如果问题再次出现，请检查服务器时钟和身份文件。</string>
+    <string name="error_204_title">此设备已被撤销</string>
+    <string name="error_204_guidance">请让服务器操作员重新配对此设备。已撤销的设备无法重新连接。</string>
+    <string name="error_205_title">服务器身份与已保存的固定值不匹配</string>
+    <string name="error_205_guidance">请确认连接到正确的服务器，然后移除已保存的配对并重新配对。已保存的固定值绝不会被自动替换。</string>
+    <string name="error_206_title">配对超时</string>
+    <string name="error_206_guidance">十分钟的配对交换期限已过。请在服务器上重新发起配对，并使用新的二维码或配对码。</string>
+    <string name="error_301_title">服务器繁忙</string>
+    <string name="error_301_guidance">请稍候；应用会按有界退避自动重试。</string>
+    <string name="error_302_title">尝试次数过多</string>
+    <string name="error_302_guidance">请等待一分钟后再试。服务器会对反复失败进行速率限制。</string>
+    <string name="error_303_title">另一个会话接管了此设备</string>
+    <string name="error_303_guidance">由于同一设备在别处连接，此会话已关闭。如需要请重新连接。</string>
+    <string name="error_401_title">协议错误</string>
+    <string name="error_401_guidance">服务器与应用在线上格式上不一致。请更新应用或报告此问题。</string>
+    <string name="error_402_title">意外的协议状态</string>
+    <string name="error_402_guidance">请重新连接。如果问题反复出现，请报告此问题。</string>
+    <string name="error_403_title">此手机无法播放服务器的音频格式</string>
+    <string name="error_403_guidance">请让服务器操作员选择受支持的 PCM 格式。</string>
+    <string name="error_501_title">服务器没有可发送的音频</string>
+    <string name="error_501_guidance">请等待服务器开始采集，然后重试。</string>
+    <string name="error_502_title">音频流已结束</string>
+    <string name="error_502_guidance">服务器已停止发送音频。请重新连接以继续。</string>
+    <string name="error_503_title">服务器正在停止</string>
+    <string name="error_503_guidance">服务器正在关闭；请在它重启后重新连接。</string>
+    <string name="error_601_title">连接已断开</string>
+    <string name="error_601_guidance">请检查网络。应用会按有界退避自动重试。</string>
+    <string name="error_602_title">当前网络路径无法传输音频</string>
+    <string name="error_602_guidance">请重新连接。如果网络阻止 UDP，请切换网络或使用 VPN。</string>
+
+    <!-- 未知或空错误码始终使用此回退文案。 -->
+    <string name="error_generic_title">出了点问题</string>
+    <string name="error_generic_guidance">请重新连接后再试。如果问题反复出现，请报告此问题。</string>
+</resources>
