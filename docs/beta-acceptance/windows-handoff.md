@@ -152,13 +152,21 @@ Beta APK 的 `applicationId` 是 `dev.audioshare.v2`，与 v1 的
 有 adb 时：
 
 ```powershell
-adb install -r .\audio-share-client-v2-0.2.0-beta.apk
+# 如果手机上有更早的 v2 beta，先卸载（保留数据升级可能触发 205）：
+# adb uninstall dev.audioshare.v2
+adb install .\audio-share-client-v2-0.2.0-beta.apk
 ```
+
+升级说明：更早的 v2 beta 经 `install -r` 覆盖可能保留陈旧凭据，随后
+“Connect to saved Server” 报 205；请卸载旧 beta 后重新安装并重新配对。
 
 无 adb 时：把 APK 传到手机，允许“安装未知来源应用”后安装。打开 App，确认：
 - 版本 **0.2.0-beta**；
 - Home 可输入 Server 地址（Windows 主机 LAN/VPN 地址，v2 端口 65531）；
 - About 显示 beta 限制、v1 明文警告与手动更新说明。
+
+本 beta 的 `server.log` 只记录启动/停止；v2 配对、连接、`ClientClosed(701)` 与撤销事件暂未写入
+Server 日志，排查关闭码请以手机 logcat 为准（下一轮补齐）。
 
 v1 APK 安装后应仍可独立打开，v1 与 v2 两个图标共存。
 
