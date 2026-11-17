@@ -1,0 +1,324 @@
+package dev.audioshare.v2.session
+
+import dev.audioshare.v2.ClientIdentityResult
+import dev.audioshare.v2.ClientSigner
+import dev.audioshare.v2.CredentialRecord
+import dev.audioshare.v2.CredentialStore
+import dev.audioshare.v2.EndReason
+import dev.audioshare.v2.LivePhase
+import dev.audioshare.v2.PairingStart
+import dev.audioshare.v2.PairingStateRelay
+import dev.audioshare.v2.SessionConfiguration
+import dev.audioshare.v2.SessionOutcome
+import dev.audioshare.v2.SessionOutcomeStore
+import dev.audioshare.v2.StopReason
+import org.json.JSONObject
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/**
+ * Ticket 21: the Service orchestration seam. A fake [SessionEngine] is the only
+ * collaborator, so these tests never touch Android, JNI or Keystore. They drive
+ * the same calls [dev.audioshare.v2.ControlSessionService] makes and assert
+ * user-visible outcomes: which engine was created, what it was started/stopped
+ * with, what reached the replayable stores, and what a stale engine can still
+ * publish.
+ */
+class SessionOrchestratorTest {
+
+    @Test
+    fun connect_starts_an_engine_with_the_configuration_and_a_live_outcome_reaches_the_ui() {
+        val fixture = Fixture()
+        val seen = mutableListOf<SessionOutcome>()
+        fixture.outcomes.setListener { seen += it }
+        val configuration = authenticatedConfiguration()
+
+        fixture.orchestrator.startSession(configuration, null)
+
+        assertTrue(fixture.orchestrator.hasEngine)
+        assertEquals(1, fixture.factory.engines.size)
+        val engine = fixture.factory.engines.single()
+        assertEquals(listOf(configuration), engine.started)
+
+        val ready = SessionOutcome.Live(LivePhase.READY)
+        engine.sink.publish(ready)
+
+        assertEquals(ready, fixture.outcomes.snapshot())
+        assertEquals(listOf<SessionOutcome>(ready), seen)
+    }
+
+    @Test
+    fun a_second_connect_supersedes_the_first_engine_and_its_late_outcome_is_dropped() {
+        val fixture = Fixture()
+        val configuration = authenticatedConfiguration()
+
+        fixture.orchestrator.startSession(configuration, null)
+        val first = fixture.factory.engines.single()
+        fixture.orchestrator.startSession(configuration, null)
+        val second = fixture.factory.engines.last()
+
+        assertEquals(listOf(StopReason.Superseded), first.stops)
+        assertEquals(2, fixture.factory.engines.size)
+
+        val seen = mutableListOf<SessionOutcome>()
+        fixture.outcomes.setListener { seen += it }
+        first.sink.publish(SessionOutcome.Live(LivePhase.READY))
+        second.sink.publish(SessionOutcome.Live(LivePhase.AUTHENTICATING))
+
+        assertEquals(SessionOutcome.Live(LivePhase.AUTHENTICATING), fixture.outcomes.snapshot())
+        assertEquals(listOf<SessionOutcome>(SessionOutcome.Live(LivePhase.AUTHENTICATING)), seen)
+    }
+
+    @Test
+    fun stop_user_stops_the_engine_and_keeps_the_user_stop_outcome_replayable() {
+        val fixture = Fixture()
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        val engine = fixture.factory.engines.single()
+        val seen = mutableListOf<SessionOutcome>()
+        fixture.outcomes.setListener { seen += it }
+        val ended = SessionOutcome.Ended(EndReason.UserStop)
+
+        fixture.orchestrator.stop(StopReason.User)
+
+        assertEquals(listOf(StopReason.User), engine.stops)
+        assertFalse(fixture.orchestrator.hasEngine)
+        assertEquals(ended, fixture.outcomes.snapshot())
+        assertEquals(listOf<SessionOutcome>(ended), seen)
+
+        // The engine already published its one Ended; nothing later surfaces.
+        engine.sink.publish(SessionOutcome.Live(LivePhase.READY))
+        assertEquals(ended, fixture.outcomes.snapshot())
+        assertEquals(listOf<SessionOutcome>(ended), seen)
+    }
+
+    @Test
+    fun an_internal_stop_invalidates_the_generation_without_surfacing_an_outcome() {
+        for (reason in listOf(StopReason.PairingCancel, StopReason.Shutdown)) {
+            val fixture = Fixture()
+            fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+            val engine = fixture.factory.engines.single()
+
+            fixture.orchestrator.stop(reason)
+
+            assertEquals(listOf(reason), engine.stops)
+            assertNull(fixture.outcomes.snapshot(), "$reason must not surface an outcome")
+
+            engine.sink.publish(SessionOutcome.Reconnecting(attempt = 1, lastCloseCode = 601))
+            assertNull(fixture.outcomes.snapshot(), "$reason must orphan the old generation")
+        }
+    }
+
+    @Test
+    fun confirm_pairing_is_forwarded_once_per_exchange_and_resets_for_a_new_one() {
+        val fixture = Fixture()
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+        val first = fixture.factory.engines.single()
+
+        assertTrue(fixture.orchestrator.confirmPairing())
+        assertFalse(fixture.orchestrator.confirmPairing())
+        assertEquals(1, first.confirmCalls, "the gate stops a duplicate confirm")
+
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+        val second = fixture.factory.engines.last()
+
+        assertTrue(fixture.orchestrator.confirmPairing())
+        assertEquals(1, second.confirmCalls, "a new exchange gets a fresh confirm")
+    }
+
+    @Test
+    fun a_rejected_confirm_does_not_consume_the_one_attempt_for_the_exchange() {
+        val fixture = Fixture()
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+        val engine = fixture.factory.engines.single()
+        engine.confirmResult = false
+
+        assertFalse(fixture.orchestrator.confirmPairing())
+        engine.confirmResult = true
+        assertTrue(fixture.orchestrator.confirmPairing())
+        assertEquals(2, engine.confirmCalls)
+    }
+
+    @Test
+    fun a_current_engines_credential_is_persisted_with_the_pairing_context() {
+        val fixture = Fixture()
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+
+        fixture.factory.engines.single().listener.onCredential(credentialJson(clientId = "client-1"))
+
+        val record = fixture.credentials.all().single()
+        assertEquals(PIN, record.serverSpkiSha256Hex)
+        assertEquals(SERVER_KEY, record.serverPublicKeyHex)
+        assertEquals("v2-test", record.keyAlias)
+        assertEquals("192.0.2.10", record.host)
+        assertEquals(65531, record.port)
+        assertEquals("192.0.2.10:65531", record.addressHint)
+        assertEquals("client-1", record.clientId)
+        assertEquals("phone", record.displayName, "an empty native name falls back to the pairing context")
+        assertTrue(record.softwareBacked)
+    }
+
+    @Test
+    fun a_superseded_engines_late_pairing_and_credential_events_are_dropped() {
+        val fixture = Fixture()
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+        val first = fixture.factory.engines.single()
+        first.listener.onPairingState(awaitingJson())
+        assertNotNull(fixture.pairing.snapshot())
+
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+        val second = fixture.factory.engines.last()
+        assertNull(fixture.pairing.snapshot(), "a new exchange clears the old snapshot")
+
+        first.listener.onPairingState(awaitingJson())
+        first.listener.onCredential(credentialJson(clientId = "stale"))
+        assertNull(fixture.pairing.snapshot())
+        assertTrue(fixture.credentials.all().isEmpty(), "a superseded engine cannot persist")
+
+        second.listener.onPairingState(awaitingJson())
+        second.listener.onCredential(credentialJson(clientId = "current"))
+        assertNotNull(fixture.pairing.snapshot())
+        assertEquals("current", fixture.credentials.all().single().clientId)
+    }
+
+    @Test
+    fun a_stopped_engines_late_pairing_credential_and_outcome_events_are_dropped() {
+        val fixture = Fixture()
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+        val engine = fixture.factory.engines.single()
+        engine.listener.onPairingState(awaitingJson())
+        assertNotNull(fixture.pairing.snapshot())
+
+        fixture.orchestrator.stop(StopReason.User)
+        assertNull(fixture.pairing.snapshot(), "Stop clears the visible pairing exchange")
+
+        engine.listener.onPairingState(awaitingJson())
+        engine.listener.onCredential(credentialJson(clientId = "stale"))
+        engine.sink.publish(SessionOutcome.Live(LivePhase.READY))
+
+        assertNull(fixture.pairing.snapshot())
+        assertTrue(fixture.credentials.all().isEmpty())
+        assertNull(fixture.outcomes.snapshot(), "a pairing exchange never feeds the outcome store")
+    }
+
+    @Test
+    fun a_pairing_exchange_never_feeds_the_session_outcome_store() {
+        val fixture = Fixture()
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+        val engine = fixture.factory.engines.single()
+
+        engine.sink.publish(SessionOutcome.Live(LivePhase.READY))
+        engine.sink.publish(SessionOutcome.Ended(EndReason.Surfaced(204)))
+
+        assertNull(fixture.outcomes.snapshot())
+    }
+
+    @Test
+    fun the_factory_accepts_the_test_support_configuration_unchanged() {
+        val fixture = Fixture()
+        val harnessConfiguration = SessionConfiguration(
+            host = "127.0.0.1",
+            port = 65531,
+            serverSpkiSha256Hex = PIN,
+            serverPublicKeyHex = SERVER_KEY,
+            clientName = "smoke-client",
+            useNativeTestIdentity = true,
+        )
+
+        fixture.orchestrator.startSession(harnessConfiguration, null)
+
+        assertEquals(listOf(harnessConfiguration), fixture.factory.engines.single().started)
+    }
+
+    // ---- fixtures ----------------------------------------------------------
+
+    private class Fixture {
+        val factory = FakeSessionEngineFactory()
+        val outcomes = SessionOutcomeStore()
+        val pairing = PairingStateRelay()
+        val credentials = InMemoryCredentialStore()
+        val logs = mutableListOf<String>()
+        val orchestrator = SessionOrchestrator(
+            engineFactory = factory,
+            outcomes = outcomes,
+            pairing = pairing,
+            credentials = credentials,
+            log = { logs += it },
+        )
+    }
+
+    private companion object {
+        const val PIN = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        const val SERVER_KEY = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+        fun authenticatedConfiguration() = SessionConfiguration(
+            host = "192.0.2.10",
+            port = 65531,
+            serverSpkiSha256Hex = PIN,
+            serverPublicKeyHex = SERVER_KEY,
+            clientName = "phone",
+        )
+
+        fun pairingConfiguration() = authenticatedConfiguration().copy(
+            pairing = PairingStart(mode = 1, nonceHex = "00".repeat(16), displayName = "phone"),
+        )
+
+        fun pairingContext() = PairingContext(
+            identity = ClientIdentityResult(
+                signer = FakeSigner,
+                alias = "v2-test",
+                softwareBacked = true,
+                hardwareBacked = false,
+            ),
+            host = "192.0.2.10",
+            port = 65531,
+            displayName = "phone",
+            mode = "qr",
+        )
+
+        fun credentialJson(clientId: String) = JSONObject().apply {
+            put("server_spki_sha256", PIN)
+            put("server_public_key", SERVER_KEY)
+            put("client_id", clientId)
+            put("display_name", "")
+        }.toString()
+
+        fun awaitingJson() = JSONObject().apply {
+            put("mode", "qr")
+            put("phase", "AWAITING_CONFIRMATION")
+            put("sas", "123456")
+            put("fingerprint", "ABCD-EFGH")
+            put("server_public_key", SERVER_KEY)
+            put("server_spki_sha256", PIN)
+            put("client_id", "client-1")
+            put("display_name", "phone")
+        }.toString()
+    }
+}
+
+/** A minimal signer so [ClientIdentityResult] can be built without Keystore. */
+private object FakeSigner : ClientSigner {
+    override fun publicKeySec1(): ByteArray = ByteArray(33)
+    override fun sign(rawContext: ByteArray): ByteArray = ByteArray(64)
+}
+
+private class InMemoryCredentialStore : CredentialStore {
+    private val records = mutableListOf<CredentialRecord>()
+
+    override fun upsert(record: CredentialRecord) {
+        records.removeAll { it.serverSpkiSha256Hex == record.serverSpkiSha256Hex }
+        records += record
+    }
+
+    override fun all(): List<CredentialRecord> = records.toList()
+
+    override fun find(serverSpkiSha256Hex: String): CredentialRecord? =
+        records.firstOrNull { it.serverSpkiSha256Hex == serverSpkiSha256Hex }
+
+    override fun delete(serverSpkiSha256Hex: String) {
+        records.removeAll { it.serverSpkiSha256Hex == serverSpkiSha256Hex }
+    }
+}
