@@ -1,6 +1,9 @@
 package dev.audioshare.v2
 
+import android.content.Context
+import android.content.pm.ActivityInfo
 import androidx.activity.ComponentActivity
+import androidx.annotation.StringRes
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -14,8 +17,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
-import android.content.Context
-import android.content.pm.ActivityInfo
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
 import org.junit.Test
@@ -34,8 +35,8 @@ import kotlin.test.assertTrue
 
 /**
  * Seam 3 of ticket 21: key Compose screens under Robolectric. Assertions are
- * on user-visible text/state and emitted events, never pixels. The screen is
- * driven by the same pure reducer the app uses.
+ * on user-visible text/state and emitted events, never pixels. Copy is looked
+ * up from resources so the same tests hold for en and zh-CN.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -45,6 +46,13 @@ class AudioShareAppTest {
     private val compose = createAndroidComposeRule<ComponentActivity>()
 
     private val events = mutableListOf<UiEvent>()
+
+    private val context: Context get() = ApplicationProvider.getApplicationContext()
+
+    private fun str(@StringRes id: Int): String = context.getString(id)
+
+    private fun reconnect(attempt: Int): String =
+        context.resources.getQuantityString(R.plurals.reconnect_attempt, attempt, attempt)
 
     /**
      * `createComposeRule()` launches a bare ComponentActivity. `ui-test-manifest`
@@ -56,15 +64,15 @@ class AudioShareAppTest {
     private val registerHostActivity = TestRule { base: Statement, _: Description ->
         object : Statement() {
             override fun evaluate() {
-                val context = ApplicationProvider.getApplicationContext<Context>()
+                val ctx = ApplicationProvider.getApplicationContext<Context>()
                 val info = ActivityInfo().apply {
                     name = ComponentActivity::class.java.name
-                    packageName = context.packageName
-                    applicationInfo = context.applicationInfo
+                    packageName = ctx.packageName
+                    applicationInfo = ctx.applicationInfo
                     enabled = true
                     exported = false
                 }
-                shadowOf(context.packageManager).addOrUpdateActivity(info)
+                shadowOf(ctx.packageManager).addOrUpdateActivity(info)
                 base.evaluate()
             }
         }
@@ -93,7 +101,9 @@ class AudioShareAppTest {
     fun home_accepts_a_server_address_and_rejects_a_bare_host() {
         start(AppState())
         compose.onNodeWithTag("address-input").performTextReplacement("10.0.2.2")
-        compose.onNodeWithText("missing port").assertIsDisplayed()
+        compose.onNodeWithTag("address-error")
+            .assertIsDisplayed()
+            .assertTextContains(str(R.string.address_error_missing_port))
         compose.onNodeWithTag("address-input").performTextReplacement("10.0.2.2:65531")
         compose.onNodeWithTag("address-input").assertTextContains("10.0.2.2:65531")
         compose.onNodeWithTag("pair-code").assertIsEnabled()
@@ -102,10 +112,10 @@ class AudioShareAppTest {
     @Test
     fun home_offers_pairing_choices_and_opens_the_pairing_screen() {
         start(AppState(address = "10.0.2.2:65531", addressError = null))
-        compose.onNodeWithText("Pair with code").assertIsDisplayed()
-        compose.onNodeWithText("Scan QR code").assertIsDisplayed()
-        compose.onNodeWithTag("pair-code").performClick()
-        compose.onNodeWithText("Pair your phone").assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.home_pair_code)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.home_scan_qr)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("pair-code").performScrollTo().performClick()
+        compose.onNodeWithText("Pair your phone").performScrollTo().assertIsDisplayed()
         assertTrue(events.contains(UiEvent.StartSasPairing))
     }
 
@@ -120,8 +130,9 @@ class AudioShareAppTest {
                 ),
             )
         )
-        compose.onNodeWithText("This device was revoked").assertIsDisplayed()
-        compose.onNodeWithText("Pair again").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.error_204_title)).assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.error_action_pair_again))
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("retry").performScrollTo().performClick()
         compose.onNodeWithText("Pair your phone").assertIsDisplayed()
     }
@@ -153,7 +164,7 @@ class AudioShareAppTest {
                 outcome = SessionOutcome.Reconnecting(attempt = 3, lastCloseCode = 601),
             )
         )
-        compose.onNodeWithTag("session-state").assertTextContains("RECONNECTING (attempt 3)")
+        compose.onNodeWithTag("session-state").assertTextContains(reconnect(3))
         compose.onNodeWithTag("stop").assertIsEnabled()
     }
 
@@ -181,7 +192,7 @@ class AudioShareAppTest {
             )
         )
         compose.onNodeWithTag("error-title").assertIsDisplayed()
-        compose.onNodeWithText("Connection lost").assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.error_601_title)).assertIsDisplayed()
         compose.onNodeWithTag("ended-user-stop").assertDoesNotExist()
     }
 
@@ -264,12 +275,10 @@ class AudioShareAppTest {
                 ),
             )
         )
-        compose.onNodeWithText("Pairing was rejected").assertIsDisplayed()
-        compose.onNodeWithText(
-            "The pairing failed or its invitation is no longer valid. Ask the Server to start " +
-                "a new pairing, then use the fresh QR code or pairing code. The Server must " +
-                "still accept this device.",
-        ).assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.error_201_title))
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.error_201_guidance))
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("scan-again").performScrollTo().assertIsDisplayed().performClick()
         assertTrue(events.contains(UiEvent.RequestScan))
     }
@@ -284,9 +293,9 @@ class AudioShareAppTest {
                 ),
             )
         )
-        compose.onNodeWithTag("settings").performScrollTo().performClick()
+        compose.onNodeWithTag("settings").performClick()
         compose.onNodeWithTag("settings-title").assertIsDisplayed()
-        compose.onNodeWithTag("settings-server").assertTextContains("Pixel", substring = true)
+        compose.onNodeWithText("Pixel").assertIsDisplayed()
         compose.onNodeWithTag("settings-version")
             .assertTextContains("0.2.0-beta", substring = true)
         assertTrue(events.contains(UiEvent.ShowSettings))
@@ -312,7 +321,7 @@ class AudioShareAppTest {
         compose.runOnUiThread {
             compose.activity.onBackPressedDispatcher.onBackPressed()
         }
-        compose.onNodeWithText("Audio Share (beta)").assertIsDisplayed()
+        compose.onNodeWithTag("home-title").assertIsDisplayed()
         assertTrue(events.contains(UiEvent.BackPressed))
         assertFalse(events.contains(UiEvent.StopRequested), "Back is not Stop")
     }
@@ -329,7 +338,7 @@ class AudioShareAppTest {
         compose.runOnUiThread {
             compose.activity.onBackPressedDispatcher.onBackPressed()
         }
-        compose.onNodeWithText("Audio Share (beta)").assertIsDisplayed()
+        compose.onNodeWithTag("home-title").assertIsDisplayed()
         assertTrue(events.contains(UiEvent.BackPressed))
         assertFalse(events.contains(UiEvent.StopRequested), "playback keeps running")
     }
@@ -350,12 +359,8 @@ class AudioShareAppTest {
     fun about_screen_states_the_beta_version_limits_and_v1_warning() {
         start(AppState(screen = AppScreen.ABOUT))
         compose.onNodeWithTag("about-version").assertTextContains("0.2.0-beta", substring = true)
-        compose.onNodeWithText("Known limitations").assertIsDisplayed()
-        compose.onNodeWithText(
-            "The v1 app sends audio without encryption or authentication. Use v1 only on a " +
-                "trusted network. This v2 beta is the encrypted, authenticated client; a v2 " +
-                "failure never downgrades to v1.",
-        ).assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.about_known_limitations)).assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.about_v1_warning)).assertIsDisplayed()
         assertEquals(AppScreen.ABOUT, AppState(screen = AppScreen.ABOUT).screen)
     }
 }
