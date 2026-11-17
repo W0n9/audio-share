@@ -70,6 +70,15 @@ class ControlSessionService : Service(), SessionController {
     /** Context for the in-flight pairing, used when the credential arrives. */
     private var pairingContext: PairingContext? = null
 
+    /**
+     * QR mode auto-confirms once per exchange. This gate is the durable guard
+     * for Activity recreation: a re-created Activity may replay the same
+     * AWAITING_CONFIRMATION snapshot before the native `CONFIRMING` phase is
+     * published, and a second queued confirmation would end the session with
+     * 402 (the native confirm channel is not idempotent).
+     */
+    private val confirmGate = PairingConfirmGate()
+
     /** Platform media session carried by the foreground notification. */
     private var mediaSession: MediaSession? = null
 
@@ -157,8 +166,13 @@ class ControlSessionService : Service(), SessionController {
             }
             ACTION_CONFIRM_PAIRING -> {
                 startForegroundCompat()
-                if (session?.confirmPairing() != true) {
-                    Log.i(TAG, "confirmPairing ignored: no verified pairing is awaiting confirmation")
+                val queued = confirmGate.confirm { session?.confirmPairing() == true }
+                if (!queued) {
+                    Log.i(
+                        TAG,
+                        "confirmPairing ignored: already confirmed for this exchange " +
+                            "or no verified pairing is awaiting confirmation",
+                    )
                 }
                 return START_STICKY
             }
@@ -318,6 +332,7 @@ class ControlSessionService : Service(), SessionController {
     private fun startSession(configuration: SessionConfiguration, pairing: Boolean) {
         teardownSession()
         lastErrorCode = null
+        confirmGate.reset()
         if (pairing) pairingRelay.clear()
         val source = relay.beginSession().also { sessionSource = it }
         val current = ClientSession(this, object : ClientSession.Listener {
@@ -456,6 +471,7 @@ class ControlSessionService : Service(), SessionController {
 
     private fun stopSession() {
         teardownSession()
+        confirmGate.reset()
         pairingRelay.clear()
         pairingContext = null
         releaseMediaSession()
@@ -493,6 +509,28 @@ class ControlSessionService : Service(), SessionController {
 }
 
 class ControlBinder(val service: ControlSessionService) : Binder()
+
+/**
+ * Exactly-once guard for one pairing exchange. The reducer already suppresses
+ * duplicate snapshots, but an Activity recreation starts from a fresh
+ * `AppState`; the Service must therefore also refuse a second confirmation
+ * until a new exchange starts. A rejected dispatch (native has nothing
+ * awaiting confirmation) does not consume the one attempt.
+ */
+internal class PairingConfirmGate {
+    private var dispatched = false
+
+    fun confirm(dispatch: () -> Boolean): Boolean {
+        if (dispatched) return false
+        if (!dispatch()) return false
+        dispatched = true
+        return true
+    }
+
+    fun reset() {
+        dispatched = false
+    }
+}
 
 /** Hex decoding helpers shared by the pairing payload paths. */
 internal fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }

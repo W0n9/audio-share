@@ -53,6 +53,11 @@ class AppStateReducerTest {
         errorCode = null,
     )
 
+    private fun awaitingQr(
+        sas: String = "123 456",
+        fingerprint: String = "AAAA1111 BBBB2222",
+    ) = awaitingSas(sas).copy(mode = "qr", fingerprint = fingerprint)
+
     @Test
     fun connecting_session_maps_idle_to_connecting_and_tracks_native_states() {
         val startup = AppReducer.reduce(
@@ -121,22 +126,161 @@ class AppStateReducerTest {
     }
 
     @Test
-    fun qr_mode_confirms_without_typing_the_sas_because_the_qr_pinned_the_server() {
-        val awaiting = AppState(
-            screen = AppScreen.PAIRING,
-            address = "10.0.2.2:65531",
-            pairing = PairingUi(
-                mode = "qr",
-                phase = "AWAITING_CONFIRMATION",
-                sas = "123 456",
-                fingerprint = "AAAA1111 BBBB2222",
-            ),
+    fun qr_mode_auto_confirms_exactly_once_after_the_native_binding_check() {
+        val started = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531"),
+            UiEvent.StartQrPairing(qrUri()),
         )
-        assertTrue(awaiting.pairing!!.canConfirm)
+
+        val awaiting = AppReducer.reduce(
+            started.state,
+            UiEvent.PairingSnapshotChanged(awaitingQr()),
+        )
         assertEquals(
             AppCommand.ConfirmPairing,
-            AppReducer.reduce(awaiting, UiEvent.ConfirmPairing).command,
+            awaiting.command,
+            "the scan is the Client's action; QR mode confirms without a tap",
         )
+        assertTrue(awaiting.state.pairing!!.autoConfirmSent)
+        assertEquals("123 456", awaiting.state.pairing!!.sas)
+        assertEquals("AAAA1111 BBBB2222", awaiting.state.pairing!!.fingerprint)
+
+        // The native watcher republishes the current snapshot every ~25 ms;
+        // duplicate snapshots must not queue a second PairingConfirm.
+        val duplicate = AppReducer.reduce(
+            awaiting.state,
+            UiEvent.PairingSnapshotChanged(awaitingQr()),
+        )
+        assertEquals(AppCommand.None, duplicate.command)
+        assertTrue(duplicate.state.pairing!!.autoConfirmSent)
+
+        val confirming = AppReducer.reduce(
+            awaiting.state,
+            UiEvent.PairingSnapshotChanged(awaitingQr().copy(phase = "CONFIRMING")),
+        )
+        assertEquals(AppCommand.None, confirming.command)
+        assertTrue(confirming.state.pairing!!.isConfirming)
+    }
+
+    @Test
+    fun qr_auto_confirm_rearms_if_the_native_phase_never_advances() {
+        val started = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531"),
+            UiEvent.StartQrPairing(qrUri()),
+        ).state
+        var state = AppReducer.reduce(
+            started,
+            UiEvent.PairingSnapshotChanged(awaitingQr()),
+        ).state
+        var retried = false
+        repeat(AppReducer.QR_AUTO_CONFIRM_RETRY_SNAPSHOTS) {
+            val next = AppReducer.reduce(state, UiEvent.PairingSnapshotChanged(awaitingQr()))
+            state = next.state
+            if (next.command == AppCommand.ConfirmPairing) retried = true
+        }
+        assertTrue(
+            retried,
+            "a confirmation the Service rejected must not wedge the screen in AWAITING",
+        )
+    }
+
+    @Test
+    fun sas_mode_never_auto_confirms_and_keeps_the_explicit_tap() {
+        val started = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531"),
+            UiEvent.StartSasPairing,
+        )
+        val awaiting = AppReducer.reduce(
+            started.state,
+            UiEvent.PairingSnapshotChanged(awaitingSas()),
+        )
+        assertEquals(AppCommand.None, awaiting.command, "SAS is not one-action")
+        assertFalse(awaiting.state.pairing!!.autoConfirmSent)
+        assertFalse(awaiting.state.pairing!!.canConfirm)
+
+        val matching = AppReducer.reduce(awaiting.state, UiEvent.SasInputChanged("385587")).state
+        assertEquals(
+            AppCommand.ConfirmPairing,
+            AppReducer.reduce(matching, UiEvent.ConfirmPairing).command,
+            "the explicit SAS Confirm still works",
+        )
+    }
+
+    @Test
+    fun invalid_or_timed_out_qr_blocks_and_waits_for_an_explicit_rescan() {
+        val started = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531"),
+            UiEvent.StartQrPairing(qrUri()),
+        ).state
+        // A pairing attempt can be running with the scanner still open.
+        val scanning = started.copy(scanActive = true)
+
+        for (code in listOf(201, 206)) {
+            val failed = AppReducer.reduce(
+                scanning,
+                UiEvent.PairingSnapshotChanged(
+                    awaitingQr().copy(phase = "FAILED", errorCode = code)
+                ),
+            )
+            assertEquals(AppCommand.None, failed.command)
+            assertEquals(AppScreen.PAIRING, failed.state.screen)
+            assertFalse(failed.state.scanActive, "the scanner closes and stays closed")
+            assertTrue(failed.state.pairing!!.isBlockingInvitationFailure)
+            assertTrue(failed.state.pairing!!.requiresExplicitRescan)
+            assertEquals(code, failed.state.pairing!!.errorCode)
+
+            // Only an explicit user action reopens the camera.
+            val rescan = AppReducer.reduce(failed.state, UiEvent.RequestScan)
+            assertTrue(rescan.state.scanActive)
+        }
+    }
+
+    @Test
+    fun a_pairing_close_code_keeps_the_blocking_state_in_either_arrival_order() {
+        val started = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531"),
+            UiEvent.StartQrPairing(qrUri()),
+        ).state
+        val guidance = ErrorGuidanceBook.forCode(201)!!
+
+        val snapshotFirst = AppReducer.reduce(
+            started,
+            UiEvent.PairingSnapshotChanged(awaitingQr().copy(phase = "FAILED", errorCode = 201)),
+        ).state
+        val closedAfter = AppReducer.reduce(snapshotFirst, UiEvent.SessionError(guidance)).state
+        assertEquals(AppScreen.PAIRING, closedAfter.screen)
+        assertNull(closedAfter.error, "the pairing card owns the blocking copy")
+        assertTrue(closedAfter.pairing!!.isBlockingInvitationFailure)
+
+        val confirming = AppReducer.reduce(
+            started,
+            UiEvent.PairingSnapshotChanged(awaitingQr().copy(phase = "CONFIRMING")),
+        ).state
+        val closedFirst = AppReducer.reduce(confirming, UiEvent.SessionError(guidance)).state
+        assertEquals(AppScreen.PAIRING, closedFirst.screen)
+        assertNull(closedFirst.error)
+        assertEquals(201, closedFirst.pairing!!.errorCode)
+        assertTrue(closedFirst.pairing!!.isBlockingInvitationFailure)
+
+        // A relay clear after the failure must not erase the recovery state.
+        val cleared = AppReducer.reduce(closedFirst, UiEvent.PairingSnapshotChanged(null)).state
+        assertTrue(cleared.pairing!!.isBlockingInvitationFailure)
+    }
+
+    @Test
+    fun a_206_timeout_keeps_the_blocking_rescan_copy() {
+        val started = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531"),
+            UiEvent.StartQrPairing(qrUri()),
+        ).state
+        val timedOut = AppReducer.reduce(
+            started,
+            UiEvent.SessionError(ErrorGuidanceBook.forCode(206)!!),
+        ).state
+        assertEquals(AppScreen.PAIRING, timedOut.screen)
+        assertEquals(206, timedOut.pairing!!.errorCode)
+        assertTrue(timedOut.pairing!!.requiresExplicitRescan)
+        assertEquals("Pairing timed out", timedOut.pairing!!.guidance?.title)
     }
 
     @Test

@@ -46,6 +46,25 @@ class ErrorGuidanceTest {
     }
 
     @Test
+    fun rejected_and_timed_out_pairings_point_to_a_fresh_server_invitation() {
+        val rejected = assertNotNull(ErrorGuidanceBook.forCode(201))
+        assertTrue(
+            rejected.guidance.contains("fresh QR code"),
+            "201 must direct the user to a new QR invitation",
+        )
+        assertTrue(
+            rejected.guidance.contains("accept this device", ignoreCase = true),
+            "the Server Accept gate stays visible after a decline",
+        )
+
+        val timedOut = assertNotNull(ErrorGuidanceBook.forCode(206))
+        assertEquals("Pairing timed out", timedOut.title)
+        assertTrue(timedOut.guidance.contains("ten-minute"))
+        assertTrue(timedOut.guidance.contains("new pairing"))
+        assertTrue(timedOut.guidance.contains("fresh QR code"))
+    }
+
+    @Test
     fun transport_codes_are_the_only_automatic_retries() {
         val automatic = ErrorGuidanceBook.all().filter { it.automaticRetry }.map { it.code }.sorted()
         assertEquals(listOf(301, 302, 503, 601, 602), automatic)

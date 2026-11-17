@@ -31,18 +31,48 @@ data class PairingUi(
     val sasInput: String = "",
     val errorCode: Int? = null,
     val message: String? = null,
+    /**
+     * QR mode only: the Client already dispatched the one automatic
+     * `PairingConfirm` for this exchange. The Service and native phase
+     * (`CONFIRMING`) are the durable guards; this flag stops duplicate
+     * snapshots in one UI lifetime from queueing a second confirmation.
+     */
+    val autoConfirmSent: Boolean = false,
+    /**
+     * Repeated `AWAITING_CONFIRMATION` snapshots seen after the automatic
+     * confirm. If the Service rejected the queued intent the native phase
+     * never advances; past a small bound the reducer re-arms instead of
+     * leaving the screen stuck.
+     */
+    val awaitingSnapshots: Int = 0,
 ) {
     val isStarting: Boolean get() = phase == "STARTING"
     val isAwaitingConfirmation: Boolean get() = phase == "AWAITING_CONFIRMATION"
+    val isConfirming: Boolean get() = phase == "CONFIRMING"
     val isComplete: Boolean get() = phase == "COMPLETE"
     val isFailed: Boolean get() = phase == "FAILED"
 
+    /** The typed guidance for a §6 pairing failure, when the code is known. */
+    val guidance: ErrorGuidance? get() = ErrorGuidanceBook.forCode(errorCode)
+
     /**
-     * The SAS is a human comparison, never an automatic one: in SAS mode
-     * Confirm is only valid when the code the user read on the Server
-     * normalizes to the code this Client derived. QR mode is already bound to
-     * the Server identity by the payload pin (pairing.md §6.1), so the QR
-     * path stays one action and Confirm does not require typing the code.
+     * `201`/`206` end the exchange: the invitation cannot be reused and the
+     * Server must present a fresh one. The UI blocks here instead of falling
+     * back to the general error card so the recovery action stays visible.
+     */
+    val isBlockingInvitationFailure: Boolean
+        get() = isFailed && (errorCode == 201 || errorCode == 206)
+
+    /** QR recovery is always an explicit user action; the camera never reopens alone. */
+    val requiresExplicitRescan: Boolean
+        get() = isBlockingInvitationFailure && mode == "qr"
+
+    /**
+     * The SAS is a human comparison, never an automatic one: Confirm is only
+     * valid when the code the user read on the Server normalizes to the code
+     * this Client derived. QR mode has no manual Confirm at all — the scan is
+     * the Client's explicit action and the reducer auto-dispatches the one
+     * `PairingConfirm` (pairing.md §6.2, ticket 30 D5).
      */
     val sasMatches: Boolean
         get() {
@@ -52,7 +82,7 @@ data class PairingUi(
         }
 
     val canConfirm: Boolean
-        get() = mode == "qr" || sasMatches
+        get() = mode == "sas" && sasMatches
 }
 
 /** Complete UI state; the reducer is pure and Android-free. */
@@ -140,6 +170,12 @@ object AutoConnectPolicy {
 }
 
 object AppReducer {
+    /**
+     * ~1 s at the native pairing watcher's 25 ms cadence. A queued confirm
+     * normally advances the phase to `CONFIRMING` long before this bound.
+     */
+    internal const val QR_AUTO_CONFIRM_RETRY_SNAPSHOTS = 40
+
     fun reduce(state: AppState, event: UiEvent): Reduction = when (event) {
         is UiEvent.AddressChanged -> Reduction(
             state.copy(
@@ -161,7 +197,7 @@ object AppReducer {
 
         is UiEvent.StartQrPairing -> startQr(state, event.uri)
 
-        is UiEvent.PairingSnapshotChanged -> Reduction(onPairingSnapshot(state, event.snapshot))
+        is UiEvent.PairingSnapshotChanged -> onPairingSnapshot(state, event.snapshot)
 
         is UiEvent.SasInputChanged -> Reduction(
             state.copy(pairing = state.pairing?.copy(sasInput = event.text))
@@ -363,12 +399,16 @@ object AppReducer {
         )
     }
 
-    private fun onPairingSnapshot(state: AppState, snapshot: PairingSnapshot?): AppState {
+    private fun onPairingSnapshot(state: AppState, snapshot: PairingSnapshot?): Reduction {
         if (snapshot == null) {
-            // The Service clears its pairing relay on connect/cancel; the
-            // screen stays available for another attempt.
-            return if (state.pairing?.isComplete == true) state
-            else state.copy(pairing = null, scanActive = false)
+            // The Service clears its pairing relay on connect/cancel; keep the
+            // terminal screens whose copy is still the user's only guidance.
+            val current = state.pairing
+            return if (current?.isComplete == true || current?.isBlockingInvitationFailure == true) {
+                Reduction(state)
+            } else {
+                Reduction(state.copy(pairing = null, scanActive = false))
+            }
         }
         val sas = snapshot.sas?.let(::formatSas)
         val guidance = snapshot.errorCode?.let(ErrorGuidanceBook::forCode)
@@ -377,16 +417,47 @@ object AppReducer {
         } else {
             null
         }
+        val previous = state.pairing
+        val awaitingSnapshots = when {
+            !snapshot.isAwaitingConfirmation -> 0
+            previous?.isAwaitingConfirmation == true -> previous.awaitingSnapshots + 1
+            else -> 0
+        }
         val pairing = PairingUi(
             mode = snapshot.mode,
             phase = snapshot.phase,
             sas = sas,
             fingerprint = snapshot.fingerprint,
-            sasInput = state.pairing?.sasInput.orEmpty(),
+            sasInput = previous?.sasInput.orEmpty(),
             errorCode = snapshot.errorCode,
             message = message,
+            // A fresh exchange always has a fresh PairingUi (STARTING), so
+            // carrying the flag only suppresses duplicate snapshots.
+            autoConfirmSent = previous?.autoConfirmSent ?: false,
+            awaitingSnapshots = awaitingSnapshots,
         )
-        return state.copy(pairing = pairing, scanActive = false)
+        // QR mode's Client action is the scan (pairing.md §6.2, ticket 30 D5):
+        // once the native side has verified the binding and published
+        // AWAITING_CONFIRMATION, send PairingConfirm exactly once. SAS mode
+        // keeps its code entry plus an explicit Confirm (ticket 30 D1).
+        val autoConfirm = pairing.mode == "qr" &&
+            pairing.isAwaitingConfirmation &&
+            (!pairing.autoConfirmSent ||
+                awaitingSnapshots >= QR_AUTO_CONFIRM_RETRY_SNAPSHOTS)
+        return if (autoConfirm) {
+            Reduction(
+                state.copy(
+                    pairing = pairing.copy(
+                        autoConfirmSent = true,
+                        awaitingSnapshots = 0,
+                    ),
+                    scanActive = false,
+                ),
+                AppCommand.ConfirmPairing,
+            )
+        } else {
+            Reduction(state.copy(pairing = pairing, scanActive = false))
+        }
     }
 
     private fun onNativeState(state: AppState, nativeState: String): AppState {
@@ -409,6 +480,29 @@ object AppReducer {
 
     private fun onSessionError(state: AppState, guidance: ErrorGuidance?): AppState {
         if (guidance == null) return state
+        // A 201/206 during pairing is the same failure the pairing snapshot
+        // reports. Keep the blocking pairing state (and its explicit rescan)
+        // instead of routing to the general error card on HOME; the native
+        // snapshot and the CLOSED close code may arrive in either order.
+        if (state.screen == AppScreen.PAIRING && (guidance.code == 201 || guidance.code == 206)) {
+            // The mode is unknown when no pairing UI survived (for example an
+            // Activity recreation at the failure instant); leave it unset so
+            // the card does not claim a QR exchange that never happened.
+            val pairing = state.pairing ?: PairingUi(mode = "", phase = "FAILED")
+            return state.copy(
+                screen = AppScreen.PAIRING,
+                error = null,
+                sessionPhase = SessionPhase.CLOSED,
+                connectRequested = false,
+                stopping = false,
+                scanActive = false,
+                pairing = pairing.copy(
+                    phase = "FAILED",
+                    errorCode = guidance.code,
+                    message = guidance.title,
+                ),
+            )
+        }
         return state.copy(
             screen = if (state.screen == AppScreen.ABOUT) AppScreen.ABOUT else AppScreen.HOME,
             error = guidance,
