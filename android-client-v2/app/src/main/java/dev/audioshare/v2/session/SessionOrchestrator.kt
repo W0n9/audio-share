@@ -1,13 +1,16 @@
 package dev.audioshare.v2.session
 
 import dev.audioshare.v2.ClientIdentityResult
+import dev.audioshare.v2.ClientSigner
 import dev.audioshare.v2.CredentialRecord
 import dev.audioshare.v2.CredentialStore
+import dev.audioshare.v2.EndReason
 import dev.audioshare.v2.OutcomeSink
 import dev.audioshare.v2.PairingConfirmGate
 import dev.audioshare.v2.PairingSnapshot
 import dev.audioshare.v2.PairingStateRelay
 import dev.audioshare.v2.SessionConfiguration
+import dev.audioshare.v2.SessionOutcome
 import dev.audioshare.v2.SessionOutcomeStore
 import dev.audioshare.v2.StopReason
 import dev.audioshare.v2.pairedAtNow
@@ -44,6 +47,17 @@ internal class SessionOrchestrator(
     private val pairing: PairingStateRelay,
     private val credentials: CredentialStore,
     private val log: (String) -> Unit,
+    /**
+     * Runs the post-persistence handoff away from the pairing watcher thread.
+     * The Service posts to its main-thread Handler; tests use a manual queue.
+     */
+    private val schedule: ((() -> Unit) -> Unit) = { it() },
+    /**
+     * One-shot completion push for the UI. Invoked exactly once per pairing
+     * exchange, on the [schedule] thread, after the authenticated session has
+     * been started. It is never replayed to a later listener.
+     */
+    private val onPairingCompleted: (CredentialRecord) -> Unit = {},
 ) {
     private val lock = Any()
     private var engine: SessionEngine? = null
@@ -51,6 +65,8 @@ internal class SessionOrchestrator(
     private var generation = 0L
     private var pairingSource: PairingStateRelay.Source? = null
     private val confirmGate = PairingConfirmGate()
+    /** At most one handoff per pairing exchange (ticket 17). */
+    private var handoffClaimed = false
 
     val hasEngine: Boolean
         get() = synchronized(lock) { engine != null }
@@ -71,6 +87,7 @@ internal class SessionOrchestrator(
         val owningPairingSource = pairing.beginSession()
         val ownerGeneration = synchronized(lock) {
             pairingSource = owningPairingSource
+            handoffClaimed = false
             ++generation
         }
         val sink = if (configuration.pairing != null) {
@@ -91,7 +108,7 @@ internal class SessionOrchestrator(
                 // Capture the pairing context per engine: a late credential
                 // from a superseded pairing must not be persisted with the new
                 // exchange's identity.
-                if (isCurrent(ownerGeneration)) persistCredential(json, pairingContext)
+                if (isCurrent(ownerGeneration)) persistCredential(json, pairingContext, ownerGeneration)
             }
         }
         val current = engineFactory.create(sink, listener)
@@ -162,17 +179,33 @@ internal class SessionOrchestrator(
         )
     }
 
+    /**
+     * A stored-connect failure that is not a pairing exchange (no credential,
+     * or the Keystore key is gone) is a session outcome, not a pairing
+     * terminal: the SESSION screen must show the typed error card with
+     * "Pair again" (ticket 17).
+     */
+    fun reportStoredConnectFailure(code: Int, message: String) {
+        log(message)
+        teardown(StopReason.Superseded)
+        outcomes.beginGeneration().publish(SessionOutcome.Ended(EndReason.Surfaced(code)))
+    }
+
     private fun isCurrent(ownerGeneration: Long): Boolean =
         synchronized(lock) { ownerGeneration == generation }
 
-    private fun persistCredential(json: String, context: PairingContext?) {
+    private fun persistCredential(
+        json: String,
+        context: PairingContext?,
+        ownerGeneration: Long,
+    ) {
         if (context == null) {
             log("credential arrived without pairing context; not persisted")
             return
         }
-        try {
+        val record = try {
             val obj = JSONObject(json)
-            val record = CredentialRecord(
+            CredentialRecord(
                 serverSpkiSha256Hex = obj.getString("server_spki_sha256"),
                 serverPublicKeyHex = obj.getString("server_public_key"),
                 addressHint = "${context.host}:${context.port}",
@@ -184,12 +217,69 @@ internal class SessionOrchestrator(
                 host = context.host,
                 port = context.port,
             )
+        } catch (e: Exception) {
+            log("credential parse failed: ${e.message}")
+            return
+        }
+        try {
             // Only PairingResult(OK) produces a credential summary, so this is
             // the only persistence point.
             credentials.upsert(record)
-            log("stored pairing for ${record.displayName} (software_backed=${record.softwareBacked})")
         } catch (e: Exception) {
-            log("credential parse failed: ${e.message}")
+            // Keep the COMPLETE pairing snapshot visible for a manual retry;
+            // never start a session or push a completion we cannot support.
+            log("credential persistence failed: ${e.message}")
+            return
         }
+        log("stored pairing for ${record.displayName} (software_backed=${record.softwareBacked})")
+        if (!isCurrent(ownerGeneration)) {
+            log("persisted credential belongs to a superseded exchange; not handing off")
+            return
+        }
+        val claimed = synchronized(lock) {
+            if (handoffClaimed) {
+                false
+            } else {
+                handoffClaimed = true
+                true
+            }
+        }
+        if (!claimed) {
+            log("credential handoff already claimed for this exchange")
+            return
+        }
+        // The watcher callback runs on the session's thread; startSession()
+        // tears the old engine down (join) and must not run inline there.
+        val signer = context.identity.signer
+        schedule { handOff(record, signer, ownerGeneration) }
     }
+
+    /**
+     * Start the authenticated session for the persisted credential, then push
+     * the one completion event. A Cancel/Stop before this runs drops it.
+     */
+    private fun handOff(
+        record: CredentialRecord,
+        signer: ClientSigner?,
+        ownerGeneration: Long,
+    ) {
+        if (!isCurrent(ownerGeneration)) {
+            log("pairing handoff dropped: the exchange is no longer current")
+            return
+        }
+        startSession(authenticatedConfiguration(record, signer), null)
+        onPairingCompleted(record)
+    }
+
+    private fun authenticatedConfiguration(
+        record: CredentialRecord,
+        signer: ClientSigner?,
+    ) = SessionConfiguration(
+        host = record.host,
+        port = record.port,
+        serverSpkiSha256Hex = record.serverSpkiSha256Hex,
+        serverPublicKeyHex = record.serverPublicKeyHex,
+        clientName = record.displayName ?: "AudioShare phone",
+        signer = signer,
+    )
 }
