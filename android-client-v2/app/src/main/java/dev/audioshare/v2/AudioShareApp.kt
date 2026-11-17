@@ -118,9 +118,6 @@ private fun HomeScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
         Text(state.scanMessage, style = MaterialTheme.typography.bodySmall)
     }
 
-    Spacer(Modifier.height(16.dp))
-    ErrorCard(state, onEvent)
-
     Spacer(Modifier.height(24.dp))
     TextButton(onClick = { onEvent(UiEvent.ShowAbout) }) { Text("About this beta") }
 }
@@ -362,9 +359,6 @@ private fun PairingScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
         }
     }
 
-    Spacer(Modifier.height(16.dp))
-    ErrorCard(state, onEvent)
-
     Spacer(Modifier.height(8.dp))
     OutlinedButton(
         onClick = { onEvent(UiEvent.CancelPairing) },
@@ -386,17 +380,70 @@ private fun SessionScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
         style = MaterialTheme.typography.bodyMedium,
     )
     Spacer(Modifier.height(16.dp))
-    Button(
-        onClick = { onEvent(UiEvent.StopRequested) },
-        enabled = state.sessionPhase != SessionPhase.NONE &&
-            state.sessionPhase != SessionPhase.CLOSED &&
-            !state.stopping,
-        modifier = Modifier.fillMaxWidth().testTag("stop"),
-    ) {
-        Text("Stop")
+
+    when (val outcome = state.outcome) {
+        is SessionOutcome.Live,
+        is SessionOutcome.Reconnecting -> {
+            // Reconnection is mid-session: Stop stays the only primary action
+            // and is merely disabled while the asynchronous Stop is in flight.
+            Button(
+                onClick = { onEvent(UiEvent.StopRequested) },
+                enabled = !state.stopRequested,
+                modifier = Modifier.fillMaxWidth().testTag("stop"),
+            ) {
+                Text("Stop")
+            }
+        }
+
+        is SessionOutcome.Ended -> when (val reason = outcome.reason) {
+            // Two visibly different terminal presentations (ticket 06/20):
+            // a user Stop is silent; a surfaced close is an error card.
+            EndReason.UserStop -> {
+                Text(
+                    "You stopped this session.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.testTag("ended-user-stop"),
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { onEvent(UiEvent.ConnectRequested) },
+                    modifier = Modifier.fillMaxWidth().testTag("connect-again"),
+                ) {
+                    Text("Connect again")
+                }
+            }
+
+            is EndReason.Surfaced -> {
+                val guidance = ErrorGuidanceBook.forCode(reason.code)
+                if (guidance != null) {
+                    ErrorCard(guidance, onEvent)
+                } else {
+                    ErrorCard(
+                        ErrorGuidance(
+                            code = reason.code ?: 0,
+                            name = "SESSION_ENDED",
+                            title = "The session ended",
+                            guidance = "Reconnect to continue.",
+                            retryable = true,
+                            requiresRepairing = false,
+                            automaticRetry = false,
+                        ),
+                        onEvent,
+                    )
+                }
+            }
+        }
+
+        // A Connect was accepted but the Service has not published yet.
+        null -> Button(
+            onClick = {},
+            enabled = false,
+            modifier = Modifier.fillMaxWidth().testTag("stop"),
+        ) {
+            Text("Stop")
+        }
     }
-    Spacer(Modifier.height(12.dp))
-    ErrorCard(state, onEvent)
+
     Spacer(Modifier.height(12.dp))
     TextButton(onClick = { onEvent(UiEvent.ShowHome) }) { Text("Back to Home") }
 }
@@ -446,9 +493,14 @@ private fun AboutScreen(versionName: String, versionCode: Int, onEvent: (UiEvent
 
 @Composable
 private fun SessionStatus(state: AppState) {
-    val label = when (state.sessionPhase) {
-        SessionPhase.NONE -> "Not connected"
-        else -> state.sessionPhase.name
+    val label = when (val outcome = state.outcome) {
+        null -> "Not connected"
+        is SessionOutcome.Live -> outcome.phase.name
+        is SessionOutcome.Reconnecting -> "RECONNECTING (attempt ${outcome.attempt})"
+        is SessionOutcome.Ended -> when (outcome.reason) {
+            EndReason.UserStop -> "STOPPED"
+            is EndReason.Surfaced -> "ENDED"
+        }
     }
     Row(horizontalArrangement = Arrangement.Start) {
         Text("State: ", style = MaterialTheme.typography.bodyMedium)
@@ -462,8 +514,7 @@ private fun SessionStatus(state: AppState) {
 }
 
 @Composable
-private fun ErrorCard(state: AppState, onEvent: (UiEvent) -> Unit) {
-    val error = state.error ?: return
+private fun ErrorCard(error: ErrorGuidance, onEvent: (UiEvent) -> Unit) {
     Spacer(Modifier.height(8.dp))
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -485,7 +536,6 @@ private fun ErrorCard(state: AppState, onEvent: (UiEvent) -> Unit) {
                 ) {
                     Text(if (error.requiresRepairing) "Pair again" else "Retry")
                 }
-                TextButton(onClick = { onEvent(UiEvent.DismissError) }) { Text("Dismiss") }
             }
         }
     }

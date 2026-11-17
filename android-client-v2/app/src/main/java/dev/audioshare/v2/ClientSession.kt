@@ -62,14 +62,10 @@ internal object SessionStartupPolicy {
 class ClientSession(
     private val appContext: Context,
     private val listener: Listener,
+    /** Generation-scoped outcome owner supplied by the Service. */
+    private val sink: OutcomeSink,
 ) {
     interface Listener {
-        /** Called on a worker thread whenever counters/state are refreshed. */
-        fun onStats(json: JSONObject)
-
-        /** Called when the user-visible session state name changes. */
-        fun onStateChange(state: String)
-
         /** Info/error lines for a log view. */
         fun onLog(line: String)
 
@@ -90,12 +86,7 @@ class ClientSession(
     private val running = AtomicBoolean(false)
     private val lifecycleLock = Any()
     private var lifecycle: Any? = null
-    private val currentState = SessionStateRelay(listener::onStateChange)
-    private var stateSource: SessionStateRelay.Source? = null
     private var mediaPlayer: MediaPlayer? = null
-
-    /** 最近一次实际 native 状态；停止后保持 CLOSED，不暴露已失效的 handle。 */
-    fun stateSnapshot(): String = currentState.snapshot()
 
     private var configuration = SessionConfiguration("", 0, "", "", "")
     /** Reconnect attempt counter; reset on start(). */
@@ -117,33 +108,39 @@ class ClientSession(
             this.configuration = configuration
             backoffAttempts.set(0)
             val lifetime = Any().also { lifecycle = it }
-            val source = currentState.beginSession().also { stateSource = it }
             registerNetworkCallback(lifetime)
-            startSession(lifetime, source)
+            startSession(lifetime)
         }
+        // A Client Session begins by connecting; native may still report IDLE.
+        sink.publish(SessionOutcome.Live(LivePhase.CONNECTING))
     }
 
-    fun stop() {
+    /**
+     * End the session. Only [StopReason.User] produces a visible outcome; an
+     * internal teardown leaves the outcome store untouched.
+     */
+    fun stop(reason: StopReason) {
         val player: MediaPlayer?
         val h = synchronized(lifecycleLock) {
             if (!running.getAndSet(false)) return
             lifecycle = null
             unregisterNetworkCallback()
             val current = handle.getAndSet(0)
-            // 先使状态来源失效，再清理 native；进行中的旧读不能发布，
-            // 已排队的创建/重连任务也属于旧生命周期。
-            stateSource?.close()
-            stateSource = null
             // The playback owner must stop before the native session dies.
             player = stopMediaLocked()
             current
+        }
+        when (val action = SessionOutcomePolicy.classify(closeCode = null, stopReason = reason)) {
+            is SessionOutcomePolicy.Action.End -> sink.publish(SessionOutcome.Ended(action.reason))
+            SessionOutcomePolicy.Action.Reconnect,
+            SessionOutcomePolicy.Action.Silent -> Unit
         }
         player?.stop()
         if (h != 0L) {
             ClientNative.stop(h)
             ClientNative.destroy(h)
         }
-        listener.onLog("stopped by user")
+        listener.onLog("stopped ($reason)")
     }
 
     fun isRunning() = running.get()
@@ -161,31 +158,30 @@ class ClientSession(
     // ---- session lifecycle with backoff ------------------------------------
 
     /** 调用者持有 lifecycleLock；数值 handle 不能独自标识事件来源。 */
-    private fun ownsSessionLocked(lifetime: Any, source: SessionStateRelay.Source, h: Long): Boolean =
-        running.get() && lifecycle === lifetime && stateSource === source && handle.get() == h
+    private fun ownsSessionLocked(lifetime: Any, h: Long): Boolean =
+        running.get() && lifecycle === lifetime && handle.get() == h
 
-    private fun startSession(lifetime: Any, previousSource: SessionStateRelay.Source) {
+    private fun startSession(lifetime: Any) {
         executor.execute {
             val configuration = synchronized(lifecycleLock) {
-                if (!ownsSessionLocked(lifetime, previousSource, 0)) return@execute
+                if (!ownsSessionLocked(lifetime, 0)) return@execute
                 this.configuration
             }
             val h = createNativeSession(configuration)
             if (h == 0L) {
                 synchronized(lifecycleLock) {
-                    if (ownsSessionLocked(lifetime, previousSource, 0)) {
+                    if (ownsSessionLocked(lifetime, 0)) {
                         listener.onLog("createSession failed; retrying after backoff")
                     }
                 }
-                scheduleReconnect(0, previousSource, lifetime)
+                scheduleReconnect(0, lifetime, lastCloseCode = null)
                 return@execute
             }
             val connected = synchronized(lifecycleLock) {
-                if (!ownsSessionLocked(lifetime, previousSource, 0)) {
+                if (!ownsSessionLocked(lifetime, 0)) {
                     null
                 } else {
                     handle.set(h)
-                    val source = currentState.beginSession().also { stateSource = it }
                     val bind = if (bindHintEnabled) (activeNetworkAddress ?: "") else ""
                     listener.onLog("connect(host=${configuration.host} port=${configuration.port} bind=$bind)")
                     // The ring is attached once per native session, before any
@@ -198,10 +194,10 @@ class ClientSession(
                         // Pairing results must be captured even when the
                         // Server closes right after PairingResult (as-cmd pair
                         // exits by design), so this watcher does not depend on
-                        // the state source or the 250 ms stats poll.
+                        // the 250 ms stats poll.
                         startPairingWatcher(h, lifetime)
                     }
-                    source to ClientNative.connect(h, bind)
+                    ClientNative.connect(h, bind)
                 }
             }
             if (connected == null) {
@@ -209,17 +205,16 @@ class ClientSession(
                 ClientNative.destroy(h)
                 return@execute
             }
-            val (source, ok) = connected
-            if (!ok) {
+            if (!connected) {
                 synchronized(lifecycleLock) {
-                    if (ownsSessionLocked(lifetime, source, h)) {
+                    if (ownsSessionLocked(lifetime, h)) {
                         listener.onLog("native connect() rejected; retrying after backoff")
                     }
                 }
-                scheduleReconnect(h, source, lifetime)
+                scheduleReconnect(h, lifetime, lastCloseCode = null)
                 return@execute
             }
-            startStatsPolling(h, source, lifetime)
+            startStatsPolling(h, lifetime)
         }
     }
 
@@ -339,20 +334,23 @@ class ClientSession(
         return if (json.isNullOrEmpty()) null else json
     }
 
-    private fun scheduleReconnect(h: Long, source: SessionStateRelay.Source, lifetime: Any) {
+    private fun scheduleReconnect(h: Long, lifetime: Any, lastCloseCode: Int?) {
+        var attempt = 0L
         synchronized(lifecycleLock) {
-            if (!ownsSessionLocked(lifetime, source, h)) return
+            if (!ownsSessionLocked(lifetime, h)) return
             handle.set(0)
-            source.close()
-            val attempt = backoffAttempts.getAndIncrement()
+            attempt = backoffAttempts.getAndIncrement()
             val delay = ReconnectPolicy.backoffDelayMs(attempt, Random.nextDouble())
             listener.onLog("reconnect attempt ${attempt + 1} in ${delay}ms")
             mainHandler.postDelayed({
                 synchronized(lifecycleLock) {
-                    if (ownsSessionLocked(lifetime, source, 0)) startSession(lifetime, source)
+                    if (ownsSessionLocked(lifetime, 0)) startSession(lifetime)
                 }
             }, delay)
         }
+        // The Client Session stays alive across attempts; the UI stays on
+        // SESSION and only sees that a retry is in flight.
+        sink.publish(SessionOutcome.Reconnecting((attempt + 1).toInt(), lastCloseCode))
         if (h != 0L) ClientNative.destroy(h)
         stopMedia()
     }
@@ -372,7 +370,6 @@ class ClientSession(
 
     private fun startStatsPolling(
         h: Long,
-        source: SessionStateRelay.Source,
         lifetime: Any,
     ) {
         val poller = Thread {
@@ -380,54 +377,79 @@ class ClientSession(
             // §6.3: only retryable closes (and transport loss with no Close,
             // close_code null) reconnect. Pairing/admin/security closes surface
             // to the user and must not auto-retry.
-            var reconnectOnExit = true
+            var lastCloseCode: Int? = null
+            var reconnectOnExit = false
             try {
-                while (synchronized(lifecycleLock) { ownsSessionLocked(lifetime, source, myHandle) }) {
-                    val state = source.poll { ClientNative.getState(myHandle) ?: "" }
-                    if (state.isEmpty() && !source.isCurrent()) break
+                while (synchronized(lifecycleLock) { ownsSessionLocked(lifetime, myHandle) }) {
+                    val state = ClientNative.getState(myHandle) ?: ""
+                    if (state.isEmpty()) {
+                        Thread.sleep(STATS_POLL_MS)
+                        continue
+                    }
+                    publishLive(state)
                     if (state == "READY") {
                         // §6.3：仅当前会话可以重置 backoff。
                         synchronized(lifecycleLock) {
-                            if (ownsSessionLocked(lifetime, source, myHandle)) backoffAttempts.set(0)
+                            if (ownsSessionLocked(lifetime, myHandle)) backoffAttempts.set(0)
                         }
                     }
                     val statsJson = ClientNative.getStats(myHandle)
-                    if (statsJson.isNullOrEmpty()) continue
-                    try {
-                        val obj = JSONObject(statsJson)
-                        synchronized(lifecycleLock) {
-                            if (ownsSessionLocked(lifetime, source, myHandle)) listener.onStats(obj)
-                        }
-                        if (state == "CLOSED") {
-                            val closeCode =
-                                if (obj.isNull("close_code")) null else obj.optInt("close_code")
-                            reconnectOnExit = ReconnectPolicy.shouldReconnect(closeCode)
-                            synchronized(lifecycleLock) {
-                                if (ownsSessionLocked(lifetime, source, myHandle)) {
-                                    listener.onLog(
-                                        if (reconnectOnExit) {
-                                            "session closed (close_code=$closeCode); reconnecting"
-                                        } else {
-                                            "session closed (close_code=$closeCode); no automatic reconnect"
-                                        }
-                                    )
+                    if (state == "CLOSED" && statsJson.isNullOrEmpty()) {
+                        // No recorded outcome: treat it exactly like transport
+                        // loss (close_code null) and let the policy reconnect.
+                        listener.onLog("session closed (close_code=null); reconnecting")
+                        reconnectOnExit = true
+                        break
+                    }
+                    if (!statsJson.isNullOrEmpty()) {
+                        try {
+                            val obj = JSONObject(statsJson)
+                            if (state == "CLOSED") {
+                                lastCloseCode =
+                                    if (obj.isNull("close_code")) null else obj.optInt("close_code")
+                                reconnectOnExit = when (
+                                    val action = SessionOutcomePolicy.classify(lastCloseCode)
+                                ) {
+                                    SessionOutcomePolicy.Action.Reconnect -> true
+                                    is SessionOutcomePolicy.Action.End ->
+                                        false.also { sink.publish(SessionOutcome.Ended(action.reason)) }
+                                    SessionOutcomePolicy.Action.Silent -> false
                                 }
+                                listener.onLog(
+                                    if (reconnectOnExit) {
+                                        "session closed (close_code=$lastCloseCode); reconnecting"
+                                    } else {
+                                        "session closed (close_code=$lastCloseCode); no automatic reconnect"
+                                    }
+                                )
+                                break
                             }
-                            break
+                        } catch (e: Exception) {
+                            Log.w(TAG, "stats parse: ${e.message}")
                         }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "stats parse: ${e.message}")
                     }
                     Thread.sleep(STATS_POLL_MS)
                 }
             } catch (_: InterruptedException) {
             } finally {
                 stopMedia()
-                if (reconnectOnExit) scheduleReconnect(myHandle, source, lifetime)
+                if (reconnectOnExit) scheduleReconnect(myHandle, lifetime, lastCloseCode)
             }
         }
         poller.name = "v2-stats-poll"
         poller.start()
+    }
+
+    /** Project a native state name onto the four semantic Live phases. */
+    private fun publishLive(state: String) {
+        val phase = when (state) {
+            "IDLE", "CONNECTING" -> LivePhase.CONNECTING
+            "AUTHENTICATING", "NEGOTIATING" -> LivePhase.AUTHENTICATING
+            "READY" -> LivePhase.READY
+            "PLAYING" -> LivePhase.PLAYING
+            else -> return
+        }
+        sink.publish(SessionOutcome.Live(phase))
     }
 
     // ---- NetworkCallback migration -----------------------------------------
@@ -452,13 +474,12 @@ class ClientSession(
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 val address = localAddressOf(network)
-                val current = synchronized(lifecycleLock) {
+                val h = synchronized(lifecycleLock) {
                     if (!running.get() || lifecycle !== lifetime) return
                     activeNetworkAddress = address
                     listener.onLog("network available: $activeNetworkAddress")
-                    stateSource?.let { it to handle.get() }
-                } ?: return
-                val (source, h) = current
+                    handle.get()
+                }
                 when (SessionStartupPolicy.availabilityAction(h, h != 0L && nativeEndpointConnected(h))) {
                     AvailabilityAction.IN_FLIGHT_OWNS_START -> {
                         // 注册回调会立即投递当前网络。此时启动/重连任务已在队列中，
@@ -476,18 +497,17 @@ class ClientSession(
                     AvailabilityAction.REBIND -> Unit
                 }
                 if (tryRebind(h, network)) return
-                // rebind 可与 STOP/重连交错；只清理本次来源。
-                teardownForReconnect("network change (rebind fallback)", h, source, lifetime)
+                // rebind 可与 STOP/重连交错；只清理本次生命周期。
+                teardownForReconnect("network change (rebind fallback)", h, lifetime)
             }
 
             override fun onLost(network: Network) {
-                val current = synchronized(lifecycleLock) {
+                val h = synchronized(lifecycleLock) {
                     if (!running.get() || lifecycle !== lifetime) return
                     listener.onLog("network lost")
-                    stateSource?.let { it to handle.get() }
-                } ?: return
-                val (source, h) = current
-                if (h != 0L) teardownForReconnect("network lost", h, source, lifetime)
+                    handle.get()
+                }
+                if (h != 0L) teardownForReconnect("network lost", h, lifetime)
             }
         }
         connectivityManager.registerNetworkCallback(request, callback)
@@ -537,13 +557,13 @@ class ClientSession(
     }
 
     /** Teardown of the current session, then the bounded-backoff reconnect. */
-    private fun teardownForReconnect(reason: String, h: Long, source: SessionStateRelay.Source, lifetime: Any) {
+    private fun teardownForReconnect(reason: String, h: Long, lifetime: Any) {
         synchronized(lifecycleLock) {
-            if (!ownsSessionLocked(lifetime, source, h)) return
+            if (!ownsSessionLocked(lifetime, h)) return
             if (h != 0L) ClientNative.stop(h)
             listener.onLog("teardown for reconnect: $reason")
         }
-        scheduleReconnect(h, source, lifetime)
+        scheduleReconnect(h, lifetime, lastCloseCode = null)
     }
 
     private fun unregisterNetworkCallback() {

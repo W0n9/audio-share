@@ -253,8 +253,11 @@ impl Session {
     /// classify it (§6.3). Remote Close frames used to leave `close_code`
     /// null, which looked like transport loss and triggered a reconnect.
     fn record_close(&self, info: CloseInfo) {
-        self.set_state(ClientState::Closed);
+        // Write the close info before publishing CLOSED. Otherwise a reader
+        // can observe CLOSED with close_code == null and misclassify a remote
+        // close as transport loss (ticket 15, behaviour-neutral cleanup).
         *self.shared.close_info.lock().unwrap() = Some(info);
+        self.set_state(ClientState::Closed);
     }
 
     fn record_error(&self, msg: String) {
@@ -853,6 +856,12 @@ impl Session {
     /// close (§6.3: 701 → no reconnect).
     pub fn stop(&self) {
         self.shared.stopping.store(true, Ordering::SeqCst);
+        // Record the terminal user-stop close before tearing state down, so
+        // `close_code == null` only ever means "no outcome recorded yet".
+        *self.shared.close_info.lock().unwrap() = Some(CloseInfo {
+            code: 701,
+            remote: false,
+        });
         self.set_state(ClientState::Closed);
         if let Some(conn) = self.shared.conn.lock().unwrap().clone() {
             conn.close(quinn::VarInt::from_u64(701).unwrap(), b"client stopping");
