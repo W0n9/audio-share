@@ -18,6 +18,10 @@
     void server.cancelPairing();
   }
 
+  function refresh(): void {
+    if (invitation) void server.beginPairing(invitation.mode);
+  }
+
   function approve(approvalId: number): void {
     void server.approvePairing(approvalId);
   }
@@ -68,9 +72,9 @@
 
         <ErrorLine message={server.pairingError} />
 
-        {#if invitation}
+        {#if invitation && (invitation.state === "active" || invitation.mode === "qr")}
           <div class="pairing-invitation">
-            {#if invitation.qrSvg}
+            {#if invitation.state === "active" && invitation.qrSvg}
               <div class="pairing-qr" aria-label={t("pairing.qrAlt")}>
                 {@html invitation.qrSvg}
               </div>
@@ -81,7 +85,7 @@
                 {invitation.mode === "qr" ? t("pairing.modeQr") : t("pairing.modeSas")}
               </strong>
             </div>
-            {#if invitation.qrUri}
+            {#if invitation.state === "active" && invitation.qrUri}
               <div class="pairing-row pairing-row-stack">
                 <span>{t("pairing.uri")}</span>
                 <code class="pairing-uri">{invitation.qrUri}</code>
@@ -91,11 +95,26 @@
               <span>{t("pairing.fingerprint")}</span>
               <code class="pairing-fingerprint">{invitation.fingerprint}</code>
             </div>
-            <div class="pairing-row">
-              <span>{t("pairing.expires")}</span>
-              <strong class="pairing-countdown">{countdown(invitation.expiresInSecs)}</strong>
-            </div>
-            <p class="pairing-hint">{t("pairing.sasHint")}</p>
+            {#if invitation.state === "active"}
+              <div class="pairing-row">
+                <span>{t("pairing.expires")}</span>
+                <strong class="pairing-countdown">{countdown(invitation.expiresInSecs)}</strong>
+              </div>
+              <p class="pairing-hint">{t("pairing.sasHint")}</p>
+            {:else}
+              <p class="pairing-error">
+                {invitation.state === "consumed"
+                  ? t("pairing.qrConsumed")
+                  : t("pairing.qrExpired")}
+              </p>
+              <button
+                class="pairing-primary"
+                disabled={server.pairingBusy}
+                onclick={refresh}
+              >
+                {t("pairing.refreshQr")}
+              </button>
+            {/if}
             <button class="pairing-secondary" onclick={cancel}>
               {t("pairing.cancel")}
             </button>
@@ -122,14 +141,14 @@
               <p class="pairing-hint">{t("pairing.liveHint")}</p>
             </div>
           {/each}
-          {#if !invitation}
+          {#if !invitation || (invitation.mode === "sas" && invitation.state !== "active")}
             <button class="pairing-secondary" onclick={cancel}>
               {t("pairing.cancel")}
             </button>
           {/if}
         {/if}
 
-        {#if !invitation && live.length === 0}
+        {#if (!invitation || (invitation.mode === "sas" && invitation.state !== "active")) && live.length === 0}
           <div class="pairing-actions">
             <button
               class="pairing-primary"

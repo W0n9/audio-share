@@ -115,6 +115,8 @@ export interface PairingInvitation {
   qrUri: string | null;
   qrSvg: string | null;
   fingerprint: string;
+  /** Lifecycle of the invitation; only `active` presents the QR. */
+  state: "active" | "consumed" | "expired";
   /** Seconds until the invitation expires; refreshed by polling. */
   expiresInSecs: number;
 }
@@ -183,7 +185,8 @@ export const api = {
   stop: () => invoke<ServerStatus>("stop_server"),
   pairingBegin: (mode: PairingMode) => invoke<PairingStatus>("pairing_begin", { mode }),
   pairingCancel: () => invoke<PairingStatus>("pairing_cancel"),
-  pairingStatus: () => invoke<PairingStatus>("pairing_status"),
+  /** Poll the open dialog; renews a naturally expired QR in place. */
+  pairingPoll: () => invoke<PairingStatus>("pairing_poll"),
   pairingApprove: (approvalId: number) =>
     invoke<PairingStatus>("pairing_approve", { approvalId }),
   pairingDecline: (approvalId: number) =>

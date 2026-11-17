@@ -366,7 +366,7 @@ class ServerStore {
 
   async refreshPairing(): Promise<void> {
     try {
-      this.pairing = await api.pairingStatus();
+      this.pairing = await api.pairingPoll();
       this.pairingError = null;
     } catch (error) {
       this.pairingError = String(error);
