@@ -55,6 +55,30 @@ pub struct PendingRequestView {
     pub sas: Option<String>,
 }
 
+/// A live pairing presented before the Client's confirmation (ticket 29).
+///
+/// The pairing code is derived from the live connection; the operator compares
+/// it with the phone before the post-confirm approval card appears.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PresentedRequestView {
+    /// The process-local handle the approval card will use.
+    pub approval_id: u64,
+    /// The canonical client id (hex).
+    pub client_id: String,
+    /// The accepted display name.
+    pub display_name: String,
+    /// QR or SAS.
+    pub mode: RequestedPairingMode,
+    /// The source address shown to the local operator only.
+    pub address: String,
+    /// The per-connection SAS (`123 456`).
+    pub sas: Option<String>,
+    /// The §7.4 Server SPKI fingerprint.
+    pub fingerprint: String,
+    /// Seconds until the pairing deadline, measured when the view was built.
+    pub expires_in_secs: u64,
+}
+
 /// A persisted Client record for the device list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientView {
@@ -90,6 +114,8 @@ pub trait PairingAdmin: Send + Sync + fmt::Debug {
     fn cancel(&self);
     /// Every verified-but-undecided pairing.
     fn pending(&self) -> Vec<PendingRequestView>;
+    /// Every live pairing presented before the Client's confirmation.
+    fn presented(&self) -> Vec<PresentedRequestView>;
     /// Approve one pending pairing by its process-local `approval_id`;
     /// `false` when the id is not pending.
     fn approve(&self, approval_id: u64) -> bool;
@@ -160,6 +186,27 @@ impl PairingAdmin for CorePairingAdmin {
             .pending_approvals()
             .into_iter()
             .map(pending_view)
+            .collect()
+    }
+
+    fn presented(&self) -> Vec<PresentedRequestView> {
+        let now = Instant::now();
+        self.core
+            .presented()
+            .into_iter()
+            .map(|presented| PresentedRequestView {
+                approval_id: presented.approval_id,
+                client_id: presented.client_id,
+                display_name: presented.display_name,
+                mode: requested_mode(presented.mode),
+                address: presented.address,
+                sas: presented.sas,
+                fingerprint: presented.fingerprint,
+                expires_in_secs: presented
+                    .expires_at
+                    .saturating_duration_since(now)
+                    .as_secs(),
+            })
             .collect()
     }
 

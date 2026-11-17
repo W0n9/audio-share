@@ -211,13 +211,22 @@ Windows GUI smoke（工单 25 要求）：
 
 ### 9.2 身份重置（仅 `as-cmd`，GUI 内无此操作）
 
-先**完全停止 GUI Server**（Store 锁会阻止离线管理）：
+portable 模式下数据目录（`identity/`、`pairing/`）**按 exe 所在目录隔离**，不是全局共享：
+`as-cmd.exe` 在 `extracted\` 下运行会创建它自己的 `pairing\`，看不到 GUI 的配对。
+因此必须把 `as-cmd.exe` 放到 GUI 的 `dist-windows\`（与 `AudioShareServer.exe` 同目录）再运行，
+或者给 GUI 与 `as-cmd` 设置相同的 `AUDIO_SHARE_CONFIG`。
+
+先**完全停止 GUI Server / GUI 进程**（Store 锁会阻止离线管理）：
 
 ```powershell
-# 解开 audio-share-server-cmd-windows.zip 后
-cd .\audio-share-server-cmd
+# 把 audio-share-server-cmd-windows.zip 里的 as-cmd.exe 复制到 dist-windows\，
+# 与 AudioShareServer.exe 同目录（共享同一个 portable store）
+cd .\dist-windows
 .\as-cmd.exe identity reset --yes
 ```
+
+若改用 `AUDIO_SHARE_CONFIG`，GUI 与 `as-cmd` 必须指向同一个配置文件（数据目录随该配置解析）；
+否则 `identity reset` 只会重置另一个空 store，GUI 的旧配对仍然有效。
 
 重置后所有旧配对失效；手机上旧凭据连接应得到 205 `SERVER_IDENTITY_MISMATCH`，
 必须重新配对。没有通用恢复后门。
@@ -225,6 +234,8 @@ cd .\audio-share-server-cmd
 ### 9.3 离线管理
 
 ```powershell
+# 与 GUI 使用同一 store：在 dist-windows\ 下运行，或设置相同的 AUDIO_SHARE_CONFIG
+cd .\dist-windows
 .\as-cmd.exe clients list
 .\as-cmd.exe clients revoke <client_id>
 ```

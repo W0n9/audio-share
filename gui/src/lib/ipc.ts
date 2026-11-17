@@ -129,10 +129,24 @@ export interface PairingRequestInfo {
   sas: string | null;
 }
 
+/** A live pairing shown before the Client confirms. */
+export interface PairingLiveInfo {
+  approvalId: number;
+  clientId: string;
+  displayName: string;
+  mode: PairingMode;
+  address: string;
+  sas: string | null;
+  fingerprint: string;
+  /** Seconds until the pairing deadline; refreshed by polling. */
+  expiresInSecs: number;
+}
+
 /** The polled pairing dialog state. */
 export interface PairingStatus {
   active: boolean;
   invitation: PairingInvitation | null;
+  live: PairingLiveInfo[];
   pending: PairingRequestInfo[];
   v2: V2Status;
 }

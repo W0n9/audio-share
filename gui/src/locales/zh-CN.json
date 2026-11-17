@@ -135,6 +135,8 @@
   "pairing.sasHint": "配对码由实时连接派生，手机连接后会显示在这里。接受前请在两端核对。",
   "pairing.cancel": "取消配对",
   "pairing.pendingTitle": "待确认设备",
+  "pairing.liveTitle": "已连接设备",
+  "pairing.liveHint": "请在手机上核对同一配对码；手机确认后会出现接受卡片。",
   "pairing.clientId": "客户端 ID",
   "pairing.address": "来源",
   "pairing.pairingCode": "配对码",
