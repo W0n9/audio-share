@@ -32,7 +32,7 @@ private fun storedServer() = StoredServer(
 )
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class HomeScreenTest : RobolectricComposeTestBase() {
 
@@ -84,7 +84,7 @@ class HomeScreenTest : RobolectricComposeTestBase() {
 }
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AboutScreenTest : RobolectricComposeTestBase() {
 
@@ -121,7 +121,7 @@ class AboutScreenTest : RobolectricComposeTestBase() {
 }
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SettingsScreenTest : RobolectricComposeTestBase() {
 
@@ -162,7 +162,7 @@ class SettingsScreenTest : RobolectricComposeTestBase() {
 }
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AccessibilitySemanticsTest : RobolectricComposeTestBase() {
 
@@ -255,7 +255,7 @@ class AccessibilitySemanticsTest : RobolectricComposeTestBase() {
 }
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], qualifiers = "zh-rCN")
+@Config(sdk = [36], qualifiers = "zh-rCN")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ChineseLocaleSmokeTest : RobolectricComposeTestBase() {
 
