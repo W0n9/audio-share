@@ -26,8 +26,18 @@ class ForegroundServiceContractTest {
         val service = source("java/dev/audioshare/v2/ControlSessionService.kt")
         assertTrue(service.contains("override fun onBind"))
         assertTrue(service.contains("class ControlSessionService : Service(), SessionController"))
-        // Ticket 15: teardown attributes the stop at the call site.
-        assertTrue(service.contains("session?.stop(reason)"))
+        // Ticket 21: the Service depends on the SessionEngineFactory seam. The
+        // single ClientSession construction site is the hand-written factory;
+        // stop attribution (the old `session?.stop(reason)`) is now asserted
+        // behaviourally in SessionOrchestratorTest.
+        assertEquals(
+            1,
+            Regex("""ClientSession\(""").findAll(service).count(),
+            "the engine factory is the only ClientSession construction site",
+        )
+        assertTrue(service.contains("SessionEngineFactory"))
+        assertTrue(service.contains("orchestrator.stop(reason)"))
+        assertFalse(service.contains("session?.stop("))
 
         val activity = source("java/dev/audioshare/v2/MainActivity.kt")
         assertTrue(activity.contains("unbindService(connection)"))
