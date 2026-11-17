@@ -60,6 +60,20 @@
         <item quantity="one">Reconnecting (attempt %1$d)</item>
         <item quantity="other">Reconnecting (attempt %1$d)</item>
     </plurals>
+    <string name="session_phase_connecting_title">Connecting to your Server</string>
+    <string name="session_phase_connecting_body">Setting up the encrypted connection…</string>
+    <string name="session_phase_authenticating_title">Verifying the Server</string>
+    <string name="session_phase_authenticating_body">Checking the Server identity and this phone\'s access.</string>
+    <string name="session_phase_ready_title">Connected</string>
+    <string name="session_phase_ready_body">The Server is ready. Audio starts when capture begins.</string>
+    <string name="session_phase_playing_title">Playing</string>
+    <string name="session_phase_playing_body">Audio is streaming from your Server.</string>
+    <string name="session_reconnecting_body">The connection dropped. Audio resumes automatically when the Server is reachable.</string>
+    <string name="session_last_close_code">Last connection closed with code %1$d.</string>
+    <string name="session_ended_user_body">Nothing is playing. Connect again whenever you are ready.</string>
+    <string name="session_ended_surfaced_title">Session ended</string>
+    <string name="session_ended_surfaced_body">The session stopped because of the problem below.</string>
+    <string name="session_error_code">Error code %1$d</string>
 
     <!-- Error card actions -->
     <string name="error_action_retry">Retry</string>
