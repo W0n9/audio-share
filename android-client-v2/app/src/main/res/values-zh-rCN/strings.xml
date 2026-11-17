@@ -55,6 +55,20 @@
         <item quantity="one">正在重连（第 %1$d 次）</item>
         <item quantity="other">正在重连（第 %1$d 次）</item>
     </plurals>
+    <string name="session_phase_connecting_title">正在连接服务器</string>
+    <string name="session_phase_connecting_body">正在建立加密连接…</string>
+    <string name="session_phase_authenticating_title">正在验证服务器</string>
+    <string name="session_phase_authenticating_body">正在检查服务器身份和此手机的访问权限。</string>
+    <string name="session_phase_ready_title">已连接</string>
+    <string name="session_phase_ready_body">服务器已就绪，开始采集后即播放音频。</string>
+    <string name="session_phase_playing_title">正在播放</string>
+    <string name="session_phase_playing_body">正在从服务器流式播放音频。</string>
+    <string name="session_reconnecting_body">连接已中断。服务器可访问后会自动恢复播放。</string>
+    <string name="session_last_close_code">上次连接关闭代码：%1$d。</string>
+    <string name="session_ended_user_body">当前没有播放。准备好后可以重新连接。</string>
+    <string name="session_ended_surfaced_title">会话已结束</string>
+    <string name="session_ended_surfaced_body">会话因下面的问题而停止。</string>
+    <string name="session_error_code">错误代码 %1$d</string>
 
     <!-- 错误卡操作 -->
     <string name="error_action_retry">重试</string>
