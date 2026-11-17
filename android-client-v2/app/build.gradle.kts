@@ -96,7 +96,9 @@ val testOnlyBuild = testSupport || deviceTests
 
 android {
     namespace = "dev.audioshare.v2"
-    compileSdk = 35
+    // Stage 3: Compose 1.12 requires compileSdk 37; targetSdk stays at 36 so
+    // ACCESS_LOCAL_NETWORK does not become a mandatory runtime permission.
+    compileSdk = 37
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -117,7 +119,7 @@ android {
         applicationId = "dev.audioshare.v2"
         // ticket 08 gate: Android 8 / API 26 baseline, same as the prototype
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         // Beta release: applicationId dev.audioshare.v2 so the beta coexists
         // with the v1 app (ticket 21 acceptance).
         versionCode = 2
@@ -216,10 +218,21 @@ kotlin {
     jvmToolchain(17)
 }
 
+// Robolectric 4.18 needs JDK 21 to run the SDK 36 sandbox, while the app and
+// its tests still compile to Java 17 bytecode. Launch only the test JVMs on
+// the 21 toolchain; do not raise the compile target.
+tasks.withType<Test>().configureEach {
+    javaLauncher.set(
+        javaToolchains.launcherFor {
+            languageVersion.set(JavaLanguageVersion.of(21))
+        }
+    )
+}
+
 dependencies {
     implementation(libs.google.protobuf.kotlin.lite)
 
-    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

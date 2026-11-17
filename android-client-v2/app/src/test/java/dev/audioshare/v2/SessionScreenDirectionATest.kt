@@ -32,7 +32,7 @@ import kotlin.test.assertTrue
  * [AppStateReducerTest].
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SessionScreenDirectionATest : RobolectricComposeTestBase() {
 
@@ -269,7 +269,7 @@ class SessionScreenDirectionATest : RobolectricComposeTestBase() {
 }
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], qualifiers = "zh-rCN")
+@Config(sdk = [36], qualifiers = "zh-rCN")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SessionChineseLocaleTest : RobolectricComposeTestBase() {
 

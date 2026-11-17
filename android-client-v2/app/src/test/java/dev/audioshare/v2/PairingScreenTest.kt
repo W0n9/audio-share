@@ -71,7 +71,7 @@ private fun pairingState(pairing: PairingUi?) = AppState(
  * localization contract; native pairing behaviour stays with tickets 30/32.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class PairingScreenTest : RobolectricComposeTestBase() {
 
@@ -483,7 +483,7 @@ class PairingScreenTest : RobolectricComposeTestBase() {
 }
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], qualifiers = "zh-rCN")
+@Config(sdk = [36], qualifiers = "zh-rCN")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class PairingChineseLocaleTest : RobolectricComposeTestBase() {
 
