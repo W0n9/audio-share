@@ -8,7 +8,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -29,6 +29,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -41,7 +42,7 @@ import kotlin.test.assertTrue
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AudioShareAppTest {
 
-    private val compose = createComposeRule()
+    private val compose = createAndroidComposeRule<ComponentActivity>()
 
     private val events = mutableListOf<UiEvent>()
 
@@ -271,6 +272,78 @@ class AudioShareAppTest {
         ).assertIsDisplayed()
         compose.onNodeWithTag("scan-again").performScrollTo().assertIsDisplayed().performClick()
         assertTrue(events.contains(UiEvent.RequestScan))
+    }
+
+    @Test
+    fun home_opens_settings_which_lists_the_paired_server_and_version() {
+        start(
+            AppState(
+                address = "10.0.2.2:65531",
+                storedServers = listOf(
+                    StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")
+                ),
+            )
+        )
+        compose.onNodeWithTag("settings").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-title").assertIsDisplayed()
+        compose.onNodeWithTag("settings-server").assertTextContains("Pixel", substring = true)
+        compose.onNodeWithTag("settings-version")
+            .assertTextContains("0.2.0-beta", substring = true)
+        assertTrue(events.contains(UiEvent.ShowSettings))
+        compose.onNodeWithTag("settings-about").performScrollTo().performClick()
+        assertTrue(events.contains(UiEvent.ShowAbout))
+    }
+
+    @Test
+    fun settings_without_a_pairing_shows_an_empty_state() {
+        start(AppState(screen = AppScreen.SETTINGS))
+        compose.onNodeWithTag("settings-empty").assertIsDisplayed()
+    }
+
+    @Test
+    fun system_back_from_pairing_cancels_and_returns_home() {
+        start(
+            AppState(
+                screen = AppScreen.PAIRING,
+                address = "10.0.2.2:65531",
+                pairing = PairingUi(mode = "sas", phase = "AWAITING_CONFIRMATION"),
+            )
+        )
+        compose.runOnUiThread {
+            compose.activity.onBackPressedDispatcher.onBackPressed()
+        }
+        compose.onNodeWithText("Audio Share (beta)").assertIsDisplayed()
+        assertTrue(events.contains(UiEvent.BackPressed))
+        assertFalse(events.contains(UiEvent.StopRequested), "Back is not Stop")
+    }
+
+    @Test
+    fun system_back_from_session_returns_home_without_stopping_playback() {
+        start(
+            AppState(
+                screen = AppScreen.SESSION,
+                address = "10.0.2.2:65531",
+                outcome = SessionOutcome.Live(LivePhase.PLAYING),
+            )
+        )
+        compose.runOnUiThread {
+            compose.activity.onBackPressedDispatcher.onBackPressed()
+        }
+        compose.onNodeWithText("Audio Share (beta)").assertIsDisplayed()
+        assertTrue(events.contains(UiEvent.BackPressed))
+        assertFalse(events.contains(UiEvent.StopRequested), "playback keeps running")
+    }
+
+    @Test
+    fun system_back_at_home_is_left_to_the_system_to_finish_the_activity() {
+        start(AppState())
+        val hasEnabledCallbacks = compose.runOnUiThread {
+            compose.activity.onBackPressedDispatcher.hasEnabledCallbacks()
+        }
+        assertFalse(
+            hasEnabledCallbacks,
+            "the HOME BackHandler is disabled so the Activity finishes normally",
+        )
     }
 
     @Test
