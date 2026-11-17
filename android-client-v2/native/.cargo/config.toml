@@ -5,11 +5,22 @@
 # ANDROID_HOME is NOT set globally on this machine.
 [target.aarch64-linux-android]
 linker = "/home/w0n9/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+# Android 16 KB page-size compatibility (Play requirement for 64-bit targets).
+# Both max- and common-page-size are needed: max-page-size aligns LOAD
+# segments, common-page-size aligns the RELRO boundary and padding.
+rustflags = [
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+    "-C", "link-arg=-Wl,-z,common-page-size=16384",
+]
 
 # x86_64 is the Android emulator ABI (development/CI only; arm64-v8a remains the
 # real-device scope). Same API-26 wrapper so minSdk behaviour matches arm64.
 [target.x86_64-linux-android]
 linker = "/home/w0n9/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang"
+rustflags = [
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+    "-C", "link-arg=-Wl,-z,common-page-size=16384",
+]
 
 # cc-rs (ring's asm/C build script) needs the cross C compiler + archiver too;
 # the NDK ships only API-suffixed clang wrappers, so name them explicitly.
