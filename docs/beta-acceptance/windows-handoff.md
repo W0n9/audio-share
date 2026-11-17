@@ -45,22 +45,27 @@ Windows SDK；只需要解压、校验、运行。
 
 ## 2. Windows 产物状态
 
-`dist-windows/` 由 Linux 上的 `cargo-xwin` 交叉构建（2026-11-16，`0.5.0-beta`）：
+`dist-windows/` 由 Linux 上的 `cargo-xwin` 交叉构建（2026-11-17 重建，含工单 29 的
+live SAS 修复，`0.5.0-beta`）：
 
 ```
-2117e7af01f6828351afae1ad4104d47b5c8f812b1c1d5457754dadc2a1b6712  AudioShareServer.exe
-857c5e055b7d6390135b93cff8b43d3a65d9e8f335103bb2c21e7da3ae874f31  audio-share-server-cmd-windows.zip
+e4575d25b19ab12fcdf626d1a592f52ac382a2f052c05e6bd82702a9c3c8e97c  AudioShareServer.exe
+2bc4ceb18bd0103286c22029f602fa1aed7e8329c4faf9bc56a04a21d9d8550d  audio-share-server-cmd-windows.zip
 ```
 
-- `AudioShareServer.exe` — 14,980,096 bytes，PE32+ x86-64 Windows GUI，Tauri GUI，
+- `AudioShareServer.exe` — 15,006,208 bytes，PE32+ x86-64 Windows GUI，Tauri GUI，
   portable，无需安装。前端资源已嵌入 exe。
-- `audio-share-server-cmd-windows.zip` — 2,052,519 bytes；解开后是
-  `audio-share-server-cmd/as-cmd.exe`（5,171,712 bytes，PE32+ console，
-  SHA-256 `f531fc92fd58a84b0167906c5ff5589d59bc6cde1870f5fc0833f9c23f7f828b`）
+- `audio-share-server-cmd-windows.zip` — 2,061,474 bytes；解开后是
+  `audio-share-server-cmd/as-cmd.exe`（5,220,864 bytes，PE32+ console，
+  SHA-256 `d2917467b28eb023e8dda7e675bd10a37595111fd14400219c4a966020e73ba5`）
   加上 LICENSE / README。
 
 状态：**在 Linux 上构建成功，未在 Windows/Wine 上运行**（本机无 Wine）。实际运行结果
 由你在 Windows 上记录；不要把“构建成功”写成 Windows PASS。
+
+2026-11-17 重建包含工单 29 的修复：Server 在发送 `PairingResponse` 后、客户端
+`PairingConfirm` 前就展示 live SAS。复跑 Windows GUI 配对时，手机连入后应立即在
+配对对话框看到 `Pairing code`/设备信息；确认手机后出现待批准卡片。
 
 若 `dist-windows/` 不存在或 `windows-build.log` 记录了交叉构建失败，则 Windows
 GUI 产物为 **NOT RUN**，不要用 Linux 的 deb/AppImage 冒充。此时可先用 `as-cmd`
@@ -103,8 +108,8 @@ Get-FileHash .\audio-share-client-v2-0.2.0-beta.apk -Algorithm SHA256
 与对应 `.sha256` 文件比对。Windows 产物预期 SHA-256：
 
 ```
-2117e7af01f6828351afae1ad4104d47b5c8f812b1c1d5457754dadc2a1b6712  AudioShareServer.exe
-857c5e055b7d6390135b93cff8b43d3a65d9e8f335103bb2c21e7da3ae874f31  audio-share-server-cmd-windows.zip
+e4575d25b19ab12fcdf626d1a592f52ac382a2f052c05e6bd82702a9c3c8e97c  AudioShareServer.exe
+2bc4ceb18bd0103286c22029f602fa1aed7e8329c4faf9bc56a04a21d9d8550d  audio-share-server-cmd-windows.zip
 ```
 
 APK 预期 SHA-256：
