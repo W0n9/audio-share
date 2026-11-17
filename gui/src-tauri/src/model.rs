@@ -114,6 +114,18 @@ impl V2Status {
     }
 }
 
+/// Lifecycle of a pairing invitation as shown to the local operator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PairingInvitationState {
+    /// The QR nonce is outstanding and the invitation is still usable.
+    Active,
+    /// The first well-formed pairing request consumed the invitation.
+    Consumed,
+    /// The invitation's lifetime elapsed without being consumed.
+    Expired,
+}
+
 /// A pairing invitation as shown in the GUI dialog.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,7 +138,10 @@ pub struct PairingInvitation {
     pub qr_svg: Option<String>,
     /// The §7.4 Server SPKI fingerprint.
     pub fingerprint: String,
-    /// Seconds until the invitation expires (refreshed by polling).
+    /// Lifecycle of the invitation; only `active` presents the QR.
+    pub state: PairingInvitationState,
+    /// Seconds until the invitation expires (refreshed by polling); zero when
+    /// the invitation is no longer active.
     pub expires_in_secs: u64,
 }
 
@@ -597,6 +612,7 @@ mod tests {
                 qr_uri: Some("audioshare-pair://p1?x".to_owned()),
                 qr_svg: Some("<svg/>".to_owned()),
                 fingerprint: "FP".to_owned(),
+                state: PairingInvitationState::Active,
                 expires_in_secs: 42,
             }),
             live: vec![PairingLiveInfo {
@@ -621,6 +637,7 @@ mod tests {
         };
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["invitation"]["qrUri"], "audioshare-pair://p1?x");
+        assert_eq!(json["invitation"]["state"], "active");
         assert_eq!(json["invitation"]["expiresInSecs"], 42);
         assert_eq!(json["pending"][0]["approvalId"], 7);
         assert_eq!(json["pending"][0]["sas"], "123 456");

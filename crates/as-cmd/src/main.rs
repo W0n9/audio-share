@@ -556,6 +556,7 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
         "Waiting up to {} s for a device; press Ctrl-C to cancel.",
         args.timeout
     );
+    println!("The invitation is single-use; if pairing fails, run `as-cmd pair` again.");
     let _ = std::io::stdout().flush();
 
     let mut approvals = core.subscribe_approvals();
@@ -567,11 +568,16 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
     let outcome = loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
-                println!("\npairing cancelled");
+                println!(
+                    "\npairing cancelled; the invitation is single-use, so run `as-cmd pair` again if you want to retry"
+                );
                 break Ok(());
             }
             _ = &mut deadline => {
-                break Err("timed out waiting for a device".to_owned());
+                break Err(
+                    "timed out waiting for a device; the invitation is single-use, so run `as-cmd pair` again"
+                        .to_owned(),
+                );
             }
             result = paired.recv() => {
                 match result {
@@ -630,7 +636,9 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
                     println!("Accepted; waiting for the phone to finish pairing...");
                 } else {
                     core.decline(request.approval_id);
-                    println!("Declined; nothing was stored.");
+                    println!(
+                        "Declined; nothing was stored. The invitation is single-use; run `as-cmd pair` again if you want to retry."
+                    );
                 }
             }
         }

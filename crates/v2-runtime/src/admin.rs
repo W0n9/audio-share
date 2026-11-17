@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use v2_transport::auth_store::ClientState;
-use v2_transport::pairing::{ApprovalRequest, Invitation, PairingCore};
+use v2_transport::pairing::{ApprovalRequest, Invitation, InvitationState, PairingCore};
 
 /// The pairing mode the operator asks for.
 ///
@@ -79,6 +79,18 @@ pub struct PresentedRequestView {
     pub expires_in_secs: u64,
 }
 
+/// Lifecycle of the most recently opened QR invitation, for local operator
+/// surfaces. A consumed invitation stays consumed even after its expiry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvitationStateView {
+    /// The QR nonce is outstanding and still usable.
+    Active,
+    /// The first well-formed pairing request consumed the nonce.
+    Consumed,
+    /// The invitation's lifetime elapsed without a request consuming it.
+    Expired,
+}
+
 /// A persisted Client record for the device list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientView {
@@ -110,6 +122,9 @@ pub enum ClientStateView {
 pub trait PairingAdmin: Send + Sync + fmt::Debug {
     /// Open an invitation. QR mode also opens the SAS admission window.
     fn begin(&self, mode: RequestedPairingMode) -> Result<InvitationView, String>;
+    /// The lifecycle state of the most recently opened QR invitation, if one
+    /// was opened. Local only; no wire message carries it.
+    fn invitation_state(&self) -> Option<InvitationStateView>;
     /// Close the SAS window and decline every undecided approval.
     fn cancel(&self);
     /// Every verified-but-undecided pairing.
@@ -179,6 +194,14 @@ impl PairingAdmin for CorePairingAdmin {
 
     fn cancel(&self) {
         self.core.cancel();
+    }
+
+    fn invitation_state(&self) -> Option<InvitationStateView> {
+        self.core.invitation_state().map(|state| match state {
+            InvitationState::Active => InvitationStateView::Active,
+            InvitationState::Consumed => InvitationStateView::Consumed,
+            InvitationState::Expired => InvitationStateView::Expired,
+        })
     }
 
     fn pending(&self) -> Vec<PendingRequestView> {

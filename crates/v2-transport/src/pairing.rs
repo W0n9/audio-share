@@ -398,6 +398,19 @@ pub struct Invitation {
     pub expires_at: Instant,
 }
 
+/// The lifecycle of the most recently opened QR invitation, as shown to the
+/// local operator. This is a local admin view; no wire message carries it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvitationState {
+    /// The nonce is still outstanding and its lifetime has not elapsed.
+    Active,
+    /// The first well-formed pairing request consumed the nonce, regardless of
+    /// the pairing's eventual outcome (§5).
+    Consumed,
+    /// The lifetime elapsed without a request consuming the nonce.
+    Expired,
+}
+
 /// A request for the operator's explicit local approval (§5.2).
 ///
 /// `approval_id` is a process-local handle; it is what `approve`, `decline`,
@@ -529,6 +542,14 @@ struct NonceEntry {
     expires_at: Instant,
 }
 
+/// The latest QR invitation, retained after consumption so the local admin
+/// surface can report `consumed` instead of losing the nonce (§5).
+struct CurrentQrInvitation {
+    nonce: [u8; NONCE_LEN],
+    expires_at: Instant,
+    consumed: bool,
+}
+
 struct PendingApproval {
     request: ApprovalRequest,
     decide: Box<dyn FnOnce(bool) + Send>,
@@ -561,6 +582,8 @@ pub struct PairingCore {
     store: Arc<AuthorizationStore>,
     clock: Arc<dyn Clock>,
     nonces: Mutex<VecDeque<NonceEntry>>,
+    /// The most recent QR invitation, retained for the local admin state.
+    current_qr: Mutex<Option<CurrentQrInvitation>>,
     sas_window: Mutex<Option<Instant>>,
     failures: Mutex<AddressRateGuard>,
     approvals: Mutex<HashMap<u64, PendingApproval>>,
@@ -621,6 +644,7 @@ impl PairingCore {
             store,
             clock,
             nonces: Mutex::new(VecDeque::new()),
+            current_qr: Mutex::new(None),
             sas_window: Mutex::new(None),
             failures: Mutex::new(AddressRateGuard::new(
                 PAIRING_FAILURE_WINDOW,
@@ -666,16 +690,41 @@ impl PairingCore {
     pub fn begin_qr(&self, _addr_hint: &str) -> Invitation {
         let nonce = random_nonce();
         let expires_at = self.clock.now() + NONCE_TTL;
-        let mut nonces = self.nonces.lock().expect("pairing nonce lock");
-        while nonces.len() >= MAX_OUTSTANDING_NONCES {
-            nonces.pop_front();
+        {
+            let mut nonces = self.nonces.lock().expect("pairing nonce lock");
+            while nonces.len() >= MAX_OUTSTANDING_NONCES {
+                nonces.pop_front();
+            }
+            nonces.push_back(NonceEntry { nonce, expires_at });
         }
-        nonces.push_back(NonceEntry { nonce, expires_at });
+        *self.current_qr.lock().expect("current QR invitation lock") = Some(CurrentQrInvitation {
+            nonce,
+            expires_at,
+            consumed: false,
+        });
         Invitation {
             mode: PairingMode::Qr,
             nonce: nonce.to_vec(),
             expires_at,
         }
+    }
+
+    /// The lifecycle state of the most recently opened QR invitation.
+    ///
+    /// A consumed invitation stays [`InvitationState::Consumed`] even after its
+    /// original expiry: the single-use rule is stronger than the lifetime rule,
+    /// and the local admin surface must not auto-renew a failed attempt (§5).
+    pub fn invitation_state(&self) -> Option<InvitationState> {
+        let current = self.current_qr.lock().expect("current QR invitation lock");
+        current.as_ref().map(|invitation| {
+            if invitation.consumed {
+                InvitationState::Consumed
+            } else if self.clock.now() >= invitation.expires_at {
+                InvitationState::Expired
+            } else {
+                InvitationState::Active
+            }
+        })
     }
 
     /// Open the admin SAS admission window (no nonce; §7.3).
@@ -788,21 +837,32 @@ impl PairingCore {
             return Err(PairingError::Malformed("pairing_nonce must be 16 bytes"));
         }
         let now = self.clock.now();
-        let mut nonces = self.nonces.lock().expect("pairing nonce lock");
-        let index = nonces
-            .iter()
-            .position(|entry| entry.nonce.as_slice() == nonce);
-        match index {
-            Some(index) => {
-                let entry = nonces.remove(index).expect("index found");
-                if now >= entry.expires_at {
-                    Err(PairingError::NonceExpired)
-                } else {
-                    Ok(())
+        let admitted = {
+            let mut nonces = self.nonces.lock().expect("pairing nonce lock");
+            let index = nonces
+                .iter()
+                .position(|entry| entry.nonce.as_slice() == nonce);
+            match index {
+                Some(index) => {
+                    let entry = nonces.remove(index).expect("index found");
+                    if now >= entry.expires_at {
+                        Err(PairingError::NonceExpired)
+                    } else {
+                        Ok(())
+                    }
+                }
+                None => Err(PairingError::NonceInvalid),
+            }
+        };
+        if admitted.is_ok() {
+            let mut current = self.current_qr.lock().expect("current QR invitation lock");
+            if let Some(invitation) = current.as_mut() {
+                if invitation.nonce.as_slice() == nonce {
+                    invitation.consumed = true;
                 }
             }
-            None => Err(PairingError::NonceInvalid),
         }
+        admitted
     }
 
     fn admit_sas(&self) -> Result<(), PairingError> {

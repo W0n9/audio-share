@@ -2,13 +2,16 @@
 //! store, no QUIC, no GUI.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use p256::ecdsa::SigningKey;
-use v2_runtime::admin::{ClientStateView, CorePairingAdmin, PairingAdmin, RequestedPairingMode};
+use v2_runtime::admin::{
+    ClientStateView, CorePairingAdmin, InvitationStateView, PairingAdmin, RequestedPairingMode,
+};
 use v2_transport::auth_store::{Authorization, AuthorizationStore};
-use v2_transport::pairing::{self, ApprovalRequest, PairingCore};
-use v2_transport::schema::PairingMode as WirePairingMode;
+use v2_transport::pairing::{self, ApprovalRequest, PairingCore, NONCE_TTL};
+use v2_transport::schema::{PairingMode as WirePairingMode, PairingRequest};
 
 fn admin() -> (
     Arc<CorePairingAdmin>,
@@ -30,6 +33,70 @@ fn client_key() -> Vec<u8> {
         .to_encoded_point(true)
         .as_bytes()
         .to_vec()
+}
+
+/// A deterministic clock for the invitation lifetime.
+#[derive(Debug)]
+struct ManualClock(Mutex<Instant>);
+
+impl ManualClock {
+    fn new() -> Arc<Self> {
+        Arc::new(Self(Mutex::new(Instant::now())))
+    }
+
+    fn advance(&self, duration: Duration) {
+        *self.0.lock().unwrap() += duration;
+    }
+}
+
+impl pairing::Clock for ManualClock {
+    fn now(&self) -> Instant {
+        *self.0.lock().unwrap()
+    }
+}
+
+fn admin_with_clock() -> (Arc<CorePairingAdmin>, Arc<PairingCore>, Arc<ManualClock>) {
+    let store = Arc::new(AuthorizationStore::in_memory());
+    let clock = ManualClock::new();
+    let core = Arc::new(PairingCore::with_clock(
+        vec![7u8; 32],
+        Arc::clone(&store),
+        clock.clone(),
+    ));
+    let admin = Arc::new(CorePairingAdmin::new(
+        Arc::clone(&core),
+        "192.168.1.20:65531",
+    ));
+    (admin, core, clock)
+}
+
+#[test]
+fn invitation_state_reports_active_consumed_and_expired() {
+    let (admin, core, clock) = admin_with_clock();
+    assert_eq!(admin.invitation_state(), None);
+
+    let invitation = admin.begin(RequestedPairingMode::Qr).expect("begin QR");
+    assert_eq!(admin.invitation_state(), Some(InvitationStateView::Active));
+
+    let uri = invitation.qr_uri.expect("QR URI");
+    let parsed = pairing::parse_qr_uri(&uri).expect("QR payload parses");
+    core.admit_request(&PairingRequest {
+        pairing_mode: WirePairingMode::Qr as i32,
+        pairing_nonce: parsed.nonce.to_vec(),
+        ..PairingRequest::default()
+    })
+    .expect("admit the first request");
+    assert_eq!(
+        admin.invitation_state(),
+        Some(InvitationStateView::Consumed)
+    );
+
+    admin
+        .begin(RequestedPairingMode::Qr)
+        .expect("begin QR again");
+    assert_eq!(admin.invitation_state(), Some(InvitationStateView::Active));
+    clock.advance(NONCE_TTL + Duration::from_millis(1));
+    assert_eq!(admin.invitation_state(), Some(InvitationStateView::Expired));
 }
 
 fn approval(request_id: u64, core: &PairingCore, accepted: Arc<AtomicBool>) {

@@ -554,10 +554,10 @@ async fn pairing_cancel(state: State<'_, AppState>) -> Result<PairingStatus, Str
     state.controller.pairing_cancel()
 }
 
-/// Polled by the dialog: invitation, pending requests, and v2 status.
+/// Polled by the dialog; renews a naturally expired QR invitation in place.
 #[tauri::command]
-async fn pairing_status(state: State<'_, AppState>) -> Result<PairingStatus, String> {
-    Ok(state.controller.pairing_status())
+async fn pairing_poll(state: State<'_, AppState>) -> Result<PairingStatus, String> {
+    state.controller.pairing_poll()
 }
 
 /// Approve one pending pairing.
@@ -713,7 +713,7 @@ fn main() {
             stop_server,
             pairing_begin,
             pairing_cancel,
-            pairing_status,
+            pairing_poll,
             pairing_approve,
             pairing_decline,
             clients_list,

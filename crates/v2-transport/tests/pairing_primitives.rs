@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use v2_transport::auth_store::AuthorizationStore;
 use v2_transport::pairing::{
-    binding_context, derive_sas_code, encode_qr_uri, format_sas, parse_qr_uri, PairingCore,
-    PairingError, PairingPresented, QrPayloadError, MAX_OUTSTANDING_NONCES, NONCE_TTL,
+    binding_context, derive_sas_code, encode_qr_uri, format_sas, parse_qr_uri, InvitationState,
+    PairingCore, PairingError, PairingPresented, QrPayloadError, MAX_OUTSTANDING_NONCES, NONCE_TTL,
 };
 use v2_transport::schema::{PairingMode, PairingRequest};
 
@@ -203,6 +203,64 @@ fn binding_context_rejects_noncanonical_capabilities() {
 // ---------------------------------------------------------------------------
 // Nonce lifecycle (§5).
 // ---------------------------------------------------------------------------
+
+#[test]
+fn current_qr_invitation_is_active_then_consumed() {
+    let clock = ManualClock::new();
+    let core = core_with_clock(Arc::clone(&clock));
+    assert_eq!(core.invitation_state(), None);
+
+    let invitation = core.begin_qr("host:1");
+    assert_eq!(core.invitation_state(), Some(InvitationState::Active));
+
+    assert!(core.admit_request(&qr_request(&invitation.nonce)).is_ok());
+    assert_eq!(
+        core.invitation_state(),
+        Some(InvitationState::Consumed),
+        "the first well-formed request consumes the invitation regardless of outcome"
+    );
+}
+
+#[test]
+fn current_qr_invitation_expires_after_ten_minutes() {
+    let clock = ManualClock::new();
+    let core = core_with_clock(Arc::clone(&clock));
+
+    let _invitation = core.begin_qr("host:1");
+    assert_eq!(core.invitation_state(), Some(InvitationState::Active));
+
+    clock.advance(NONCE_TTL + Duration::from_millis(1));
+    assert_eq!(core.invitation_state(), Some(InvitationState::Expired));
+}
+
+#[test]
+fn a_consumed_invitation_stays_consumed_after_its_expiry() {
+    let clock = ManualClock::new();
+    let core = core_with_clock(Arc::clone(&clock));
+
+    let invitation = core.begin_qr("host:1");
+    assert!(core.admit_request(&qr_request(&invitation.nonce)).is_ok());
+    clock.advance(NONCE_TTL + Duration::from_millis(1));
+
+    assert_eq!(
+        core.invitation_state(),
+        Some(InvitationState::Consumed),
+        "consumption outranks expiry so a failed attempt is never auto-renewed"
+    );
+}
+
+#[test]
+fn a_new_qr_invitation_replaces_the_previous_state() {
+    let clock = ManualClock::new();
+    let core = core_with_clock(Arc::clone(&clock));
+
+    let first = core.begin_qr("host:1");
+    assert!(core.admit_request(&qr_request(&first.nonce)).is_ok());
+    assert_eq!(core.invitation_state(), Some(InvitationState::Consumed));
+
+    let _second = core.begin_qr("host:1");
+    assert_eq!(core.invitation_state(), Some(InvitationState::Active));
+}
 
 #[test]
 fn nonce_is_single_use_and_consumed_before_the_outcome() {

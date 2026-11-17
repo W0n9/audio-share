@@ -14,19 +14,21 @@ use audio_share_core::capture::{CaptureBackend, Endpoint};
 use audio_share_core::config::{self, DEFAULT_ENDPOINT};
 use audio_share_core::server::{Server, ServerHandle};
 use v2_runtime::admin::{
-    ClientStateView, ClientView, PairingAdmin, PendingRequestView, PresentedRequestView,
+    ClientStateView, ClientView, InvitationStateView, PairingAdmin, PendingRequestView,
+    PresentedRequestView,
 };
 
 use crate::logging;
 use crate::model::{
-    ApplicationSettings, ClientInfo, PairingInvitation, PairingLiveInfo, PairingRequestInfo,
-    PairingStatus, ServerState, ServerStatus, Settings, V2Status,
+    ApplicationSettings, ClientInfo, PairingInvitation, PairingInvitationState, PairingLiveInfo,
+    PairingRequestInfo, PairingStatus, ServerState, ServerStatus, Settings, V2Status,
 };
 use crate::v2::{PairingModeArg, V2Runtime, V2StartInputs, V2Starter, DEFAULT_V2_PORT};
 
 /// Called after every published status change, outside the controller lock.
 pub type StatusListener = Arc<dyn Fn(&ServerStatus) + Send + Sync>;
 
+#[derive(Clone)]
 struct ActiveInvitation {
     mode: String,
     qr_uri: Option<String>,
@@ -46,6 +48,10 @@ struct ControllerState {
     /// The invitation created by the last `pairing_begin`; nonces expire on
     /// their own, closing the dialog does not consume them (pairing.md §5).
     invitation: Option<ActiveInvitation>,
+    /// Set when an automatic refresh failed; cleared by a manual begin/cancel.
+    auto_renew_blocked: bool,
+    /// Guards against two concurrent polls renewing the same invitation.
+    auto_renew_in_flight: bool,
 }
 
 /// Owns the running server, the persisted settings, and the displayed status.
@@ -97,6 +103,8 @@ impl ServerController {
                 v2: None,
                 v2_admin: None,
                 invitation: None,
+                auto_renew_blocked: false,
+                auto_renew_in_flight: false,
             }),
             listener: Mutex::new(None),
             config_path,
@@ -401,28 +409,39 @@ impl ServerController {
     /// `v2` block explains why and the dialog stays inert.
     pub fn pairing_status(&self) -> PairingStatus {
         let now = Instant::now();
-        let (v2, admin, invitation) = {
-            let mut state = lock(&self.state);
-            let v2 = state.status.v2.clone();
-            let admin = state.v2_admin.clone();
-            let invitation = match state.invitation.as_ref() {
-                Some(active) if active.expires_at > now => Some(PairingInvitation {
-                    mode: active.mode.clone(),
-                    qr_uri: active.qr_uri.clone(),
-                    qr_svg: active.qr_svg.clone(),
-                    fingerprint: active.fingerprint.clone(),
-                    expires_in_secs: active.expires_at.saturating_duration_since(now).as_secs(),
-                }),
-                Some(_) => {
-                    // Expired nonces/windows are left to expire by the core;
-                    // the dialog simply stops presenting them (pairing.md §5).
-                    state.invitation = None;
-                    None
-                }
-                None => None,
-            };
-            (v2, admin, invitation)
+        let (v2, admin, active) = {
+            let state = lock(&self.state);
+            (
+                state.status.v2.clone(),
+                state.v2_admin.clone(),
+                state.invitation.clone(),
+            )
         };
+        let invitation = active.map(|active| {
+            let state = match active.mode.as_str() {
+                "qr" => match admin.as_ref().and_then(|admin| admin.invitation_state()) {
+                    Some(InvitationStateView::Active) => PairingInvitationState::Active,
+                    Some(InvitationStateView::Consumed) => PairingInvitationState::Consumed,
+                    // Expired, or the core no longer holds this invitation
+                    // (for example a core restart): the QR is not usable.
+                    Some(InvitationStateView::Expired) | None => PairingInvitationState::Expired,
+                },
+                _ if active.expires_at > now => PairingInvitationState::Active,
+                _ => PairingInvitationState::Expired,
+            };
+            PairingInvitation {
+                expires_in_secs: if state == PairingInvitationState::Active {
+                    active.expires_at.saturating_duration_since(now).as_secs()
+                } else {
+                    0
+                },
+                mode: active.mode,
+                qr_uri: active.qr_uri,
+                qr_svg: active.qr_svg,
+                fingerprint: active.fingerprint,
+                state,
+            }
+        });
         let pending = admin
             .as_ref()
             .map(|admin| admin.pending())
@@ -437,13 +456,71 @@ impl ServerController {
             .into_iter()
             .map(live_info)
             .collect::<Vec<_>>();
+        let invitation_active = invitation
+            .as_ref()
+            .is_some_and(|invitation| invitation.state == PairingInvitationState::Active);
         PairingStatus {
-            active: invitation.is_some() || !live.is_empty() || !pending.is_empty(),
+            active: invitation_active || !live.is_empty() || !pending.is_empty(),
             invitation,
             live,
             pending,
             v2,
         }
+    }
+
+    /// Poll the pairing dialog and renew a naturally expired QR invitation.
+    ///
+    /// The store calls this only while the dialog is open. A consumed
+    /// invitation is never renewed automatically: a failed attempt needs an
+    /// explicit refresh (§5). A failed automatic renewal is not retried until
+    /// the operator refreshes or cancels.
+    pub fn pairing_poll(&self) -> Result<PairingStatus, String> {
+        let status = self.pairing_status();
+        let (admin, mode) = {
+            let state = lock(&self.state);
+            (
+                state.v2_admin.clone(),
+                state
+                    .invitation
+                    .as_ref()
+                    .map(|invitation| invitation.mode.clone()),
+            )
+        };
+        // Renewal is driven by the core's natural-expiry state, never by the
+        // locally truncated countdown and never when the core has no state
+        // (for example after a core restart): that is not a natural expiry.
+        let core_expired = mode.as_deref() == Some("qr")
+            && admin.as_ref().and_then(|admin| admin.invitation_state())
+                == Some(InvitationStateView::Expired);
+        let should_renew = {
+            let mut state = lock(&self.state);
+            let should = core_expired
+                && status.live.is_empty()
+                && status.pending.is_empty()
+                && !state.auto_renew_blocked
+                && !state.auto_renew_in_flight;
+            if should {
+                state.auto_renew_in_flight = true;
+            }
+            should
+        };
+        if !should_renew {
+            let mut state = lock(&self.state);
+            if !status
+                .invitation
+                .as_ref()
+                .is_some_and(|invitation| invitation.state == PairingInvitationState::Expired)
+            {
+                state.auto_renew_blocked = false;
+            }
+            return Ok(status);
+        }
+        let result = self.pairing_begin(PairingModeArg::Qr);
+        let mut state = lock(&self.state);
+        state.auto_renew_in_flight = false;
+        state.auto_renew_blocked = result.is_err();
+        drop(state);
+        result
     }
 
     /// Begin a pairing invitation from the GUI dialog.
@@ -453,13 +530,17 @@ impl ServerController {
             .begin(mode.into())
             .map_err(|error| format!("cannot begin pairing: {error}"))?;
         let expires_at = Instant::now() + Duration::from_secs(view.expires_in_secs.max(1));
-        lock(&self.state).invitation = Some(ActiveInvitation {
-            mode: mode_name(view.mode),
-            qr_uri: view.qr_uri,
-            qr_svg: view.qr_svg,
-            fingerprint: view.fingerprint,
-            expires_at,
-        });
+        {
+            let mut state = lock(&self.state);
+            state.invitation = Some(ActiveInvitation {
+                mode: mode_name(view.mode),
+                qr_uri: view.qr_uri,
+                qr_svg: view.qr_svg,
+                fingerprint: view.fingerprint,
+                expires_at,
+            });
+            state.auto_renew_blocked = false;
+        }
         Ok(self.pairing_status())
     }
 
@@ -472,7 +553,11 @@ impl ServerController {
     pub fn pairing_cancel(&self) -> Result<PairingStatus, String> {
         let admin = self.pairing_admin()?;
         admin.cancel();
-        lock(&self.state).invitation = None;
+        {
+            let mut state = lock(&self.state);
+            state.invitation = None;
+            state.auto_renew_blocked = false;
+        }
         Ok(self.pairing_status())
     }
 
@@ -615,8 +700,8 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
     use v2_runtime::admin::{
-        ClientStateView, ClientView, InvitationView, PairingAdmin, PendingRequestView,
-        PresentedRequestView, RequestedPairingMode,
+        ClientStateView, ClientView, InvitationStateView, InvitationView, PairingAdmin,
+        PendingRequestView, PresentedRequestView, RequestedPairingMode,
     };
 
     use super::*;
@@ -628,6 +713,7 @@ mod tests {
         pending: Vec<PendingRequestView>,
         presented: Vec<PresentedRequestView>,
         clients: Vec<ClientView>,
+        invitation_state: Option<InvitationStateView>,
     }
 
     #[derive(Debug, Clone, Default)]
@@ -647,7 +733,9 @@ mod tests {
 
     impl PairingAdmin for FakeAdmin {
         fn begin(&self, mode: RequestedPairingMode) -> Result<InvitationView, String> {
-            lock(&self.state).calls.push(format!("begin:{mode:?}"));
+            let mut state = lock(&self.state);
+            state.calls.push(format!("begin:{mode:?}"));
+            state.invitation_state = Some(InvitationStateView::Active);
             let view = InvitationView {
                 mode,
                 qr_uri: (mode == RequestedPairingMode::Qr).then(|| {
@@ -660,10 +748,15 @@ mod tests {
             Ok(view)
         }
 
+        fn invitation_state(&self) -> Option<InvitationStateView> {
+            lock(&self.state).invitation_state
+        }
+
         fn cancel(&self) {
             let mut state = lock(&self.state);
             state.calls.push("cancel".to_owned());
             state.presented.clear();
+            state.invitation_state = None;
         }
 
         fn pending(&self) -> Vec<PendingRequestView> {
@@ -1509,6 +1602,7 @@ mod tests {
         assert!(status.active);
         let invitation = status.invitation.expect("invitation");
         assert_eq!(invitation.mode, "qr");
+        assert_eq!(invitation.state, PairingInvitationState::Active);
         assert!(invitation.qr_uri.is_some());
         assert_eq!(invitation.qr_svg.as_deref(), Some("<svg/>"));
         assert_eq!(invitation.fingerprint, "FP");
@@ -1565,7 +1659,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pairing_status_hides_expired_invitations() {
+    async fn pairing_status_marks_expired_invitations_without_dropping_them() {
         let (admin, _state, starter, _stopped) = fake_v2();
         let controller = ServerController::new(test_settings());
         controller.enable_v2(starter, 0);
@@ -1583,9 +1677,176 @@ mod tests {
         }
 
         let status = controller.pairing_status();
-        assert!(!status.active, "an expired invitation is not presented");
-        assert!(status.invitation.is_none());
+        assert!(!status.active, "an expired invitation is not active");
+        let invitation = status
+            .invitation
+            .expect("the expired invitation stays visible for refresh");
+        assert_eq!(invitation.state, PairingInvitationState::Expired);
+        assert_eq!(invitation.expires_in_secs, 0);
         controller.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn pairing_poll_never_renews_a_consumed_invitation() {
+        let (admin, admin_state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+
+        controller
+            .pairing_begin(PairingModeArg::Qr)
+            .expect("begin QR");
+        lock(&admin_state).invitation_state = Some(InvitationStateView::Consumed);
+
+        let status = controller.pairing_poll().expect("poll");
+        let invitation = status
+            .invitation
+            .expect("the consumed invitation stays visible for refresh");
+        assert_eq!(invitation.state, PairingInvitationState::Consumed);
+        assert!(!status.active);
+        assert_eq!(
+            begin_qr_count(&admin),
+            1,
+            "a consumed invitation is never renewed automatically"
+        );
+
+        controller.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn pairing_poll_renews_a_naturally_expired_invitation_once() {
+        let (admin, admin_state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+
+        controller
+            .pairing_begin(PairingModeArg::Qr)
+            .expect("begin QR");
+        lock(&admin_state).invitation_state = Some(InvitationStateView::Expired);
+
+        let status = controller.pairing_poll().expect("poll renews");
+        let invitation = status.invitation.expect("renewed invitation");
+        assert_eq!(invitation.state, PairingInvitationState::Active);
+        assert!(status.active);
+        assert_eq!(
+            begin_qr_count(&admin),
+            2,
+            "one manual begin plus one automatic renewal"
+        );
+
+        let status = controller.pairing_poll().expect("second poll");
+        assert_eq!(
+            status.invitation.expect("still active").state,
+            PairingInvitationState::Active,
+            "the renewed invitation is not renewed again"
+        );
+        assert_eq!(begin_qr_count(&admin), 2);
+
+        controller.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn pairing_poll_does_not_renew_while_a_pairing_is_live() {
+        let (admin, admin_state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+
+        controller
+            .pairing_begin(PairingModeArg::Qr)
+            .expect("begin QR");
+        {
+            let mut state = lock(&admin_state);
+            state.invitation_state = Some(InvitationStateView::Expired);
+            state.presented.push(live_request());
+        }
+
+        let status = controller.pairing_poll().expect("poll");
+        assert!(status.active, "a live pairing keeps the dialog active");
+        assert_eq!(
+            status.invitation.expect("invitation").state,
+            PairingInvitationState::Expired,
+            "the expired QR is shown as expired, not silently replaced"
+        );
+        assert_eq!(begin_qr_count(&admin), 1);
+
+        controller.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn core_active_outranks_a_truncated_local_deadline() {
+        let (admin, admin_state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+
+        lock(&admin_state).invitation_state = Some(InvitationStateView::Active);
+        {
+            let mut state = lock(&controller.state);
+            state.v2_admin = Some(Arc::new(admin.clone()));
+            state.invitation = Some(ActiveInvitation {
+                mode: "qr".to_owned(),
+                qr_uri: Some("audioshare-pair://p1?…".to_owned()),
+                qr_svg: None,
+                fingerprint: "FP".to_owned(),
+                expires_at: Instant::now() - Duration::from_secs(1),
+            });
+        }
+
+        let status = controller.pairing_status();
+        assert_eq!(
+            status.invitation.expect("invitation").state,
+            PairingInvitationState::Active,
+            "the core is the single source of truth for the QR lifecycle"
+        );
+        let status = controller.pairing_poll().expect("poll");
+        assert_eq!(
+            status.invitation.expect("invitation").state,
+            PairingInvitationState::Active
+        );
+        assert_eq!(
+            begin_qr_count(&admin),
+            0,
+            "the truncated local countdown must not renew before the core expires"
+        );
+
+        controller.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn pairing_poll_does_not_renew_an_unknown_core_invitation() {
+        let (admin, admin_state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+
+        controller
+            .pairing_begin(PairingModeArg::Qr)
+            .expect("begin QR");
+        lock(&admin_state).invitation_state = None;
+
+        let status = controller.pairing_poll().expect("poll");
+        assert_eq!(
+            status.invitation.expect("invitation").state,
+            PairingInvitationState::Expired,
+            "an unknown core state is shown as expired"
+        );
+        assert_eq!(
+            begin_qr_count(&admin),
+            1,
+            "only a natural expiration reported by the core triggers renewal"
+        );
+
+        controller.stop().await.expect("stop");
+    }
+
+    fn begin_qr_count(admin: &FakeAdmin) -> usize {
+        admin
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "begin:Qr")
+            .count()
     }
 
     #[tokio::test]
