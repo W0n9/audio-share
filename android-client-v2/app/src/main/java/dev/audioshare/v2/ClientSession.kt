@@ -234,21 +234,25 @@ class ClientSession(
         val watcher = Thread {
             var credentialSeen = false
             var failed = false
-            // A stopped/teardown session must not deliver a late snapshot or
-            // credential into the next pairing attempt. Ownership is checked
-            // right before every listener call, not only at loop entry.
-            fun ownsExchange(): Boolean = synchronized(lifecycleLock) {
-                running.get() && lifecycle === lifetime && handle.get() == h
+            // This watcher must outlive a native transport close so that
+            // PairingResult(OK) + credential are still captured (as-cmd pair
+            // closes immediately after writing them). It is tied to the
+            // ClientSession lifetime, NOT to a numeric handle: a reconnect
+            // clears the handle before the 25 ms poll observes the credential.
+            // Stale pairing snapshots are independently rejected by the
+            // Service's PairingStateRelay source ownership.
+            fun ownsLifetime(): Boolean = synchronized(lifecycleLock) {
+                running.get() && lifecycle === lifetime
             }
-            while (ownsExchange()) {
+            while (ownsLifetime()) {
                 val pairingJson = ClientNative.getPairingState(h)
-                if (!pairingJson.isNullOrEmpty() && ownsExchange()) {
+                if (!pairingJson.isNullOrEmpty() && ownsLifetime()) {
                     listener.onPairingState(pairingJson)
                     failed = pairingJson.contains("\"phase\":\"FAILED\"")
                 }
                 val credential = ClientNative.getCredentialSummary(h)
                 if (!credential.isNullOrEmpty()) {
-                    if (!credentialSeen && ownsExchange()) {
+                    if (!credentialSeen && ownsLifetime()) {
                         credentialSeen = true
                         listener.onCredential(credential)
                     }
