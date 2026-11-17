@@ -235,7 +235,9 @@ class AudioShareAppTest {
             )
         )
         compose.onNodeWithTag("qr-auto-confirm").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Pairing with AAAA1111 BBBB2222…").assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.pairing_awaiting_qr_title)).assertIsDisplayed()
+        compose.onNodeWithTag("pairing-fingerprint")
+            .assertTextContains("AAAA1111 BBBB2222")
         compose.onNodeWithTag("confirm-pairing").assertDoesNotExist()
         compose.onNodeWithTag("pairing-sas-input").assertDoesNotExist()
         compose.onNodeWithText("123 456").performScrollTo().assertIsDisplayed()
@@ -256,7 +258,7 @@ class AudioShareAppTest {
             )
         )
         compose.onNodeWithTag("pairing-confirming").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Confirmed, waiting for the Server to accept.").assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.pairing_confirming_title)).assertIsDisplayed()
         compose.onNodeWithTag("confirm-pairing").assertDoesNotExist()
     }
 

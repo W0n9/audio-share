@@ -39,4 +39,48 @@ class PairingConfirmGateTest {
         assertFalse(gate.confirm { false }, "nothing was awaiting confirmation")
         assertTrue(gate.confirm { true }, "the real confirmation is still allowed")
     }
+
+    @Test
+    fun a_snapshot_replayed_after_activity_recreation_is_gated() {
+        fun awaiting() = PairingSnapshot(
+            mode = "qr",
+            phase = "AWAITING_CONFIRMATION",
+            sas = "123 456",
+            fingerprint = "AAAA1111 BBBB2222",
+            serverPublicKeyHex = null,
+            serverSpkiSha256Hex = null,
+            clientId = null,
+            displayName = null,
+            errorCode = null,
+        )
+
+        // Each fresh AppState models one Activity lifetime receiving the same
+        // replayed AWAITING_CONFIRMATION snapshot.
+        fun reduceFresh() = AppReducer.reduce(
+            AppState(
+                screen = AppScreen.PAIRING,
+                pairing = PairingUi(mode = "qr", phase = "STARTING"),
+            ),
+            UiEvent.PairingSnapshotChanged(awaiting()),
+        )
+
+        val first = reduceFresh()
+        assertEquals(
+            AppCommand.ConfirmPairing,
+            first.command,
+            "the first Activity dispatches the one automatic confirmation",
+        )
+        var dispatches = 0
+        val gate = PairingConfirmGate()
+        assertTrue(gate.confirm { dispatches += 1; true })
+
+        val replayed = reduceFresh()
+        assertEquals(
+            AppCommand.ConfirmPairing,
+            replayed.command,
+            "a re-created UI cannot know the old lifetime already confirmed",
+        )
+        assertFalse(gate.confirm { dispatches += 1; true })
+        assertEquals(1, dispatches, "the Service gate is the exactly-once boundary")
+    }
 }
