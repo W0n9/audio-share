@@ -199,7 +199,7 @@ class ClientSession(
                         // Server closes right after PairingResult (as-cmd pair
                         // exits by design), so this watcher does not depend on
                         // the state source or the 250 ms stats poll.
-                        startPairingWatcher(h)
+                        startPairingWatcher(h, lifetime)
                     }
                     source to ClientNative.connect(h, bind)
                 }
@@ -230,19 +230,29 @@ class ClientSession(
      * on the state relay (which is invalidated by reconnect) would lose the
      * credential.
      */
-    private fun startPairingWatcher(h: Long) {
+    private fun startPairingWatcher(h: Long, lifetime: Any) {
         val watcher = Thread {
             var credentialSeen = false
             var failed = false
-            while (true) {
+            // This watcher must outlive a native transport close so that
+            // PairingResult(OK) + credential are still captured (as-cmd pair
+            // closes immediately after writing them). It is tied to the
+            // ClientSession lifetime, NOT to a numeric handle: a reconnect
+            // clears the handle before the 25 ms poll observes the credential.
+            // Stale pairing snapshots are independently rejected by the
+            // Service's PairingStateRelay source ownership.
+            fun ownsLifetime(): Boolean = synchronized(lifecycleLock) {
+                running.get() && lifecycle === lifetime
+            }
+            while (ownsLifetime()) {
                 val pairingJson = ClientNative.getPairingState(h)
-                if (!pairingJson.isNullOrEmpty()) {
+                if (!pairingJson.isNullOrEmpty() && ownsLifetime()) {
                     listener.onPairingState(pairingJson)
                     failed = pairingJson.contains("\"phase\":\"FAILED\"")
                 }
                 val credential = ClientNative.getCredentialSummary(h)
                 if (!credential.isNullOrEmpty()) {
-                    if (!credentialSeen) {
+                    if (!credentialSeen && ownsLifetime()) {
                         credentialSeen = true
                         listener.onCredential(credential)
                     }

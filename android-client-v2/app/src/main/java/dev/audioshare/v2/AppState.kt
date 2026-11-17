@@ -233,7 +233,12 @@ object AppReducer {
 
         is UiEvent.SessionError -> Reduction(onSessionError(state, event.guidance))
 
-        UiEvent.StopRequested -> Reduction(state.copy(stopping = true), AppCommand.Stop)
+        UiEvent.StopRequested -> Reduction(
+            // An explicit Stop is not a failure: dismiss any banner left over
+            // from an earlier transport blip before the CLOSED replay lands.
+            state.copy(stopping = true, error = null),
+            AppCommand.Stop,
+        )
 
         is UiEvent.StartupLoaded -> {
             val servers = event.credentials.map(StoredServer::from)
@@ -463,6 +468,8 @@ object AppReducer {
     private fun onNativeState(state: AppState, nativeState: String): AppState {
         val phase = mapSessionPhase(nativeState, state.connectRequested)
         val closed = phase == SessionPhase.CLOSED
+        val live = phase == SessionPhase.READY || phase == SessionPhase.PLAYING
+        val wasStopping = state.stopping
         val screen = when {
             state.screen == AppScreen.ABOUT -> AppScreen.ABOUT
             state.screen == AppScreen.PAIRING -> AppScreen.PAIRING
@@ -475,11 +482,17 @@ object AppReducer {
             sessionPhase = phase,
             connectRequested = if (closed) false else state.connectRequested,
             stopping = if (closed) false else state.stopping,
+            // A recovered session makes an earlier "Connection lost" card
+            // stale; a user-requested close is never an error.
+            error = if (live || (closed && wasStopping)) null else state.error,
         )
     }
 
     private fun onSessionError(state: AppState, guidance: ErrorGuidance?): AppState {
         if (guidance == null) return state
+        // A close that completes a user Stop is not an error, even if the
+        // Service still carries the close code from an earlier interruption.
+        if (state.stopping) return state
         // A 201/206 during pairing is the same failure the pairing snapshot
         // reports. Keep the blocking pairing state (and its explicit rescan)
         // instead of routing to the general error card on HOME; the native

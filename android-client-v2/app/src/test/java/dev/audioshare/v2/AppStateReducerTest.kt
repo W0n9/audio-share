@@ -373,6 +373,61 @@ class AppStateReducerTest {
     }
 
     @Test
+    fun explicit_stop_clears_a_stale_connection_lost_banner() {
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(null, listOf(record())),
+        ).state
+        val connected = AppReducer.reduce(startup, UiEvent.ConnectRequested).state
+        val playing = AppReducer.reduce(connected, UiEvent.SessionStateChanged("PLAYING")).state
+        // A previous network blip left a 601 guidance card on screen even
+        // though the session recovered; an explicit Stop must not carry it to
+        // HOME.
+        val stale = playing.copy(error = ErrorGuidanceBook.forCode(601))
+        val stopping = AppReducer.reduce(stale, UiEvent.StopRequested).state
+        assertNull(stopping.error, "Stop dismisses the stale banner immediately")
+        val closed = AppReducer.reduce(stopping, UiEvent.SessionStateChanged("CLOSED")).state
+        assertEquals(AppScreen.HOME, closed.screen)
+        assertNull(closed.error, "HOME must not show Connection lost after a user Stop")
+    }
+
+    @Test
+    fun a_recovered_session_dismisses_the_stale_connection_lost_banner() {
+        // The user saw an earlier 601, then the bounded-backoff reconnect
+        // succeeded in the background; the banner is no longer true.
+        val stale = AppState(
+            screen = AppScreen.HOME,
+            sessionPhase = SessionPhase.CLOSED,
+            error = ErrorGuidanceBook.forCode(601),
+        )
+        val recovered = AppReducer.reduce(stale, UiEvent.SessionStateChanged("PLAYING")).state
+        assertNull(recovered.error, "a live session dismisses the stale error card")
+        assertEquals(SessionPhase.PLAYING, recovered.sessionPhase)
+
+        // A later user Stop (including the notification path, which never
+        // dispatches StopRequested) must still land on a clean HOME.
+        val stopped = AppReducer.reduce(recovered, UiEvent.SessionStateChanged("CLOSED")).state
+        assertEquals(AppScreen.HOME, stopped.screen)
+        assertNull(stopped.error)
+    }
+
+    @Test
+    fun a_close_error_arriving_after_the_user_stop_is_not_shown() {
+        val playing = AppState(
+            screen = AppScreen.SESSION,
+            sessionPhase = SessionPhase.PLAYING,
+            connectRequested = true,
+        )
+        val stopping = AppReducer.reduce(playing, UiEvent.StopRequested).state
+        val late = AppReducer.reduce(
+            stopping,
+            UiEvent.SessionError(ErrorGuidanceBook.forCode(601)),
+        ).state
+        assertNull(late.error, "a close caused by the user's own Stop is not an error")
+        assertTrue(late.stopping, "the reducer keeps waiting for the CLOSED replay")
+    }
+
+    @Test
     fun startup_restores_the_last_address_and_chooses_its_saved_server() {
         val other = record(pin = "12".repeat(32), address = "other.example:65531")
         val matching = record()
