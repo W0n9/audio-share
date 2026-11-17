@@ -239,11 +239,19 @@ data class PairingSnapshot(
     }
 }
 
-/** Replayable pairing-state holder shared by the Service and the UI. */
+/**
+ * Replayable pairing-state holder shared by the Service and the UI.
+ *
+ * A pairing exchange is a one-shot transcript: after a revoke/reject retry a
+ * stopped `ClientSession`'s watcher may still deliver a late snapshot. Source
+ * ownership makes the relay reject every event that does not belong to the
+ * exchange the Service started last, exactly like [SessionStateRelay].
+ */
 class PairingStateRelay {
     private val lock = Any()
     private var current: PairingSnapshot? = null
     private var listener: ((PairingSnapshot?) -> Unit)? = null
+    private var activeSource: Source? = null
 
     fun snapshot(): PairingSnapshot? = synchronized(lock) { current }
 
@@ -254,17 +262,52 @@ class PairingStateRelay {
         }
     }
 
-    fun publish(snapshot: PairingSnapshot?) {
-        synchronized(lock) {
-            current = snapshot
-            listener?.invoke(snapshot)
+    /**
+     * Start a fresh pairing exchange. The previous exchange loses ownership
+     * immediately and its snapshot is cleared (and replayed as null), so a
+     * stale FAILED/COMPLETE banner cannot survive a new attempt.
+     */
+    fun beginSession(): Source = synchronized(lock) {
+        val previous = activeSource
+        activeSource = null
+        previous?.closed = true
+        Source().also {
+            activeSource = it
+            publishLocked(null)
         }
     }
 
-    /** Publish a native JSON snapshot; invalid JSON clears to null. */
-    fun publishJson(json: String?) {
-        publish(PairingSnapshot.fromJson(json))
+    /**
+     * Clear the visible snapshot without ending the current exchange: a live
+     * source may publish again (for example when the Service returns to HOME).
+     */
+    fun clear() = synchronized(lock) { publishLocked(null) }
+
+    private fun publishLocked(snapshot: PairingSnapshot?) {
+        current = snapshot
+        listener?.invoke(snapshot)
     }
 
-    fun clear() = publish(null)
+    /** The event source of exactly one pairing exchange. */
+    inner class Source internal constructor() {
+        internal var closed = false
+
+        fun isCurrent(): Boolean = synchronized(lock) { activeSource === this && !closed }
+
+        /** Publish this exchange's snapshot; false when it lost ownership. */
+        fun publish(snapshot: PairingSnapshot?): Boolean = synchronized(lock) {
+            if (activeSource !== this || closed) return false
+            publishLocked(snapshot)
+            true
+        }
+
+        /** Publish a native JSON snapshot; invalid JSON clears to null. */
+        fun publishJson(json: String?): Boolean =
+            publish(PairingSnapshot.fromJson(json))
+
+        /** Invalidate this source. It no longer changes the snapshot. */
+        fun close() {
+            synchronized(lock) { closed = true }
+        }
+    }
 }

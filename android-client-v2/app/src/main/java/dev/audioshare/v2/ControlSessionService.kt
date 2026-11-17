@@ -62,6 +62,8 @@ interface SessionController {
 class ControlSessionService : Service(), SessionController {
     private var session: ClientSession? = null
     private var sessionSource: SessionStateRelay.Source? = null
+    /** Source of the pairing exchange owned by the current ClientSession. */
+    private var pairingSource: PairingStateRelay.Source? = null
     private val relay = SessionStateRelay()
     private val pairingRelay = PairingStateRelay()
     private val binder = ControlBinder(this)
@@ -184,7 +186,7 @@ class ControlSessionService : Service(), SessionController {
                 null
             }
             if (configuration != null) {
-                startSession(configuration, pairing = false)
+                startSession(configuration)
                 return START_STICKY
             }
         }
@@ -222,7 +224,7 @@ class ControlSessionService : Service(), SessionController {
             signer = identity.signer,
             pairing = PairingStart(mode = MODE_QR, nonceHex = payload.nonce.toHex(), displayName = displayName),
         )
-        startSession(configuration, pairing = true)
+        startSession(configuration)
     }
 
     private fun beginSas(address: String?) {
@@ -252,12 +254,16 @@ class ControlSessionService : Service(), SessionController {
             signer = identity.signer,
             pairing = PairingStart(mode = MODE_SAS, nonceHex = "", displayName = displayName),
         )
-        startSession(configuration, pairing = true)
+        startSession(configuration)
     }
 
     private fun reportPairingFailure(mode: String, errorCode: Int?, message: String) {
         Log.i(TAG, "pairing failed: $message")
-        pairingRelay.publish(
+        // A failure before startSession (invalid payload/address/identity) has
+        // no live exchange yet; begin one so the snapshot stays replayable.
+        val source = pairingSource?.takeIf { it.isCurrent() }
+            ?: pairingRelay.beginSession().also { pairingSource = it }
+        source.publish(
             PairingSnapshot(
                 mode = mode,
                 phase = "FAILED",
@@ -311,14 +317,20 @@ class ControlSessionService : Service(), SessionController {
             clientName = record.displayName ?: "AudioShare phone",
             signer = identity.signer,
         )
-        pairingRelay.clear()
-        startSession(configuration, pairing = false)
+        startSession(configuration)
     }
 
-    private fun startSession(configuration: SessionConfiguration, pairing: Boolean) {
-        teardownSession()
+    private fun startSession(configuration: SessionConfiguration) {
+        // Clear the previous error BEFORE teardown publishes its CLOSED
+        // replay: guidanceOnClosed() must not resurface a revoke/reject banner
+        // while a new pairing exchange is starting.
         lastErrorCode = null
-        if (pairing) pairingRelay.clear()
+        teardownSession()
+        // Every session owns a fresh pairing exchange source. beginSession()
+        // invalidates the previous one and clears a stale FAILED/COMPLETE
+        // banner, so a stopped session's late watcher event can never
+        // overwrite the new exchange's AWAITING_CONFIRMATION.
+        val owningPairingSource = pairingRelay.beginSession().also { pairingSource = it }
         val source = relay.beginSession().also { sessionSource = it }
         val current = ClientSession(this, object : ClientSession.Listener {
             override fun onStats(json: JSONObject) {
@@ -326,8 +338,16 @@ class ControlSessionService : Service(), SessionController {
                     lastErrorCode = json.optInt("close_code")
                 }
             }
-            override fun onStateChange(state: String) { source.publish(state) }
-            override fun onPairingState(json: String) { pairingRelay.publishJson(json) }
+            override fun onStateChange(state: String) {
+                // A recovered session must not leave a stale transport error
+                // for a later user Stop to resurface.
+                if (state == "READY" || state == "PLAYING") lastErrorCode = null
+                source.publish(state)
+            }
+            override fun onPairingState(json: String) {
+                // Source ownership: only the current exchange may publish.
+                owningPairingSource.publishJson(json)
+            }
             override fun onCredential(json: String) { persistCredential(json) }
             // Reconnect/migration diagnostics are the only evidence that the
             // startup race happened; surface them in logcat (no secrets).
@@ -366,6 +386,10 @@ class ControlSessionService : Service(), SessionController {
     }
 
     private fun teardownSession() {
+        // Invalidate the pairing exchange first: a late watcher publication
+        // from the old ClientSession must not reach the new one.
+        pairingSource?.close()
+        pairingSource = null
         sessionSource?.close()
         sessionSource = null
         session?.stop()
@@ -455,6 +479,10 @@ class ControlSessionService : Service(), SessionController {
     }
 
     private fun stopSession() {
+        // An explicit Stop is not an error; clear before teardown publishes
+        // the CLOSED replay so guidanceOnClosed() cannot resurface a stale
+        // close code from an earlier interruption.
+        lastErrorCode = null
         teardownSession()
         pairingRelay.clear()
         pairingContext = null
