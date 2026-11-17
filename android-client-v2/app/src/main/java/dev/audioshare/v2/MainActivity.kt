@@ -59,6 +59,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hadSavedState = savedInstanceState != null
+        // Restore only the UI hint (screen/address/SAS input); the Service
+        // replays session, pairing, and credential state on the first bind.
+        UiStatePersistence.restore(savedInstanceState)?.let { state.value = it }
         setContent {
             AudioShareTheme {
                 AudioShareApp(
@@ -96,6 +99,12 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Never persist outcome, pairing, credentials, errors, or camera state.
+        UiStatePersistence.save(outState, state.value)
+    }
+
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         credentialPolling = false
@@ -114,7 +123,22 @@ class MainActivity : ComponentActivity() {
         initialized = true
         dispatch(UiEvent.StartupLoaded(prefs.lastAddress(), service.credentials()))
         val outcome = service.outcomeSnapshot()
-        if (outcome != null) dispatch(UiEvent.SessionOutcomeChanged(outcome))
+        val pairing = service.pairingSnapshot()
+
+        if (firstBind && hadSavedState) {
+            // The listeners registered in onServiceConnected already replayed
+            // the current pairing snapshot. Reconcile the restored screen
+            // against what the Service owns; the reducer keeps ownership of
+            // the resulting destination (ticket 06 §4).
+            dispatch(
+                UiEvent.RestorationReconciled(
+                    outcome = outcome,
+                    pairingSnapshotPresent = pairing != null,
+                )
+            )
+        } else if (outcome != null) {
+            dispatch(UiEvent.SessionOutcomeChanged(outcome))
+        }
 
         if (firstBind) {
             requestNotificationPermissionIfNeeded()
