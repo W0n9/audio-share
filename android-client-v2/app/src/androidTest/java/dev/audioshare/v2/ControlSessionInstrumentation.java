@@ -22,12 +22,50 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** 只经 Android 的公开 UI 接口验证 minified release 中的真实 native 会话。 */
 public final class ControlSessionInstrumentation extends Instrumentation {
-    /** M4+: fake capture can legitimately leave the session in PLAYING. */
-    private static final Set<String> LIVE_STATES =
-        Collections.unmodifiableSet(new HashSet<>(Arrays.asList("READY", "PLAYING")));
-    /** A reconnect/recreate would surface one of these during the observed window. */
-    private static final Set<String> REBUILD_STATES =
-        Collections.unmodifiableSet(new HashSet<>(Arrays.asList("IDLE", "AUTHENTICATING", "CLOSING", "CLOSED")));
+    /** M4+: fake capture can legitimately leave the session in READY/PLAYING. */
+    private static boolean isLive(SessionOutcome outcome) {
+        if (!(outcome instanceof SessionOutcome.Live)) return false;
+        LivePhase phase = ((SessionOutcome.Live) outcome).getPhase();
+        return phase == LivePhase.READY || phase == LivePhase.PLAYING;
+    }
+
+    private static boolean isReady(SessionOutcome outcome) {
+        return outcome instanceof SessionOutcome.Live
+            && ((SessionOutcome.Live) outcome).getPhase() == LivePhase.READY;
+    }
+
+    private static boolean isUserStop(SessionOutcome outcome) {
+        return outcome instanceof SessionOutcome.Ended
+            && ((SessionOutcome.Ended) outcome).getReason() == EndReason.UserStop.INSTANCE;
+    }
+
+    /**
+     * A reconnect/recreate would surface a retry or a fresh connection attempt
+     * during the observed window. READY -> PLAYING is a normal live transition.
+     */
+    private static boolean isRebuildTransition(SessionOutcome outcome) {
+        if (outcome == null) return false;
+        if (outcome instanceof SessionOutcome.Reconnecting
+            || outcome instanceof SessionOutcome.Ended) return true;
+        if (outcome instanceof SessionOutcome.Live) {
+            LivePhase phase = ((SessionOutcome.Live) outcome).getPhase();
+            return phase == LivePhase.CONNECTING || phase == LivePhase.AUTHENTICATING;
+        }
+        return false;
+    }
+
+    private static String describe(SessionOutcome outcome) {
+        if (outcome == null) return "<none>";
+        if (outcome instanceof SessionOutcome.Live) {
+            return "Live(" + ((SessionOutcome.Live) outcome).getPhase() + ")";
+        }
+        if (outcome instanceof SessionOutcome.Reconnecting) {
+            SessionOutcome.Reconnecting retry = (SessionOutcome.Reconnecting) outcome;
+            return "Reconnecting(" + retry.getAttempt() + ", " + retry.getLastCloseCode() + ")";
+        }
+        SessionOutcome.Ended ended = (SessionOutcome.Ended) outcome;
+        return "Ended(" + ended.getReason() + ")";
+    }
 
     private Bundle arguments;
     private final AtomicReference<Activity> currentActivity = new AtomicReference<>();
@@ -79,7 +117,7 @@ public final class ControlSessionInstrumentation extends Instrumentation {
             String testCase = arguments.getString("case", "ready");
             if ("ready".equals(testCase)) {
                 // READY 在 M4 是 AUTHENTICATING→PLAYING 之间的短暂状态。先绑定
-                // Service 再拉起 Activity，直接轮询公开的 stateSnapshot，
+                // Service 再拉起 Activity，直接轮询公开的 outcomeSnapshot，
                 // 避免 UI 回调注册太晚而漏掉 READY。
                 bindEarlyService();
             }
@@ -104,7 +142,7 @@ public final class ControlSessionInstrumentation extends Instrumentation {
                 assertBoundServiceReplaysReady();
             } else if ("recreate".equals(testCase)) {
                 ControlSessionService owner = assertBoundServiceReplaysReady();
-                List<String> observed = observeStates(owner);
+                List<SessionOutcome> observed = observeStates(owner);
                 activity = recreateAndAssertLive(activity, observed);
                 ControlSessionService rebound = assertBoundServiceReplaysReady();
                 if (rebound != owner) throw new AssertionError("Activity 重建后 Service/session 被重建");
@@ -112,7 +150,7 @@ public final class ControlSessionInstrumentation extends Instrumentation {
                 assertLiveSnapshot(owner, "Activity 重建后");
             } else if ("recreate-loop".equals(testCase)) {
                 ControlSessionService owner = assertBoundServiceReplaysReady();
-                List<String> observed = observeStates(owner);
+                List<SessionOutcome> observed = observeStates(owner);
                 for (int i = 0; i < 10; i++) {
                     activity = recreateAndAssertLive(activity, observed);
                     ControlSessionService rebound = assertBoundServiceReplaysReady();
@@ -126,7 +164,7 @@ public final class ControlSessionInstrumentation extends Instrumentation {
                 }
             } else if ("lock".equals(testCase)) {
                 ControlSessionService owner = assertBoundServiceReplaysReady();
-                List<String> observed = observeStates(owner);
+                List<SessionOutcome> observed = observeStates(owner);
                 int pidBefore = servicePid();
                 currentActivity.set(null);
                 awaitingScreenStop = true;
@@ -150,11 +188,11 @@ public final class ControlSessionInstrumentation extends Instrumentation {
                 getTargetContext().startService(new Intent().setClassName(getTargetContext(),
                     "dev.audioshare.v2.ControlSessionService").setAction("dev.audioshare.v2.CONTROL_STOP"));
                 long stoppedBy = System.nanoTime() + 5_000_000_000L;
-                while ((!"CLOSED".equals(owner.stateSnapshot()) || serviceIsForeground()) &&
+                while ((!isUserStop(owner.outcomeSnapshot()) || serviceIsForeground()) &&
                     System.nanoTime() < stoppedBy) Thread.sleep(100);
-                if (!"CLOSED".equals(owner.stateSnapshot()) || serviceIsForeground()) {
-                    throw new AssertionError("ACTION_STOP 未清理：snapshot=" + owner.stateSnapshot() +
-                        ", foreground=" + serviceIsForeground());
+                if (!isUserStop(owner.outcomeSnapshot()) || serviceIsForeground()) {
+                    throw new AssertionError("ACTION_STOP 未清理：outcome=" +
+                        describe(owner.outcomeSnapshot()) + ", foreground=" + serviceIsForeground());
                 }
             } else if (!"ready".equals(testCase)) {
                 throw new AssertionError("未知测试：" + testCase);
@@ -224,40 +262,42 @@ public final class ControlSessionInstrumentation extends Instrumentation {
         }
     }
 
-    /** 观察 Service 发布的状态；用于证明锁屏/重建期间没有出现重连窗口。 */
-    private List<String> observeStates(ControlSessionService owner) {
-        List<String> observed = Collections.synchronizedList(new ArrayList<String>());
+    /** 观察 Service 发布的 outcome；用于证明锁屏/重建期间没有出现重连窗口。 */
+    private List<SessionOutcome> observeStates(ControlSessionService owner) {
+        List<SessionOutcome> observed = Collections.synchronizedList(new ArrayList<SessionOutcome>());
         observeStates(owner, observed);
         return observed;
     }
 
-    private void observeStates(ControlSessionService owner, final List<String> observed) {
-        owner.setStateListener(new Function1() {
-            @Override public Object invoke(Object state) {
-                observed.add((String) state);
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private void observeStates(ControlSessionService owner, final List<SessionOutcome> observed) {
+        owner.setOutcomeListener(new Function1() {
+            @Override public Object invoke(Object outcome) {
+                observed.add((SessionOutcome) outcome);
                 return null;
             }
         });
     }
 
-    private void assertNoRebuildTransitions(List<String> observed, String context) {
+    private void assertNoRebuildTransitions(List<SessionOutcome> observed, String context) {
         synchronized (observed) {
-            for (String state : observed) {
-                if (REBUILD_STATES.contains(state)) {
-                    throw new AssertionError(context + " 出现会话重建状态：" + state + "（完整序列：" + observed + "）");
+            for (SessionOutcome outcome : observed) {
+                if (isRebuildTransition(outcome)) {
+                    throw new AssertionError(context + " 出现会话重建状态：" + describe(outcome) +
+                        "（完整序列：" + observed + "）");
                 }
             }
         }
     }
 
     private void assertLiveSnapshot(ControlSessionService owner, String context) {
-        String state = owner.stateSnapshot();
-        if (!LIVE_STATES.contains(state)) {
-            throw new AssertionError(context + " 会话未存活：" + state);
+        SessionOutcome outcome = owner.outcomeSnapshot();
+        if (!isLive(outcome)) {
+            throw new AssertionError(context + " 会话未存活：" + describe(outcome));
         }
     }
 
-    private Activity recreateAndAssertLive(final Activity oldActivity, List<String> observed)
+    private Activity recreateAndAssertLive(final Activity oldActivity, List<SessionOutcome> observed)
         throws InterruptedException {
         currentActivity.set(null);
         runOnMainSync(new Runnable() {
@@ -294,14 +334,14 @@ public final class ControlSessionInstrumentation extends Instrumentation {
         try {
             if (!bound.await(5, TimeUnit.SECONDS)) throw new AssertionError("未收到 Service binding");
             long deadline = System.nanoTime() + 10_000_000_000L;
-            String last = "<none>";
+            SessionOutcome last = null;
             do {
                 ControlSessionService service = owner.get();
-                last = service == null ? "<none>" : service.stateSnapshot();
-                if (LIVE_STATES.contains(last)) return;
+                last = service == null ? null : service.outcomeSnapshot();
+                if (isLive(last)) return;
                 Thread.sleep(100);
             } while (System.nanoTime() < deadline);
-            throw new AssertionError(context + " 会话未达到 READY/PLAYING；实际：" + last);
+            throw new AssertionError(context + " 会话未达到 READY/PLAYING；实际：" + describe(last));
         } finally {
             getTargetContext().unbindService(connection);
         }
@@ -310,20 +350,23 @@ public final class ControlSessionInstrumentation extends Instrumentation {
     @SuppressWarnings({"rawtypes", "unchecked"})
     private ControlSessionService assertBoundServiceReplaysReady() throws InterruptedException {
         final CountDownLatch bound = new CountDownLatch(1);
-        final AtomicReference<String> immediate = new AtomicReference<>();
+        final AtomicReference<SessionOutcome> immediate = new AtomicReference<>();
         final AtomicReference<ControlSessionService> owner = new AtomicReference<>();
         ServiceConnection connection = new ServiceConnection() {
             @Override public void onServiceConnected(ComponentName name, IBinder binder) {
-                final AtomicReference<String> seen = new AtomicReference<>();
+                final AtomicReference<SessionOutcome> seen = new AtomicReference<>();
                 ControlSessionService service = ((ControlBinder) binder).getService();
                 owner.set(service);
-                if (!LIVE_STATES.contains(service.stateSnapshot())) {
-                    immediate.set("snapshot=" + service.stateSnapshot());
+                if (!isLive(service.outcomeSnapshot())) {
+                    immediate.set(service.outcomeSnapshot());
                     bound.countDown();
                     return;
                 }
-                service.setStateListener(new Function1() {
-                    @Override public Object invoke(Object state) { seen.set((String) state); return null; }
+                service.setOutcomeListener(new Function1() {
+                    @Override public Object invoke(Object outcome) {
+                        seen.set((SessionOutcome) outcome);
+                        return null;
+                    }
                 });
                 // 必须同步重放；后续轮询不能把这个 RED 变成假通过。
                 immediate.set(seen.get());
@@ -336,9 +379,9 @@ public final class ControlSessionInstrumentation extends Instrumentation {
         if (!getTargetContext().bindService(intent, connection, 0)) throw new AssertionError("无法绑定活动会话");
         try {
             if (!bound.await(3, TimeUnit.SECONDS)) throw new AssertionError("未收到 Service binding");
-            String replay = immediate.get();
-            if (replay == null || !LIVE_STATES.contains(replay)) {
-                throw new AssertionError("会话重绑定后必须立即重放 READY/PLAYING；实际：" + replay);
+            SessionOutcome replay = immediate.get();
+            if (!isLive(replay)) {
+                throw new AssertionError("会话重绑定后必须立即重放 READY/PLAYING；实际：" + describe(replay));
             }
             return owner.get();
         } finally {
@@ -346,7 +389,7 @@ public final class ControlSessionInstrumentation extends Instrumentation {
         }
     }
 
-    /** 在 Activity 之前绑定 Service，用 stateSnapshot 捕捉短暂的 READY。 */
+    /** 在 Activity 之前绑定 Service，用 outcomeSnapshot 捕捉短暂的 READY。 */
     private void bindEarlyService() throws InterruptedException {
         earlyConnection = new ServiceConnection() {
             @Override public void onServiceConnected(ComponentName name, IBinder binder) {
@@ -371,10 +414,10 @@ public final class ControlSessionInstrumentation extends Instrumentation {
         throws InterruptedException {
         long deadline = System.nanoTime() + 5_000_000_000L;
         do {
-            if (owner != null && "READY".equals(owner.stateSnapshot())) return;
+            if (owner != null && isReady(owner.outcomeSnapshot())) return;
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);
-        throw new AssertionError("原生会话完成认证后，必须观察到 READY；实际 snapshot="
-            + (owner == null ? "<none>" : owner.stateSnapshot()));
+        throw new AssertionError("原生会话完成认证后，必须观察到 READY；实际 outcome="
+            + describe(owner == null ? null : owner.outcomeSnapshot()));
     }
 }

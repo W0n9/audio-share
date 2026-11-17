@@ -26,7 +26,8 @@ class ForegroundServiceContractTest {
         val service = source("java/dev/audioshare/v2/ControlSessionService.kt")
         assertTrue(service.contains("override fun onBind"))
         assertTrue(service.contains("class ControlSessionService : Service(), SessionController"))
-        assertTrue(service.contains("session?.stop()"))
+        // Ticket 15: teardown attributes the stop at the call site.
+        assertTrue(service.contains("session?.stop(reason)"))
 
         val activity = source("java/dev/audioshare/v2/MainActivity.kt")
         assertTrue(activity.contains("unbindService(connection)"))
@@ -43,7 +44,6 @@ class ForegroundServiceContractTest {
             "java/dev/audioshare/v2/MainActivity.kt",
             "java/dev/audioshare/v2/AudioShareApp.kt",
             "java/dev/audioshare/v2/AppState.kt",
-            "java/dev/audioshare/v2/SessionCommandExecutor.kt",
             "java/dev/audioshare/v2/UiPreferences.kt",
         ).map(::source)
         val forbidden = listOf(

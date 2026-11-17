@@ -30,7 +30,6 @@ class MainActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private var controller: SessionController? = null
-    private var commands: SessionCommandExecutor? = null
     private var bound = false
     private var hadSavedState = false
     private var initialized = false
@@ -45,15 +44,15 @@ class MainActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val service = (binder as? ControlBinder)?.service ?: return
             controller = service
-            commands = SessionCommandExecutor(service)
-            service.setStateListener { native -> runOnUiThread { onNativeState(native) } }
+            service.setOutcomeListener { outcome ->
+                runOnUiThread { dispatch(UiEvent.SessionOutcomeChanged(outcome)) }
+            }
             service.setPairingListener { snapshot -> runOnUiThread { onPairingSnapshot(snapshot) } }
             initialize(service)
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             controller = null
-            commands = null
         }
     }
 
@@ -93,7 +92,6 @@ class MainActivity : ComponentActivity() {
             unbindService(connection)
             bound = false
             controller = null
-            commands = null
         }
         super.onStop()
     }
@@ -115,8 +113,8 @@ class MainActivity : ComponentActivity() {
         val firstBind = !initialized
         initialized = true
         dispatch(UiEvent.StartupLoaded(prefs.lastAddress(), service.credentials()))
-        val snapshot = service.stateSnapshot()
-        if (snapshot.isNotEmpty()) dispatch(UiEvent.SessionStateChanged(snapshot))
+        val outcome = service.outcomeSnapshot()
+        if (outcome != null) dispatch(UiEvent.SessionOutcomeChanged(outcome))
 
         if (firstBind) {
             requestNotificationPermissionIfNeeded()
@@ -124,7 +122,7 @@ class MainActivity : ComponentActivity() {
             if (!harnessStarted && AutoConnectPolicy.shouldAutoConnect(
                     savedStatePresent = hadSavedState,
                     hasCredential = credentials.isNotEmpty(),
-                    serviceState = snapshot,
+                    outcome = outcome,
                 )
             ) {
                 dispatch(UiEvent.AutoConnectStarted)
@@ -164,15 +162,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * The reducer's commands map one-to-one onto the [SessionController] seam.
+     * There is no Activity-scoped state between the two: stop attribution and
+     * outcome classification belong to the Service/session owner.
+     */
     private fun execute(command: AppCommand) {
-        commands?.execute(command)
-    }
-
-    private fun onNativeState(native: String) {
-        dispatch(UiEvent.SessionStateChanged(native))
-        if (native == "CLOSED") {
-            val guidance = commands?.guidanceOnClosed()
-            if (guidance != null) dispatch(UiEvent.SessionError(guidance))
+        val controller = controller ?: return
+        when (command) {
+            AppCommand.None -> Unit
+            is AppCommand.BeginQr -> controller.beginQrPairing(command.uri)
+            is AppCommand.BeginSas -> controller.beginSasPairing(command.address)
+            AppCommand.ConfirmPairing -> controller.confirmPairing()
+            AppCommand.CancelPairing -> controller.cancelPairing()
+            is AppCommand.ConnectStored -> controller.connectStored(command.serverSpkiSha256Hex)
+            AppCommand.Stop -> controller.disconnect()
         }
     }
 

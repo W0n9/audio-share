@@ -112,8 +112,8 @@ class AudioShareAppTest {
     fun terminal_error_shows_guidance_and_retry_opens_repairing_pairing() {
         start(
             AppState(
-                error = ErrorGuidanceBook.forCode(204),
-                sessionPhase = SessionPhase.CLOSED,
+                screen = AppScreen.SESSION,
+                outcome = SessionOutcome.Ended(EndReason.Surfaced(204)),
                 storedServers = listOf(
                     StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")
                 ),
@@ -134,13 +134,54 @@ class AudioShareAppTest {
                 storedServers = listOf(
                     StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")
                 ),
-                sessionPhase = SessionPhase.PLAYING,
+                outcome = SessionOutcome.Live(LivePhase.PLAYING),
             )
         )
         compose.onNodeWithTag("session-state").assertTextContains("PLAYING")
         compose.onNodeWithTag("stop").assertIsEnabled().performClick()
         assertTrue(events.contains(UiEvent.StopRequested))
         compose.onNodeWithTag("stop").assertIsNotEnabled()
+    }
+
+    @Test
+    fun reconnecting_is_shown_in_place_with_the_attempt_number() {
+        start(
+            AppState(
+                screen = AppScreen.SESSION,
+                address = "10.0.2.2:65531",
+                outcome = SessionOutcome.Reconnecting(attempt = 3, lastCloseCode = 601),
+            )
+        )
+        compose.onNodeWithTag("session-state").assertTextContains("RECONNECTING (attempt 3)")
+        compose.onNodeWithTag("stop").assertIsEnabled()
+    }
+
+    @Test
+    fun ended_user_stop_is_visibly_different_from_a_surfaced_error() {
+        start(
+            AppState(
+                screen = AppScreen.SESSION,
+                address = "10.0.2.2:65531",
+                outcome = SessionOutcome.Ended(EndReason.UserStop),
+            )
+        )
+        compose.onNodeWithTag("ended-user-stop").assertIsDisplayed()
+        compose.onNodeWithTag("connect-again").assertIsDisplayed()
+        compose.onNodeWithTag("error-title").assertDoesNotExist()
+    }
+
+    @Test
+    fun ended_surfaced_shows_the_error_card_without_the_user_stop_copy() {
+        start(
+            AppState(
+                screen = AppScreen.SESSION,
+                address = "10.0.2.2:65531",
+                outcome = SessionOutcome.Ended(EndReason.Surfaced(601)),
+            )
+        )
+        compose.onNodeWithTag("error-title").assertIsDisplayed()
+        compose.onNodeWithText("Connection lost").assertIsDisplayed()
+        compose.onNodeWithTag("ended-user-stop").assertDoesNotExist()
     }
 
     @Test

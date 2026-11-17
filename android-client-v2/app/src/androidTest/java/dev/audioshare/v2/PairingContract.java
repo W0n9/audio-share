@@ -193,8 +193,13 @@ final class PairingContract {
             service.disconnect();
             return;
         }
-        awaitClosed(20_000);
-        ErrorGuidance guidance = service.lastErrorGuidance();
+        SessionOutcome outcome = awaitEnded(expectedError, 20_000);
+        EndReason reason = ((SessionOutcome.Ended) outcome).getReason();
+        if (!(reason instanceof EndReason.Surfaced)) {
+            throw new AssertionError("expected a surfaced close, got " + reason);
+        }
+        Integer code = ((EndReason.Surfaced) reason).getCode();
+        ErrorGuidance guidance = ErrorGuidanceBook.INSTANCE.forCode(code);
         if (guidance == null) throw new AssertionError("no typed error guidance after close");
         if (guidance.getCode() != expectedError) {
             throw new AssertionError("expected error " + expectedError + ", got " + guidance.getCode());
@@ -242,26 +247,53 @@ final class PairingContract {
             "; last=" + (snapshot == null ? "<none>" : snapshot.getPhase()));
     }
 
-    private static void awaitLiveState(long timeoutMillis) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
-        while (System.nanoTime() < deadline) {
-            String state = lastController == null ? null : lastController.stateSnapshot();
-            if ("READY".equals(state) || "PLAYING".equals(state)) return;
-            Thread.sleep(50);
-        }
-        throw new AssertionError("session did not reach READY/PLAYING; last=" +
-            (lastController == null ? "<none>" : lastController.stateSnapshot()));
+    private static boolean isLive(SessionOutcome outcome) {
+        if (!(outcome instanceof SessionOutcome.Live)) return false;
+        LivePhase phase = ((SessionOutcome.Live) outcome).getPhase();
+        return phase == LivePhase.READY || phase == LivePhase.PLAYING;
     }
 
-    private static void awaitClosed(long timeoutMillis) throws InterruptedException {
+    private static String describe(SessionOutcome outcome) {
+        if (outcome == null) return "<none>";
+        if (outcome instanceof SessionOutcome.Live) {
+            return "Live(" + ((SessionOutcome.Live) outcome).getPhase() + ")";
+        }
+        if (outcome instanceof SessionOutcome.Reconnecting) {
+            SessionOutcome.Reconnecting retry = (SessionOutcome.Reconnecting) outcome;
+            return "Reconnecting(" + retry.getAttempt() + ", " + retry.getLastCloseCode() + ")";
+        }
+        SessionOutcome.Ended ended = (SessionOutcome.Ended) outcome;
+        return "Ended(" + ended.getReason() + ")";
+    }
+
+    private static void awaitLiveState(long timeoutMillis) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        SessionOutcome last = null;
         while (System.nanoTime() < deadline) {
-            String state = lastController == null ? null : lastController.stateSnapshot();
-            if ("CLOSED".equals(state)) return;
+            last = lastController == null ? null : lastController.outcomeSnapshot();
+            if (isLive(last)) return;
             Thread.sleep(50);
         }
-        throw new AssertionError("session did not close; last=" +
-            (lastController == null ? "<none>" : lastController.stateSnapshot()));
+        throw new AssertionError("session did not reach READY/PLAYING; last=" + describe(last));
+    }
+
+    private static SessionOutcome awaitEnded(int expectedCode, long timeoutMillis)
+        throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        SessionOutcome last = null;
+        while (System.nanoTime() < deadline) {
+            last = lastController == null ? null : lastController.outcomeSnapshot();
+            if (last instanceof SessionOutcome.Ended) {
+                EndReason reason = ((SessionOutcome.Ended) last).getReason();
+                if (reason instanceof EndReason.Surfaced) {
+                    Integer code = ((EndReason.Surfaced) reason).getCode();
+                    if (code != null && code == expectedCode) return last;
+                }
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("session did not end with code " + expectedCode +
+            "; last=" + describe(last));
     }
 
     /** Rebuild the SEC1 point and verify the raw-context signature with JCA. */
