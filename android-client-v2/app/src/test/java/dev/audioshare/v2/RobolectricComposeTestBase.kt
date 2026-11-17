@@ -24,6 +24,9 @@ import org.robolectric.Shadows.shadowOf
 abstract class RobolectricComposeTestBase {
     protected val compose = createAndroidComposeRule<ComponentActivity>()
     protected val events = mutableListOf<UiEvent>()
+    protected val commands = mutableListOf<AppCommand>()
+
+    private var dispatchEvent: ((UiEvent) -> Unit)? = null
 
     protected val context: Context get() = ApplicationProvider.getApplicationContext()
 
@@ -56,17 +59,27 @@ abstract class RobolectricComposeTestBase {
 
     protected fun start(initial: AppState) {
         var state by mutableStateOf(initial)
+        val handle: (UiEvent) -> Unit = { event ->
+            events += event
+            val reduction = AppReducer.reduce(state, event)
+            if (reduction.command != AppCommand.None) commands += reduction.command
+            state = reduction.state
+        }
+        dispatchEvent = handle
         compose.setContent {
             AudioShareTheme {
                 AudioShareApp(
                     state = state,
                     versionName = "0.2.0-beta",
                     versionCode = 2,
-                ) { event ->
-                    events += event
-                    state = AppReducer.reduce(state, event).state
-                }
+                    onEvent = handle,
+                )
             }
         }
+    }
+
+    /** Deliver an event through the same reducer loop as the UI actions. */
+    protected fun send(event: UiEvent) {
+        compose.runOnUiThread { dispatchEvent?.invoke(event) }
     }
 }
