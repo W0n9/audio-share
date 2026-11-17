@@ -115,7 +115,7 @@ e4575d25b19ab12fcdf626d1a592f52ac382a2f052c05e6bd82702a9c3c8e97c  AudioShareServ
 APK 预期 SHA-256：
 
 ```
-6da98e4adae0c72e04ca8c4aa6e6d4ed804a81c8651194ccf5a334a402845141  audio-share-client-v2-0.2.0-beta.apk
+c1d1b23634abb05bf760bcb975bd442e65abc674610dfac11140f6dd7992af58  audio-share-client-v2-0.2.0-beta.apk
 ```
 
 APK 签名证书 SHA-256：
@@ -166,14 +166,18 @@ v1 APK 安装后应仍可独立打开，v1 与 v2 两个图标共存。
 
 ## 7. 配对路径（两条都做）
 
-### 7.1 QR 主路径
+### 7.1 QR 主路径（一步配对）
+
+QR 模式按 2026-11-17 的维护者裁决采用一步配对：二维码已经绑定 Server 公钥，
+手机扫描后自动确认，不需要再输入 SAS；Server 操作员仍需在 GUI 接受设备。
 
 1. Server GUI 显示 QR。
 2. 手机 Pairing → “扫描二维码”，授予相机权限，扫描。
-3. 手机显示 Server fingerprint 与 SAS；与 GUI 待批准卡片上的 SAS / fingerprint 比对。
+3. 手机自动确认并进入等待；手机仍显示 Server fingerprint 与 SAS，可选用它们与
+   GUI 上的信息比对。
 4. GUI 待批准卡片显示设备名、`client_id`、来源地址、SAS；点击“接受”。
 5. 手机显示配对完成并自动连接；Server 设备列表出现该设备。
-6. 若二维码过期（10 分钟），在 GUI 取消并重新开始。
+6. 若二维码过期，GUI 会隐藏失效码并提供原地刷新/重新开始，不需要重启 Server。
 
 ### 7.2 SAS / 无相机路径
 
