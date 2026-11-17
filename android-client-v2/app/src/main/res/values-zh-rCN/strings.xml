@@ -73,7 +73,6 @@
     <!-- 错误卡操作 -->
     <string name="error_action_retry">重试</string>
     <string name="error_action_pair_again">重新配对</string>
-    <string name="error_no_v1_fallback">此应用绝不会回退到 v1。</string>
 
     <!-- ABOUT -->
     <string name="about_title">关于此测试版</string>

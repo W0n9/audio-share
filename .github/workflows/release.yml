@@ -40,7 +40,7 @@ jobs:
           sdkmanager --install \
             "ndk;27.2.12479018" \
             "build-tools;36.0.0" \
-            "platforms;android-37"
+            "platforms;android-37.0"
 
       - uses: Swatinem/rust-cache@v2
         with:

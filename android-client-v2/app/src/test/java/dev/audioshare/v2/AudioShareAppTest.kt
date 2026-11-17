@@ -115,7 +115,7 @@ class AudioShareAppTest {
         compose.onNodeWithText(str(R.string.home_pair_code)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(str(R.string.home_scan_qr)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("pair-code").performScrollTo().performClick()
-        compose.onNodeWithText("Pair your phone").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.pairing_title)).performScrollTo().assertIsDisplayed()
         assertTrue(events.contains(UiEvent.StartSasPairing))
     }
 
@@ -134,7 +134,7 @@ class AudioShareAppTest {
         compose.onNodeWithText(str(R.string.error_action_pair_again))
             .performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("retry").performScrollTo().performClick()
-        compose.onNodeWithText("Pair your phone").assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.pairing_title)).assertIsDisplayed()
     }
 
     @Test
