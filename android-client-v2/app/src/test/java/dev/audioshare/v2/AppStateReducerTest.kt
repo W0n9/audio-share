@@ -442,7 +442,7 @@ class AppStateReducerTest {
     }
 
     @Test
-    fun pairing_completion_waits_for_the_credential_before_connecting() {
+    fun pairing_completion_does_not_connect_until_the_service_pushes_pairing_completed() {
         val started = AppReducer.reduce(
             AppState(address = "10.0.2.2:65531"),
             UiEvent.StartQrPairing(qrUri()),
@@ -459,10 +459,34 @@ class AppStateReducerTest {
         assertEquals(AppScreen.PAIRING, complete.state.screen)
         assertEquals(AppCommand.None, complete.command, "the credential may not be stored yet")
 
+        // Ticket 17: the credential observation is list-only; the Service owns
+        // the one authenticated connection and the one-shot push.
         val stored = AppReducer.reduce(complete.state, UiEvent.CredentialStored(record()))
-        assertEquals(AppScreen.SESSION, stored.state.screen)
+        assertEquals(AppScreen.PAIRING, stored.state.screen, "CredentialStored must not navigate")
         assertTrue(stored.state.hasStoredPairing)
-        assertEquals(AppCommand.ConnectStored("ab".repeat(32)), stored.command)
+        assertTrue(stored.state.pairing!!.isComplete, "the visible COMPLETE state is untouched")
+        assertEquals(AppCommand.None, stored.command, "the UI must not start a second connection")
+    }
+
+    @Test
+    fun pairing_completed_navigates_to_session_and_updates_the_server_list_without_connecting() {
+        val complete = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531"),
+            UiEvent.StartSasPairing,
+        ).let {
+            AppReducer.reduce(
+                it.state,
+                UiEvent.PairingSnapshotChanged(awaitingSas().copy(phase = "COMPLETE")),
+            ).state
+        }
+
+        val completed = AppReducer.reduce(complete, UiEvent.PairingCompleted(record()))
+
+        assertEquals(AppScreen.SESSION, completed.state.screen)
+        assertEquals(listOf(stored()), completed.state.storedServers)
+        assertNull(completed.state.pairing)
+        assertFalse(completed.state.stopRequested)
+        assertEquals(AppCommand.None, completed.command, "the Service already started the only session")
     }
 
     @Test
