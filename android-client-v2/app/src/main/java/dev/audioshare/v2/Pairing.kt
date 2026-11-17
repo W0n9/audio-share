@@ -245,7 +245,8 @@ data class PairingSnapshot(
  * A pairing exchange is a one-shot transcript: after a revoke/reject retry a
  * stopped `ClientSession`'s watcher may still deliver a late snapshot. Source
  * ownership makes the relay reject every event that does not belong to the
- * exchange the Service started last, exactly like [SessionStateRelay].
+ * exchange the Service started last, with the same generation ownership as
+ * [SessionOutcomeStore].
  */
 class PairingStateRelay {
     private val lock = Any()
