@@ -128,11 +128,10 @@ class ForegroundServiceContractTest {
         )
 
         val session = source("java/dev/audioshare/v2/ClientSession.kt")
+        // Ticket 22: the Android adapter still constructs the platform player;
+        // attach-before-connect is asserted behaviourally in
+        // SessionLifecycleDriverTest because the driver owns that ordering.
         assertTrue(session.contains("MediaPlayer(NativeMediaBridge)"))
-        assertTrue(
-            session.contains("it.attach(h)"),
-            "the ring is attached once per native session, before connect()",
-        )
 
         val player = source("java/dev/audioshare/v2/MediaPlayer.kt")
         assertTrue(
@@ -168,6 +167,17 @@ class ForegroundServiceContractTest {
             player.contains("ENCODING_PCM_24BIT"),
             "AudioFormat has no 24-bit encoding on API 26",
         )
-        assertEquals(1, player.split("val encoding = when (sampleFormat)").size - 1)
+        // The supported-format table is centralized and names the Rust gate as
+        // authoritative; the mapping behaviour itself lives in MediaPlaybackTest.
+        assertTrue(
+            player.contains("control.rs"),
+            "the Kotlin table must point at the authoritative Rust gate",
+        )
+        assertTrue(player.contains("SUPPORTED_SAMPLE_FORMATS"))
+        assertEquals(
+            1,
+            player.split("fun encodingFor(sampleFormat: Int)").size - 1,
+            "one centralized supported-format table",
+        )
     }
 }
