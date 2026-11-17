@@ -11,7 +11,9 @@ import android.graphics.drawable.Icon
 import android.media.session.MediaSession
 import android.os.Build
 import android.os.Binder
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import dev.audioshare.v2.session.PairingContext
 import dev.audioshare.v2.session.SessionEngineFactory
@@ -34,6 +36,14 @@ interface SessionController {
     fun setPairingListener(listener: ((PairingSnapshot?) -> Unit)?)
     /** Replayable current pairing state (null when no pairing is active). */
     fun pairingSnapshot(): PairingSnapshot?
+
+    /**
+     * One-shot pairing handoff (ticket 17): after the credential is persisted
+     * the Service starts the authenticated session and pushes this exactly
+     * once per exchange. A listener registered later gets no replay; a
+     * recreated Activity relies on the outcome and the restoration rule.
+     */
+    fun setPairingCompletedListener(listener: ((CredentialRecord) -> Unit)?)
 
     /** Parse and begin a QR pairing from the scanned/pasted payload URI. */
     fun beginQrPairing(uri: String)
@@ -67,6 +77,14 @@ class ControlSessionService : Service(), SessionController {
     private val pairingRelay = PairingStateRelay()
     private val binder = ControlBinder(this)
     private val credentials by lazy { SharedPreferencesCredentialStore(this) }
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+    /**
+     * One-shot handoff target. It is deliberately not replayed: a late
+     * Activity registration must not re-enter SESSION after the user left.
+     */
+    @Volatile
+    private var pairingCompletedListener: ((CredentialRecord) -> Unit)? = null
 
     /**
      * Hand-written composition root for the session graph (ticket 21). This is
@@ -83,6 +101,10 @@ class ControlSessionService : Service(), SessionController {
             pairing = pairingRelay,
             credentials = credentials,
             log = { Log.i(TAG, it) },
+            // The watcher callback persists on its own thread; the handoff
+            // (teardown joins the media thread) runs later on main.
+            schedule = { task -> mainHandler.post(task) },
+            onPairingCompleted = { record -> pairingCompletedListener?.invoke(record) },
         )
     }
 
@@ -103,6 +125,10 @@ class ControlSessionService : Service(), SessionController {
         pairingRelay.setListener(listener)
 
     override fun pairingSnapshot(): PairingSnapshot? = pairingRelay.snapshot()
+
+    override fun setPairingCompletedListener(listener: ((CredentialRecord) -> Unit)?) {
+        pairingCompletedListener = listener
+    }
 
     override fun beginQrPairing(uri: String) {
         dispatch(ACTION_PAIR_QR) { putExtra(EXTRA_PAIRING_URI, uri) }
@@ -276,9 +302,8 @@ class ControlSessionService : Service(), SessionController {
         }
         if (record == null) {
             Log.i(TAG, "connectStored: no credential; pairing is required")
-            reportPairingFailure(
-                "sas",
-                errorCode = 205,
+            orchestrator.reportStoredConnectFailure(
+                code = 205,
                 message = "no saved pairing for this Server; re-pair required",
             )
             stopForegroundCompat()
@@ -290,9 +315,8 @@ class ControlSessionService : Service(), SessionController {
         } catch (e: Exception) {
             // A missing key means re-pairing; never regenerate silently.
             Log.i(TAG, "stored Client key missing for ${record.keyAlias}: ${e.message}")
-            reportPairingFailure(
-                "sas",
-                errorCode = 205,
+            orchestrator.reportStoredConnectFailure(
+                code = 205,
                 message = "the stored Client key is gone; re-pair the phone",
             )
             stopForegroundCompat()
@@ -411,6 +435,9 @@ class ControlSessionService : Service(), SessionController {
     }
 
     override fun onDestroy() {
+        // A pending handoff must not start a session after the Service is gone.
+        mainHandler.removeCallbacksAndMessages(null)
+        pairingCompletedListener = null
         teardownSession(StopReason.Shutdown)
         releaseMediaSession()
         super.onDestroy()

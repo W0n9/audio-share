@@ -10,6 +10,31 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
+ * The wire Transfer Format values Kotlin can actually play.
+ *
+ * AUTHORITY: the Rust gate is authoritative —
+ * `android-client-v2/native/src/control.rs` `configuration_decodable` /
+ * `SUPPORTED_SAMPLE_FORMATS` (around line 1112) admits only F32LE (1) and
+ * S16LE (3). Kotlin must not widen that set.
+ *
+ * S24 packed 3-byte has no direct AudioTrack encoding on API 26 (S24LE); the
+ * Rust gate rejects it, so it is not mapped here. U8 (2) and S32 (5) are
+ * likewise unreachable in production and are deliberately absent.
+ */
+internal object TransferFormats {
+    fun encodingFor(sampleFormat: Int): Int? = when (sampleFormat) {
+        1 -> AudioFormat.ENCODING_PCM_FLOAT
+        3 -> AudioFormat.ENCODING_PCM_16BIT
+        else -> null
+    }
+
+    fun bytesPerSample(encoding: Int): Int = when (encoding) {
+        AudioFormat.ENCODING_PCM_16BIT -> 2
+        else -> 4 // ENCODING_PCM_FLOAT samples
+    }
+}
+
+/**
  * The platform playback seam (ticket 14). The player loop is testable with a
  * fake sink; production uses [AudioTrackSink].
  *
@@ -35,23 +60,13 @@ interface AudioSink {
     companion object {
         /** Open a platform sink for the native geometry, or null when mappable formats run out. */
         fun open(sampleRate: Int, channels: Int, sampleFormat: Int): AudioSink? {
-            val encoding = when (sampleFormat) {
-                1 -> AudioFormat.ENCODING_PCM_FLOAT
-                2 -> AudioFormat.ENCODING_PCM_8BIT
-                3 -> AudioFormat.ENCODING_PCM_16BIT
-                5 -> AudioFormat.ENCODING_PCM_32BIT
-                else -> return null // S24 packed 3-byte has no direct AudioTrack encoding
-            }
+            val encoding = TransferFormats.encodingFor(sampleFormat) ?: return null
             val channelMask = when (channels) {
                 1 -> AudioFormat.CHANNEL_OUT_MONO
                 2 -> AudioFormat.CHANNEL_OUT_STEREO
                 else -> return null
             }
-            val bytesPerSample = when (encoding) {
-                AudioFormat.ENCODING_PCM_8BIT -> 1
-                AudioFormat.ENCODING_PCM_16BIT -> 2
-                else -> 4
-            }
+            val bytesPerSample = TransferFormats.bytesPerSample(encoding)
             val minBuffer = AudioTrack.getMinBufferSize(sampleRate, channelMask, encoding)
             if (minBuffer <= 0) return null
             // Three platform buffers of headroom: enough for a 100 ms send-ahead

@@ -8,10 +8,7 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
-import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,14 +24,12 @@ import androidx.compose.runtime.mutableStateOf
 class MainActivity : ComponentActivity() {
     private val state = mutableStateOf(AppState())
     private val prefs by lazy { SharedPreferencesUiPreferences(this) }
-    private val handler = Handler(Looper.getMainLooper())
 
     private var controller: SessionController? = null
     private var bound = false
     private var hadSavedState = false
     private var initialized = false
     private var harnessStarted = false
-    private var credentialPolling = false
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -48,6 +43,9 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread { dispatch(UiEvent.SessionOutcomeChanged(outcome)) }
             }
             service.setPairingListener { snapshot -> runOnUiThread { onPairingSnapshot(snapshot) } }
+            service.setPairingCompletedListener { record ->
+                runOnUiThread { dispatch(UiEvent.PairingCompleted(record)) }
+            }
             initialize(service)
         }
 
@@ -92,6 +90,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         if (bound) {
+            // The handoff push is one-shot, not replayable; do not retain the
+            // Activity through the Service after unbinding.
+            controller?.setPairingCompletedListener(null)
             unbindService(connection)
             bound = false
             controller = null
@@ -106,8 +107,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        handler.removeCallbacksAndMessages(null)
-        credentialPolling = false
         if (isFinishing && !isChangingConfigurations) {
             startService(Intent(this, ControlSessionService::class.java).apply {
                 action = ControlSessionService.ACTION_STOP
@@ -206,37 +205,5 @@ class MainActivity : ComponentActivity() {
 
     private fun onPairingSnapshot(snapshot: PairingSnapshot?) {
         dispatch(UiEvent.PairingSnapshotChanged(snapshot))
-        if (snapshot?.isComplete == true) awaitCredential(snapshot.serverSpkiSha256Hex)
-    }
-
-    /**
-     * `PairingResult(OK)` persists the credential just after the COMPLETE
-     * snapshot, so connect only once the record is actually in the store.
-     */
-    private fun awaitCredential(pin: String?) {
-        if (credentialPolling) return
-        credentialPolling = true
-        val deadline = SystemClock.uptimeMillis() + 5_000
-        val poll = object : Runnable {
-            override fun run() {
-                val service = controller
-                if (service == null) {
-                    credentialPolling = false
-                    return
-                }
-                val record = if (pin != null) {
-                    service.credentials().firstOrNull { it.serverSpkiSha256Hex == pin }
-                } else {
-                    service.credentials().lastOrNull()
-                }
-                if (record == null && SystemClock.uptimeMillis() < deadline) {
-                    handler.postDelayed(this, 100)
-                    return
-                }
-                credentialPolling = false
-                if (record != null) dispatch(UiEvent.CredentialStored(record))
-            }
-        }
-        handler.post(poll)
     }
 }
