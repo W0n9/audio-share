@@ -2,6 +2,7 @@ package dev.audioshare.v2
 
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -49,12 +50,20 @@ fun AudioShareApp(
     versionCode: Int,
     onEvent: (UiEvent) -> Unit,
 ) {
+    // Back is navigation only (ticket 06 §5). HOME deliberately has no enabled
+    // handler: the system finishes the Activity, and MainActivity.onDestroy
+    // sends ACTION_STOP only for a real finish (so two Backs from SESSION stop
+    // the session, as intended).
+    BackHandler(enabled = state.screen != AppScreen.HOME) {
+        onEvent(UiEvent.BackPressed)
+    }
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
         when (state.screen) {
             AppScreen.HOME -> HomeScreen(state, onEvent)
             AppScreen.PAIRING -> PairingScreen(state, onEvent)
             AppScreen.SESSION -> SessionScreen(state, onEvent)
             AppScreen.ABOUT -> AboutScreen(versionName, versionCode, onEvent)
+            AppScreen.SETTINGS -> SettingsScreen(state, versionName, versionCode, onEvent)
         }
     }
 }
@@ -119,7 +128,17 @@ private fun HomeScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
     }
 
     Spacer(Modifier.height(24.dp))
-    TextButton(onClick = { onEvent(UiEvent.ShowAbout) }) { Text("About this beta") }
+    Row {
+        TextButton(onClick = { onEvent(UiEvent.ShowAbout) }) { Text("About this beta") }
+        // Ticket 18 moves this entry to the top bar; ticket 16 only requires
+        // that the SETTINGS destination is reachable from Home.
+        TextButton(
+            onClick = { onEvent(UiEvent.ShowSettings) },
+            modifier = Modifier.testTag("settings"),
+        ) {
+            Text("Settings")
+        }
+    }
 }
 
 @Composable
@@ -446,6 +465,55 @@ private fun SessionScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
 
     Spacer(Modifier.height(12.dp))
     TextButton(onClick = { onEvent(UiEvent.ShowHome) }) { Text("Back to Home") }
+}
+
+@Composable
+private fun SettingsScreen(
+    state: AppState,
+    versionName: String,
+    versionCode: Int,
+    onEvent: (UiEvent) -> Unit,
+) {
+    // Ticket 16 keeps the destination minimal and read-only: ticket 18 owns the
+    // Direction A Settings shell (switches, rename, delete, and so on).
+    Text(
+        "Settings",
+        style = MaterialTheme.typography.headlineSmall,
+        modifier = Modifier.testTag("settings-title"),
+    )
+    Spacer(Modifier.height(16.dp))
+
+    Text("Paired Server", style = MaterialTheme.typography.titleSmall)
+    val server = state.storedServers.firstOrNull()
+    if (server == null) {
+        Text(
+            "No Server is paired yet.",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.testTag("settings-empty"),
+        )
+    } else {
+        Text(
+            listOfNotNull(server.displayName, server.address).joinToString(" · "),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.testTag("settings-server"),
+        )
+    }
+    Spacer(Modifier.height(16.dp))
+
+    Text(
+        "Version $versionName ($versionCode)",
+        style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.testTag("settings-version"),
+    )
+    Spacer(Modifier.height(16.dp))
+
+    TextButton(
+        onClick = { onEvent(UiEvent.ShowAbout) },
+        modifier = Modifier.testTag("settings-about"),
+    ) {
+        Text("About this beta")
+    }
+    TextButton(onClick = { onEvent(UiEvent.ShowHome) }) { Text("Back") }
 }
 
 @Composable

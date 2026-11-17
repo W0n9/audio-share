@@ -1,7 +1,7 @@
 package dev.audioshare.v2
 
-/** The four beta screens (beta-spec "Android Client: minimal Compose UI"). */
-enum class AppScreen { HOME, PAIRING, SESSION, ABOUT }
+/** The five beta screens (ticket 06 "Navigation": HOME, PAIRING, SESSION, ABOUT, SETTINGS). */
+enum class AppScreen { HOME, PAIRING, SESSION, ABOUT, SETTINGS }
 
 /** A paired Server as the UI needs it (public credential data only). */
 data class StoredServer(
@@ -96,6 +96,13 @@ data class AppState(
     val pairing: PairingUi? = null,
     val scanActive: Boolean = false,
     val scanMessage: String? = null,
+    /**
+     * Config-change hint only: the SAS input typed before the Activity was
+     * recreated. The Service replay owns the pairing snapshot, so this hint is
+     * applied to the first snapshot and then consumed. It is never used when a
+     * PairingUi already exists, and it is dropped whenever pairing is cleared.
+     */
+    val restoredSasInput: String = "",
 ) {
     val hasStoredPairing: Boolean get() = storedServers.isNotEmpty()
 
@@ -124,7 +131,19 @@ sealed interface UiEvent {
     data class SasInputChanged(val text: String) : UiEvent
     data object ConfirmPairing : UiEvent
     data object CancelPairing : UiEvent
+    /** Android system Back. Pure navigation; the Activity decides HOME finish. */
+    data object BackPressed : UiEvent
     data class SessionOutcomeChanged(val outcome: SessionOutcome?) : UiEvent
+    /**
+     * First-bind replay of the Service-owned session/pairing state, followed by
+     * reconciliation of the restored screen (ticket 06 §4). The pairing
+     * snapshot itself was already replayed through the pairing listener; this
+     * event only carries whether one exists, so it never rebuilds PairingUi.
+     */
+    data class RestorationReconciled(
+        val outcome: SessionOutcome?,
+        val pairingSnapshotPresent: Boolean,
+    ) : UiEvent
     data object StopRequested : UiEvent
     data class StartupLoaded(
         val rememberedAddress: String?,
@@ -134,6 +153,7 @@ sealed interface UiEvent {
     data object ShowHome : UiEvent
     data object ShowPairing : UiEvent
     data object ShowAbout : UiEvent
+    data object ShowSettings : UiEvent
     data object RequestScan : UiEvent
     data object ScanPermissionDenied : UiEvent
     data object ScanClosed : UiEvent
@@ -227,15 +247,55 @@ object AppReducer {
             }
         }
 
-        UiEvent.CancelPairing -> Reduction(
-            state.copy(
-                screen = AppScreen.HOME,
-                pairing = null,
-                scanActive = false,
-                scanMessage = null,
-            ),
-            AppCommand.CancelPairing,
-        )
+        UiEvent.CancelPairing -> cancelPairing(state)
+
+        // Back is navigation only (ticket 06 §5). Pairing cancels the exchange;
+        // every other non-Home screen returns Home without touching the
+        // session/channel. HOME is left to the system, which finishes the
+        // Activity; only a real finish sends ACTION_STOP.
+        UiEvent.BackPressed -> when (state.screen) {
+            AppScreen.PAIRING -> cancelPairing(state)
+            AppScreen.SESSION,
+            AppScreen.ABOUT,
+            AppScreen.SETTINGS -> Reduction(
+                state.copy(
+                    screen = AppScreen.HOME,
+                    scanActive = false,
+                    scanMessage = null,
+                    restoredSasInput = "",
+                )
+            )
+
+            AppScreen.HOME -> Reduction(state)
+        }
+
+        // The restored screen is only a hint. The first bind replays the
+        // Service-owned outcome/pairing state, then this event reconciles the
+        // hint; the reducer stays the single owner of the screen choice.
+        is UiEvent.RestorationReconciled -> {
+            val screen = NavigationRestoration.reconcile(
+                restored = state.screen,
+                outcome = event.outcome,
+                pairingSnapshotPresent = event.pairingSnapshotPresent,
+            )
+            val leftPairing = screen != AppScreen.PAIRING
+            val cleared = screen == AppScreen.HOME
+            Reduction(
+                state.copy(
+                    screen = screen,
+                    outcome = event.outcome,
+                    stopRequested = if (event.outcome is SessionOutcome.Ended) {
+                        false
+                    } else {
+                        state.stopRequested
+                    },
+                    pairing = if (cleared) null else state.pairing,
+                    scanActive = if (cleared) false else state.scanActive,
+                    scanMessage = if (cleared) null else state.scanMessage,
+                    restoredSasInput = if (leftPairing) "" else state.restoredSasInput,
+                )
+            )
+        }
 
         // The outcome never chooses the screen. Live/Reconnecting stay wherever
         // the user is; Ended stays in place with different content (ticket 06).
@@ -284,6 +344,7 @@ object AppReducer {
                     storedServers = servers,
                     stopRequested = false,
                     pairing = null,
+                    restoredSasInput = "",
                 ),
                 // Ticket 17 replaces this handoff with the Service's one-shot
                 // PairingCompleted push; the credential is still the trigger.
@@ -292,7 +353,12 @@ object AppReducer {
         }
 
         UiEvent.ShowHome -> Reduction(
-            state.copy(screen = AppScreen.HOME, scanActive = false, scanMessage = null)
+            state.copy(
+                screen = AppScreen.HOME,
+                scanActive = false,
+                scanMessage = null,
+                restoredSasInput = "",
+            )
         )
 
         UiEvent.ShowPairing -> Reduction(
@@ -301,10 +367,17 @@ object AppReducer {
                 pairing = null,
                 scanActive = false,
                 scanMessage = null,
+                restoredSasInput = "",
             )
         )
 
         UiEvent.ShowAbout -> Reduction(state.copy(screen = AppScreen.ABOUT, scanActive = false))
+
+        // SETTINGS is a user-driven destination; no session outcome or pairing
+        // terminal ever navigates to or away from it (ticket 06 §2).
+        UiEvent.ShowSettings -> Reduction(
+            state.copy(screen = AppScreen.SETTINGS, scanActive = false)
+        )
 
         UiEvent.RequestScan -> Reduction(
             state.copy(
@@ -332,11 +405,23 @@ object AppReducer {
                     phase = "FAILED",
                     message = event.message,
                 ),
+                restoredSasInput = "",
             )
         )
 
         UiEvent.Retry -> retry(state)
     }
+
+    private fun cancelPairing(state: AppState): Reduction = Reduction(
+        state.copy(
+            screen = AppScreen.HOME,
+            pairing = null,
+            scanActive = false,
+            scanMessage = null,
+            restoredSasInput = "",
+        ),
+        AppCommand.CancelPairing,
+    )
 
     private fun connect(state: AppState): Reduction {
         val outcome = state.outcome
@@ -388,6 +473,7 @@ object AppReducer {
                 pairing = PairingUi(mode = "sas", phase = "STARTING"),
                 scanActive = false,
                 scanMessage = null,
+                restoredSasInput = "",
             ),
             AppCommand.BeginSas(address),
         )
@@ -406,6 +492,7 @@ object AppReducer {
                         phase = "FAILED",
                         message = "This is not a valid Audio Share pairing link.",
                     ),
+                    restoredSasInput = "",
                 )
             )
         }
@@ -417,6 +504,7 @@ object AppReducer {
                 pairing = PairingUi(mode = "qr", phase = "STARTING"),
                 scanActive = false,
                 scanMessage = null,
+                restoredSasInput = "",
             ),
             AppCommand.BeginQr(uri.trim()),
         )
@@ -430,7 +518,9 @@ object AppReducer {
             return if (current?.isComplete == true || current?.isBlockingInvitationFailure == true) {
                 Reduction(state)
             } else {
-                Reduction(state.copy(pairing = null, scanActive = false))
+                Reduction(
+                    state.copy(pairing = null, scanActive = false, restoredSasInput = "")
+                )
             }
         }
         val sas = snapshot.sas?.let(::formatSas)
@@ -451,7 +541,7 @@ object AppReducer {
             phase = snapshot.phase,
             sas = sas,
             fingerprint = snapshot.fingerprint,
-            sasInput = previous?.sasInput.orEmpty(),
+            sasInput = previous?.sasInput ?: state.restoredSasInput,
             errorCode = snapshot.errorCode,
             message = message,
             // A fresh exchange always has a fresh PairingUi (STARTING), so
@@ -475,11 +565,14 @@ object AppReducer {
                         awaitingSnapshots = 0,
                     ),
                     scanActive = false,
+                    restoredSasInput = "",
                 ),
                 AppCommand.ConfirmPairing,
             )
         } else {
-            Reduction(state.copy(pairing = pairing, scanActive = false))
+            Reduction(
+                state.copy(pairing = pairing, scanActive = false, restoredSasInput = "")
+            )
         }
     }
 
@@ -490,6 +583,7 @@ object AppReducer {
                 state.copy(
                     screen = AppScreen.PAIRING,
                     pairing = null,
+                    restoredSasInput = "",
                 )
             )
         }
