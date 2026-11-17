@@ -22,13 +22,14 @@
 //! - CLOSING: absorbs; no new requests.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::auth;
 use crate::auth_store::{Authorization, AuthorizationStore, StoredClient};
 use crate::codes::ErrorCode;
 use crate::pairing::{
     self, ApprovalRequest, PairingCore, PairingError, PairingExporter, PairingPermit,
-    PAIRING_EXPORTER_LABEL, SAS_EXPORTER_LABEL,
+    PairingPresented, PAIRING_EXPORTER_LABEL, SAS_EXPORTER_LABEL,
 };
 use crate::schema::{frame, Frame, PairingMode, Status};
 
@@ -337,6 +338,9 @@ struct PendingPairing {
     verified: bool,
     /// The driver has already handed this request to the local operator.
     approval_requested: bool,
+    /// The live view published to the operator before `PairingConfirm`
+    /// (delivered once; ticket 29).
+    presented: Option<PairingPresented>,
     /// The TM-5 concurrency slot for this exchange; dropped with the pending
     /// exchange on approval, decline, deadline, or connection loss.
     _permit: PairingPermit,
@@ -947,6 +951,17 @@ impl StateMachine {
             .and_then(|pending| pending.approval_id)
     }
 
+    /// Hand the live pairing (mode, SAS, identity, address, expiry) to the
+    /// driver exactly once, before the Client's `PairingConfirm` (ticket 29).
+    ///
+    /// The driver publishes it only after `PairingResponse` has been written;
+    /// this view changes no wire or approval semantics.
+    pub fn take_pairing_presented(&mut self) -> Option<PairingPresented> {
+        self.pending_pairing
+            .as_mut()
+            .and_then(|pending| pending.presented.take())
+    }
+
     /// Hand a verified-but-unapproved pairing to the local operator exactly
     /// once. The driver registers an approval callback and never blocks the
     /// state machine on human input.
@@ -957,7 +972,9 @@ impl StateMachine {
             return None;
         }
         pending.approval_requested = true;
-        let approval_id = core.next_approval_id();
+        let approval_id = pending
+            .approval_id
+            .unwrap_or_else(|| core.next_approval_id());
         pending.approval_id = Some(approval_id);
         let client_id: String = auth::client_id(&pending.client_public_key)
             .iter()
@@ -1135,9 +1152,23 @@ impl StateMachine {
 
         let display_name = pairing::normalize_display_name(&request.client_name);
         let client_id = auth::client_id(&request.client_public_key).to_vec();
+        // The live operator view is handed to the driver now, but the driver
+        // publishes it only after PairingResponse is written (ticket 29). It
+        // shares the approval handle used later by the post-confirm card.
+        let approval_id = core.next_approval_id();
+        let presented = PairingPresented {
+            approval_id,
+            mode,
+            client_id: client_id.iter().map(|byte| format!("{byte:02x}")).collect(),
+            display_name: display_name.clone(),
+            address: String::from_utf8_lossy(source).into_owned(),
+            sas: sas.clone(),
+            fingerprint: core.fingerprint(),
+            expires_at: Instant::now() + pairing::PAIRING_DEADLINE,
+        };
         self.pending_pairing = Some(PendingPairing {
             request_id: request.request_id,
-            approval_id: None,
+            approval_id: Some(approval_id),
             mode,
             client_public_key: request.client_public_key.clone(),
             display_name: display_name.clone(),
@@ -1145,6 +1176,7 @@ impl StateMachine {
             sas,
             verified: false,
             approval_requested: false,
+            presented: Some(presented),
             _permit: permit,
         });
         self.state = ServerState::Authenticating;

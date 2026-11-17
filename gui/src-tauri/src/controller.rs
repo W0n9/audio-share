@@ -13,12 +13,14 @@ use std::time::{Duration, Instant};
 use audio_share_core::capture::{CaptureBackend, Endpoint};
 use audio_share_core::config::{self, DEFAULT_ENDPOINT};
 use audio_share_core::server::{Server, ServerHandle};
-use v2_runtime::admin::{ClientStateView, ClientView, PairingAdmin, PendingRequestView};
+use v2_runtime::admin::{
+    ClientStateView, ClientView, PairingAdmin, PendingRequestView, PresentedRequestView,
+};
 
 use crate::logging;
 use crate::model::{
-    ApplicationSettings, ClientInfo, PairingInvitation, PairingRequestInfo, PairingStatus,
-    ServerState, ServerStatus, Settings, V2Status,
+    ApplicationSettings, ClientInfo, PairingInvitation, PairingLiveInfo, PairingRequestInfo,
+    PairingStatus, ServerState, ServerStatus, Settings, V2Status,
 };
 use crate::v2::{PairingModeArg, V2Runtime, V2StartInputs, V2Starter, DEFAULT_V2_PORT};
 
@@ -422,14 +424,23 @@ impl ServerController {
             (v2, admin, invitation)
         };
         let pending = admin
+            .as_ref()
             .map(|admin| admin.pending())
             .unwrap_or_default()
             .into_iter()
             .map(pending_info)
             .collect::<Vec<_>>();
+        let live = admin
+            .as_ref()
+            .map(|admin| admin.presented())
+            .unwrap_or_default()
+            .into_iter()
+            .map(live_info)
+            .collect::<Vec<_>>();
         PairingStatus {
-            active: invitation.is_some() || !pending.is_empty(),
+            active: invitation.is_some() || !live.is_empty() || !pending.is_empty(),
             invitation,
+            live,
             pending,
             v2,
         }
@@ -563,6 +574,19 @@ fn pending_info(request: PendingRequestView) -> PairingRequestInfo {
     }
 }
 
+fn live_info(request: PresentedRequestView) -> PairingLiveInfo {
+    PairingLiveInfo {
+        approval_id: request.approval_id,
+        client_id: request.client_id,
+        display_name: request.display_name,
+        mode: mode_name(request.mode),
+        address: request.address,
+        sas: request.sas,
+        fingerprint: request.fingerprint,
+        expires_in_secs: request.expires_in_secs,
+    }
+}
+
 fn client_info(client: ClientView) -> ClientInfo {
     ClientInfo {
         client_id: client.client_id,
@@ -592,7 +616,7 @@ mod tests {
     use tokio::net::TcpStream;
     use v2_runtime::admin::{
         ClientStateView, ClientView, InvitationView, PairingAdmin, PendingRequestView,
-        RequestedPairingMode,
+        PresentedRequestView, RequestedPairingMode,
     };
 
     use super::*;
@@ -602,6 +626,7 @@ mod tests {
     struct FakeAdminState {
         calls: Vec<String>,
         pending: Vec<PendingRequestView>,
+        presented: Vec<PresentedRequestView>,
         clients: Vec<ClientView>,
     }
 
@@ -636,11 +661,18 @@ mod tests {
         }
 
         fn cancel(&self) {
-            lock(&self.state).calls.push("cancel".to_owned());
+            let mut state = lock(&self.state);
+            state.calls.push("cancel".to_owned());
+            state.presented.clear();
         }
 
         fn pending(&self) -> Vec<PendingRequestView> {
             lock(&self.state).pending.clone()
+        }
+
+        fn presented(&self) -> Vec<PresentedRequestView> {
+            lock(&self.state).calls.push("presented".to_owned());
+            lock(&self.state).presented.clone()
         }
 
         fn approve(&self, approval_id: u64) -> bool {
@@ -655,6 +687,9 @@ mod tests {
             {
                 Some(index) => {
                     state.pending.remove(index);
+                    state
+                        .presented
+                        .retain(|request| request.approval_id != approval_id);
                     true
                 }
                 None => false,
@@ -673,6 +708,9 @@ mod tests {
             {
                 Some(index) => {
                     state.pending.remove(index);
+                    state
+                        .presented
+                        .retain(|request| request.approval_id != approval_id);
                     true
                 }
                 None => false,
@@ -771,6 +809,19 @@ mod tests {
             mode: RequestedPairingMode::Qr,
             address: "192.168.1.44:50000".to_owned(),
             sas: Some("123 456".to_owned()),
+        }
+    }
+
+    fn live_request() -> PresentedRequestView {
+        PresentedRequestView {
+            approval_id: 7,
+            client_id: "0011223344556677".to_owned(),
+            display_name: "Pixel 8".to_owned(),
+            mode: RequestedPairingMode::Qr,
+            address: "192.168.1.44:50000".to_owned(),
+            sas: Some("123 456".to_owned()),
+            fingerprint: "FP".to_owned(),
+            expires_in_secs: 600,
         }
     }
 
@@ -1373,6 +1424,76 @@ mod tests {
         let status = controller.pairing_status();
         assert!(!status.active);
         assert!(status.pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pairing_status_reports_live_pairings_until_they_clear() {
+        let (_admin, admin_state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+
+        let status = controller
+            .pairing_begin(PairingModeArg::Sas)
+            .expect("begin SAS");
+        assert!(status.live.is_empty());
+
+        // Client connected (PairingResponse written) but has not confirmed:
+        // the live view is already visible and keeps the dialog active.
+        lock(&admin_state).presented.push(live_request());
+        let status = controller.pairing_status();
+        assert!(status.active, "a live pairing keeps the dialog active");
+        assert!(status.pending.is_empty(), "no approval card before confirm");
+        assert_eq!(status.live.len(), 1);
+        assert_eq!(status.live[0].approval_id, 7);
+        assert_eq!(status.live[0].display_name, "Pixel 8");
+        assert_eq!(status.live[0].sas.as_deref(), Some("123 456"));
+        assert_eq!(status.live[0].client_id, "0011223344556677");
+        assert_eq!(status.live[0].address, "192.168.1.44:50000");
+        assert_eq!(status.live[0].fingerprint, "FP");
+        assert_eq!(status.live[0].expires_in_secs, 600);
+
+        // PairingConfirm has arrived: the approval card joins the live view.
+        lock(&admin_state).pending.push(pending_request());
+        let status = controller.pairing_status();
+        assert_eq!(status.live.len(), 1);
+        assert_eq!(status.pending.len(), 1);
+
+        // Approving clears both the approval card and the live view.
+        let status = controller.pairing_approve(7).expect("approve");
+        assert!(status.live.is_empty());
+        assert!(status.pending.is_empty());
+
+        // Cancel must clear a live view that has not reached approval.
+        controller
+            .pairing_begin(PairingModeArg::Sas)
+            .expect("begin SAS again");
+        lock(&admin_state).presented.push(live_request());
+        let status = controller.pairing_cancel().expect("cancel");
+        assert!(status.live.is_empty());
+        assert!(!status.active);
+
+        // Decline clears the live view too.
+        controller
+            .pairing_begin(PairingModeArg::Qr)
+            .expect("begin QR again");
+        lock(&admin_state).presented.push(live_request());
+        lock(&admin_state).pending.push(pending_request());
+        let status = controller.pairing_decline(7).expect("decline");
+        assert!(status.live.is_empty());
+        assert!(status.pending.is_empty());
+
+        // Deadline/connection-loss clearing (driver side) drops the live view;
+        // the controller reflects that on the next poll.
+        controller
+            .pairing_begin(PairingModeArg::Sas)
+            .expect("begin SAS third time");
+        lock(&admin_state).presented.push(live_request());
+        assert_eq!(controller.pairing_status().live.len(), 1);
+        lock(&admin_state).presented.clear();
+        assert!(controller.pairing_status().live.is_empty());
+
+        controller.stop().await.expect("stop");
     }
 
     #[tokio::test]

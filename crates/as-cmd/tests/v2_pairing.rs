@@ -10,11 +10,14 @@ use std::time::Duration;
 
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
+use tokio::io::AsyncBufReadExt as _;
 
 use v2_transport::auth;
 use v2_transport::codes::ALPN_PROTOCOL;
 use v2_transport::framing::{check_length_prefix, decode_body, encode_frame, LengthCheck};
-use v2_transport::pairing::{self, PAIRING_EXPORTER_LABEL};
+use v2_transport::pairing::{
+    self, derive_sas_code, format_sas, PAIRING_EXPORTER_LABEL, SAS_EXPORTER_LABEL,
+};
 use v2_transport::schema::{
     frame, Frame, PairingConfirm, PairingMode, PairingRequest, PairingResponse,
 };
@@ -198,6 +201,130 @@ async fn run_pair_accept_once(iteration: usize) -> (tempfile::TempDir, SigningKe
         );
     }
     (temp, key, stdout)
+}
+
+/// `as-cmd pair` must print the connection-derived SAS as soon as the Server
+/// has written `PairingResponse`, before the Client sends `PairingConfirm`.
+/// Ticket 25 saw the code only after confirmation (buffered), while the phone
+/// waited for the code to compare — the other half of the GUI deadlock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn as_cmd_pair_prints_the_live_code_before_confirmation() {
+    let _port_lock = PortLock::acquire();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let port = free_udp_port();
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_as-cmd"))
+        .args([
+            "pair",
+            "--sas",
+            "--accept",
+            "--timeout",
+            "15",
+            "--v2-port",
+            &port.to_string(),
+        ])
+        .env("AUDIO_SHARE_CONFIG", temp.path().join("config.ini"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn as-cmd pair");
+
+    let address: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    let connection = connect_with_retry(address).await;
+    let key = SigningKey::random(&mut rand_core::OsRng);
+    let (mut send, mut recv) = connection.open_bi().await.expect("control stream");
+    send_frame(
+        &mut send,
+        frame::Body::PairingRequest(PairingRequest {
+            request_id: 1,
+            pairing_mode: PairingMode::Sas as i32,
+            pairing_nonce: Vec::new(),
+            client_random: vec![0x42; 32],
+            client_public_key: public_key(&key),
+            protocol_major: 2,
+            capabilities: Vec::new(),
+            client_name: "CLI Test Phone".to_owned(),
+        }),
+    )
+    .await;
+    let response = match read_frame(&mut recv).await.body {
+        Some(frame::Body::PairingResponse(response)) => response,
+        other => panic!("expected PairingResponse, got {other:?}"),
+    };
+
+    // The Client can derive the same SAS from this connection's exporter.
+    let context = pairing::binding_context(
+        PairingMode::Sas,
+        &[],
+        &response.client_random,
+        &response.server_random,
+        &public_key(&key),
+        &response.server_public_key,
+        &response.capabilities,
+        &response.display_name,
+    )
+    .expect("binding context");
+    let mut seed = [0u8; 32];
+    connection
+        .export_keying_material(&mut seed, SAS_EXPORTER_LABEL, &context)
+        .expect("SAS exporter");
+    let expected_sas = format_sas(derive_sas_code(&seed).expect("SAS seed"));
+
+    // Do NOT confirm yet: read the child's stdout until it prints the code.
+    let stdout = child.stdout.take().expect("stdout piped");
+    let mut lines = tokio::io::BufReader::new(stdout).lines();
+    let printed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let line = lines
+                .next_line()
+                .await
+                .expect("read as-cmd stdout")
+                .unwrap_or_else(|| panic!("as-cmd stdout closed before printing the code"));
+            if let Some(code) = line.strip_prefix("Pairing code: ") {
+                if !code.is_empty()
+                    && code
+                        .chars()
+                        .all(|character| character.is_ascii_digit() || character == ' ')
+                {
+                    break line;
+                }
+            }
+        }
+    })
+    .await
+    .expect("as-cmd must print the live pairing code before PairingConfirm");
+    assert_eq!(
+        printed.trim(),
+        format!("Pairing code: {expected_sas}"),
+        "the printed code must be this connection's SAS"
+    );
+
+    // Finish the pairing so the child exits cleanly.
+    let mut binding = [0u8; 48];
+    connection
+        .export_keying_material(&mut binding, PAIRING_EXPORTER_LABEL, &context)
+        .expect("TLS exporter");
+    let proof: Signature = key.sign(&auth::build_pairing_proof_input(&binding));
+    send_frame(
+        &mut send,
+        frame::Body::PairingConfirm(PairingConfirm {
+            request_id: 1,
+            binding_echo: binding.to_vec(),
+            client_proof: proof.to_vec(),
+        }),
+    )
+    .await;
+    match read_frame(&mut recv).await.body {
+        Some(frame::Body::PairingResult(result)) => assert_eq!(result.status.code, 0),
+        other => panic!("expected PairingResult(OK), got {other:?}"),
+    }
+    connection.close(0u32.into(), b"");
+
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("as-cmd pair exits after the pairing")
+        .expect("wait for as-cmd");
+    assert!(status.success(), "pair exited with {status:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

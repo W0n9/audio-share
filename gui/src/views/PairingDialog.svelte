@@ -7,6 +7,7 @@
   const v2 = $derived(server.status.v2);
   const v2Ready = $derived(v2.state === "running");
   const invitation = $derived(server.pairing?.invitation ?? null);
+  const live = $derived(server.pairing?.live ?? []);
   const pending = $derived(server.pairing?.pending ?? []);
 
   function begin(mode: PairingMode): void {
@@ -99,7 +100,36 @@
               {t("pairing.cancel")}
             </button>
           </div>
-        {:else}
+        {/if}
+
+        {#if live.length > 0}
+          <div class="pairing-section-title">{t("pairing.liveTitle")}</div>
+          {#each live as request (request.approvalId)}
+            <div class="pairing-card pairing-card-live">
+              <div class="pairing-card-title">{request.displayName}</div>
+              <div class="pairing-row">
+                <span>{t("pairing.clientId")}</span>
+                <code>{request.clientId}</code>
+              </div>
+              <div class="pairing-row">
+                <span>{t("pairing.address")}</span>
+                <code>{request.address}</code>
+              </div>
+              <div class="pairing-code">
+                <span>{t("pairing.pairingCode")}</span>
+                <strong>{request.sas ?? t("pairing.codeUnavailable")}</strong>
+              </div>
+              <p class="pairing-hint">{t("pairing.liveHint")}</p>
+            </div>
+          {/each}
+          {#if !invitation}
+            <button class="pairing-secondary" onclick={cancel}>
+              {t("pairing.cancel")}
+            </button>
+          {/if}
+        {/if}
+
+        {#if !invitation && live.length === 0}
           <div class="pairing-actions">
             <button
               class="pairing-primary"

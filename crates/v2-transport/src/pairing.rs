@@ -420,6 +420,50 @@ pub struct ApprovalRequest {
     pub sas: Option<String>,
 }
 
+/// A live pairing as presented to the local operator.
+///
+/// Published as soon as the Server has successfully written `PairingResponse`
+/// (pairing.md §6.2, §7.3), before the Client's `PairingConfirm`. The wire
+/// protocol is unchanged: this is a local operator view only. It carries the
+/// same process-local `approval_id` the post-confirm approval card will use,
+/// so every clear path (approve, decline, cancel, deadline, connection loss)
+/// can drop both with one id.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PairingPresented {
+    /// Process-unique local approval handle (shared with the approval card).
+    pub approval_id: u64,
+    /// QR or SAS.
+    pub mode: PairingMode,
+    /// The canonical client id (hex).
+    pub client_id: String,
+    /// The accepted display name.
+    pub display_name: String,
+    /// The source address (unmasked: shown to the local operator only).
+    pub address: String,
+    /// The per-connection SAS, when the connection supplied one.
+    pub sas: Option<String>,
+    /// The §7.4 Server SPKI fingerprint.
+    pub fingerprint: String,
+    /// The monotonic pairing deadline instant.
+    pub expires_at: Instant,
+}
+
+impl fmt::Debug for PairingPresented {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Red line: never expose the SAS through Debug/log output.
+        f.debug_struct("PairingPresented")
+            .field("approval_id", &self.approval_id)
+            .field("mode", &self.mode)
+            .field("client_id", &self.client_id)
+            .field("display_name", &self.display_name)
+            .field("address", &self.address)
+            .field("sas", &self.sas.as_ref().map(|_| "<redacted>"))
+            .field("fingerprint", &self.fingerprint)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
+}
+
 /// A pairing failure. Pre-authentication failures never carry detail on the
 /// wire; these variants exist for local classification and redacted logs.
 #[derive(Debug)]
@@ -520,11 +564,15 @@ pub struct PairingCore {
     sas_window: Mutex<Option<Instant>>,
     failures: Mutex<AddressRateGuard>,
     approvals: Mutex<HashMap<u64, PendingApproval>>,
+    /// Live pairings published after `PairingResponse`, keyed by the same
+    /// process-local `approval_id` used by the approval card.
+    presented: Mutex<HashMap<u64, PairingPresented>>,
     /// Process-unique approval handles; never derived from the wire.
     approval_seq: AtomicU64,
     /// Live pairing sessions holding a TM-5 concurrency slot.
     active_pairings: Arc<AtomicUsize>,
     approval_tx: broadcast::Sender<ApprovalRequest>,
+    presented_tx: broadcast::Sender<PairingPresented>,
     paired_tx: broadcast::Sender<StoredClient>,
 }
 
@@ -536,6 +584,7 @@ impl fmt::Debug for PairingCore {
             .field("nonces", &self.nonces.lock().map(|n| n.len()).unwrap_or(0))
             .field("sas_window_open", &self.sas_window_open())
             .field("pending_approvals", &self.pending_approvals().len())
+            .field("presented", &self.presented().len())
             .field("clients", &self.store.clients().len())
             .finish()
     }
@@ -563,6 +612,7 @@ impl PairingCore {
         clock: Arc<dyn Clock>,
     ) -> Self {
         let (approval_tx, _) = broadcast::channel(16);
+        let (presented_tx, _) = broadcast::channel(16);
         let (paired_tx, _) = broadcast::channel(16);
         Self {
             server_public_key: server_public_key
@@ -577,9 +627,11 @@ impl PairingCore {
                 PAIRING_FAILURES_PER_WINDOW,
             )),
             approvals: Mutex::new(HashMap::new()),
+            presented: Mutex::new(HashMap::new()),
             approval_seq: AtomicU64::new(0),
             active_pairings: Arc::new(AtomicUsize::new(0)),
             approval_tx,
+            presented_tx,
             paired_tx,
         }
     }
@@ -656,6 +708,10 @@ impl PairingCore {
     /// (closing a dialog does not consume them; §5).
     pub fn cancel(&self) {
         *self.sas_window.lock().expect("sas window lock") = None;
+        self.presented
+            .lock()
+            .expect("pairing presented lock")
+            .clear();
         let pending: Vec<_> = self
             .approvals
             .lock()
@@ -796,6 +852,46 @@ impl PairingCore {
         self.approval_seq.fetch_add(1, Ordering::Relaxed) + 1
     }
 
+    /// Publish a live pairing after `PairingResponse` was written.
+    ///
+    /// At most one entry exists per `approval_id`; a re-publish replaces it.
+    /// The broadcast lets a one-shot CLI surface print the code immediately
+    /// instead of polling.
+    pub fn publish_presented(&self, presented: PairingPresented) {
+        let approval_id = presented.approval_id;
+        self.presented
+            .lock()
+            .expect("pairing presented lock")
+            .insert(approval_id, presented.clone());
+        let _ = self.presented_tx.send(presented);
+    }
+
+    /// Every live presented pairing, ordered by process-local handle.
+    pub fn presented(&self) -> Vec<PairingPresented> {
+        let mut presented: Vec<_> = self
+            .presented
+            .lock()
+            .expect("pairing presented lock")
+            .values()
+            .cloned()
+            .collect();
+        presented.sort_by_key(|request| request.approval_id);
+        presented
+    }
+
+    /// Drop one live presented pairing (deadline, decline, connection loss).
+    fn clear_presented(&self, approval_id: u64) {
+        self.presented
+            .lock()
+            .expect("pairing presented lock")
+            .remove(&approval_id);
+    }
+
+    /// Subscribe to live pairing presentations (one receiver per admin surface).
+    pub fn subscribe_presented(&self) -> broadcast::Receiver<PairingPresented> {
+        self.presented_tx.subscribe()
+    }
+
     /// Register a verified-but-unapproved pairing and notify observers.
     ///
     /// The decision callback is invoked at most once, by [`Self::approve`],
@@ -836,6 +932,7 @@ impl PairingCore {
             .remove(&approval_id);
         match pending {
             Some(pending) => {
+                self.clear_presented(approval_id);
                 (pending.decide)(true);
                 true
             }
@@ -852,6 +949,7 @@ impl PairingCore {
             .remove(&approval_id);
         match pending {
             Some(pending) => {
+                self.clear_presented(approval_id);
                 (pending.decide)(false);
                 true
             }
@@ -865,6 +963,7 @@ impl PairingCore {
             .lock()
             .expect("pairing approval lock")
             .remove(&approval_id);
+        self.clear_presented(approval_id);
     }
 
     /// Every pending approval, for local admin surfaces.
