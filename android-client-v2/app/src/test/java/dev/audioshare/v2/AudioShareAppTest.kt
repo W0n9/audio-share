@@ -149,7 +149,7 @@ class AudioShareAppTest {
                 outcome = SessionOutcome.Live(LivePhase.PLAYING),
             )
         )
-        compose.onNodeWithTag("session-state")
+        compose.onNodeWithTag("session-outcome")
             .assertTextContains(str(R.string.session_phase_playing_title))
         compose.onNodeWithTag("stop").assertIsEnabled().performClick()
         assertTrue(events.contains(UiEvent.StopRequested))
@@ -165,7 +165,7 @@ class AudioShareAppTest {
                 outcome = SessionOutcome.Reconnecting(attempt = 3, lastCloseCode = 601),
             )
         )
-        compose.onNodeWithTag("session-state").assertTextContains(reconnect(3))
+        compose.onNodeWithTag("session-outcome").assertTextContains(reconnect(3))
         compose.onNodeWithTag("stop").assertIsEnabled()
     }
 

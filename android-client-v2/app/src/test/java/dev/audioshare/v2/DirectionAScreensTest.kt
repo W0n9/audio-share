@@ -241,15 +241,15 @@ class AccessibilitySemanticsTest : RobolectricComposeTestBase() {
     }
 
     @Test
-    fun home_focus_order_is_title_then_status_then_error_then_primary_action() {
+    fun home_focus_order_is_title_then_outcome_then_error_then_primary_action() {
         start(AppState())
         compose.onNodeWithTag("address-input").performTextReplacement("10.0.2.2")
         val title = compose.onNodeWithTag("home-title").fetchSemanticsNode().boundsInRoot
-        val status = compose.onNodeWithTag("session-state").fetchSemanticsNode().boundsInRoot
+        val outcome = compose.onNodeWithTag("session-outcome").fetchSemanticsNode().boundsInRoot
         val error = compose.onNodeWithTag("address-error").fetchSemanticsNode().boundsInRoot
         val primary = compose.onNodeWithTag("pair-code").fetchSemanticsNode().boundsInRoot
-        assertTrue(title.top < status.top, "title precedes status")
-        assertTrue(status.top < error.top, "status/error follows the title")
+        assertTrue(title.top < outcome.top, "title precedes outcome")
+        assertTrue(outcome.top < error.top, "outcome/error follows the title")
         assertTrue(error.top < primary.top, "the primary action follows the error")
     }
 }

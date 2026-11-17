@@ -175,13 +175,6 @@ internal class SessionLifecycleDriver(
         return h != 0L && native.confirmPairing(h)
     }
 
-    fun pairingStateJson(): String? {
-        val h = synchronized(lock) { handle }
-        if (h == 0L) return null
-        val json = native.getPairingState(h)
-        return if (json.isNullOrEmpty()) null else json
-    }
-
     // ---- create/connect ----------------------------------------------------
 
     /** 调用者持有 lifecycleLock；数值 handle 不能独自标识事件来源。 */
@@ -335,7 +328,7 @@ internal class SessionLifecycleDriver(
                 if (!synchronized(lock) { ownsLocked(lifetime, h) }) return@loop null
                 val state = native.getState(h) ?: ""
                 if (state.isEmpty()) return@loop STATS_POLL_MS
-                publishLive(state)
+                publishLive(state, h, lifetime)
                 if (state == "READY") {
                     // §6.3：仅当前会话可以重置 backoff。
                     synchronized(lock) {
@@ -361,7 +354,14 @@ internal class SessionLifecycleDriver(
                             ) {
                                 SessionOutcomePolicy.Action.Reconnect -> true
                                 is SessionOutcomePolicy.Action.End -> {
-                                    sink.publish(SessionOutcome.Ended(action.reason))
+                                    // stop() clears the handle and running flag
+                                    // before native Session::stop() records 701.
+                                    // A tick that read CLOSED(701) just before an
+                                    // internal teardown must not reattribute that
+                                    // close to the user.
+                                    if (synchronized(lock) { ownsLocked(lifetime, h) }) {
+                                        sink.publish(SessionOutcome.Ended(action.reason))
+                                    }
                                     false
                                 }
                                 SessionOutcomePolicy.Action.Silent -> false
@@ -390,7 +390,7 @@ internal class SessionLifecycleDriver(
     }
 
     /** Project a native state name onto the four semantic Live phases. */
-    private fun publishLive(state: String) {
+    private fun publishLive(state: String, h: Long, lifetime: Any) {
         val phase = when (state) {
             "IDLE", "CONNECTING" -> LivePhase.CONNECTING
             "AUTHENTICATING", "NEGOTIATING" -> LivePhase.AUTHENTICATING
@@ -398,6 +398,9 @@ internal class SessionLifecycleDriver(
             "PLAYING" -> LivePhase.PLAYING
             else -> return
         }
+        // A stop may have won the race since this tick began; never publish a
+        // Live outcome for a session the driver no longer owns.
+        if (!synchronized(lock) { ownsLocked(lifetime, h) }) return
         sink.publish(SessionOutcome.Live(phase))
     }
 
