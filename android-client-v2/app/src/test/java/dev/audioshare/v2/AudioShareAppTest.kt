@@ -167,7 +167,7 @@ class AudioShareAppTest {
     }
 
     @Test
-    fun qr_pairing_can_be_confirmed_without_typing_a_code() {
+    fun qr_pairing_shows_the_automatic_confirmation_transition_without_a_confirm_button() {
         start(
             AppState(
                 screen = AppScreen.PAIRING,
@@ -177,11 +177,59 @@ class AudioShareAppTest {
                     phase = "AWAITING_CONFIRMATION",
                     sas = "123 456",
                     fingerprint = "AAAA1111 BBBB2222",
+                    autoConfirmSent = true,
                 ),
             )
         )
-        compose.onNodeWithTag("confirm-pairing").performScrollTo().assertIsEnabled().performClick()
-        assertTrue(events.contains(UiEvent.ConfirmPairing))
+        compose.onNodeWithTag("qr-auto-confirm").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Pairing with AAAA1111 BBBB2222…").assertIsDisplayed()
+        compose.onNodeWithTag("confirm-pairing").assertDoesNotExist()
+        compose.onNodeWithTag("pairing-sas-input").assertDoesNotExist()
+        compose.onNodeWithText("123 456").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun qr_pairing_shows_that_the_server_still_needs_to_accept_after_the_auto_confirm() {
+        start(
+            AppState(
+                screen = AppScreen.PAIRING,
+                address = "10.0.2.2:65531",
+                pairing = PairingUi(
+                    mode = "qr",
+                    phase = "CONFIRMING",
+                    fingerprint = "AAAA1111 BBBB2222",
+                    autoConfirmSent = true,
+                ),
+            )
+        )
+        compose.onNodeWithTag("pairing-confirming").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Confirmed, waiting for the Server to accept.").assertIsDisplayed()
+        compose.onNodeWithTag("confirm-pairing").assertDoesNotExist()
+    }
+
+    @Test
+    fun an_invalid_qr_blocks_and_offers_an_explicit_scan_again_action() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        shadowOf(app).grantPermissions(android.Manifest.permission.CAMERA)
+        start(
+            AppState(
+                screen = AppScreen.PAIRING,
+                address = "10.0.2.2:65531",
+                pairing = PairingUi(
+                    mode = "qr",
+                    phase = "FAILED",
+                    errorCode = 201,
+                ),
+            )
+        )
+        compose.onNodeWithText("Pairing was rejected").assertIsDisplayed()
+        compose.onNodeWithText(
+            "The pairing failed or its invitation is no longer valid. Ask the Server to start " +
+                "a new pairing, then use the fresh QR code or pairing code. The Server must " +
+                "still accept this device.",
+        ).assertIsDisplayed()
+        compose.onNodeWithTag("scan-again").performScrollTo().assertIsDisplayed().performClick()
+        assertTrue(events.contains(UiEvent.RequestScan))
     }
 
     @Test

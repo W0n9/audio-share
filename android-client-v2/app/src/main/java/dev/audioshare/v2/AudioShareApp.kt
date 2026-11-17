@@ -189,28 +189,91 @@ private fun PairingScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
         Spacer(Modifier.height(16.dp))
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
-                Text(
-                    when (pairing.phase) {
-                        "STARTING" -> "Connecting to the Server…"
-                        "AWAITING_CONFIRMATION" -> "Compare the pairing code"
-                        "COMPLETE" -> "Pairing complete"
-                        "FAILED" -> "Pairing failed"
-                        else -> pairing.phase
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                if (pairing.isAwaitingConfirmation) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("Code on this phone", style = MaterialTheme.typography.labelMedium)
-                    Text(
-                        pairing.sas ?: "—",
-                        fontSize = 30.sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().testTag("pairing-sas"),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    if (pairing.mode == "sas") {
+                Text(pairingTitle(pairing), style = MaterialTheme.typography.titleMedium)
+                when {
+                    pairing.isBlockingInvitationFailure -> {
+                        Spacer(Modifier.height(8.dp))
+                        val guidance = pairing.guidance
+                        if (guidance != null) {
+                            Text(guidance.guidance, style = MaterialTheme.typography.bodyMedium)
+                        } else if (pairing.message != null) {
+                            Text(pairing.message, color = MaterialTheme.colorScheme.error)
+                        }
+                        if (pairing.mode == "qr") {
+                            Text(
+                                "The invitation cannot be reused. The Server must show a fresh one.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        } else {
+                            Text(
+                                "Start a new pairing on the Server before trying again.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (pairing.requiresExplicitRescan) {
+                            Spacer(Modifier.height(8.dp))
+                            val rescan = rememberScanStarter(onEvent)
+                            Button(
+                                onClick = rescan,
+                                modifier = Modifier.fillMaxWidth().testTag("scan-again"),
+                            ) {
+                                Text("Scan again")
+                            }
+                            Text(
+                                "The camera stays closed until you choose Scan again.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+
+                    pairing.isAwaitingConfirmation && pairing.mode == "qr" -> {
+                        // QR mode is one action: the scan already bound the
+                        // Server identity, so the reducer sends PairingConfirm
+                        // without a Confirm tap (ticket 30 D5). The SAS and
+                        // fingerprint stay visible as optional operator aids.
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Pairing with ${pairing.fingerprint ?: "the Server"}…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.testTag("qr-auto-confirm"),
+                        )
+                        Text(
+                            "The QR code verified the Server identity. This phone is confirming " +
+                                "automatically; the Server still needs to accept this device.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Pairing code (optional check)",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        Text(
+                            pairing.sas ?: "—",
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().testTag("pairing-sas"),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text("Server fingerprint", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            pairing.fingerprint ?: "—",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.testTag("pairing-fingerprint"),
+                        )
+                    }
+
+                    pairing.isAwaitingConfirmation -> {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Code on this phone", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            pairing.sas ?: "—",
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().testTag("pairing-sas"),
+                        )
+                        Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
                             value = pairing.sasInput,
                             onValueChange = { onEvent(UiEvent.SasInputChanged(it)) },
@@ -225,37 +288,75 @@ private fun PairingScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
-                    } else {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Server fingerprint", style = MaterialTheme.typography.labelMedium)
                         Text(
-                            "The QR code already verified the Server identity. " +
-                                "Compare the code and fingerprint, then confirm.",
+                            pairing.fingerprint ?: "—",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.testTag("pairing-fingerprint"),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = { onEvent(UiEvent.ConfirmPairing) },
+                            enabled = pairing.canConfirm,
+                            modifier = Modifier.fillMaxWidth().testTag("confirm-pairing"),
+                        ) {
+                            Text("Confirm pairing")
+                        }
+                    }
+
+                    pairing.isConfirming -> {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Confirmed, waiting for the Server to accept.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.testTag("pairing-confirming"),
+                        )
+                        Text(
+                            "The pairing completes only after the Server operator accepts this " +
+                                "device. " +
+                                if (pairing.mode == "qr") {
+                                    "If they decline, the QR code must be refreshed."
+                                } else {
+                                    "If they decline, start a new pairing."
+                                },
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        if (pairing.sas != null) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Pairing code (optional check)",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            Text(
+                                pairing.sas,
+                                fontSize = 30.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().testTag("pairing-sas"),
+                            )
+                        }
+                        if (pairing.fingerprint != null) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("Server fingerprint", style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                pairing.fingerprint,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.testTag("pairing-fingerprint"),
+                            )
+                        }
                     }
-                    Spacer(Modifier.height(8.dp))
-                    Text("Server fingerprint", style = MaterialTheme.typography.labelMedium)
-                    Text(
-                        pairing.fingerprint ?: "—",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.testTag("pairing-fingerprint"),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Button(
-                        onClick = { onEvent(UiEvent.ConfirmPairing) },
-                        enabled = pairing.canConfirm,
-                        modifier = Modifier.fillMaxWidth().testTag("confirm-pairing"),
-                    ) {
-                        Text("Confirm pairing")
+
+                    pairing.isComplete -> {
+                        Text(
+                            "Saving the pairing. The app will connect automatically.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
                     }
-                }
-                if (pairing.isComplete) {
-                    Text(
-                        "Saving the pairing. The app will connect automatically.",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                if (pairing.message != null) {
-                    Text(pairing.message, color = MaterialTheme.colorScheme.error)
+
+                    pairing.message != null -> {
+                        Text(pairing.message, color = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
         }
@@ -397,6 +498,16 @@ private fun Bullet(text: String) {
 
 private fun canStartPairing(state: AppState): Boolean =
     state.address.isNotBlank() && state.addressError == null
+
+private fun pairingTitle(pairing: PairingUi): String = when (pairing.phase) {
+    "STARTING" -> "Connecting to the Server…"
+    "AWAITING_CONFIRMATION" ->
+        if (pairing.mode == "qr") "Pairing with the Server…" else "Compare the pairing code"
+    "CONFIRMING" -> "Confirmed, waiting for the Server to accept"
+    "COMPLETE" -> "Pairing complete"
+    "FAILED" -> pairing.guidance?.title ?: "Pairing failed"
+    else -> pairing.phase
+}
 
 /**
  * Runtime CAMERA permission (no GMS). When granted, the reducer opens the

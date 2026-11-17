@@ -26,8 +26,9 @@ object ErrorGuidanceBook {
         ErrorGuidance(
             201, "PAIRING_REJECTED",
             "Pairing was rejected",
-            "Start a new pairing on the Server and scan a fresh QR code or use a new pairing code. " +
-                "The previous invitation is single-use.",
+            "The pairing failed or its invitation is no longer valid. Ask the Server to start " +
+                "a new pairing, then use the fresh QR code or pairing code. The Server must " +
+                "still accept this device.",
             retryable = true, requiresRepairing = true, automaticRetry = false,
         ),
         ErrorGuidance(
@@ -57,8 +58,9 @@ object ErrorGuidanceBook {
         ),
         ErrorGuidance(
             206, "PAIRING_PENDING_TIMEOUT",
-            "The pairing invitation expired",
-            "Start a new pairing on the Server and try again. Pairing invitations last ten minutes.",
+            "Pairing timed out",
+            "The ten-minute pairing exchange deadline passed. Start a new pairing on the Server " +
+                "and use the fresh QR code or pairing code.",
             retryable = true, requiresRepairing = false, automaticRetry = false,
         ),
         ErrorGuidance(
