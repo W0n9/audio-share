@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use v2_transport::auth_store::AuthorizationStore;
 use v2_transport::pairing::{
     binding_context, derive_sas_code, encode_qr_uri, format_sas, parse_qr_uri, PairingCore,
-    PairingError, QrPayloadError, MAX_OUTSTANDING_NONCES, NONCE_TTL,
+    PairingError, PairingPresented, QrPayloadError, MAX_OUTSTANDING_NONCES, NONCE_TTL,
 };
 use v2_transport::schema::{PairingMode, PairingRequest};
 
@@ -443,6 +443,57 @@ fn concurrent_approvals_with_the_same_wire_request_id_are_independent() {
         *decisions.lock().unwrap(),
         vec![("8899aabbccddeeff".to_owned(), true)]
     );
+}
+
+fn presented(approval_id: u64, sas: &str) -> PairingPresented {
+    PairingPresented {
+        approval_id,
+        mode: PairingMode::Qr,
+        client_id: "cf7940b474310246".to_owned(),
+        display_name: "Test Phone".to_owned(),
+        address: "192.168.1.20:65531".to_owned(),
+        sas: Some(sas.to_owned()),
+        fingerprint: "FP".to_owned(),
+        expires_at: Instant::now() + Duration::from_secs(600),
+    }
+}
+
+#[test]
+fn presented_pairings_are_published_and_cleared_by_local_decisions() {
+    let core = Arc::new(core_with_clock(ManualClock::new()));
+
+    core.publish_presented(presented(41, "123 456"));
+    core.publish_presented(presented(42, "654 321"));
+    let live = core.presented();
+    assert_eq!(live.len(), 2);
+    assert!(live.iter().any(|request| request.approval_id == 41));
+    assert!(live.iter().any(|request| request.approval_id == 42));
+
+    // Clearing one id (deadline, connection loss, decline) leaves the other.
+    core.cancel_approval(41);
+    let live = core.presented();
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].approval_id, 42);
+
+    // A local approval/decline of the linked approval id clears the live view.
+    core.request_approval(
+        v2_transport::pairing::ApprovalRequest {
+            approval_id: 42,
+            client_id: "cf7940b474310246".to_owned(),
+            display_name: "Test Phone".to_owned(),
+            mode: PairingMode::Qr,
+            address: "192.168.1.20:65531".to_owned(),
+            sas: Some("654 321".to_owned()),
+        },
+        Box::new(|_| {}),
+    );
+    assert!(core.approve(42));
+    assert!(core.presented().is_empty());
+
+    // Closing the dialog clears every live view.
+    core.publish_presented(presented(43, "111 222"));
+    core.cancel();
+    assert!(core.presented().is_empty());
 }
 
 #[test]

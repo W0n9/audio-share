@@ -258,6 +258,80 @@ fn qr_happy_path_verifies_then_waits_for_local_approval() {
 }
 
 #[test]
+fn live_pairing_is_presented_once_before_the_approval_card() {
+    let clock = TestClock::new();
+    let core = core_with_nonce(clock);
+    let mut machine = machine(config(Arc::clone(&core)));
+
+    let out = machine.handle(frame_event(
+        frame::Body::PairingRequest(request_qr()),
+        "192.168.1.20",
+    ));
+    let _ = expect_pairing_response(&out);
+
+    // The Server has sent PairingResponse but has not seen PairingConfirm.
+    // The live view is available at that point — the missing piece behind the
+    // Windows GUI deadlock (ticket 25 / ticket 29).
+    let presented = machine
+        .take_pairing_presented()
+        .expect("live pairing is presented before the Client confirms");
+    assert_eq!(presented.mode, PairingMode::Qr);
+    assert_eq!(presented.client_id, "cf7940b474310246");
+    assert_eq!(presented.display_name, "Test Phone");
+    assert_eq!(presented.sas.as_deref(), Some("900 067"));
+    assert_eq!(presented.fingerprint, core.fingerprint());
+    assert!(presented.expires_at > Instant::now());
+    assert!(
+        machine.take_pairing_presented().is_none(),
+        "the live view is delivered exactly once"
+    );
+    assert!(
+        machine.take_pairing_approval_request().is_none(),
+        "the approval card still waits for PairingConfirm"
+    );
+
+    machine.handle(frame_event(
+        frame::Body::PairingConfirm(PairingConfirm {
+            request_id: 1,
+            binding_echo: unhex(QR_BINDING),
+            client_proof: unhex(QR_PROOF),
+        }),
+        "192.168.1.20",
+    ));
+    let approval = machine
+        .take_pairing_approval_request()
+        .expect("approval appears after PairingConfirm");
+    assert_eq!(
+        approval.approval_id, presented.approval_id,
+        "the live card and the approval card share one process-local handle"
+    );
+    assert_eq!(approval.sas, presented.sas);
+}
+
+#[test]
+fn sas_live_pairing_is_presented_before_the_approval_card() {
+    let clock = TestClock::new();
+    let store = Arc::new(AuthorizationStore::in_memory());
+    let core = Arc::new(PairingCore::with_clock(unhex(SERVER_PUB), store, clock));
+    core.begin_sas();
+    let mut machine = machine(config_with_exporter(
+        Arc::clone(&core),
+        FixtureExporter::SAS,
+    ));
+    let out = machine.handle(frame_event(
+        frame::Body::PairingRequest(request_sas()),
+        "192.168.1.20",
+    ));
+    let _ = expect_pairing_response(&out);
+
+    let presented = machine.take_pairing_presented().expect("SAS live view");
+    assert_eq!(presented.mode, PairingMode::Sas);
+    assert_eq!(presented.sas.as_deref(), Some("900 067"));
+    assert_eq!(presented.display_name, "Test Phone");
+    assert!(machine.take_pairing_approval_request().is_none());
+}
+
+#[test]
 fn declined_approval_is_201_and_close_with_nothing_persisted() {
     let clock = TestClock::new();
     let core = core_with_nonce(clock);

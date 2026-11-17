@@ -551,15 +551,15 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
         print_qr(&uri);
     }
     println!("Server fingerprint: {}", runtime.fingerprint());
-    println!(
-        "Pairing code: shown below when the phone connects (derived from the live connection)."
-    );
+    println!("Pairing code: printed here as soon as the phone connects.");
     println!(
         "Waiting up to {} s for a device; press Ctrl-C to cancel.",
         args.timeout
     );
+    let _ = std::io::stdout().flush();
 
     let mut approvals = core.subscribe_approvals();
+    let mut presented = core.subscribe_presented();
     let mut paired = core.subscribe_paired();
     let deadline = tokio::time::sleep(std::time::Duration::from_secs(args.timeout));
     tokio::pin!(deadline);
@@ -587,6 +587,24 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => continue,
                 }
             }
+            result = presented.recv() => {
+                let request = match result {
+                    Ok(request) => request,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => continue,
+                };
+                // The live SAS is available as soon as the Server has written
+                // PairingResponse; the phone needs it to confirm (ticket 29).
+                println!(
+                    "\nDevice connected: {} [{}] from {}",
+                    request.display_name, request.client_id, request.address
+                );
+                if let Some(sas) = request.sas.as_deref() {
+                    println!("Pairing code: {sas}");
+                }
+                println!("Compare this code with the phone before accepting.");
+                let _ = std::io::stdout().flush();
+            }
             result = approvals.recv() => {
                 let request = match result {
                     Ok(request) => request,
@@ -601,6 +619,7 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
                     println!("Pairing code: {sas}");
                 }
                 println!("Compare the code with the phone before accepting.");
+                let _ = std::io::stdout().flush();
                 let accepted = if args.accept {
                     true
                 } else {

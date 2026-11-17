@@ -148,14 +148,38 @@ pub struct PairingRequestInfo {
     pub sas: Option<String>,
 }
 
+/// A live pairing shown before the Client's confirmation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingLiveInfo {
+    /// The process-local handle the approval card will use.
+    pub approval_id: u64,
+    /// Canonical client id (hex).
+    pub client_id: String,
+    /// Device display name.
+    pub display_name: String,
+    /// `qr` or `sas`.
+    pub mode: String,
+    /// The source address shown to the local operator.
+    pub address: String,
+    /// The connection-derived SAS (`123 456`).
+    pub sas: Option<String>,
+    /// The §7.4 Server SPKI fingerprint.
+    pub fingerprint: String,
+    /// Seconds until the pairing deadline, refreshed by polling.
+    pub expires_in_secs: u64,
+}
+
 /// The pairing dialog's complete polled state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PairingStatus {
-    /// Whether an invitation or pending request is active.
+    /// Whether an invitation, live pairing, or pending request is active.
     pub active: bool,
     /// The current invitation, if any.
     pub invitation: Option<PairingInvitation>,
+    /// Live pairings presented before the Client's confirmation.
+    pub live: Vec<PairingLiveInfo>,
     /// Verified pairings awaiting approval.
     pub pending: Vec<PairingRequestInfo>,
     /// The independent v2 status (surfaced even when pairing is closed).
@@ -575,6 +599,16 @@ mod tests {
                 fingerprint: "FP".to_owned(),
                 expires_in_secs: 42,
             }),
+            live: vec![PairingLiveInfo {
+                approval_id: 7,
+                client_id: "0011223344556677".to_owned(),
+                display_name: "Pixel 8".to_owned(),
+                mode: "qr".to_owned(),
+                address: "192.168.1.44:50000".to_owned(),
+                sas: Some("123 456".to_owned()),
+                fingerprint: "FP".to_owned(),
+                expires_in_secs: 600,
+            }],
             pending: vec![PairingRequestInfo {
                 approval_id: 7,
                 client_id: "0011223344556677".to_owned(),
