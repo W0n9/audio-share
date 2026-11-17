@@ -149,7 +149,8 @@ class AudioShareAppTest {
                 outcome = SessionOutcome.Live(LivePhase.PLAYING),
             )
         )
-        compose.onNodeWithTag("session-state").assertTextContains("PLAYING")
+        compose.onNodeWithTag("session-state")
+            .assertTextContains(str(R.string.session_phase_playing_title))
         compose.onNodeWithTag("stop").assertIsEnabled().performClick()
         assertTrue(events.contains(UiEvent.StopRequested))
         compose.onNodeWithTag("stop").assertIsNotEnabled()
