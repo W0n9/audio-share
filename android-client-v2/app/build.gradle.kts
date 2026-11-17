@@ -296,6 +296,9 @@ val nativeStripTasks = androidAbis.map { abi ->
         outputs.file(cargoOut.resolve(nativeLibName))
         inputs.dir(nativeDir.resolve("src"))
         inputs.file(nativeDir.resolve("Cargo.toml"))
+        // Linker page-size flags live here; without this input Gradle can
+        // repackage a stale 4 KB-aligned library after the flags change.
+        inputs.file(nativeDir.resolve(".cargo/config.toml"))
     }
 
     tasks.register<Exec>("stripNative$taskSuffix") {
