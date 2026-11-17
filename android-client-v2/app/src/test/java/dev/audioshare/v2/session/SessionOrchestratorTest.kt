@@ -179,8 +179,8 @@ class SessionOrchestratorTest {
         assertTrue(fixture.credentials.all().isEmpty(), "a superseded engine cannot persist")
 
         second.listener.onPairingState(awaitingJson())
-        second.listener.onCredential(credentialJson(clientId = "current"))
         assertNotNull(fixture.pairing.snapshot())
+        second.listener.onCredential(credentialJson(clientId = "current"))
         assertEquals("current", fixture.credentials.all().single().clientId)
     }
 
@@ -216,6 +216,102 @@ class SessionOrchestratorTest {
         assertNull(fixture.outcomes.snapshot())
     }
 
+    // ---- ticket 17: Service-owned pairing handoff --------------------------
+
+    @Test
+    fun a_persisted_credential_hands_off_asynchronously_with_one_authenticated_session() {
+        val fixture = Fixture(manualDispatch = true)
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+        val pairingEngine = fixture.factory.engines.single()
+
+        pairingEngine.listener.onPairingState(completeJson())
+        pairingEngine.listener.onCredential(credentialJson(clientId = "client-1"))
+
+        assertEquals(1, fixture.factory.engines.size, "persistence alone must not start the session inline")
+        assertTrue(fixture.completed.isEmpty(), "the push waits for the dispatched handoff")
+
+        fixture.drain()
+
+        assertEquals(2, fixture.factory.engines.size)
+        val authenticated = fixture.factory.engines.last()
+        assertEquals(listOf(authenticatedConfiguration().copy(signer = FakeSigner)), authenticated.started)
+        assertEquals(listOf(fixture.credentials.all().single()), fixture.completed)
+        assertNull(fixture.outcomes.snapshot(), "the authenticated session has published nothing yet")
+    }
+
+    @Test
+    fun a_persistence_failure_keeps_complete_and_does_not_start_or_push() {
+        val fixture = Fixture(manualDispatch = true)
+        fixture.credentials.failUpsert = true
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+        val pairingEngine = fixture.factory.engines.single()
+        pairingEngine.listener.onPairingState(completeJson())
+
+        pairingEngine.listener.onCredential(credentialJson(clientId = "client-1"))
+        fixture.drain()
+
+        assertEquals(1, fixture.factory.engines.size, "no authenticated session")
+        assertTrue(fixture.completed.isEmpty(), "no PairingCompleted push")
+        assertEquals("COMPLETE", fixture.pairing.snapshot()?.phase, "the terminal pairing stays visible")
+        assertTrue(fixture.credentials.all().isEmpty())
+    }
+
+    @Test
+    fun a_second_credential_callback_for_the_same_exchange_does_not_start_or_push_again() {
+        val fixture = Fixture(manualDispatch = true)
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+        val pairingEngine = fixture.factory.engines.single()
+
+        pairingEngine.listener.onCredential(credentialJson(clientId = "client-1"))
+        pairingEngine.listener.onCredential(credentialJson(clientId = "client-2"))
+        fixture.drain()
+
+        assertEquals(2, fixture.factory.engines.size, "exactly one authenticated session")
+        assertEquals(1, fixture.completed.size, "exactly one PairingCompleted")
+    }
+
+    @Test
+    fun a_handoff_posted_before_cancel_is_dropped() {
+        val fixture = Fixture(manualDispatch = true)
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+        val pairingEngine = fixture.factory.engines.single()
+        pairingEngine.listener.onCredential(credentialJson(clientId = "client-1"))
+
+        fixture.orchestrator.stop(StopReason.PairingCancel)
+        fixture.drain()
+
+        assertEquals(1, fixture.factory.engines.size, "a cancelled exchange does not reconnect")
+        assertTrue(fixture.completed.isEmpty())
+        assertNull(fixture.outcomes.snapshot())
+    }
+
+    @Test
+    fun a_stored_connect_without_a_credential_surfaces_one_ended_205_outcome() {
+        val fixture = Fixture()
+        val seen = mutableListOf<SessionOutcome>()
+        fixture.outcomes.setListener { seen += it }
+
+        fixture.orchestrator.reportStoredConnectFailure(205, "no saved pairing for this Server")
+
+        val ended = SessionOutcome.Ended(EndReason.Surfaced(205))
+        assertEquals(ended, fixture.outcomes.snapshot())
+        assertEquals(listOf<SessionOutcome>(ended), seen)
+        assertNull(fixture.pairing.snapshot(), "a stored-connect failure is not a pairing terminal")
+    }
+
+    @Test
+    fun a_stored_connect_failure_supersedes_any_live_session_before_publishing() {
+        val fixture = Fixture()
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        val engine = fixture.factory.engines.single()
+
+        fixture.orchestrator.reportStoredConnectFailure(205, "the stored Client key is gone")
+
+        assertEquals(listOf(StopReason.Superseded), engine.stops)
+        assertEquals(SessionOutcome.Ended(EndReason.Surfaced(205)), fixture.outcomes.snapshot())
+        assertFalse(fixture.orchestrator.hasEngine)
+    }
+
     @Test
     fun the_factory_accepts_the_test_support_configuration_unchanged() {
         val fixture = Fixture()
@@ -235,19 +331,28 @@ class SessionOrchestratorTest {
 
     // ---- fixtures ----------------------------------------------------------
 
-    private class Fixture {
+    private class Fixture(manualDispatch: Boolean = false) {
+        private val pending = ArrayDeque<() -> Unit>()
         val factory = FakeSessionEngineFactory()
         val outcomes = SessionOutcomeStore()
         val pairing = PairingStateRelay()
         val credentials = InMemoryCredentialStore()
         val logs = mutableListOf<String>()
+        val completed = mutableListOf<CredentialRecord>()
         val orchestrator = SessionOrchestrator(
             engineFactory = factory,
             outcomes = outcomes,
             pairing = pairing,
             credentials = credentials,
             log = { logs += it },
+            schedule = { task -> if (manualDispatch) pending += task else task() },
+            onPairingCompleted = { completed += it },
         )
+
+        /** Run the tasks the Service's main-thread handler would run. */
+        fun drain() {
+            while (pending.isNotEmpty()) pending.removeFirst()()
+        }
     }
 
     private companion object {
@@ -296,6 +401,15 @@ class SessionOrchestratorTest {
             put("client_id", "client-1")
             put("display_name", "phone")
         }.toString()
+
+        fun completeJson() = JSONObject().apply {
+            put("mode", "qr")
+            put("phase", "COMPLETE")
+            put("server_public_key", SERVER_KEY)
+            put("server_spki_sha256", PIN)
+            put("client_id", "client-1")
+            put("display_name", "phone")
+        }.toString()
     }
 }
 
@@ -307,8 +421,10 @@ private object FakeSigner : ClientSigner {
 
 private class InMemoryCredentialStore : CredentialStore {
     private val records = mutableListOf<CredentialRecord>()
+    var failUpsert = false
 
     override fun upsert(record: CredentialRecord) {
+        if (failUpsert) throw IllegalStateException("credential store unavailable")
         records.removeAll { it.serverSpkiSha256Hex == record.serverSpkiSha256Hex }
         records += record
     }

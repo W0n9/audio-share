@@ -151,6 +151,12 @@ sealed interface UiEvent {
         val credentials: List<CredentialRecord>,
     ) : UiEvent
     data class CredentialStored(val record: CredentialRecord) : UiEvent
+    /**
+     * One-shot Service handoff after a successful pairing: the authenticated
+     * session already exists (the Service started it), so the UI only
+     * navigates and refreshes the Server list (ticket 17).
+     */
+    data class PairingCompleted(val record: CredentialRecord) : UiEvent
     data object ShowHome : UiEvent
     data object ShowPairing : UiEvent
     data object ShowAbout : UiEvent
@@ -336,6 +342,15 @@ object AppReducer {
         }
 
         is UiEvent.CredentialStored -> {
+            // List-only observation: the Service owns the handoff and the only
+            // authenticated connection (ticket 17). Never emit ConnectStored.
+            val server = StoredServer.from(event.record)
+            val servers = state.storedServers
+                .filterNot { it.serverSpkiSha256Hex == server.serverSpkiSha256Hex } + server
+            Reduction(state.copy(storedServers = servers))
+        }
+
+        is UiEvent.PairingCompleted -> {
             val server = StoredServer.from(event.record)
             val servers = state.storedServers
                 .filterNot { it.serverSpkiSha256Hex == server.serverSpkiSha256Hex } + server
@@ -345,11 +360,10 @@ object AppReducer {
                     storedServers = servers,
                     stopRequested = false,
                     pairing = null,
+                    scanActive = false,
+                    scanNotice = null,
                     restoredSasInput = "",
                 ),
-                // Ticket 17 replaces this handoff with the Service's one-shot
-                // PairingCompleted push; the credential is still the trigger.
-                AppCommand.ConnectStored(server.serverSpkiSha256Hex),
             )
         }
 
