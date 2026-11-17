@@ -203,6 +203,43 @@ class SessionLifecycleDriverTest {
         )
     }
 
+    @Test
+    fun a_closed_701_stats_read_racing_an_internal_stop_publishes_no_outcome() {
+        val h = Harness()
+        h.start()
+        // The native stop() records 701 for every teardown, including an
+        // internal one. The in-flight tick read CLOSED(701) just before STOP
+        // cleared ownership; it must not attribute that close to the user.
+        h.native.state = "CLOSED"
+        h.native.stats = """{"close_code":701}"""
+        h.native.onGetStats = { h.driver.stop(StopReason.Superseded) }
+
+        h.scheduler.advanceBy(250)
+
+        assertEquals(
+            listOf<SessionOutcome>(SessionOutcome.Live(LivePhase.CONNECTING)),
+            h.sink.outcomes,
+            "a Superseded teardown must never surface Ended(UserStop)",
+        )
+    }
+
+    @Test
+    fun a_closed_701_stats_read_racing_a_user_stop_publishes_exactly_one_ended() {
+        val h = Harness()
+        h.start()
+        h.native.state = "CLOSED"
+        h.native.stats = """{"close_code":701}"""
+        h.native.onGetStats = { h.driver.stop(StopReason.User) }
+
+        h.scheduler.advanceBy(250)
+
+        assertEquals(
+            1,
+            h.sink.outcomes.count { it == SessionOutcome.Ended(EndReason.UserStop) },
+            "the explicit stop owns the single Ended(UserStop); the stale tick is dropped",
+        )
+    }
+
     // ---- stale generations -------------------------------------------------
 
     @Test
@@ -301,6 +338,7 @@ class SessionLifecycleDriverTest {
         var connectResult = true
         var rebindResult = true
         var onCreate: (() -> Unit)? = null
+        var onGetStats: (() -> Unit)? = null
         var createCount = 0
         val createCalls = mutableListOf<SessionConfiguration>()
         val connectCalls = mutableListOf<Pair<Long, String>>()
@@ -333,7 +371,10 @@ class SessionLifecycleDriverTest {
 
         override fun getState(handle: Long): String = state
 
-        override fun getStats(handle: Long): String = stats
+        override fun getStats(handle: Long): String {
+            onGetStats?.invoke()
+            return stats
+        }
 
         override fun rebind(handle: Long, fd: Int): Boolean {
             events += "native.rebind"

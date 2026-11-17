@@ -93,11 +93,6 @@ class ClientSession(
     override fun stop(reason: StopReason) = driver.stop(reason)
 
     override fun confirmPairing(): Boolean = driver.confirmPairing()
-
-    fun isRunning(): Boolean = driver.isRunning()
-
-    /** The current native pairing JSON, or null when not pairing/unknown. */
-    fun pairingStateJson(): String? = driver.pairingStateJson()
 }
 
 /**
