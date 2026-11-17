@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
  * reducer).
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 class NavigationRestorationTest {
 
     private fun awaitingSas(sas: String = "385 587") = PairingSnapshot(

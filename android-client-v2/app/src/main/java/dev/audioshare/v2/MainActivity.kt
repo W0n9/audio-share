@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.mutableStateOf
 
@@ -56,6 +57,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // targetSdk 35+ draws edge-to-edge; targetSdk 36 keeps that behaviour.
+        // The Scaffold in AudioShareApp consumes system-bar insets, so the
+        // content and top bar stay clear of the status/navigation/gesture bars.
+        enableEdgeToEdge()
         hadSavedState = savedInstanceState != null
         // Restore only the UI hint (screen/address/SAS input); the Service
         // replays session, pairing, and credential state on the first bind.
