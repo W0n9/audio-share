@@ -2,6 +2,7 @@ package dev.audioshare.v2
 
 import org.junit.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -57,29 +58,75 @@ class CredentialStoreTest {
 }
 
 class PairingStateRelayTest {
+    private fun snapshot(
+        phase: String = "AWAITING_CONFIRMATION",
+        mode: String = "sas",
+        errorCode: Int? = null,
+    ) = PairingSnapshot(
+        mode, phase, "123 456", null, null, null, null, "Phone", errorCode,
+    )
+
     @Test
     fun listener_registration_replays_the_current_snapshot() {
         val relay = PairingStateRelay()
-        val snapshot = PairingSnapshot(
-            "qr", "AWAITING_CONFIRMATION", "123 456", null, null, null, null, "Phone", null,
-        )
-        relay.publish(snapshot)
+        val current = snapshot()
+        val source = relay.beginSession()
+        source.publish(current)
         var seen: PairingSnapshot? = null
         relay.setListener { seen = it }
-        assertEquals(snapshot, seen)
-        assertEquals(snapshot, relay.snapshot())
+        assertEquals(current, seen)
+        assertEquals(current, relay.snapshot())
     }
 
     @Test
     fun publish_updates_and_clear_resets() {
         val relay = PairingStateRelay()
+        val source = relay.beginSession()
         var seen: PairingSnapshot? = null
         relay.setListener { seen = it }
         assertNull(seen)
-        relay.publishJson("""{"mode":"sas","phase":"AWAITING_RESPONSE"}""")
+        source.publishJson("""{"mode":"sas","phase":"AWAITING_RESPONSE"}""")
         assertEquals("sas", seen?.mode)
         relay.clear()
         assertNull(seen)
         assertNull(relay.snapshot())
+    }
+
+    @Test
+    fun a_new_exchange_clears_the_previous_failure_and_ignores_the_old_source() {
+        val relay = PairingStateRelay()
+        val old = relay.beginSession()
+        val rejected = snapshot(phase = "FAILED", errorCode = 201)
+        assertTrue(old.publish(rejected))
+        var seen: PairingSnapshot? = null
+        relay.setListener { seen = it }
+        assertEquals(rejected, seen)
+
+        // A revoke/reject retry starts a fresh exchange: the old banner must
+        // vanish and the stopped session's late snapshots must be discarded.
+        val fresh = relay.beginSession()
+        assertNull(seen, "beginSession clears the previous snapshot")
+        assertNull(relay.snapshot())
+        assertFalse(old.publish(rejected), "the old source lost ownership")
+        assertFalse(old.publishJson("""{"mode":"sas","phase":"FAILED","error_code":204}"""))
+
+        val awaiting = snapshot()
+        assertTrue(fresh.publish(awaiting))
+        assertFalse(old.publish(rejected), "late FAILED cannot overwrite AWAITING_CONFIRMATION")
+        assertEquals(awaiting, relay.snapshot())
+        assertEquals(awaiting, seen)
+    }
+
+    @Test
+    fun a_closed_source_can_no_longer_publish() {
+        val relay = PairingStateRelay()
+        val source = relay.beginSession()
+        assertTrue(source.publish(snapshot(phase = "COMPLETE")))
+        source.close()
+        val complete = relay.snapshot()
+        assertFalse(source.publish(snapshot()), "close() revokes publication")
+        assertFalse(source.publishJson("""{"mode":"sas","phase":"FAILED"}"""))
+        assertEquals(complete, relay.snapshot(), "a closed source never changes the snapshot")
+        assertFalse(source.isCurrent())
     }
 }
