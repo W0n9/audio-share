@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    English default copy (ticket 18). Every user-visible string owned by the
+    shell, HOME, ABOUT, SETTINGS, the foreground notification, and the error
+    guidance registry lives here. PAIRING/SESSION internals are still owned by
+    tickets 19/20 except where a value is shared with those screens.
+-->
+<resources>
+    <!-- Shell -->
+    <string name="app_name">Audio Share</string>
+    <string name="app_label">audio-share v2</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_about">About</string>
+    <string name="action_back">Back</string>
+
+    <!-- HOME -->
+    <string name="home_title">Ready when you are</string>
+    <string name="home_subtitle_unpaired">Pair with your Server to start listening.</string>
+    <string name="home_subtitle_paired">Connect to the Server you paired on this phone.</string>
+    <string name="home_paired_server">Paired Server</string>
+    <string name="home_paired_badge">PAIRED</string>
+    <string name="home_connect">Connect</string>
+    <string name="home_pair_code">Pair with code</string>
+    <string name="home_pair_new">Pair a new phone</string>
+    <string name="home_scan_qr">Scan QR code</string>
+    <string name="home_scan_qr_instead">Scan QR instead</string>
+    <string name="server_address_label">Server address</string>
+    <string name="server_address_placeholder">host:port</string>
+
+    <!-- Address validation (localizable; SAS/address values stay neutral) -->
+    <string name="address_error_missing_port">Address must include a port, for example host:47820.</string>
+    <string name="address_error_invalid_port">The port must be a number.</string>
+    <string name="address_error_port_range">The port must be between 1 and 65535.</string>
+    <string name="address_error_invalid_host">The host may contain only letters, digits, dots, and hyphens.</string>
+    <string name="address_error_ipv6_bracketed">A raw IPv6 address must be enclosed in brackets, for example [::1]:47820.</string>
+    <string name="address_error_invalid_ipv6">Enter a valid IPv6 address.</string>
+    <string name="address_error_bracketed_host_not_ipv6">A bracketed host must be an IPv6 address.</string>
+    <string name="address_error_invalid">Enter the Server address as host:port.</string>
+    <string name="address_error_required">Enter the Server address first.</string>
+    <string name="address_error_no_saved_pairing">No saved pairing. Pair with the Server first.</string>
+
+    <!-- Camera permission / pairing notices (shared HOME + PAIRING) -->
+    <string name="scan_permission_denied">Camera permission was denied. Paste the pairing link instead.</string>
+    <string name="pairing_notice_sas_mismatch">The code does not match the one shown on the Server.</string>
+    <string name="pairing_notice_invalid_link">This is not a valid Audio Share pairing link.</string>
+
+    <!-- SESSION -->
+    <string name="session_title">Session</string>
+    <string name="session_state_prefix">State: </string>
+    <string name="session_not_connected">Not connected</string>
+    <string name="session_server_unset">Server: not set</string>
+    <string name="session_server_value">Server: %1$s</string>
+    <string name="session_stop">Stop</string>
+    <string name="session_stopped_by_user">You stopped this session.</string>
+    <string name="session_connect_again">Connect again</string>
+    <string name="session_outcome_stopped">STOPPED</string>
+    <string name="session_outcome_ended">ENDED</string>
+    <string name="session_back_home">Back to Home</string>
+    <plurals name="reconnect_attempt">
+        <item quantity="one">Reconnecting (attempt %1$d)</item>
+        <item quantity="other">Reconnecting (attempt %1$d)</item>
+    </plurals>
+
+    <!-- Error card actions -->
+    <string name="error_action_retry">Retry</string>
+    <string name="error_action_pair_again">Pair again</string>
+    <string name="error_no_v1_fallback">This app never falls back to v1.</string>
+
+    <!-- ABOUT -->
+    <string name="about_title">About this beta</string>
+    <string name="version_label">Version %1$s (%2$d)</string>
+    <string name="about_known_limitations">Known limitations</string>
+    <string name="about_limit_jitter">No jitter buffer, concealment, or clock-drift correction. Audio quality is best-effort.</string>
+    <string name="about_limit_one_client">One Client per Server. Concurrent phones are not supported.</string>
+    <string name="about_limit_diagnostics">No diagnostics export, no telemetry, and no raw-audio recording.</string>
+    <string name="about_v1_title">About v1</string>
+    <string name="about_v1_warning">The v1 app sends audio without encryption or authentication. Use v1 only on a trusted network. This v2 beta is the encrypted, authenticated client; a v2 failure never downgrades to v1.</string>
+    <string name="about_updates_title">Updates</string>
+    <string name="about_updates_body">Updates are manual. Download the new APK from the GitHub Release page and verify its SHA-256 checksum before installing. There is no in-app updater.</string>
+    <string name="about_privacy_title">Privacy</string>
+    <string name="about_privacy_body">This beta has no telemetry and does not record raw audio.</string>
+
+    <!-- SETTINGS (read-only) -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_paired_server">Paired Server</string>
+    <string name="settings_server_name">Name</string>
+    <string name="settings_server_address">Address</string>
+    <string name="settings_server_fingerprint">Fingerprint</string>
+    <string name="settings_empty_body">No Server is paired yet.</string>
+    <string name="settings_pair_phone">Pair a phone</string>
+    <string name="settings_about_link">About this beta</string>
+
+    <!-- Foreground notification -->
+    <string name="notification_channel_name">Audio Share session</string>
+    <string name="notification_title">Audio Share</string>
+    <string name="notification_body">Media session active. Audio plays while the screen is locked.</string>
+    <string name="notification_stop">Stop</string>
+
+    <!-- Error guidance registry: error_<code>_title / error_<code>_guidance -->
+    <string name="error_201_title">Pairing was rejected</string>
+    <string name="error_201_guidance">The pairing failed or its invitation is no longer valid. Ask the Server to start a new pairing, then use the fresh QR code or pairing code. The Server must still accept this device.</string>
+    <string name="error_202_title">This phone is not paired with the Server</string>
+    <string name="error_202_guidance">Pair the phone again. The Server does not recognize this identity.</string>
+    <string name="error_203_title">The Server rejected the identity proof</string>
+    <string name="error_203_guidance">Re-pair the phone. If the problem repeats, check the Server clock and identity files.</string>
+    <string name="error_204_title">This device was revoked</string>
+    <string name="error_204_guidance">Ask the Server operator to pair this device again. A revoked device cannot reconnect.</string>
+    <string name="error_205_title">The Server identity does not match the saved pin</string>
+    <string name="error_205_guidance">Verify you are connecting to the right Server, then remove the saved pairing and pair again. The saved pin is never replaced automatically.</string>
+    <string name="error_206_title">Pairing timed out</string>
+    <string name="error_206_guidance">The ten-minute pairing exchange deadline passed. Start a new pairing on the Server and use the fresh QR code or pairing code.</string>
+    <string name="error_301_title">The Server is busy</string>
+    <string name="error_301_guidance">Wait a moment; the app retries automatically with bounded backoff.</string>
+    <string name="error_302_title">Too many attempts</string>
+    <string name="error_302_guidance">Wait a minute before trying again. Repeated failures are rate-limited by the Server.</string>
+    <string name="error_303_title">Another session took over this device</string>
+    <string name="error_303_guidance">This session was closed because the same device connected elsewhere. Reconnect if needed.</string>
+    <string name="error_401_title">Protocol error</string>
+    <string name="error_401_guidance">The Server and app disagreed on the wire format. Update the app or report the issue.</string>
+    <string name="error_402_title">Unexpected protocol state</string>
+    <string name="error_402_guidance">Reconnect. If this repeats, report the issue.</string>
+    <string name="error_403_title">This phone cannot play the Server audio format</string>
+    <string name="error_403_guidance">Ask the Server operator to choose a supported PCM format.</string>
+    <string name="error_501_title">The Server has no audio to send</string>
+    <string name="error_501_guidance">Wait for the Server to start capture, then retry.</string>
+    <string name="error_502_title">The audio stream ended</string>
+    <string name="error_502_guidance">The Server stopped sending audio. Reconnect to continue.</string>
+    <string name="error_503_title">The Server is stopping</string>
+    <string name="error_503_guidance">The Server is shutting down; reconnect after it restarts.</string>
+    <string name="error_601_title">Connection lost</string>
+    <string name="error_601_guidance">Check the network. The app retries automatically with bounded backoff.</string>
+    <string name="error_602_title">The network path cannot carry audio</string>
+    <string name="error_602_guidance">Reconnect. If the network is blocking UDP, switch networks or use a VPN.</string>
+
+    <!-- Unknown/null codes always resolve here (documented fallback). -->
+    <string name="error_generic_title">Something went wrong</string>
+    <string name="error_generic_guidance">Reconnect and try again. If this keeps happening, report the issue.</string>
+</resources>

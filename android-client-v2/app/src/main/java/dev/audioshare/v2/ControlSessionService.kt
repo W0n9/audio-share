@@ -355,7 +355,8 @@ class ControlSessionService : Service(), SessionController {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(NotificationChannel(
-                CHANNEL_ID, "Audio Share session", NotificationManager.IMPORTANCE_LOW,
+                CHANNEL_ID, getString(R.string.notification_channel_name),
+                NotificationManager.IMPORTANCE_LOW,
             ))
         }
         val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -377,15 +378,15 @@ class ControlSessionService : Service(), SessionController {
         )
         val action = Notification.Action.Builder(
             Icon.createWithResource(this, android.R.drawable.ic_media_pause),
-            "Stop",
+            getString(R.string.notification_stop),
             stopIntent,
         ).build()
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
             @Suppress("DEPRECATION") Notification.Builder(this)
-        }.setContentTitle("Audio Share")
-            .setContentText("Media session active. Audio plays while the screen is locked.")
+        }.setContentTitle(getString(R.string.notification_title))
+            .setContentText(getString(R.string.notification_body))
             .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_TRANSPORT)

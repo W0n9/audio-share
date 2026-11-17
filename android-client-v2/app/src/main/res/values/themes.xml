@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Light window theme. The app renders Compose Material 3 inside it. -->
+<resources>
+    <style name="Theme.AudioShare" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

@@ -14,8 +14,8 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application
-        android:label="audio-share v2"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:label="@string/app_label"
+        android:theme="@style/Theme.AudioShare">
 
         <service
             android:name=".ControlSessionService"

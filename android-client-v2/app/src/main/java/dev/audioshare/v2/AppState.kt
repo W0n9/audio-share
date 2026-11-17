@@ -27,7 +27,8 @@ data class PairingUi(
     /** What the user typed after reading the code on the Server screen. */
     val sasInput: String = "",
     val errorCode: Int? = null,
-    val message: String? = null,
+    /** Localizable pairing notice; copy resolves through resources. */
+    val notice: PairingNotice? = null,
     /**
      * QR mode only: the Client already dispatched the one automatic
      * `PairingConfirm` for this exchange. The Service and native phase
@@ -86,7 +87,7 @@ data class PairingUi(
 data class AppState(
     val screen: AppScreen = AppScreen.HOME,
     val address: String = "",
-    val addressError: String? = null,
+    val addressError: AddressError? = null,
     val rememberedAddress: String? = null,
     val storedServers: List<StoredServer> = emptyList(),
     /** The Service-owned single outcome; the UI never derives one. */
@@ -95,7 +96,7 @@ data class AppState(
     val stopRequested: Boolean = false,
     val pairing: PairingUi? = null,
     val scanActive: Boolean = false,
-    val scanMessage: String? = null,
+    val scanNotice: ScanNotice? = null,
     /**
      * Config-change hint only: the SAS input typed before the Activity was
      * recreated. The Service replay owns the pairing snapshot, so this hint is
@@ -163,7 +164,7 @@ sealed interface UiEvent {
     data object RequestScan : UiEvent
     data object ScanPermissionDenied : UiEvent
     data object ScanClosed : UiEvent
-    data class PairingUriRejected(val message: String) : UiEvent
+    data object PairingUriRejected : UiEvent
     data object Retry : UiEvent
 }
 
@@ -245,7 +246,7 @@ object AppReducer {
                 Reduction(state, AppCommand.ConfirmPairing)
             } else {
                 val next = if (pairing != null && pairing.isAwaitingConfirmation && !pairing.canConfirm) {
-                    pairing.copy(message = "The code does not match the one shown on the Server.")
+                    pairing.copy(notice = PairingNotice.SAS_MISMATCH)
                 } else {
                     pairing
                 }
@@ -267,7 +268,7 @@ object AppReducer {
                 state.copy(
                     screen = AppScreen.HOME,
                     scanActive = false,
-                    scanMessage = null,
+                    scanNotice = null,
                     restoredSasInput = "",
                 )
             )
@@ -297,7 +298,7 @@ object AppReducer {
                     },
                     pairing = if (cleared) null else state.pairing,
                     scanActive = if (cleared) false else state.scanActive,
-                    scanMessage = if (cleared) null else state.scanMessage,
+                    scanNotice = if (cleared) null else state.scanNotice,
                     restoredSasInput = if (leftPairing) "" else state.restoredSasInput,
                 )
             )
@@ -360,7 +361,7 @@ object AppReducer {
                     stopRequested = false,
                     pairing = null,
                     scanActive = false,
-                    scanMessage = null,
+                    scanNotice = null,
                     restoredSasInput = "",
                 ),
             )
@@ -370,7 +371,7 @@ object AppReducer {
             state.copy(
                 screen = AppScreen.HOME,
                 scanActive = false,
-                scanMessage = null,
+                scanNotice = null,
                 restoredSasInput = "",
             )
         )
@@ -380,7 +381,7 @@ object AppReducer {
                 screen = AppScreen.PAIRING,
                 pairing = null,
                 scanActive = false,
-                scanMessage = null,
+                scanNotice = null,
                 restoredSasInput = "",
             )
         )
@@ -397,14 +398,14 @@ object AppReducer {
             state.copy(
                 screen = AppScreen.PAIRING,
                 scanActive = true,
-                scanMessage = null,
+                scanNotice = null,
             )
         )
 
         UiEvent.ScanPermissionDenied -> Reduction(
             state.copy(
                 scanActive = false,
-                scanMessage = "Camera permission was denied. Paste the pairing link instead.",
+                scanNotice = ScanNotice.CAMERA_PERMISSION_DENIED,
             )
         )
 
@@ -417,7 +418,7 @@ object AppReducer {
                 pairing = PairingUi(
                     mode = "qr",
                     phase = "FAILED",
-                    message = event.message,
+                    notice = PairingNotice.INVALID_PAIRING_LINK,
                 ),
                 restoredSasInput = "",
             )
@@ -431,7 +432,7 @@ object AppReducer {
             screen = AppScreen.HOME,
             pairing = null,
             scanActive = false,
-            scanMessage = null,
+            scanNotice = null,
             restoredSasInput = "",
         ),
         AppCommand.CancelPairing,
@@ -448,7 +449,7 @@ object AppReducer {
                     stopRequested = false,
                     pairing = null,
                     scanActive = false,
-                    scanMessage = null,
+                    scanNotice = null,
                 )
             )
         }
@@ -456,7 +457,7 @@ object AppReducer {
             return Reduction(
                 state.copy(
                     screen = AppScreen.HOME,
-                    addressError = "No saved pairing. Pair with the Server first.",
+                    addressError = AddressError.NO_SAVED_PAIRING,
                 )
             )
         }
@@ -466,7 +467,7 @@ object AppReducer {
                 stopRequested = false,
                 pairing = null,
                 scanActive = false,
-                scanMessage = null,
+                scanNotice = null,
             ),
             AppCommand.ConnectStored(state.selectedPin()),
         )
@@ -475,7 +476,7 @@ object AppReducer {
     private fun startSas(state: AppState): Reduction {
         val address = state.address.trim()
         if (address.isEmpty()) {
-            return Reduction(state.copy(addressError = "Enter the Server address first."))
+            return Reduction(state.copy(addressError = AddressError.REQUIRED))
         }
         val error = validateAddressInput(address)
         if (error != null) return Reduction(state.copy(addressError = error))
@@ -486,7 +487,7 @@ object AppReducer {
                 screen = AppScreen.PAIRING,
                 pairing = PairingUi(mode = "sas", phase = "STARTING"),
                 scanActive = false,
-                scanMessage = null,
+                scanNotice = null,
                 restoredSasInput = "",
             ),
             AppCommand.BeginSas(address),
@@ -504,7 +505,7 @@ object AppReducer {
                     pairing = PairingUi(
                         mode = "qr",
                         phase = "FAILED",
-                        message = "This is not a valid Audio Share pairing link.",
+                        notice = PairingNotice.INVALID_PAIRING_LINK,
                     ),
                     restoredSasInput = "",
                 )
@@ -517,7 +518,7 @@ object AppReducer {
                 screen = AppScreen.PAIRING,
                 pairing = PairingUi(mode = "qr", phase = "STARTING"),
                 scanActive = false,
-                scanMessage = null,
+                scanNotice = null,
                 restoredSasInput = "",
             ),
             AppCommand.BeginQr(uri.trim()),
@@ -538,12 +539,6 @@ object AppReducer {
             }
         }
         val sas = snapshot.sas?.let(::formatSas)
-        val guidance = snapshot.errorCode?.let(ErrorGuidanceBook::forCode)
-        val message = if (snapshot.isFailed) {
-            guidance?.title ?: "Pairing failed. Start a new pairing on the Server and try again."
-        } else {
-            null
-        }
         val previous = state.pairing
         val awaitingSnapshots = when {
             !snapshot.isAwaitingConfirmation -> 0
@@ -557,7 +552,7 @@ object AppReducer {
             fingerprint = snapshot.fingerprint,
             sasInput = previous?.sasInput ?: state.restoredSasInput,
             errorCode = snapshot.errorCode,
-            message = message,
+            notice = null,
             // A fresh exchange always has a fresh PairingUi (STARTING), so
             // carrying the flag only suppresses duplicate snapshots.
             autoConfirmSent = previous?.autoConfirmSent ?: false,
@@ -613,16 +608,16 @@ object AppReducer {
     }
 }
 
-/** Reuses the normative `addr` rules (pairing.md §4.2). */
-internal fun validateAddressInput(text: String): String? {
+/** Reuses the normative `addr` rules (pairing.md §4.2); returns typed state. */
+internal fun validateAddressInput(text: String): AddressError? {
     val value = text.trim()
     if (value.isEmpty()) return null
     return try {
         PairingPayload.validateAddress(value)
         null
-    } catch (e: QrPayloadException) {
-        e.message ?: "invalid Server address"
+    } catch (e: AddressValidationException) {
+        e.reason
     } catch (_: Exception) {
-        "invalid Server address"
+        AddressError.INVALID_ADDRESS_HINT
     }
 }
