@@ -186,7 +186,7 @@ private fun HomeScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
         Spacer(Modifier.height(16.dp))
     }
 
-    SessionStatus(state)
+    SessionOutcomeText(state)
     Spacer(Modifier.height(16.dp))
 
     val server = state.storedServers.firstOrNull()
@@ -795,7 +795,7 @@ private fun SessionScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
         // A Connect was accepted but the Service has not published yet. Show
         // the connecting hero and keep Stop disabled until it owns a session.
         null -> SessionHero(
-            status = stringResource(R.string.session_phase_connecting_title),
+            headline = stringResource(R.string.session_phase_connecting_title),
             body = stringResource(R.string.session_phase_connecting_body),
         )
     }
@@ -858,7 +858,7 @@ private fun LiveSessionHero(phase: LivePhase) {
     HeroPulse()
     Spacer(Modifier.height(12.dp))
     SessionHero(
-        status = stringResource(phase.titleRes()),
+        headline = stringResource(phase.titleRes()),
         body = stringResource(phase.bodyRes()),
     )
     if (phase == LivePhase.CONNECTING || phase == LivePhase.AUTHENTICATING) {
@@ -874,7 +874,7 @@ private fun ReconnectingSessionHero(outcome: SessionOutcome.Reconnecting) {
     HeroPulse()
     Spacer(Modifier.height(12.dp))
     SessionHero(
-        status = pluralStringResource(
+        headline = pluralStringResource(
             R.plurals.reconnect_attempt,
             outcome.attempt,
             outcome.attempt,
@@ -899,41 +899,41 @@ private fun ReconnectingSessionHero(outcome: SessionOutcome.Reconnecting) {
 @Composable
 private fun EndedUserStopHero() {
     SessionHero(
-        status = stringResource(R.string.session_stopped_by_user),
+        headline = stringResource(R.string.session_stopped_by_user),
         body = stringResource(R.string.session_ended_user_body),
-        statusTag = "ended-user-stop",
+        outcomeTag = "ended-user-stop",
     )
 }
 
 @Composable
 private fun SurfacedSessionHero() {
     SessionHero(
-        status = stringResource(R.string.session_ended_surfaced_title),
+        headline = stringResource(R.string.session_ended_surfaced_title),
         body = stringResource(R.string.session_ended_surfaced_body),
     )
 }
 
 /**
- * The hero status is the screen reader announcement for an outcome: assertive
+ * The hero headline is the screen reader announcement for an outcome: assertive
  * so TalkBack reports phase/reconnect/ended changes without user action.
  */
 @Composable
 private fun SessionHero(
-    status: String,
+    headline: String,
     body: String,
-    statusTag: String = "session-state",
+    outcomeTag: String = "session-outcome",
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            status,
+            headline,
             style = MaterialTheme.typography.headlineSmall,
             textAlign = TextAlign.Center,
             modifier = Modifier
                 .semantics { liveRegion = LiveRegionMode.Assertive }
-                .testTag(statusTag),
+                .testTag(outcomeTag),
         )
         Spacer(Modifier.height(4.dp))
         Text(
@@ -1107,7 +1107,7 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun SessionStatus(state: AppState) {
+private fun SessionOutcomeText(state: AppState) {
     val label = when (val outcome = state.outcome) {
         null -> stringResource(R.string.session_not_connected)
         is SessionOutcome.Live -> stringResource(outcome.phase.titleRes())
@@ -1130,7 +1130,7 @@ private fun SessionStatus(state: AppState) {
             label,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.testTag("session-state"),
+            modifier = Modifier.testTag("session-outcome"),
         )
     }
 }
@@ -1139,15 +1139,14 @@ private fun SessionStatus(state: AppState) {
  * The terminal error presentation for `Ended(Surfaced)`. Copy is resolved from
  * the code through [ErrorGuidanceResources] (so unknown and null codes still
  * get the documented generic fallback); the action is Retry, or Pair again
- * when the guidance requires repairing. `state.sessionError` supplies that
- * flag and never carries copy.
+ * when the guidance requires repairing. [AppState.sessionError] is the single
+ * owner of that derivation; this card only renders it.
  */
 @Composable
 private fun SurfacedErrorCard(state: AppState, onEvent: (UiEvent) -> Unit) {
-    val reason = (state.outcome as? SessionOutcome.Ended)?.reason as? EndReason.Surfaced
-        ?: return
-    val code = reason.code
-    val requiresRepairing = state.sessionError?.requiresRepairing == true
+    val error = state.sessionError ?: return
+    val code = error.code
+    val requiresRepairing = error.requiresRepairing
 
     Card(
         modifier = Modifier.fillMaxWidth().testTag("session-error-card"),

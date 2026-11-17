@@ -341,7 +341,7 @@ class PairingScreenTest : RobolectricComposeTestBase() {
         send(UiEvent.PairingCompleted(completedRecord()))
         compose.waitForIdle()
         assertTrue(
-            compose.onAllNodesWithTag("session-state").fetchSemanticsNodes().isNotEmpty(),
+            compose.onAllNodesWithTag("session-outcome").fetchSemanticsNodes().isNotEmpty(),
             "the one-shot PairingCompleted handoff moves the screen to SESSION",
         )
     }

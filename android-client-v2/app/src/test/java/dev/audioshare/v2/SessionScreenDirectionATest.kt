@@ -44,7 +44,7 @@ class SessionScreenDirectionATest : RobolectricComposeTestBase() {
     ) {
         startSession(outcome)
         compose.onNodeWithTag("session-title").assertIsDisplayed()
-        compose.onNodeWithTag("session-state").assertTextEquals(str(titleRes))
+        compose.onNodeWithTag("session-outcome").assertTextEquals(str(titleRes))
         compose.onNodeWithTag("session-hero-body").assertTextEquals(str(bodyRes))
         compose.onNodeWithTag("stop").performScrollTo().assertIsEnabled()
         if (progress) {
@@ -118,7 +118,7 @@ class SessionScreenDirectionATest : RobolectricComposeTestBase() {
     fun reconnecting_stays_in_session_with_the_attempt_and_no_error_card() {
         startSession(SessionOutcome.Reconnecting(attempt = 3, lastCloseCode = 601))
         compose.onNodeWithTag("session-title").assertIsDisplayed()
-        compose.onNodeWithTag("session-state").assertTextEquals(reconnect(3))
+        compose.onNodeWithTag("session-outcome").assertTextEquals(reconnect(3))
         compose.onNodeWithTag("session-hero-body")
             .assertTextEquals(str(R.string.session_reconnecting_body))
         compose.onNodeWithTag("session-reconnect-code")
@@ -130,7 +130,7 @@ class SessionScreenDirectionATest : RobolectricComposeTestBase() {
         compose.onNodeWithTag("session-error-card").assertDoesNotExist()
         compose.onNodeWithTag("connect-again").assertDoesNotExist()
         compose.onNodeWithTag("retry").assertDoesNotExist()
-        compose.onNodeWithTag("session-state").assert(
+        compose.onNodeWithTag("session-outcome").assert(
             SemanticsMatcher.expectValue(
                 SemanticsProperties.LiveRegion,
                 LiveRegionMode.Assertive,
@@ -165,7 +165,7 @@ class SessionScreenDirectionATest : RobolectricComposeTestBase() {
     @Test
     fun ended_surfaced_shows_code_guidance_and_retry_without_the_user_stop_copy() {
         startSession(SessionOutcome.Ended(EndReason.Surfaced(601)))
-        compose.onNodeWithTag("session-state")
+        compose.onNodeWithTag("session-outcome")
             .assertTextEquals(str(R.string.session_ended_surfaced_title))
         compose.onNodeWithTag("session-hero-body")
             .assertTextEquals(str(R.string.session_ended_surfaced_body))
@@ -208,24 +208,24 @@ class SessionScreenDirectionATest : RobolectricComposeTestBase() {
     }
 
     @Test
-    fun session_focus_order_is_title_then_status_or_error_then_primary_action() {
+    fun session_focus_order_is_title_then_outcome_or_error_then_primary_action() {
         startSession(SessionOutcome.Live(LivePhase.PLAYING))
         val title = compose.onNodeWithTag("session-title").fetchSemanticsNode().boundsInRoot
-        val status = compose.onNodeWithTag("session-state").fetchSemanticsNode().boundsInRoot
+        val outcome = compose.onNodeWithTag("session-outcome").fetchSemanticsNode().boundsInRoot
         val primary = compose.onNodeWithTag("stop").fetchSemanticsNode().boundsInRoot
-        assertTrue(title.top < status.top, "title precedes the status")
-        assertTrue(status.top < primary.top, "the status precedes the primary action")
+        assertTrue(title.top < outcome.top, "title precedes the outcome")
+        assertTrue(outcome.top < primary.top, "the outcome precedes the primary action")
     }
 
     @Test
-    fun surfaced_focus_order_is_title_then_status_then_error_then_retry() {
+    fun surfaced_focus_order_is_title_then_outcome_then_error_then_retry() {
         startSession(SessionOutcome.Ended(EndReason.Surfaced(601)))
         val title = compose.onNodeWithTag("session-title").fetchSemanticsNode().boundsInRoot
-        val status = compose.onNodeWithTag("session-state").fetchSemanticsNode().boundsInRoot
+        val outcome = compose.onNodeWithTag("session-outcome").fetchSemanticsNode().boundsInRoot
         val error = compose.onNodeWithTag("error-title").fetchSemanticsNode().boundsInRoot
         val retry = compose.onNodeWithTag("retry").fetchSemanticsNode().boundsInRoot
-        assertTrue(title.top < status.top, "title precedes the status")
-        assertTrue(status.top < error.top, "the error follows the status")
+        assertTrue(title.top < outcome.top, "title precedes the outcome")
+        assertTrue(outcome.top < error.top, "the error follows the outcome")
         assertTrue(error.top < retry.top, "the primary action follows the error")
     }
 
@@ -249,7 +249,7 @@ class SessionScreenDirectionATest : RobolectricComposeTestBase() {
                 }
             }
         }
-        for (tag in listOf("session-title", "session-state", "session-hero-body", "stop")) {
+        for (tag in listOf("session-title", "session-outcome", "session-hero-body", "stop")) {
             compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
         }
     }
@@ -283,7 +283,7 @@ class SessionChineseLocaleTest : RobolectricComposeTestBase() {
             )
         )
         compose.onNodeWithTag("session-title").assertTextEquals("会话")
-        compose.onNodeWithTag("session-state").assertTextEquals("正在播放")
+        compose.onNodeWithTag("session-outcome").assertTextEquals("正在播放")
         compose.onNodeWithTag("session-hero-body").assertTextEquals("正在从服务器流式播放音频。")
         compose.onNodeWithTag("stop").performScrollTo().assertTextContains("停止")
     }

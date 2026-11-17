@@ -544,6 +544,58 @@ class AppStateReducerTest {
         assertEquals(AppCommand.CancelPairing, cancelled.command)
     }
 
+    @Test
+    fun starting_a_pairing_drops_the_superseded_outcome_so_home_connect_works() {
+        // BeginSas/BeginQr make the Service supersede the live Client Session.
+        // The UI must drop its copy then, not only on CancelPairing; otherwise
+        // leaving PAIRING by Home keeps a stale Live and Connect only navigates.
+        val live = sessionState(SessionOutcome.Live(LivePhase.PLAYING), screen = AppScreen.HOME)
+
+        val pairing = AppReducer.reduce(live, UiEvent.StartSasPairing).state
+        assertNull(pairing.outcome, "the pairing start supersedes the previous session")
+
+        val home = AppReducer.reduce(pairing, UiEvent.ShowHome).state
+        assertEquals(AppScreen.HOME, home.screen)
+        assertNull(home.outcome)
+
+        val connect = AppReducer.reduce(home, UiEvent.ConnectRequested)
+        assertEquals(
+            AppCommand.ConnectStored("ab".repeat(32)),
+            connect.command,
+            "Connect after leaving pairing must start a session",
+        )
+    }
+
+    @Test
+    fun cancel_pairing_drops_the_stale_outcome_so_connect_starts_a_new_session() {
+        // A live session that was superseded by another pairing exchange leaves
+        // no session behind; cancelling must not keep its replayable outcome.
+        val pairingOverLiveSession = AppState(
+            screen = AppScreen.PAIRING,
+            address = "10.0.2.2:65531",
+            storedServers = listOf(stored()),
+            outcome = SessionOutcome.Live(LivePhase.PLAYING),
+            stopRequested = true,
+            pairing = PairingUi(mode = "sas", phase = "AWAITING_CONFIRMATION"),
+        )
+
+        val cancelled = AppReducer.reduce(pairingOverLiveSession, UiEvent.CancelPairing)
+
+        assertEquals(AppScreen.HOME, cancelled.state.screen)
+        assertNull(
+            cancelled.state.outcome,
+            "PairingCancel tears the session down; HOME must not keep its outcome",
+        )
+        assertFalse(cancelled.state.stopRequested)
+
+        val connect = AppReducer.reduce(cancelled.state, UiEvent.ConnectRequested)
+        assertEquals(
+            AppCommand.ConnectStored("ab".repeat(32)),
+            connect.command,
+            "Connect after the cancel must start a session, not merely navigate",
+        )
+    }
+
     // ---- retry --------------------------------------------------------------
 
     @Test

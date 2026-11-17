@@ -100,11 +100,48 @@ class SessionOutcomeStoreTest {
         store.setListener { seen += it }
         store.invalidate()
         sink.publish(SessionOutcome.Ended(EndReason.Surfaced(204)))
-        assertEquals(connecting, store.snapshot(), "an internal teardown publishes nothing")
-        assertEquals(listOf<SessionOutcome>(connecting), seen)
+        assertNull(store.snapshot(), "an internal teardown leaves nothing replayable")
+        assertEquals(
+            listOf<SessionOutcome>(connecting),
+            seen,
+            "invalidation is not a synthetic outcome for the current listener",
+        )
 
         val replacement = store.beginGeneration()
         replacement.publish(ready)
+        assertEquals(ready, store.snapshot())
+    }
+
+    @Test
+    fun invalidate_clears_the_latest_outcome_so_a_late_listener_replays_nothing() {
+        val store = SessionOutcomeStore()
+        val sink = store.beginGeneration()
+        sink.publish(SessionOutcome.Live(LivePhase.PLAYING))
+
+        store.invalidate()
+
+        assertNull(store.snapshot(), "a torn-down session has no replayable outcome")
+        val late = mutableListOf<SessionOutcome>()
+        store.setListener { late += it }
+        assertTrue(late.isEmpty(), "a listener registered after the teardown sees no stale value")
+    }
+
+    @Test
+    fun a_new_generation_can_publish_the_same_live_phase_after_invalidate() {
+        val store = SessionOutcomeStore()
+        store.beginGeneration().publish(ready)
+        val seen = mutableListOf<SessionOutcome>()
+        store.setListener { seen += it }
+
+        store.invalidate()
+        val next = store.beginGeneration()
+        next.publish(ready)
+
+        assertEquals(
+            listOf<SessionOutcome>(ready, ready),
+            seen,
+            "dedupe is per store value, not a global ban on repeating a Live phase",
+        )
         assertEquals(ready, store.snapshot())
     }
 
