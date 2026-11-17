@@ -11,11 +11,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -86,11 +89,17 @@ fun AudioShareApp(
     }
     Scaffold(
         topBar = { ShellTopBar(state.screen, onEvent) },
+        // Edge-to-edge (targetSdk 36): pad for the status/navigation bars AND
+        // for the IME and display cutout. `adjustResize` no longer shrinks the
+        // window, so without safeDrawing the address/SAS fields could sit
+        // behind the keyboard. The top bar consumes its own status-bar inset.
+        contentWindowInsets = WindowInsets.safeDrawing,
     ) { contentInsets ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentInsets)
+                .consumeWindowInsets(contentInsets)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 16.dp),
         ) {

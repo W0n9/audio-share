@@ -19,7 +19,7 @@ import kotlin.test.assertTrue
  * recovery facts the old Kotlin strings carried.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 class ErrorGuidanceResourcesTest {
 
     private val context: Context get() = ApplicationProvider.getApplicationContext()
