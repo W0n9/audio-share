@@ -7,9 +7,14 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+/**
+ * Domain-only guidance facts. User-visible copy lives in resources and is
+ * verified by `ErrorGuidanceResourcesTest` (Robolectric); this test never
+ * asserts English text.
+ */
 class ErrorGuidanceTest {
     @Test
-    fun pairing_codes_have_typed_names_and_guidance() {
+    fun pairing_codes_have_typed_names_and_no_text_fields() {
         val expected = mapOf(
             201 to "PAIRING_REJECTED",
             202 to "AUTHORIZATION_UNKNOWN",
@@ -21,8 +26,6 @@ class ErrorGuidanceTest {
         for ((code, name) in expected) {
             val guidance = assertNotNull(ErrorGuidanceBook.forCode(code), "missing $code")
             assertEquals(name, guidance.name)
-            assertTrue(guidance.title.isNotBlank())
-            assertTrue(guidance.guidance.isNotBlank())
             assertFalse(guidance.fallbackToV1, "v2 never falls back to v1")
         }
     }
@@ -43,25 +46,6 @@ class ErrorGuidanceTest {
         val guidance = assertNotNull(ErrorGuidanceBook.forCode(206))
         assertTrue(guidance.retryable)
         assertFalse(guidance.automaticRetry)
-    }
-
-    @Test
-    fun rejected_and_timed_out_pairings_point_to_a_fresh_server_invitation() {
-        val rejected = assertNotNull(ErrorGuidanceBook.forCode(201))
-        assertTrue(
-            rejected.guidance.contains("fresh QR code"),
-            "201 must direct the user to a new QR invitation",
-        )
-        assertTrue(
-            rejected.guidance.contains("accept this device", ignoreCase = true),
-            "the Server Accept gate stays visible after a decline",
-        )
-
-        val timedOut = assertNotNull(ErrorGuidanceBook.forCode(206))
-        assertEquals("Pairing timed out", timedOut.title)
-        assertTrue(timedOut.guidance.contains("ten-minute"))
-        assertTrue(timedOut.guidance.contains("new pairing"))
-        assertTrue(timedOut.guidance.contains("fresh QR code"))
     }
 
     @Test

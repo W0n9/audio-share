@@ -507,7 +507,7 @@ class AppStateReducerTest {
         )
         assertEquals(AppScreen.PAIRING, rejected.state.screen)
         assertTrue(rejected.state.pairing!!.isFailed)
-        assertNotNull(rejected.state.pairing!!.message)
+        assertNotNull(rejected.state.pairing!!.notice)
         assertEquals(AppCommand.None, rejected.command)
     }
 

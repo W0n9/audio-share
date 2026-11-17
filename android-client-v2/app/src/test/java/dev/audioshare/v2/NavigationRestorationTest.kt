@@ -44,7 +44,7 @@ class NavigationRestorationTest {
         val state = AppState(
             screen = AppScreen.PAIRING,
             address = "10.0.2.2:65531",
-            addressError = "stale error",
+            addressError = AddressError.INVALID_HOST,
             rememberedAddress = "other.example:65531",
             storedServers = listOf(stored()),
             outcome = SessionOutcome.Live(LivePhase.PLAYING),
@@ -56,7 +56,7 @@ class NavigationRestorationTest {
                 sasInput = "385587",
             ),
             scanActive = true,
-            scanMessage = "camera denied",
+            scanNotice = ScanNotice.CAMERA_PERMISSION_DENIED,
         )
         val bundle = Bundle()
 
@@ -76,7 +76,7 @@ class NavigationRestorationTest {
         assertNull(restored.pairing)
         assertTrue(restored.storedServers.isEmpty())
         assertFalse(restored.scanActive, "the camera never reopens automatically")
-        assertNull(restored.scanMessage)
+        assertNull(restored.scanNotice)
         assertNull(restored.addressError, "errors are derived, never persisted")
         assertFalse(restored.stopRequested)
     }
