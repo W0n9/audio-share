@@ -130,4 +130,40 @@
     <!-- 未知或空错误码始终使用此回退文案。 -->
     <string name="error_generic_title">出了点问题</string>
     <string name="error_generic_guidance">请重新连接后再试。如果问题反复出现，请报告此问题。</string>
+
+    <!-- PAIRING（工单 19，方向 A） -->
+    <string name="pairing_title">配对手机</string>
+    <string name="pairing_subtitle">使用服务器上显示的二维码或配对码。</string>
+    <string name="pairing_scan_qr">扫描二维码</string>
+    <string name="pairing_scan_instruction">将相机对准服务器上的二维码。</string>
+    <string name="pairing_close_camera">关闭相机</string>
+    <string name="pairing_paste_label">粘贴配对链接</string>
+    <string name="pairing_use_pasted_link">使用粘贴的链接</string>
+    <string name="pairing_start_code">使用配对码</string>
+    <string name="pairing_cancel">取消配对</string>
+    <string name="pairing_back_home">返回主页</string>
+    <string name="pairing_starting_title">正在连接服务器…</string>
+    <string name="pairing_starting_body">正在准备安全的配对交换。请保持此屏幕打开。</string>
+    <string name="pairing_awaiting_qr_title">正在与服务器配对…</string>
+    <string name="pairing_awaiting_qr_confirmed">已自动确认。正在等待服务器接受此设备。</string>
+    <string name="pairing_awaiting_qr_body">二维码已验证服务器身份。此手机将自动确认；服务器操作员仍需要接受此设备。</string>
+    <string name="pairing_awaiting_sas_title">核对配对码</string>
+    <string name="pairing_awaiting_sas_body">请确认此配对码与服务器上显示的一致，然后在下方输入。</string>
+    <string name="pairing_code_on_phone">此手机上的配对码</string>
+    <string name="pairing_enter_code">输入服务器上显示的配对码</string>
+    <string name="pairing_server_fingerprint">服务器指纹</string>
+    <string name="pairing_confirm">确认配对</string>
+    <string name="pairing_confirming_title">已确认。正在等待服务器接受此设备。</string>
+    <string name="pairing_confirming_body_qr">如果服务器操作员拒绝此设备，二维码必须刷新。</string>
+    <string name="pairing_confirming_body_sas">如果服务器操作员拒绝此设备，请重新发起配对。</string>
+    <string name="pairing_complete_title">配对完成</string>
+    <string name="pairing_complete_body">正在保存配对。服务器接受此设备后，应用会自动连接。</string>
+    <string name="pairing_failed_title">配对失败</string>
+    <string name="pairing_error_code">错误码 %1$d</string>
+    <string name="pairing_failed_invitation_qr">邀请已无法复用。请让服务器显示新的二维码。</string>
+    <string name="pairing_failed_invitation_sas">请先在服务器上重新发起配对，然后再试。</string>
+    <string name="pairing_scan_again">重新扫描</string>
+    <string name="pairing_camera_stays_closed">在你选择“重新扫描”之前，相机保持关闭。</string>
+    <string name="pairing_try_again">重试</string>
+    <string name="pairing_sas_optional">配对码（可选核对）</string>
 </resources>

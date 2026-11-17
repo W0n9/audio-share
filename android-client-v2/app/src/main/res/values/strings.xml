@@ -135,4 +135,40 @@
     <!-- Unknown/null codes always resolve here (documented fallback). -->
     <string name="error_generic_title">Something went wrong</string>
     <string name="error_generic_guidance">Reconnect and try again. If this keeps happening, report the issue.</string>
+
+    <!-- PAIRING (ticket 19, Direction A) -->
+    <string name="pairing_title">Pair your phone</string>
+    <string name="pairing_subtitle">Use the QR code or pairing code shown on the Server.</string>
+    <string name="pairing_scan_qr">Scan QR code</string>
+    <string name="pairing_scan_instruction">Point the camera at the QR code on the Server.</string>
+    <string name="pairing_close_camera">Close camera</string>
+    <string name="pairing_paste_label">Paste pairing link</string>
+    <string name="pairing_use_pasted_link">Use pasted link</string>
+    <string name="pairing_start_code">Pair with a code</string>
+    <string name="pairing_cancel">Cancel pairing</string>
+    <string name="pairing_back_home">Back to Home</string>
+    <string name="pairing_starting_title">Connecting to the Server…</string>
+    <string name="pairing_starting_body">Preparing a secure pairing exchange. Keep this screen open.</string>
+    <string name="pairing_awaiting_qr_title">Pairing with the Server…</string>
+    <string name="pairing_awaiting_qr_confirmed">Confirmed. Waiting for the Server to accept this device.</string>
+    <string name="pairing_awaiting_qr_body">The QR code verified the Server identity. This phone confirms automatically; the Server operator still needs to accept it.</string>
+    <string name="pairing_awaiting_sas_title">Compare the pairing code</string>
+    <string name="pairing_awaiting_sas_body">Check that this code matches the one shown on the Server, then enter it below.</string>
+    <string name="pairing_code_on_phone">Code on this phone</string>
+    <string name="pairing_enter_code">Enter the code shown on the Server</string>
+    <string name="pairing_server_fingerprint">Server fingerprint</string>
+    <string name="pairing_confirm">Confirm pairing</string>
+    <string name="pairing_confirming_title">Confirmed. Waiting for the Server to accept this device.</string>
+    <string name="pairing_confirming_body_qr">If the Server operator declines this device, the QR code must be refreshed.</string>
+    <string name="pairing_confirming_body_sas">If the Server operator declines this device, start a new pairing.</string>
+    <string name="pairing_complete_title">Pairing complete</string>
+    <string name="pairing_complete_body">Saving this pairing. The app will connect automatically as soon as the Server accepts this device.</string>
+    <string name="pairing_failed_title">Pairing failed</string>
+    <string name="pairing_error_code">Error code %1$d</string>
+    <string name="pairing_failed_invitation_qr">The invitation cannot be reused. Ask the Server to show a fresh QR code.</string>
+    <string name="pairing_failed_invitation_sas">Start a new pairing on the Server before trying again.</string>
+    <string name="pairing_scan_again">Scan again</string>
+    <string name="pairing_camera_stays_closed">The camera stays closed until you choose Scan again.</string>
+    <string name="pairing_try_again">Try again</string>
+    <string name="pairing_sas_optional">Pairing code (optional check)</string>
 </resources>
