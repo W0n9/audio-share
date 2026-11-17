@@ -45,19 +45,19 @@ Windows SDK；只需要解压、校验、运行。
 
 ## 2. Windows 产物状态
 
-`dist-windows/` 由 Linux 上的 `cargo-xwin` 交叉构建（2026-11-17 重建，含工单 29 的
-live SAS 修复，`0.5.0-beta`）：
+`dist-windows/` 由 Linux 上的 `cargo-xwin` 交叉构建（2026-11-17 最终重建，含工单 29 live SAS、工单 30 客户端状态修复与
+QR 一步配对/失效邀请恢复，`0.5.0-beta`）：
 
 ```
-e4575d25b19ab12fcdf626d1a592f52ac382a2f052c05e6bd82702a9c3c8e97c  AudioShareServer.exe
-2bc4ceb18bd0103286c22029f602fa1aed7e8329c4faf9bc56a04a21d9d8550d  audio-share-server-cmd-windows.zip
+0a7dd9cef054e0d7a7175391144ae8d261a70cee675b8d7a11b15ce1c3dd4ca7  AudioShareServer.exe
+afe3b660a54172d9bbad8283db8e53f59ca1ee2fb7e110fb126d16c23233ff72  audio-share-server-cmd-windows.zip
 ```
 
-- `AudioShareServer.exe` — 15,006,208 bytes，PE32+ x86-64 Windows GUI，Tauri GUI，
+- `AudioShareServer.exe` — 15,014,400 bytes，PE32+ x86-64 Windows GUI，Tauri GUI，
   portable，无需安装。前端资源已嵌入 exe。
-- `audio-share-server-cmd-windows.zip` — 2,061,474 bytes；解开后是
-  `audio-share-server-cmd/as-cmd.exe`（5,220,864 bytes，PE32+ console，
-  SHA-256 `d2917467b28eb023e8dda7e675bd10a37595111fd14400219c4a966020e73ba5`）
+- `audio-share-server-cmd-windows.zip` — 2,064,549 bytes；解开后是
+  `audio-share-server-cmd/as-cmd.exe`（5,222,912 bytes，PE32+ console，
+  SHA-256 `3a50d8bee9e0fbe681b1922175c3e45835bbe2d09bce113f707f9c8bd57e2420`）
   加上 LICENSE / README。
 
 状态：**在 Linux 上构建成功，未在 Windows/Wine 上运行**（本机无 Wine）。实际运行结果
@@ -108,8 +108,8 @@ Get-FileHash .\audio-share-client-v2-0.2.0-beta.apk -Algorithm SHA256
 与对应 `.sha256` 文件比对。Windows 产物预期 SHA-256：
 
 ```
-e4575d25b19ab12fcdf626d1a592f52ac382a2f052c05e6bd82702a9c3c8e97c  AudioShareServer.exe
-2bc4ceb18bd0103286c22029f602fa1aed7e8329c4faf9bc56a04a21d9d8550d  audio-share-server-cmd-windows.zip
+0a7dd9cef054e0d7a7175391144ae8d261a70cee675b8d7a11b15ce1c3dd4ca7  AudioShareServer.exe
+afe3b660a54172d9bbad8283db8e53f59ca1ee2fb7e110fb126d16c23233ff72  audio-share-server-cmd-windows.zip
 ```
 
 APK 预期 SHA-256：
