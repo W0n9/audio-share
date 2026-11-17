@@ -100,11 +100,18 @@ class SessionOutcomeStore @JvmOverloads constructor(
     }
 
     /**
-     * Orphan the current generation without publishing. Used for Superseded,
-     * Shutdown and PairingCancel, whose late events must never reach the UI.
+     * Orphan the current generation and drop the replayable outcome. Used for
+     * Superseded, Shutdown and PairingCancel: the session is gone, so a late
+     * event (or a listener registering afterwards) must see nothing rather
+     * than the previous session's value. The registered listener is not sent a
+     * synthetic outcome; the UI paths that cause the teardown clear their own
+     * copy (`AppReducer` on pairing start and on `CancelPairing`).
      */
     fun invalidate() {
-        synchronized(lock) { generation += 1 }
+        synchronized(lock) {
+            generation += 1
+            latest = null
+        }
     }
 
     /** Replay the latest outcome immediately, if any. */

@@ -83,6 +83,14 @@ data class PairingUi(
         get() = mode == "sas" && sasMatches
 }
 
+/** The error presentation for `Ended(Surfaced)`; copy resolves by [code]. */
+data class SessionError(
+    val code: Int?,
+    val guidance: ErrorGuidance?,
+) {
+    val requiresRepairing: Boolean get() = guidance?.requiresRepairing == true
+}
+
 /** Complete UI state; the reducer is pure and Android-free. */
 data class AppState(
     val screen: AppScreen = AppScreen.HOME,
@@ -107,12 +115,17 @@ data class AppState(
 ) {
     val hasStoredPairing: Boolean get() = storedServers.isNotEmpty()
 
-    /** The error card for a surfaced close, derived from the outcome only. */
-    val sessionError: ErrorGuidance?
+    /**
+     * The surfaced-close presentation, derived from the outcome only. [code]
+     * is the close code the card prints (null when native recorded none);
+     * [guidance] is the typed registry entry, null when the code has none (the
+     * card still renders the documented generic copy).
+     */
+    val sessionError: SessionError?
         get() = (outcome as? SessionOutcome.Ended)
             ?.reason
             ?.let { it as? EndReason.Surfaced }
-            ?.let { ErrorGuidanceBook.forCode(it.code) }
+            ?.let { SessionError(it.code, ErrorGuidanceBook.forCode(it.code)) }
 
     /** Prefer the credential matching the typed address, else the first. */
     fun selectedPin(): String? {
@@ -430,6 +443,12 @@ object AppReducer {
     private fun cancelPairing(state: AppState): Reduction = Reduction(
         state.copy(
             screen = AppScreen.HOME,
+            // Cancelling abandons the exchange and tears its pairing session
+            // down (StopReason.PairingCancel), so no Client Session remains.
+            // Keeping the superseded session's outcome would make a later
+            // Connect merely navigate instead of requesting a new session.
+            outcome = null,
+            stopRequested = false,
             pairing = null,
             scanActive = false,
             scanNotice = null,
@@ -485,6 +504,12 @@ object AppReducer {
                 address = address,
                 addressError = null,
                 screen = AppScreen.PAIRING,
+                // BeginSas supersedes any live Client Session in the Service,
+                // so the UI drops the superseded outcome immediately. Otherwise
+                // leaving PAIRING by Home keeps a stale Live and Connect only
+                // navigates instead of starting a session.
+                outcome = null,
+                stopRequested = false,
                 pairing = PairingUi(mode = "sas", phase = "STARTING"),
                 scanActive = false,
                 scanNotice = null,
@@ -516,6 +541,9 @@ object AppReducer {
                 address = payload.address,
                 addressError = null,
                 screen = AppScreen.PAIRING,
+                // BeginQr supersedes any live Client Session in the Service.
+                outcome = null,
+                stopRequested = false,
                 pairing = PairingUi(mode = "qr", phase = "STARTING"),
                 scanActive = false,
                 scanNotice = null,
