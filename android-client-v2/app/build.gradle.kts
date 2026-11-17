@@ -6,7 +6,8 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // AGP 9 built-in Kotlin compiles Kotlin sources; the separate
+    // org.jetbrains.kotlin.android plugin is no longer applied.
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.protobuf)
 }
@@ -178,17 +179,14 @@ android {
     // 设备回归必须覆盖经过 R8 压缩的真实 release APK。
     testBuildType = "release"
 
-    kotlin {
-        jvmToolchain(17)
-    }
-
     sourceSets {
         getByName("main") {
             // generated dir under build/ so `clean` starts without a stale
             // native lib in source dirs
             // Keep the ABI subdirectory layout (<dir>/<abi>/lib*.so); abiFilters
-            // selects which ABI is packaged.
-            jniLibs.srcDir("build/generated/jniLibs")
+            // selects which ABI is packaged. AGP 9's non-deprecated source-set
+            // API is the `directories` mutable set.
+            jniLibs.directories += "build/generated/jniLibs"
             // ONE schema, two ends: the Kotlin codegen compiles the same
             // frozen .proto the Rust side does (never a copy).
             proto {
@@ -197,9 +195,10 @@ android {
             // TEST-SUPPORT ONLY: the adb-extras lifecycle harness. Without
             // -PtestSupport the class is absent from the source set, so a
             // production build has no extras-addressing path at all.
+            // Built-in Kotlin supports Kotlin source directories only through
+            // AndroidSourceSet.kotlin; do not mirror them into java.srcDir.
             if (testSupport) {
-                java.srcDir("src/testSupport/java")
-                kotlin.srcDir("src/testSupport/java")
+                kotlin.directories += "src/testSupport/java"
             }
         }
     }
@@ -209,6 +208,12 @@ android {
             excludes += "META-INF/*"
         }
     }
+}
+
+// AGP 9 built-in Kotlin moves jvmToolchain out of the android {} block; the
+// project-level Kotlin extension sets it. Application bytecode stays Java 17.
+kotlin {
+    jvmToolchain(17)
 }
 
 dependencies {
@@ -231,12 +236,14 @@ dependencies {
     implementation(libs.zxing.core)
 
     // Unit tests: the fixture replay harness. org.json comes from the real
-    // artifact (android.jar's stubs throw in unit tests); kotlin("test")
-    // provides the kotlin.test assertions.
+    // artifact (android.jar's stubs throw in unit tests); kotlin-test-junit
+    // provides the kotlin.test assertions and the kotlin.test.Test alias for
+    // JUnit 4. Built-in Kotlin does not apply KGP's JUnit test-framework
+    // variant selection, so name the JUnit 4 artifact explicitly.
     testImplementation(libs.junit)
     testImplementation("io.mockk:mockk:1.13.16")
     testImplementation("org.json:json:20240303")
-    testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit:${libs.versions.kotlin.get()}")
     // Compose screen tests run on the JVM under Robolectric so the custom
     // release-build Instrumentation runner stays untouched.
     testImplementation(libs.robolectric)
