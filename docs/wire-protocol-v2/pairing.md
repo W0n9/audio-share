@@ -1,6 +1,6 @@
 # Wire Protocol v2 — Pairing and Key Lifecycle Specification
 
-Status: accepted (2026-11-12, maintainer adjudication)
+Status: accepted (2026-11-12, maintainer adjudication; confirmation-scope clarification 2026-11-17)
 
 Feature: wire-protocol-v2 · Ticket: `.scratch/wire-protocol-v2/issues/04-threat-model-pairing-spec.md` · Companion document: [threat-model.md](threat-model.md)
 
@@ -147,6 +147,11 @@ S→C  PairingResult { ok | error_code }   // OK only after binding_echo + clien
 
 The Client also independently checks `server_pubkey` against the QR `key` field (QR mode) and aborts on mismatch — belt and braces on top of the SPKI pin. `wire_protocol_major` inside the messages MUST equal the ALPN major; a mismatch is an explicit protocol failure, never a fallback (threat-model.md §5.7).
 
+**Confirmation scope (2026-11-17 adjudication).** In QR mode the Client's explicit action is
+the QR scan. After it verifies `binding` (§6.3), the Client MAY send `PairingConfirm` without a
+separate confirmation tap. The Server still requires local approval before `PairingResult`(OK).
+The "both ends require an explicit user action" rule in §7.3 applies to SAS mode only.
+
 ### 6.3 Transcript binding
 
 The pairing binds **identities + nonce + protocol major + capabilities** into the authenticated transcript, as required by design baseline §Security and Pairing Model — First Pairing. The mechanism:
@@ -238,8 +243,13 @@ Stated explicitly, as required by the design baseline:
 | Server GUI | Displayed under the QR, labeled `Pairing code`, with the Server address hint shown alongside so a user pairing against the wrong host can notice |
 | as-cmd | Printed as `Pairing code: 123 456` |
 | Android Client | Displayed prominently during pairing, labeled `Pairing code` |
-| Confirmation | Both ends require an explicit user action: the Client "Confirm pairing", the Server "Accept device" / `as-cmd` confirmation. Pairing completes only after both |
+| Confirmation | SAS mode: both ends require an explicit user action — the Client "Confirm pairing", the Server "Accept device" / `as-cmd` confirmation. Pairing completes only after both. QR mode: the scan is the Client's explicit action (§6.2); the Server still requires "Accept device" / `as-cmd` confirmation |
 | Admission gate (SAS mode) | The Server accepts SAS-mode `PairingRequest`s only while a local pairing window is open — the Server GUI pairing dialog or an active `as-cmd pair` invocation (an admin action, TB3). SAS has **no nonce**; this admin-opened window is the admission control (threat-model.md §6) |
+
+**Scope (2026-11-17 adjudication).** The two-end confirmation rule in this section applies to
+SAS mode. In QR mode the Client's explicit action is the scan; only the Server's local approval
+is required (§6.2). The SAS remains visible on both ends in QR mode as an optional operator aid,
+not a completion gate.
 
 ### 7.4 Fingerprint path (always available)
 
@@ -434,6 +444,7 @@ Signed off by maintainer adjudication 2026-11-12; see tickets 03/04 Comments.
 | PR-12 | Concurrency/corruption | Core-owned state + exclusive lock for headless writes; atomic write + 1 backup generation; corruption ⇒ v2 fail-closed, never auto-regenerated | §10.3 | ✅ accepted (2026-11-12) |
 | PR-13 | Revocation timing | New connections immediate; active sessions closed within ≤ 5 s | §9.2 | ✅ accepted (2026-11-12) |
 | PR-14 | Test bypasses | Compile-time test feature only; no runtime bypass in production binaries | §11.3 | ✅ accepted (2026-11-12) |
+| PR-15 | Confirmation scope | §7.3's two-end explicit confirmation applies to SAS mode; in QR mode the Client's explicit action is the scan, while the Server still requires local approval | §6.2, §7.3 | ✅ accepted (2026-11-17 maintainer adjudication) |
 
 ## 13. References
 
