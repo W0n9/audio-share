@@ -39,8 +39,8 @@ jobs:
         run: |
           sdkmanager --install \
             "ndk;27.2.12479018" \
-            "build-tools;35.0.0" \
-            "platforms;android-35"
+            "build-tools;36.0.0" \
+            "platforms;android-37"
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -84,8 +84,8 @@ jobs:
         run: |
           set -euo pipefail
           apk=android-client-v2/app/build/outputs/apk/release/app-release.apk
-          apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
-          aapt="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          aapt="$ANDROID_HOME/build-tools/36.0.0/aapt"
           test -f "$apk"
           "$apksigner" verify --verbose --print-certs "$apk"
           badging=$("$aapt" dump badging "$apk")
