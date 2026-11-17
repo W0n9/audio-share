@@ -8,6 +8,7 @@ import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import dev.audioshare.v2.session.SessionEngine
 import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.Inet6Address
@@ -61,21 +62,10 @@ internal object SessionStartupPolicy {
  */
 class ClientSession(
     private val appContext: Context,
-    private val listener: Listener,
+    private val listener: SessionEngine.Listener,
     /** Generation-scoped outcome owner supplied by the Service. */
     private val sink: OutcomeSink,
-) {
-    interface Listener {
-        /** Info/error lines for a log view. */
-        fun onLog(line: String)
-
-        /** Pairing display material/phase changed (native JSON). */
-        fun onPairingState(json: String) {}
-
-        /** `PairingResult(OK)` arrived; persist this public credential. */
-        fun onCredential(json: String) {}
-    }
-
+) : SessionEngine {
     companion object {
         private const val TAG = "ClientSession"
         /** §6.3 backoff policy lives in [ReconnectPolicy]. */
@@ -102,7 +92,7 @@ class ClientSession(
     @Volatile private var activeNetworkAddress: String? = null
     @Volatile private var registeredCallback: ConnectivityManager.NetworkCallback? = null
 
-    fun start(configuration: SessionConfiguration) {
+    override fun start(configuration: SessionConfiguration) {
         synchronized(lifecycleLock) {
             if (running.getAndSet(true)) return
             this.configuration = configuration
@@ -119,7 +109,7 @@ class ClientSession(
      * End the session. Only [StopReason.User] produces a visible outcome; an
      * internal teardown leaves the outcome store untouched.
      */
-    fun stop(reason: StopReason) {
+    override fun stop(reason: StopReason) {
         val player: MediaPlayer?
         val h = synchronized(lifecycleLock) {
             if (!running.getAndSet(false)) return
@@ -321,7 +311,7 @@ class ClientSession(
     }
 
     /** Confirm a verified pairing; true when the confirmation was queued. */
-    fun confirmPairing(): Boolean {
+    override fun confirmPairing(): Boolean {
         val h = handle.get()
         return h != 0L && ClientNative.confirmPairing(h)
     }
