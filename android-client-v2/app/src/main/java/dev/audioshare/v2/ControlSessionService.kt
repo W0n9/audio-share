@@ -23,8 +23,11 @@ import java.util.UUID
  * snapshot is replayed to a listener registered after Activity recreation.
  */
 interface SessionController {
-    fun setStateListener(listener: ((String) -> Unit)?)
-    fun stateSnapshot(): String
+    /** The single replayable outcome owner; registering replays the latest. */
+    fun setOutcomeListener(listener: ((SessionOutcome) -> Unit)?)
+
+    /** `null` until this Service has carried a Client Session. */
+    fun outcomeSnapshot(): SessionOutcome?
 
     fun setPairingListener(listener: ((PairingSnapshot?) -> Unit)?)
     /** Replayable current pairing state (null when no pairing is active). */
@@ -50,9 +53,6 @@ interface SessionController {
 
     /** Stop the session. */
     fun disconnect()
-
-    /** Typed guidance for the most recent terminal error, if any. */
-    fun lastErrorGuidance(): ErrorGuidance?
 }
 
 /**
@@ -61,10 +61,10 @@ interface SessionController {
  */
 class ControlSessionService : Service(), SessionController {
     private var session: ClientSession? = null
-    private var sessionSource: SessionStateRelay.Source? = null
     /** Source of the pairing exchange owned by the current ClientSession. */
     private var pairingSource: PairingStateRelay.Source? = null
-    private val relay = SessionStateRelay()
+    /** The single replayable Session outcome owner (ticket 01 / ADR-0005). */
+    private val outcomeStore = SessionOutcomeStore()
     private val pairingRelay = PairingStateRelay()
     private val binder = ControlBinder(this)
     private val credentials by lazy { SharedPreferencesCredentialStore(this) }
@@ -84,9 +84,6 @@ class ControlSessionService : Service(), SessionController {
     /** Platform media session carried by the foreground notification. */
     private var mediaSession: MediaSession? = null
 
-    @Volatile
-    private var lastErrorCode: Int? = null
-
     private data class PairingContext(
         val identity: ClientIdentityResult,
         val host: String,
@@ -99,10 +96,11 @@ class ControlSessionService : Service(), SessionController {
 
     // ---- SessionController -------------------------------------------------
 
-    override fun setStateListener(listener: ((String) -> Unit)?) = relay.setListener(listener)
+    override fun setOutcomeListener(listener: ((SessionOutcome) -> Unit)?) =
+        outcomeStore.setListener(listener)
 
-    /** 即使会话已清理，也保留最后的关闭状态。 */
-    override fun stateSnapshot(): String = relay.snapshot()
+    /** A terminal outcome stays replayable after the session is gone. */
+    override fun outcomeSnapshot(): SessionOutcome? = outcomeStore.snapshot()
 
     override fun setPairingListener(listener: ((PairingSnapshot?) -> Unit)?) =
         pairingRelay.setListener(listener)
@@ -137,8 +135,6 @@ class ControlSessionService : Service(), SessionController {
         dispatch(ACTION_STOP)
     }
 
-    override fun lastErrorGuidance(): ErrorGuidance? = ErrorGuidanceBook.forCode(lastErrorCode)
-
     private fun dispatch(action: String, configure: Intent.() -> Unit = {}) {
         val intent = Intent(this, ControlSessionService::class.java).setAction(action).apply(configure)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -153,7 +149,7 @@ class ControlSessionService : Service(), SessionController {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                stopSession()
+                stopSession(StopReason.User)
                 return START_NOT_STICKY
             }
             ACTION_PAIR_QR -> {
@@ -179,7 +175,7 @@ class ControlSessionService : Service(), SessionController {
                 return START_STICKY
             }
             ACTION_CANCEL_PAIRING -> {
-                stopSession()
+                stopSession(StopReason.PairingCancel)
                 return START_NOT_STICKY
             }
             ACTION_CONNECT_STORED -> {
@@ -335,31 +331,24 @@ class ControlSessionService : Service(), SessionController {
     }
 
     private fun startSession(configuration: SessionConfiguration) {
-        // Clear the previous error BEFORE teardown publishes its CLOSED
-        // replay: guidanceOnClosed() must not resurface a revoke/reject banner
-        // while a new pairing exchange is starting.
-        lastErrorCode = null
         // A QR one-step confirmation belongs to exactly one exchange.
         confirmGate.reset()
-        teardownSession()
+        // Replacing a session is an internal teardown: it never surfaces an
+        // outcome for the session being replaced.
+        teardownSession(StopReason.Superseded)
         // Every session owns a fresh pairing exchange source. beginSession()
         // invalidates the previous one and clears a stale FAILED/COMPLETE
         // banner, so a stopped session's late watcher event can never
         // overwrite the new exchange's AWAITING_CONFIRMATION.
         val owningPairingSource = pairingRelay.beginSession().also { pairingSource = it }
-        val source = relay.beginSession().also { sessionSource = it }
+        // A pairing exchange is not a Client Session outcome (ticket 17 owns
+        // the handoff); only the authenticated session feeds the store.
+        val sink = if (configuration.pairing != null) {
+            OutcomeSink.NONE
+        } else {
+            outcomeStore.beginGeneration()
+        }
         val current = ClientSession(this, object : ClientSession.Listener {
-            override fun onStats(json: JSONObject) {
-                if (json.optString("state") == "CLOSED" && !json.isNull("close_code")) {
-                    lastErrorCode = json.optInt("close_code")
-                }
-            }
-            override fun onStateChange(state: String) {
-                // A recovered session must not leave a stale transport error
-                // for a later user Stop to resurface.
-                if (state == "READY" || state == "PLAYING") lastErrorCode = null
-                source.publish(state)
-            }
             override fun onPairingState(json: String) {
                 // Source ownership: only the current exchange may publish.
                 owningPairingSource.publishJson(json)
@@ -368,7 +357,7 @@ class ControlSessionService : Service(), SessionController {
             // Reconnect/migration diagnostics are the only evidence that the
             // startup race happened; surface them in logcat (no secrets).
             override fun onLog(line: String) { Log.i(TAG, line) }
-        })
+        }, sink)
         session = current
         current.start(configuration)
     }
@@ -401,15 +390,16 @@ class ControlSessionService : Service(), SessionController {
         }
     }
 
-    private fun teardownSession() {
+    private fun teardownSession(reason: StopReason) {
         // Invalidate the pairing exchange first: a late watcher publication
         // from the old ClientSession must not reach the new one.
         pairingSource?.close()
         pairingSource = null
-        sessionSource?.close()
-        sessionSource = null
-        session?.stop()
+        session?.stop(reason)
         session = null
+        // Only a user Stop is a visible outcome. Every internal teardown
+        // orphans the generation so a late Live/Reconnecting cannot surface.
+        if (reason != StopReason.User) outcomeStore.invalidate()
     }
 
     private fun deviceDisplayName(): String {
@@ -494,12 +484,10 @@ class ControlSessionService : Service(), SessionController {
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
-    private fun stopSession() {
-        // An explicit Stop is not an error; clear before teardown publishes
-        // the CLOSED replay so guidanceOnClosed() cannot resurface a stale
-        // close code from an earlier interruption.
-        lastErrorCode = null
-        teardownSession()
+    private fun stopSession(reason: StopReason) {
+        // An explicit Stop is not an error; the outcome store keeps the single
+        // Ended(UserStop) replayable for a recreated Activity.
+        teardownSession(reason)
         confirmGate.reset()
         pairingRelay.clear()
         pairingContext = null
@@ -509,7 +497,7 @@ class ControlSessionService : Service(), SessionController {
     }
 
     override fun onDestroy() {
-        teardownSession()
+        teardownSession(StopReason.Shutdown)
         releaseMediaSession()
         super.onDestroy()
     }

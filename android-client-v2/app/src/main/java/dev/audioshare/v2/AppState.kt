@@ -3,9 +3,6 @@ package dev.audioshare.v2
 /** The four beta screens (beta-spec "Android Client: minimal Compose UI"). */
 enum class AppScreen { HOME, PAIRING, SESSION, ABOUT }
 
-/** User-visible session state; [NONE] means no session has been requested. */
-enum class SessionPhase { NONE, CONNECTING, AUTHENTICATING, READY, PLAYING, CLOSED }
-
 /** A paired Server as the UI needs it (public credential data only). */
 data class StoredServer(
     val serverSpkiSha256Hex: String,
@@ -92,15 +89,22 @@ data class AppState(
     val addressError: String? = null,
     val rememberedAddress: String? = null,
     val storedServers: List<StoredServer> = emptyList(),
-    val sessionPhase: SessionPhase = SessionPhase.NONE,
-    val connectRequested: Boolean = false,
-    val stopping: Boolean = false,
+    /** The Service-owned single outcome; the UI never derives one. */
+    val outcome: SessionOutcome? = null,
+    /** Local button-disable while an asynchronous Stop is in flight. */
+    val stopRequested: Boolean = false,
     val pairing: PairingUi? = null,
-    val error: ErrorGuidance? = null,
     val scanActive: Boolean = false,
     val scanMessage: String? = null,
 ) {
     val hasStoredPairing: Boolean get() = storedServers.isNotEmpty()
+
+    /** The error card for a surfaced close, derived from the outcome only. */
+    val sessionError: ErrorGuidance?
+        get() = (outcome as? SessionOutcome.Ended)
+            ?.reason
+            ?.let { it as? EndReason.Surfaced }
+            ?.let { ErrorGuidanceBook.forCode(it.code) }
 
     /** Prefer the credential matching the typed address, else the first. */
     fun selectedPin(): String? {
@@ -120,8 +124,7 @@ sealed interface UiEvent {
     data class SasInputChanged(val text: String) : UiEvent
     data object ConfirmPairing : UiEvent
     data object CancelPairing : UiEvent
-    data class SessionStateChanged(val nativeState: String) : UiEvent
-    data class SessionError(val guidance: ErrorGuidance?) : UiEvent
+    data class SessionOutcomeChanged(val outcome: SessionOutcome?) : UiEvent
     data object StopRequested : UiEvent
     data class StartupLoaded(
         val rememberedAddress: String?,
@@ -136,7 +139,6 @@ sealed interface UiEvent {
     data object ScanClosed : UiEvent
     data class PairingUriRejected(val message: String) : UiEvent
     data object Retry : UiEvent
-    data object DismissError : UiEvent
 }
 
 /** Session side effects the Activity executes after reducing an event. */
@@ -154,18 +156,26 @@ data class Reduction(val state: AppState, val command: AppCommand = AppCommand.N
 
 /**
  * Auto-connect is a launch-time policy, never a boot policy: it only fires on
- * a fresh Activity launch, only with a saved credential, and only when the
- * Service is not already carrying a session (Activity recreation must not
- * start a second connection).
+ * a fresh Activity launch, only with a saved credential, and only when no
+ * Client Session owns the Service. The outcome is the only session input.
  */
 object AutoConnectPolicy {
     fun shouldAutoConnect(
         savedStatePresent: Boolean,
         hasCredential: Boolean,
-        serviceState: String,
-    ): Boolean {
-        if (savedStatePresent || !hasCredential) return false
-        return serviceState.isEmpty() || serviceState == "IDLE" || serviceState == "CLOSED"
+        outcome: SessionOutcome?,
+    ): Boolean = !savedStatePresent && hasCredential && isEligibleOutcome(outcome)
+
+    /** `null` (no session) and a terminal Ended are eligible; Live/Reconnecting are not. */
+    fun isEligibleOutcome(outcome: SessionOutcome?): Boolean = when (outcome) {
+        null -> true
+        is SessionOutcome.Ended -> {
+            val reason = outcome.reason
+            !(reason is EndReason.Surfaced &&
+                ErrorGuidanceBook.forCode(reason.code)?.requiresRepairing == true)
+        }
+        is SessionOutcome.Live,
+        is SessionOutcome.Reconnecting -> false
     }
 }
 
@@ -188,8 +198,8 @@ object AppReducer {
 
         UiEvent.AutoConnectStarted -> {
             val canStart = state.screen == AppScreen.HOME &&
-                state.sessionPhase in setOf(SessionPhase.NONE, SessionPhase.CLOSED) &&
-                state.hasStoredPairing
+                state.hasStoredPairing &&
+                AutoConnectPolicy.isEligibleOutcome(state.outcome)
             if (canStart) connect(state) else Reduction(state)
         }
 
@@ -221,22 +231,29 @@ object AppReducer {
             state.copy(
                 screen = AppScreen.HOME,
                 pairing = null,
-                connectRequested = false,
-                stopping = false,
                 scanActive = false,
                 scanMessage = null,
             ),
             AppCommand.CancelPairing,
         )
 
-        is UiEvent.SessionStateChanged -> Reduction(onNativeState(state, event.nativeState))
-
-        is UiEvent.SessionError -> Reduction(onSessionError(state, event.guidance))
+        // The outcome never chooses the screen. Live/Reconnecting stay wherever
+        // the user is; Ended stays in place with different content (ticket 06).
+        // PAIRING is therefore never pulled away by a session outcome: pairing
+        // terminal state is owned by PairingStateRelay.
+        is UiEvent.SessionOutcomeChanged -> Reduction(
+            state.copy(
+                outcome = event.outcome,
+                stopRequested = if (event.outcome is SessionOutcome.Ended) {
+                    false
+                } else {
+                    state.stopRequested
+                },
+            )
+        )
 
         UiEvent.StopRequested -> Reduction(
-            // An explicit Stop is not a failure: dismiss any banner left over
-            // from an earlier transport blip before the CLOSED replay lands.
-            state.copy(stopping = true, error = null),
+            state.copy(stopRequested = true),
             AppCommand.Stop,
         )
 
@@ -265,12 +282,11 @@ object AppReducer {
                 state.copy(
                     screen = AppScreen.SESSION,
                     storedServers = servers,
-                    sessionPhase = SessionPhase.CONNECTING,
-                    connectRequested = true,
-                    stopping = false,
+                    stopRequested = false,
                     pairing = null,
-                    error = null,
                 ),
+                // Ticket 17 replaces this handoff with the Service's one-shot
+                // PairingCompleted push; the credential is still the trigger.
                 AppCommand.ConnectStored(server.serverSpkiSha256Hex),
             )
         }
@@ -285,7 +301,6 @@ object AppReducer {
                 pairing = null,
                 scanActive = false,
                 scanMessage = null,
-                error = null,
             )
         )
 
@@ -296,7 +311,6 @@ object AppReducer {
                 screen = AppScreen.PAIRING,
                 scanActive = true,
                 scanMessage = null,
-                error = null,
             )
         )
 
@@ -322,11 +336,23 @@ object AppReducer {
         )
 
         UiEvent.Retry -> retry(state)
-
-        UiEvent.DismissError -> Reduction(state.copy(error = null))
     }
 
     private fun connect(state: AppState): Reduction {
+        val outcome = state.outcome
+        // A live or reconnecting session already owns the Service: navigate,
+        // but never issue a second ConnectStored that would tear it down.
+        if (outcome is SessionOutcome.Live || outcome is SessionOutcome.Reconnecting) {
+            return Reduction(
+                state.copy(
+                    screen = AppScreen.SESSION,
+                    stopRequested = false,
+                    pairing = null,
+                    scanActive = false,
+                    scanMessage = null,
+                )
+            )
+        }
         if (!state.hasStoredPairing) {
             return Reduction(
                 state.copy(
@@ -338,12 +364,10 @@ object AppReducer {
         return Reduction(
             state.copy(
                 screen = AppScreen.SESSION,
-                sessionPhase = SessionPhase.CONNECTING,
-                connectRequested = true,
-                stopping = false,
+                stopRequested = false,
                 pairing = null,
-                error = null,
                 scanActive = false,
+                scanMessage = null,
             ),
             AppCommand.ConnectStored(state.selectedPin()),
         )
@@ -362,9 +386,6 @@ object AppReducer {
                 addressError = null,
                 screen = AppScreen.PAIRING,
                 pairing = PairingUi(mode = "sas", phase = "STARTING"),
-                connectRequested = false,
-                stopping = false,
-                error = null,
                 scanActive = false,
                 scanMessage = null,
             ),
@@ -394,9 +415,6 @@ object AppReducer {
                 addressError = null,
                 screen = AppScreen.PAIRING,
                 pairing = PairingUi(mode = "qr", phase = "STARTING"),
-                connectRequested = false,
-                stopping = false,
-                error = null,
                 scanActive = false,
                 scanMessage = null,
             ),
@@ -465,84 +483,20 @@ object AppReducer {
         }
     }
 
-    private fun onNativeState(state: AppState, nativeState: String): AppState {
-        val phase = mapSessionPhase(nativeState, state.connectRequested)
-        val closed = phase == SessionPhase.CLOSED
-        val live = phase == SessionPhase.READY || phase == SessionPhase.PLAYING
-        val wasStopping = state.stopping
-        val screen = when {
-            state.screen == AppScreen.ABOUT -> AppScreen.ABOUT
-            state.screen == AppScreen.PAIRING -> AppScreen.PAIRING
-            closed -> AppScreen.HOME
-            state.connectRequested && state.screen == AppScreen.HOME -> AppScreen.SESSION
-            else -> state.screen
-        }
-        return state.copy(
-            screen = screen,
-            sessionPhase = phase,
-            connectRequested = if (closed) false else state.connectRequested,
-            stopping = if (closed) false else state.stopping,
-            // A recovered session makes an earlier "Connection lost" card
-            // stale; a user-requested close is never an error.
-            error = if (live || (closed && wasStopping)) null else state.error,
-        )
-    }
-
-    private fun onSessionError(state: AppState, guidance: ErrorGuidance?): AppState {
-        if (guidance == null) return state
-        // A close that completes a user Stop is not an error, even if the
-        // Service still carries the close code from an earlier interruption.
-        if (state.stopping) return state
-        // A 201/206 during pairing is the same failure the pairing snapshot
-        // reports. Keep the blocking pairing state (and its explicit rescan)
-        // instead of routing to the general error card on HOME; the native
-        // snapshot and the CLOSED close code may arrive in either order.
-        if (state.screen == AppScreen.PAIRING && (guidance.code == 201 || guidance.code == 206)) {
-            // The mode is unknown when no pairing UI survived (for example an
-            // Activity recreation at the failure instant); leave it unset so
-            // the card does not claim a QR exchange that never happened.
-            val pairing = state.pairing ?: PairingUi(mode = "", phase = "FAILED")
-            return state.copy(
-                screen = AppScreen.PAIRING,
-                error = null,
-                sessionPhase = SessionPhase.CLOSED,
-                connectRequested = false,
-                stopping = false,
-                scanActive = false,
-                pairing = pairing.copy(
-                    phase = "FAILED",
-                    errorCode = guidance.code,
-                    message = guidance.title,
-                ),
-            )
-        }
-        return state.copy(
-            screen = if (state.screen == AppScreen.ABOUT) AppScreen.ABOUT else AppScreen.HOME,
-            error = guidance,
-            sessionPhase = SessionPhase.CLOSED,
-            connectRequested = false,
-            stopping = false,
-            pairing = null,
-            scanActive = false,
-        )
-    }
-
     private fun retry(state: AppState): Reduction {
-        val error = state.error
+        val error = state.sessionError
         if (error?.requiresRepairing == true) {
             return Reduction(
                 state.copy(
                     screen = AppScreen.PAIRING,
                     pairing = null,
-                    error = null,
-                    sessionPhase = SessionPhase.CLOSED,
                 )
             )
         }
         if (state.hasStoredPairing) {
-            return connect(state.copy(error = null))
+            return connect(state)
         }
-        return Reduction(state.copy(error = null, screen = AppScreen.HOME))
+        return Reduction(state.copy(screen = AppScreen.HOME))
     }
 
     private fun formatSas(raw: String): String {
@@ -550,18 +504,6 @@ object AppReducer {
         return SasCode.format(code)
     }
 }
-
-/** IDLE is the native pre-handshake state; a requested connect is CONNECTING. */
-internal fun mapSessionPhase(nativeState: String, connectRequested: Boolean): SessionPhase =
-    when (nativeState) {
-        "CONNECTING" -> SessionPhase.CONNECTING
-        "AUTHENTICATING", "NEGOTIATING" -> SessionPhase.AUTHENTICATING
-        "READY" -> SessionPhase.READY
-        "PLAYING" -> SessionPhase.PLAYING
-        "CLOSED", "CLOSING" -> SessionPhase.CLOSED
-        "IDLE" -> if (connectRequested) SessionPhase.CONNECTING else SessionPhase.NONE
-        else -> if (connectRequested) SessionPhase.CONNECTING else SessionPhase.NONE
-    }
 
 /** Reuses the normative `addr` rules (pairing.md §4.2). */
 internal fun validateAddressInput(text: String): String? {

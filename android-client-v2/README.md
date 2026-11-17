@@ -84,7 +84,7 @@ every input prints `ALIGNED`.
 
 ## 前台 Service 设备回归
 
-工单 11 的设备工装直接观察真实 Activity 与公开的 `stateSnapshot()` / 本地
+工单 11 的设备工装直接观察真实 Activity 与公开的 `outcomeSnapshot()` / 本地
 Binder 监听接口，不模拟 native READY。测试 APK 只使用 Android 平台
 Instrumentation，不增加生产依赖，也不要求提高 API 26 baseline。
 
