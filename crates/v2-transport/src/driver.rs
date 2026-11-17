@@ -773,6 +773,17 @@ impl SessionServer {
                                 {
                                     return self.terminate(&watcher, &machine, registered, termination);
                                 }
+                                // The live pairing view is published only
+                                // after PairingResponse was written (ticket
+                                // 29). A failed write returned above, so no
+                                // local surface sees a pairing the Client did
+                                // not receive.
+                                if let Some(mut presented) = machine.take_pairing_presented() {
+                                    if let Some(pairing) = self.pairing.as_ref() {
+                                        presented.address = peer.to_string();
+                                        pairing.publish_presented(presented);
+                                    }
+                                }
                                 self.sync_registry(&machine, &event_tx, &mut registered);
                             }
                         }

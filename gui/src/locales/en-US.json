@@ -135,6 +135,8 @@
   "pairing.sasHint": "The pairing code is derived from the live connection and appears here when a phone connects. Compare it on both screens before accepting.",
   "pairing.cancel": "Cancel pairing",
   "pairing.pendingTitle": "Incoming device",
+  "pairing.liveTitle": "Device connected",
+  "pairing.liveHint": "Compare this code with the phone. The accept card appears after the phone confirms.",
   "pairing.clientId": "Client ID",
   "pairing.address": "From",
   "pairing.pairingCode": "Pairing code",
