@@ -204,7 +204,7 @@ class SessionScreenDirectionATest : RobolectricComposeTestBase() {
 
         compose.onNodeWithTag("retry").performScrollTo().performClick()
         assertTrue(events.contains(UiEvent.Retry))
-        compose.onNodeWithText("Pair your phone").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.pairing_title)).performScrollTo().assertIsDisplayed()
     }
 
     @Test

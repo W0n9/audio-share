@@ -78,7 +78,6 @@
     <!-- Error card actions -->
     <string name="error_action_retry">Retry</string>
     <string name="error_action_pair_again">Pair again</string>
-    <string name="error_no_v1_fallback">This app never falls back to v1.</string>
 
     <!-- ABOUT -->
     <string name="about_title">About this beta</string>
