@@ -240,6 +240,40 @@ class SessionLifecycleDriverTest {
         )
     }
 
+    @Test
+    fun a_retry_connect_keeps_the_reconnecting_attempt_visible() {
+        val h = Harness()
+        h.native.connectResult = false
+        h.start()
+        assertEquals(
+            SessionOutcome.Reconnecting(attempt = 1, lastCloseCode = null),
+            h.sink.outcomes.last(),
+        )
+
+        // The retry connects, but native stays in CONNECTING while the QUIC
+        // handshake runs. The attempt counter must stay visible for that whole
+        // window, not be replaced by a bare Live(CONNECTING).
+        h.native.connectResult = true
+        h.native.state = "CONNECTING"
+        h.scheduler.advanceBy(1000)
+
+        assertEquals(
+            SessionOutcome.Reconnecting(attempt = 1, lastCloseCode = null),
+            h.sink.outcomes.last(),
+            "a retry connect must not erase the reconnecting attempt",
+        )
+        assertEquals(
+            1,
+            h.sink.outcomes.count { it == SessionOutcome.Live(LivePhase.CONNECTING) },
+            "only the initial connection publishes Live(CONNECTING)",
+        )
+
+        // Once the retry gets past the handshake, the live phase resumes.
+        h.native.state = "AUTHENTICATING"
+        h.scheduler.advanceBy(250)
+        assertEquals(SessionOutcome.Live(LivePhase.AUTHENTICATING), h.sink.outcomes.last())
+    }
+
     // ---- stale generations -------------------------------------------------
 
     @Test
