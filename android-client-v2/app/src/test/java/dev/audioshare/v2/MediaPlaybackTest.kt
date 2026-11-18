@@ -1,8 +1,10 @@
 package dev.audioshare.v2
 
+import android.media.AudioFormat
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -104,6 +106,23 @@ class MediaPlaybackTest {
         val sink = FakeSink(frameBytes = 8, acceptAtMost = 12)
         player.offerForPlayback(ByteArray(32), 32, sink)
         assertEquals(8L, player.submittedBytesTotal(), "12 bytes is one whole frame")
+    }
+
+    /**
+     * Ticket 22: the Kotlin table mirrors the authoritative Rust gate
+     * (F32LE / S16LE). U8 (2), S24LE (4) and S32 (5) are unreachable in
+     * production and must not silently map to a platform encoding.
+     */
+    @Test
+    fun supported_transfer_formats_map_and_unreachable_formats_are_refused() {
+        assertEquals(AudioFormat.ENCODING_PCM_FLOAT, TransferFormats.encodingFor(1))
+        assertEquals(AudioFormat.ENCODING_PCM_16BIT, TransferFormats.encodingFor(3))
+        for (unsupported in listOf(0, 2, 4, 5)) {
+            assertNull(
+                TransferFormats.encodingFor(unsupported),
+                "sample format $unsupported must have no silent fallback",
+            )
+        }
     }
 
     private class RecordingNative : MediaPlayer.NativeMedia {

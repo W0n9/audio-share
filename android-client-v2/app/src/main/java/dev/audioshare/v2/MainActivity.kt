@@ -8,12 +8,10 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
-import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.mutableStateOf
 
@@ -27,15 +25,12 @@ import androidx.compose.runtime.mutableStateOf
 class MainActivity : ComponentActivity() {
     private val state = mutableStateOf(AppState())
     private val prefs by lazy { SharedPreferencesUiPreferences(this) }
-    private val handler = Handler(Looper.getMainLooper())
 
     private var controller: SessionController? = null
-    private var commands: SessionCommandExecutor? = null
     private var bound = false
     private var hadSavedState = false
     private var initialized = false
     private var harnessStarted = false
-    private var credentialPolling = false
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -45,21 +40,31 @@ class MainActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val service = (binder as? ControlBinder)?.service ?: return
             controller = service
-            commands = SessionCommandExecutor(service)
-            service.setStateListener { native -> runOnUiThread { onNativeState(native) } }
+            service.setOutcomeListener { outcome ->
+                runOnUiThread { dispatch(UiEvent.SessionOutcomeChanged(outcome)) }
+            }
             service.setPairingListener { snapshot -> runOnUiThread { onPairingSnapshot(snapshot) } }
+            service.setPairingCompletedListener { record ->
+                runOnUiThread { dispatch(UiEvent.PairingCompleted(record)) }
+            }
             initialize(service)
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             controller = null
-            commands = null
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // targetSdk 35+ draws edge-to-edge; targetSdk 36 keeps that behaviour.
+        // The Scaffold in AudioShareApp consumes system-bar insets, so the
+        // content and top bar stay clear of the status/navigation/gesture bars.
+        enableEdgeToEdge()
         hadSavedState = savedInstanceState != null
+        // Restore only the UI hint (screen/address/SAS input); the Service
+        // replays session, pairing, and credential state on the first bind.
+        UiStatePersistence.restore(savedInstanceState)?.let { state.value = it }
         setContent {
             AudioShareTheme {
                 AudioShareApp(
@@ -90,17 +95,23 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         if (bound) {
+            // The handoff push is one-shot, not replayable; do not retain the
+            // Activity through the Service after unbinding.
+            controller?.setPairingCompletedListener(null)
             unbindService(connection)
             bound = false
             controller = null
-            commands = null
         }
         super.onStop()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Never persist outcome, pairing, credentials, errors, or camera state.
+        UiStatePersistence.save(outState, state.value)
+    }
+
     override fun onDestroy() {
-        handler.removeCallbacksAndMessages(null)
-        credentialPolling = false
         if (isFinishing && !isChangingConfigurations) {
             startService(Intent(this, ControlSessionService::class.java).apply {
                 action = ControlSessionService.ACTION_STOP
@@ -115,8 +126,22 @@ class MainActivity : ComponentActivity() {
         val firstBind = !initialized
         initialized = true
         dispatch(UiEvent.StartupLoaded(prefs.lastAddress(), service.credentials()))
-        val snapshot = service.stateSnapshot()
-        if (snapshot.isNotEmpty()) dispatch(UiEvent.SessionStateChanged(snapshot))
+        val outcome = service.outcomeSnapshot()
+        val pairing = service.pairingSnapshot()
+
+        // Reconcile the current screen on every bind, not only the first one.
+        // The pairing-completion push is deliberately one-shot and is dropped
+        // when no Activity is bound; if the phone was stopped/backgrounded when
+        // the Server accepted the device, the handoff still happened and the
+        // authenticated session is live. Leaving PAIRING for SESSION here is
+        // the only recovery path that does not replay the one-shot event
+        // (real-device finding, 2026-11-18).
+        dispatch(
+            UiEvent.RestorationReconciled(
+                outcome = outcome,
+                pairingSnapshotPresent = pairing != null,
+            )
+        )
 
         if (firstBind) {
             requestNotificationPermissionIfNeeded()
@@ -124,7 +149,7 @@ class MainActivity : ComponentActivity() {
             if (!harnessStarted && AutoConnectPolicy.shouldAutoConnect(
                     savedStatePresent = hadSavedState,
                     hasCredential = credentials.isNotEmpty(),
-                    serviceState = snapshot,
+                    outcome = outcome,
                 )
             ) {
                 dispatch(UiEvent.AutoConnectStarted)
@@ -164,51 +189,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * The reducer's commands map one-to-one onto the [SessionController] seam.
+     * There is no Activity-scoped state between the two: stop attribution and
+     * outcome classification belong to the Service/session owner.
+     */
     private fun execute(command: AppCommand) {
-        commands?.execute(command)
-    }
-
-    private fun onNativeState(native: String) {
-        dispatch(UiEvent.SessionStateChanged(native))
-        if (native == "CLOSED") {
-            val guidance = commands?.guidanceOnClosed()
-            if (guidance != null) dispatch(UiEvent.SessionError(guidance))
+        val controller = controller ?: return
+        when (command) {
+            AppCommand.None -> Unit
+            is AppCommand.BeginQr -> controller.beginQrPairing(command.uri)
+            is AppCommand.BeginSas -> controller.beginSasPairing(command.address)
+            AppCommand.ConfirmPairing -> controller.confirmPairing()
+            AppCommand.CancelPairing -> controller.cancelPairing()
+            is AppCommand.ConnectStored -> controller.connectStored(command.serverSpkiSha256Hex)
+            AppCommand.Stop -> controller.disconnect()
         }
     }
 
     private fun onPairingSnapshot(snapshot: PairingSnapshot?) {
         dispatch(UiEvent.PairingSnapshotChanged(snapshot))
-        if (snapshot?.isComplete == true) awaitCredential(snapshot.serverSpkiSha256Hex)
-    }
-
-    /**
-     * `PairingResult(OK)` persists the credential just after the COMPLETE
-     * snapshot, so connect only once the record is actually in the store.
-     */
-    private fun awaitCredential(pin: String?) {
-        if (credentialPolling) return
-        credentialPolling = true
-        val deadline = SystemClock.uptimeMillis() + 5_000
-        val poll = object : Runnable {
-            override fun run() {
-                val service = controller
-                if (service == null) {
-                    credentialPolling = false
-                    return
-                }
-                val record = if (pin != null) {
-                    service.credentials().firstOrNull { it.serverSpkiSha256Hex == pin }
-                } else {
-                    service.credentials().lastOrNull()
-                }
-                if (record == null && SystemClock.uptimeMillis() < deadline) {
-                    handler.postDelayed(this, 100)
-                    return
-                }
-                credentialPolling = false
-                if (record != null) dispatch(UiEvent.CredentialStored(record))
-            }
-        }
-        handler.post(poll)
     }
 }

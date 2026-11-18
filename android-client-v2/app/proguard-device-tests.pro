@@ -3,10 +3,17 @@
     public dev.audioshare.v2.ControlSessionService getService();
 }
 -keepclassmembers class dev.audioshare.v2.ControlSessionService {
-    public void setStateListener(kotlin.jvm.functions.Function1);
-    public java.lang.String stateSnapshot();
+    public void setOutcomeListener(kotlin.jvm.functions.Function1);
+    public dev.audioshare.v2.SessionOutcome outcomeSnapshot();
 }
 -keep interface kotlin.jvm.functions.Function1 { *; }
+
+# Ticket 15: the device contract observes the outcome seam by name.
+-keep class dev.audioshare.v2.SessionOutcome { *; }
+-keep class dev.audioshare.v2.SessionOutcome$* { *; }
+-keep class dev.audioshare.v2.LivePhase { *; }
+-keep class dev.audioshare.v2.EndReason { *; }
+-keep class dev.audioshare.v2.EndReason$* { *; }
 
 # Ticket 20: the pairing/Keystore device contract lives in the separate test
 # APK and calls these app classes by name. Device-test builds only; production

@@ -6,7 +6,8 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // AGP 9 built-in Kotlin compiles Kotlin sources; the separate
+    // org.jetbrains.kotlin.android plugin is no longer applied.
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.protobuf)
 }
@@ -95,7 +96,9 @@ val testOnlyBuild = testSupport || deviceTests
 
 android {
     namespace = "dev.audioshare.v2"
-    compileSdk = 35
+    // Stage 3: Compose 1.12 requires compileSdk 37; targetSdk stays at 36 so
+    // ACCESS_LOCAL_NETWORK does not become a mandatory runtime permission.
+    compileSdk = 37
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -116,7 +119,7 @@ android {
         applicationId = "dev.audioshare.v2"
         // ticket 08 gate: Android 8 / API 26 baseline, same as the prototype
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         // Beta release: applicationId dev.audioshare.v2 so the beta coexists
         // with the v1 app (ticket 21 acceptance).
         versionCode = 2
@@ -178,17 +181,14 @@ android {
     // 设备回归必须覆盖经过 R8 压缩的真实 release APK。
     testBuildType = "release"
 
-    kotlin {
-        jvmToolchain(17)
-    }
-
     sourceSets {
         getByName("main") {
             // generated dir under build/ so `clean` starts without a stale
             // native lib in source dirs
             // Keep the ABI subdirectory layout (<dir>/<abi>/lib*.so); abiFilters
-            // selects which ABI is packaged.
-            jniLibs.srcDir("build/generated/jniLibs")
+            // selects which ABI is packaged. AGP 9's non-deprecated source-set
+            // API is the `directories` mutable set.
+            jniLibs.directories += "build/generated/jniLibs"
             // ONE schema, two ends: the Kotlin codegen compiles the same
             // frozen .proto the Rust side does (never a copy).
             proto {
@@ -197,9 +197,10 @@ android {
             // TEST-SUPPORT ONLY: the adb-extras lifecycle harness. Without
             // -PtestSupport the class is absent from the source set, so a
             // production build has no extras-addressing path at all.
+            // Built-in Kotlin supports Kotlin source directories only through
+            // AndroidSourceSet.kotlin; do not mirror them into java.srcDir.
             if (testSupport) {
-                java.srcDir("src/testSupport/java")
-                kotlin.srcDir("src/testSupport/java")
+                kotlin.directories += "src/testSupport/java"
             }
         }
     }
@@ -211,10 +212,27 @@ android {
     }
 }
 
+// AGP 9 built-in Kotlin moves jvmToolchain out of the android {} block; the
+// project-level Kotlin extension sets it. Application bytecode stays Java 17.
+kotlin {
+    jvmToolchain(17)
+}
+
+// Robolectric 4.18 needs JDK 21 to run the SDK 36 sandbox, while the app and
+// its tests still compile to Java 17 bytecode. Launch only the test JVMs on
+// the 21 toolchain; do not raise the compile target.
+tasks.withType<Test>().configureEach {
+    javaLauncher.set(
+        javaToolchains.launcherFor {
+            languageVersion.set(JavaLanguageVersion.of(21))
+        }
+    )
+}
+
 dependencies {
     implementation(libs.google.protobuf.kotlin.lite)
 
-    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -231,12 +249,14 @@ dependencies {
     implementation(libs.zxing.core)
 
     // Unit tests: the fixture replay harness. org.json comes from the real
-    // artifact (android.jar's stubs throw in unit tests); kotlin("test")
-    // provides the kotlin.test assertions.
+    // artifact (android.jar's stubs throw in unit tests); kotlin-test-junit
+    // provides the kotlin.test assertions and the kotlin.test.Test alias for
+    // JUnit 4. Built-in Kotlin does not apply KGP's JUnit test-framework
+    // variant selection, so name the JUnit 4 artifact explicitly.
     testImplementation(libs.junit)
     testImplementation("io.mockk:mockk:1.13.16")
     testImplementation("org.json:json:20240303")
-    testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit:${libs.versions.kotlin.get()}")
     // Compose screen tests run on the JVM under Robolectric so the custom
     // release-build Instrumentation runner stays untouched.
     testImplementation(libs.robolectric)
@@ -296,6 +316,9 @@ val nativeStripTasks = androidAbis.map { abi ->
         outputs.file(cargoOut.resolve(nativeLibName))
         inputs.dir(nativeDir.resolve("src"))
         inputs.file(nativeDir.resolve("Cargo.toml"))
+        // Linker page-size flags live here; without this input Gradle can
+        // repackage a stale 4 KB-aligned library after the flags change.
+        inputs.file(nativeDir.resolve(".cargo/config.toml"))
     }
 
     tasks.register<Exec>("stripNative$taskSuffix") {

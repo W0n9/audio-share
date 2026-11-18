@@ -14,8 +14,8 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application
-        android:label="audio-share v2"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:label="@string/app_label"
+        android:theme="@style/Theme.AudioShare">
 
         <service
             android:name=".ControlSessionService"
@@ -24,7 +24,9 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:enableOnBackInvokedCallback="true"
+            android:resizeableActivity="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -9,9 +9,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Seam 1 of ticket 21: the pure AppState/UiEvent reducer. Every test drives a
- * user-visible transition through [AppReducer.reduce] and asserts the state
- * and the session command the Activity would execute.
+ * Seam 1 of ticket 21, rewritten for ticket 15: the UI state is driven by a
+ * single [SessionOutcome]. Every test asserts a user-visible destination, the
+ * derived error card, the emitted command, or an auto-connect decision.
  */
 class AppStateReducerTest {
 
@@ -41,6 +41,8 @@ class AppStateReducerTest {
         port = address.substringAfterLast(':').toInt(),
     )
 
+    private fun stored() = StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")
+
     private fun awaitingSas(sas: String = "385 587") = PairingSnapshot(
         mode = "sas",
         phase = "AWAITING_CONFIRMATION",
@@ -58,36 +60,264 @@ class AppStateReducerTest {
         fingerprint: String = "AAAA1111 BBBB2222",
     ) = awaitingSas(sas).copy(mode = "qr", fingerprint = fingerprint)
 
+    private fun sessionState(
+        outcome: SessionOutcome?,
+        screen: AppScreen = AppScreen.SESSION,
+    ) = AppState(
+        screen = screen,
+        address = "10.0.2.2:65531",
+        storedServers = listOf(stored()),
+        outcome = outcome,
+    )
+
+    // ---- outcome -> screen (ticket 06 / 08 scenarios 1-7) -------------------
+
     @Test
-    fun connecting_session_maps_idle_to_connecting_and_tracks_native_states() {
+    fun live_phases_stay_on_the_session_screen() {
+        for (phase in LivePhase.values()) {
+            val reduced = AppReducer.reduce(
+                sessionState(SessionOutcome.Live(LivePhase.CONNECTING)),
+                UiEvent.SessionOutcomeChanged(SessionOutcome.Live(phase)),
+            )
+            assertEquals(AppScreen.SESSION, reduced.state.screen)
+            assertEquals(SessionOutcome.Live(phase), reduced.state.outcome)
+            assertEquals(AppCommand.None, reduced.command)
+        }
+    }
+
+    @Test
+    fun reconnecting_stays_on_the_session_screen_and_keeps_stop_available() {
+        val playing = sessionState(SessionOutcome.Live(LivePhase.PLAYING))
+        val reconnecting = SessionOutcome.Reconnecting(attempt = 3, lastCloseCode = 601)
+        val reduced = AppReducer.reduce(playing, UiEvent.SessionOutcomeChanged(reconnecting))
+        assertEquals(AppScreen.SESSION, reduced.state.screen)
+        assertEquals(reconnecting, reduced.state.outcome)
+        assertFalse(reduced.state.stopRequested, "Stop stays available while reconnecting")
+    }
+
+    @Test
+    fun a_reconnect_does_not_pull_the_user_back_from_home() {
+        val session = sessionState(SessionOutcome.Live(LivePhase.PLAYING))
+        val home = AppReducer.reduce(session, UiEvent.ShowHome).state
+        val reconnecting = AppReducer.reduce(
+            home,
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Reconnecting(1, null)),
+        ).state
+        assertEquals(AppScreen.HOME, reconnecting.screen)
+    }
+
+    @Test
+    fun ended_user_stop_stays_on_session_without_an_error_card() {
+        val reduced = AppReducer.reduce(
+            sessionState(SessionOutcome.Live(LivePhase.PLAYING)),
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Ended(EndReason.UserStop)),
+        )
+        assertEquals(AppScreen.SESSION, reduced.state.screen)
+        assertEquals(SessionOutcome.Ended(EndReason.UserStop), reduced.state.outcome)
+        assertNull(reduced.state.sessionError, "a user Stop is not an error")
+    }
+
+    @Test
+    fun ended_surfaced_stays_on_session_with_typed_guidance() {
+        val reduced = AppReducer.reduce(
+            sessionState(SessionOutcome.Live(LivePhase.READY)),
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Ended(EndReason.Surfaced(204))),
+        )
+        assertEquals(AppScreen.SESSION, reduced.state.screen)
+        assertEquals(204, reduced.state.sessionError?.code)
+        assertTrue(reduced.state.sessionError!!.requiresRepairing)
+    }
+
+    @Test
+    fun a_retryable_ended_outcome_shows_guidance_that_does_not_require_repairing() {
+        val reduced = AppReducer.reduce(
+            sessionState(SessionOutcome.Live(LivePhase.PLAYING)),
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Ended(EndReason.Surfaced(402))),
+        )
+        assertEquals(402, reduced.state.sessionError?.code)
+        assertFalse(reduced.state.sessionError!!.requiresRepairing)
+    }
+
+    @Test
+    fun pairing_failure_stays_on_pairing_and_has_no_session_error() {
+        val started = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531"),
+            UiEvent.StartSasPairing,
+        ).state
+        val failed = AppReducer.reduce(
+            started,
+            UiEvent.PairingSnapshotChanged(awaitingSas().copy(phase = "FAILED", errorCode = 201)),
+        ).state
+        assertEquals(AppScreen.PAIRING, failed.screen)
+        assertNull(failed.sessionError)
+        assertTrue(failed.pairing!!.isBlockingInvitationFailure)
+    }
+
+    @Test
+    fun a_session_outcome_does_not_pull_the_user_off_about() {
+        val about = AppState(screen = AppScreen.ABOUT)
+        val ended = AppReducer.reduce(
+            about,
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Ended(EndReason.Surfaced(204))),
+        ).state
+        assertEquals(AppScreen.ABOUT, ended.screen)
+        assertEquals(204, ended.sessionError?.code)
+    }
+
+    @Test
+    fun settings_is_reachable_and_an_outcome_never_pulls_the_user_away() {
+        val settings = AppReducer.reduce(AppState(), UiEvent.ShowSettings)
+        assertEquals(AppScreen.SETTINGS, settings.state.screen)
+        assertEquals(AppCommand.None, settings.command)
+
+        for (outcome in listOf(
+            SessionOutcome.Live(LivePhase.PLAYING),
+            SessionOutcome.Reconnecting(attempt = 2, lastCloseCode = 601),
+            SessionOutcome.Ended(EndReason.UserStop),
+            SessionOutcome.Ended(EndReason.Surfaced(204)),
+        )) {
+            val stayed = AppReducer.reduce(
+                settings.state,
+                UiEvent.SessionOutcomeChanged(outcome),
+            ).state
+            assertEquals(AppScreen.SETTINGS, stayed.screen, "$outcome must not navigate")
+        }
+    }
+
+    @Test
+    fun a_session_outcome_does_not_pull_the_user_off_pairing() {
+        val pairing = AppState(
+            screen = AppScreen.PAIRING,
+            address = "10.0.2.2:65531",
+            pairing = PairingUi(mode = "sas", phase = "AWAITING_CONFIRMATION"),
+        )
+        val stayed = AppReducer.reduce(
+            pairing,
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Live(LivePhase.READY)),
+        ).state
+        assertEquals(AppScreen.PAIRING, stayed.screen)
+    }
+
+    // ---- Connect / auto-connect --------------------------------------------
+
+    @Test
+    fun connect_navigates_to_session_and_requests_the_selected_credential() {
         val startup = AppReducer.reduce(
             AppState(),
             UiEvent.StartupLoaded(rememberedAddress = null, credentials = listOf(record())),
         ).state
         val requested = AppReducer.reduce(startup, UiEvent.ConnectRequested)
-        assertEquals(SessionPhase.CONNECTING, requested.state.sessionPhase)
         assertEquals(AppScreen.SESSION, requested.state.screen)
         assertEquals(AppCommand.ConnectStored("ab".repeat(32)), requested.command)
-
-        // The native side reports IDLE before authentication; the UI must keep
-        // showing CONNECTING for a connection the user asked for.
-        assertEquals(
-            SessionPhase.CONNECTING,
-            AppReducer.reduce(requested.state, UiEvent.SessionStateChanged("IDLE")).state.sessionPhase,
-        )
-        assertEquals(
-            SessionPhase.AUTHENTICATING,
-            AppReducer.reduce(requested.state, UiEvent.SessionStateChanged("AUTHENTICATING")).state.sessionPhase,
-        )
-        assertEquals(
-            SessionPhase.READY,
-            AppReducer.reduce(requested.state, UiEvent.SessionStateChanged("READY")).state.sessionPhase,
-        )
-        assertEquals(
-            SessionPhase.PLAYING,
-            AppReducer.reduce(requested.state, UiEvent.SessionStateChanged("PLAYING")).state.sessionPhase,
-        )
+        assertNull(requested.state.outcome, "the Service is the only outcome owner")
     }
+
+    @Test
+    fun connect_without_a_credential_stays_home_with_an_address_error() {
+        val requested = AppReducer.reduce(AppState(), UiEvent.ConnectRequested)
+        assertEquals(AppScreen.HOME, requested.state.screen)
+        assertNotNull(requested.state.addressError)
+        assertEquals(AppCommand.None, requested.command)
+    }
+
+    @Test
+    fun connect_while_live_only_navigates_and_never_reissues_connect_stored() {
+        for (outcome in listOf(
+            SessionOutcome.Live(LivePhase.READY),
+            SessionOutcome.Live(LivePhase.PLAYING),
+            SessionOutcome.Reconnecting(2, 601),
+        )) {
+            val live = sessionState(outcome, screen = AppScreen.HOME)
+            val reduced = AppReducer.reduce(live, UiEvent.ConnectRequested)
+            assertEquals(AppScreen.SESSION, reduced.state.screen)
+            assertEquals(AppCommand.None, reduced.command)
+            assertEquals(outcome, reduced.state.outcome)
+        }
+    }
+
+    @Test
+    fun connect_after_ended_issues_a_new_connect() {
+        for (reason in listOf(EndReason.UserStop, EndReason.Surfaced(601))) {
+            val ended = sessionState(SessionOutcome.Ended(reason))
+            val reduced = AppReducer.reduce(ended, UiEvent.ConnectRequested)
+            assertEquals(AppScreen.SESSION, reduced.state.screen)
+            assertEquals(AppCommand.ConnectStored("ab".repeat(32)), reduced.command)
+        }
+    }
+
+    @Test
+    fun stop_disables_the_button_until_the_service_publishes_ended() {
+        val playing = sessionState(SessionOutcome.Live(LivePhase.PLAYING))
+        val stopping = AppReducer.reduce(playing, UiEvent.StopRequested)
+        assertEquals(AppCommand.Stop, stopping.command)
+        assertTrue(stopping.state.stopRequested)
+        val ended = AppReducer.reduce(
+            stopping.state,
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Ended(EndReason.UserStop)),
+        ).state
+        assertFalse(ended.stopRequested, "the terminal outcome re-enables the primary action")
+    }
+
+    @Test
+    fun auto_connect_is_eligible_only_for_no_outcome_or_an_ended_session() {
+        assertTrue(AutoConnectPolicy.shouldAutoConnect(false, true, null))
+        assertTrue(
+            AutoConnectPolicy.shouldAutoConnect(
+                false, true, SessionOutcome.Ended(EndReason.UserStop),
+            )
+        )
+        assertTrue(
+            AutoConnectPolicy.shouldAutoConnect(
+                false, true, SessionOutcome.Ended(EndReason.Surfaced(601)),
+            )
+        )
+        assertFalse(
+            AutoConnectPolicy.shouldAutoConnect(
+                false, true, SessionOutcome.Ended(EndReason.Surfaced(204)),
+            ),
+            "a repairing close must not auto-retry",
+        )
+        for (outcome in listOf(
+            SessionOutcome.Live(LivePhase.CONNECTING),
+            SessionOutcome.Live(LivePhase.PLAYING),
+            SessionOutcome.Reconnecting(1, null),
+        )) {
+            assertFalse(
+                AutoConnectPolicy.shouldAutoConnect(false, true, outcome),
+                "$outcome already owns the session",
+            )
+        }
+        assertFalse(AutoConnectPolicy.shouldAutoConnect(true, true, null), "Activity recreate")
+        assertFalse(AutoConnectPolicy.shouldAutoConnect(false, false, null), "no pairing")
+    }
+
+    @Test
+    fun auto_connect_event_is_ignored_when_a_session_already_exists() {
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(null, listOf(record())),
+        ).state
+        val live = AppReducer.reduce(
+            startup,
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Live(LivePhase.PLAYING)),
+        ).state
+        val auto = AppReducer.reduce(live, UiEvent.AutoConnectStarted)
+        assertEquals(AppCommand.None, auto.command)
+        assertEquals(SessionOutcome.Live(LivePhase.PLAYING), auto.state.outcome)
+    }
+
+    @Test
+    fun auto_connect_event_starts_from_home_with_a_credential_and_no_session() {
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(null, listOf(record())),
+        ).state
+        val auto = AppReducer.reduce(startup, UiEvent.AutoConnectStarted)
+        assertEquals(AppScreen.SESSION, auto.state.screen)
+        assertEquals(AppCommand.ConnectStored("ab".repeat(32)), auto.command)
+    }
+
+    // ---- pairing / credential handoff (unchanged behaviour) ----------------
 
     @Test
     fun address_input_is_validated_with_the_pairing_payload_rules() {
@@ -145,8 +375,6 @@ class AppStateReducerTest {
         assertEquals("123 456", awaiting.state.pairing!!.sas)
         assertEquals("AAAA1111 BBBB2222", awaiting.state.pairing!!.fingerprint)
 
-        // The native watcher republishes the current snapshot every ~25 ms;
-        // duplicate snapshots must not queue a second PairingConfirm.
         val duplicate = AppReducer.reduce(
             awaiting.state,
             UiEvent.PairingSnapshotChanged(awaitingQr()),
@@ -212,7 +440,6 @@ class AppStateReducerTest {
             AppState(address = "10.0.2.2:65531"),
             UiEvent.StartQrPairing(qrUri()),
         ).state
-        // A pairing attempt can be running with the scanner still open.
         val scanning = started.copy(scanActive = true)
 
         for (code in listOf(201, 206)) {
@@ -226,65 +453,30 @@ class AppStateReducerTest {
             assertEquals(AppScreen.PAIRING, failed.state.screen)
             assertFalse(failed.state.scanActive, "the scanner closes and stays closed")
             assertTrue(failed.state.pairing!!.isBlockingInvitationFailure)
-            assertTrue(failed.state.pairing!!.requiresExplicitRescan)
             assertEquals(code, failed.state.pairing!!.errorCode)
 
-            // Only an explicit user action reopens the camera.
             val rescan = AppReducer.reduce(failed.state, UiEvent.RequestScan)
             assertTrue(rescan.state.scanActive)
         }
     }
 
     @Test
-    fun a_pairing_close_code_keeps_the_blocking_state_in_either_arrival_order() {
+    fun a_relay_clear_does_not_erase_a_blocking_pairing_failure() {
         val started = AppReducer.reduce(
             AppState(address = "10.0.2.2:65531"),
             UiEvent.StartQrPairing(qrUri()),
         ).state
-        val guidance = ErrorGuidanceBook.forCode(201)!!
-
-        val snapshotFirst = AppReducer.reduce(
+        val failed = AppReducer.reduce(
             started,
             UiEvent.PairingSnapshotChanged(awaitingQr().copy(phase = "FAILED", errorCode = 201)),
         ).state
-        val closedAfter = AppReducer.reduce(snapshotFirst, UiEvent.SessionError(guidance)).state
-        assertEquals(AppScreen.PAIRING, closedAfter.screen)
-        assertNull(closedAfter.error, "the pairing card owns the blocking copy")
-        assertTrue(closedAfter.pairing!!.isBlockingInvitationFailure)
-
-        val confirming = AppReducer.reduce(
-            started,
-            UiEvent.PairingSnapshotChanged(awaitingQr().copy(phase = "CONFIRMING")),
-        ).state
-        val closedFirst = AppReducer.reduce(confirming, UiEvent.SessionError(guidance)).state
-        assertEquals(AppScreen.PAIRING, closedFirst.screen)
-        assertNull(closedFirst.error)
-        assertEquals(201, closedFirst.pairing!!.errorCode)
-        assertTrue(closedFirst.pairing!!.isBlockingInvitationFailure)
-
-        // A relay clear after the failure must not erase the recovery state.
-        val cleared = AppReducer.reduce(closedFirst, UiEvent.PairingSnapshotChanged(null)).state
+        val cleared = AppReducer.reduce(failed, UiEvent.PairingSnapshotChanged(null)).state
+        assertEquals(AppScreen.PAIRING, cleared.screen)
         assertTrue(cleared.pairing!!.isBlockingInvitationFailure)
     }
 
     @Test
-    fun a_206_timeout_keeps_the_blocking_rescan_copy() {
-        val started = AppReducer.reduce(
-            AppState(address = "10.0.2.2:65531"),
-            UiEvent.StartQrPairing(qrUri()),
-        ).state
-        val timedOut = AppReducer.reduce(
-            started,
-            UiEvent.SessionError(ErrorGuidanceBook.forCode(206)!!),
-        ).state
-        assertEquals(AppScreen.PAIRING, timedOut.screen)
-        assertEquals(206, timedOut.pairing!!.errorCode)
-        assertTrue(timedOut.pairing!!.requiresExplicitRescan)
-        assertEquals("Pairing timed out", timedOut.pairing!!.guidance?.title)
-    }
-
-    @Test
-    fun pairing_completion_waits_for_the_credential_before_connecting() {
+    fun pairing_completion_does_not_connect_until_the_service_pushes_pairing_completed() {
         val started = AppReducer.reduce(
             AppState(address = "10.0.2.2:65531"),
             UiEvent.StartQrPairing(qrUri()),
@@ -301,11 +493,34 @@ class AppStateReducerTest {
         assertEquals(AppScreen.PAIRING, complete.state.screen)
         assertEquals(AppCommand.None, complete.command, "the credential may not be stored yet")
 
+        // Ticket 17: the credential observation is list-only; the Service owns
+        // the one authenticated connection and the one-shot push.
         val stored = AppReducer.reduce(complete.state, UiEvent.CredentialStored(record()))
-        assertEquals(AppScreen.SESSION, stored.state.screen)
-        assertEquals(SessionPhase.CONNECTING, stored.state.sessionPhase)
+        assertEquals(AppScreen.PAIRING, stored.state.screen, "CredentialStored must not navigate")
         assertTrue(stored.state.hasStoredPairing)
-        assertEquals(AppCommand.ConnectStored("ab".repeat(32)), stored.command)
+        assertTrue(stored.state.pairing!!.isComplete, "the visible COMPLETE state is untouched")
+        assertEquals(AppCommand.None, stored.command, "the UI must not start a second connection")
+    }
+
+    @Test
+    fun pairing_completed_navigates_to_session_and_updates_the_server_list_without_connecting() {
+        val complete = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531"),
+            UiEvent.StartSasPairing,
+        ).let {
+            AppReducer.reduce(
+                it.state,
+                UiEvent.PairingSnapshotChanged(awaitingSas().copy(phase = "COMPLETE")),
+            ).state
+        }
+
+        val completed = AppReducer.reduce(complete, UiEvent.PairingCompleted(record()))
+
+        assertEquals(AppScreen.SESSION, completed.state.screen)
+        assertEquals(listOf(stored()), completed.state.storedServers)
+        assertNull(completed.state.pairing)
+        assertFalse(completed.state.stopRequested)
+        assertEquals(AppCommand.None, completed.command, "the Service already started the only session")
     }
 
     @Test
@@ -316,116 +531,91 @@ class AppStateReducerTest {
         )
         assertEquals(AppScreen.PAIRING, rejected.state.screen)
         assertTrue(rejected.state.pairing!!.isFailed)
-        assertNotNull(rejected.state.pairing!!.message)
+        assertNotNull(rejected.state.pairing!!.notice)
         assertEquals(AppCommand.None, rejected.command)
     }
 
     @Test
-    fun terminal_errors_show_guidance_and_repairing_retry_opens_pairing() {
-        val startup = AppReducer.reduce(
-            AppState(),
-            UiEvent.StartupLoaded(null, listOf(record())),
-        ).state
-        val connected = AppReducer.reduce(startup, UiEvent.ConnectRequested).state
-        val revoked = ErrorGuidanceBook.forCode(204)!!
-        val failed = AppReducer.reduce(connected, UiEvent.SessionError(revoked)).state
-        assertEquals(AppScreen.HOME, failed.screen)
-        assertEquals(204, failed.error?.code)
-        assertEquals(SessionPhase.CLOSED, failed.sessionPhase)
-        assertTrue(failed.error!!.requiresRepairing)
+    fun cancel_pairing_returns_home_without_confirming() {
+        val started = AppReducer.reduce(AppState(address = "10.0.2.2:65531"), UiEvent.StartSasPairing).state
+        val cancelled = AppReducer.reduce(started, UiEvent.CancelPairing)
+        assertEquals(AppScreen.HOME, cancelled.state.screen)
+        assertNull(cancelled.state.pairing)
+        assertEquals(AppCommand.CancelPairing, cancelled.command)
+    }
 
-        val retry = AppReducer.reduce(failed, UiEvent.Retry)
+    @Test
+    fun starting_a_pairing_drops_the_superseded_outcome_so_home_connect_works() {
+        // BeginSas/BeginQr make the Service supersede the live Client Session.
+        // The UI must drop its copy then, not only on CancelPairing; otherwise
+        // leaving PAIRING by Home keeps a stale Live and Connect only navigates.
+        val live = sessionState(SessionOutcome.Live(LivePhase.PLAYING), screen = AppScreen.HOME)
+
+        val pairing = AppReducer.reduce(live, UiEvent.StartSasPairing).state
+        assertNull(pairing.outcome, "the pairing start supersedes the previous session")
+
+        val home = AppReducer.reduce(pairing, UiEvent.ShowHome).state
+        assertEquals(AppScreen.HOME, home.screen)
+        assertNull(home.outcome)
+
+        val connect = AppReducer.reduce(home, UiEvent.ConnectRequested)
+        assertEquals(
+            AppCommand.ConnectStored("ab".repeat(32)),
+            connect.command,
+            "Connect after leaving pairing must start a session",
+        )
+    }
+
+    @Test
+    fun cancel_pairing_drops_the_stale_outcome_so_connect_starts_a_new_session() {
+        // A live session that was superseded by another pairing exchange leaves
+        // no session behind; cancelling must not keep its replayable outcome.
+        val pairingOverLiveSession = AppState(
+            screen = AppScreen.PAIRING,
+            address = "10.0.2.2:65531",
+            storedServers = listOf(stored()),
+            outcome = SessionOutcome.Live(LivePhase.PLAYING),
+            stopRequested = true,
+            pairing = PairingUi(mode = "sas", phase = "AWAITING_CONFIRMATION"),
+        )
+
+        val cancelled = AppReducer.reduce(pairingOverLiveSession, UiEvent.CancelPairing)
+
+        assertEquals(AppScreen.HOME, cancelled.state.screen)
+        assertNull(
+            cancelled.state.outcome,
+            "PairingCancel tears the session down; HOME must not keep its outcome",
+        )
+        assertFalse(cancelled.state.stopRequested)
+
+        val connect = AppReducer.reduce(cancelled.state, UiEvent.ConnectRequested)
+        assertEquals(
+            AppCommand.ConnectStored("ab".repeat(32)),
+            connect.command,
+            "Connect after the cancel must start a session, not merely navigate",
+        )
+    }
+
+    // ---- retry --------------------------------------------------------------
+
+    @Test
+    fun retry_after_a_repairing_close_opens_pairing() {
+        val ended = sessionState(SessionOutcome.Ended(EndReason.Surfaced(204)))
+        val retry = AppReducer.reduce(ended, UiEvent.Retry)
         assertEquals(AppScreen.PAIRING, retry.state.screen)
-        assertNull(retry.state.error)
+        assertNull(retry.state.pairing)
         assertEquals(AppCommand.None, retry.command)
     }
 
     @Test
-    fun retryable_network_error_reconnects_without_repairing() {
-        val startup = AppReducer.reduce(
-            AppState(),
-            UiEvent.StartupLoaded(null, listOf(record())),
-        ).state
-        val connected = AppReducer.reduce(startup, UiEvent.ConnectRequested).state
-        val dropped = AppReducer.reduce(
-            connected,
-            UiEvent.SessionError(ErrorGuidanceBook.forCode(601)!!),
-        ).state
-        val retry = AppReducer.reduce(dropped, UiEvent.Retry)
+    fun retry_after_a_retryable_close_reconnects_without_repairing() {
+        val ended = sessionState(SessionOutcome.Ended(EndReason.Surfaced(601)))
+        val retry = AppReducer.reduce(ended, UiEvent.Retry)
+        assertEquals(AppScreen.SESSION, retry.state.screen)
         assertEquals(AppCommand.ConnectStored("ab".repeat(32)), retry.command)
-        assertEquals(SessionPhase.CONNECTING, retry.state.sessionPhase)
     }
 
-    @Test
-    fun stop_returns_home_and_shows_closed() {
-        val startup = AppReducer.reduce(
-            AppState(),
-            UiEvent.StartupLoaded(null, listOf(record())),
-        ).state
-        val connected = AppReducer.reduce(startup, UiEvent.ConnectRequested).state
-        val playing = AppReducer.reduce(connected, UiEvent.SessionStateChanged("PLAYING")).state
-        val stopping = AppReducer.reduce(playing, UiEvent.StopRequested)
-        assertEquals(AppCommand.Stop, stopping.command)
-        assertTrue(stopping.state.stopping)
-        val closed = AppReducer.reduce(stopping.state, UiEvent.SessionStateChanged("CLOSED")).state
-        assertEquals(AppScreen.HOME, closed.screen)
-        assertEquals(SessionPhase.CLOSED, closed.sessionPhase)
-    }
-
-    @Test
-    fun explicit_stop_clears_a_stale_connection_lost_banner() {
-        val startup = AppReducer.reduce(
-            AppState(),
-            UiEvent.StartupLoaded(null, listOf(record())),
-        ).state
-        val connected = AppReducer.reduce(startup, UiEvent.ConnectRequested).state
-        val playing = AppReducer.reduce(connected, UiEvent.SessionStateChanged("PLAYING")).state
-        // A previous network blip left a 601 guidance card on screen even
-        // though the session recovered; an explicit Stop must not carry it to
-        // HOME.
-        val stale = playing.copy(error = ErrorGuidanceBook.forCode(601))
-        val stopping = AppReducer.reduce(stale, UiEvent.StopRequested).state
-        assertNull(stopping.error, "Stop dismisses the stale banner immediately")
-        val closed = AppReducer.reduce(stopping, UiEvent.SessionStateChanged("CLOSED")).state
-        assertEquals(AppScreen.HOME, closed.screen)
-        assertNull(closed.error, "HOME must not show Connection lost after a user Stop")
-    }
-
-    @Test
-    fun a_recovered_session_dismisses_the_stale_connection_lost_banner() {
-        // The user saw an earlier 601, then the bounded-backoff reconnect
-        // succeeded in the background; the banner is no longer true.
-        val stale = AppState(
-            screen = AppScreen.HOME,
-            sessionPhase = SessionPhase.CLOSED,
-            error = ErrorGuidanceBook.forCode(601),
-        )
-        val recovered = AppReducer.reduce(stale, UiEvent.SessionStateChanged("PLAYING")).state
-        assertNull(recovered.error, "a live session dismisses the stale error card")
-        assertEquals(SessionPhase.PLAYING, recovered.sessionPhase)
-
-        // A later user Stop (including the notification path, which never
-        // dispatches StopRequested) must still land on a clean HOME.
-        val stopped = AppReducer.reduce(recovered, UiEvent.SessionStateChanged("CLOSED")).state
-        assertEquals(AppScreen.HOME, stopped.screen)
-        assertNull(stopped.error)
-    }
-
-    @Test
-    fun a_close_error_arriving_after_the_user_stop_is_not_shown() {
-        val playing = AppState(
-            screen = AppScreen.SESSION,
-            sessionPhase = SessionPhase.PLAYING,
-            connectRequested = true,
-        )
-        val stopping = AppReducer.reduce(playing, UiEvent.StopRequested).state
-        val late = AppReducer.reduce(
-            stopping,
-            UiEvent.SessionError(ErrorGuidanceBook.forCode(601)),
-        ).state
-        assertNull(late.error, "a close caused by the user's own Stop is not an error")
-        assertTrue(late.stopping, "the reducer keeps waiting for the CLOSED replay")
-    }
+    // ---- startup ------------------------------------------------------------
 
     @Test
     fun startup_restores_the_last_address_and_chooses_its_saved_server() {
@@ -440,38 +630,5 @@ class AppStateReducerTest {
 
         val typedOther = AppReducer.reduce(loaded, UiEvent.AddressChanged("other.example:65531")).state
         assertEquals(other.serverSpkiSha256Hex, typedOther.selectedPin())
-    }
-
-    @Test
-    fun auto_connect_is_only_for_a_launch_with_a_credential() {
-        assertTrue(AutoConnectPolicy.shouldAutoConnect(false, true, "IDLE"))
-        assertTrue(AutoConnectPolicy.shouldAutoConnect(false, true, "CLOSED"))
-        assertFalse(AutoConnectPolicy.shouldAutoConnect(true, true, "IDLE"), "Activity recreate")
-        assertFalse(AutoConnectPolicy.shouldAutoConnect(false, false, "IDLE"), "no pairing")
-        assertFalse(AutoConnectPolicy.shouldAutoConnect(false, true, "CONNECTING"), "already live")
-        assertFalse(AutoConnectPolicy.shouldAutoConnect(false, true, "AUTHENTICATING"), "already live")
-        assertFalse(AutoConnectPolicy.shouldAutoConnect(false, true, "READY"), "already live")
-        assertFalse(AutoConnectPolicy.shouldAutoConnect(false, true, "PLAYING"), "already live")
-    }
-
-    @Test
-    fun auto_connect_event_is_ignored_when_a_session_is_already_active() {
-        val startup = AppReducer.reduce(
-            AppState(),
-            UiEvent.StartupLoaded(null, listOf(record())),
-        ).state
-        val live = AppReducer.reduce(startup, UiEvent.SessionStateChanged("PLAYING")).state
-        val auto = AppReducer.reduce(live, UiEvent.AutoConnectStarted)
-        assertEquals(AppCommand.None, auto.command)
-        assertEquals(SessionPhase.PLAYING, auto.state.sessionPhase)
-    }
-
-    @Test
-    fun cancel_pairing_returns_home_without_confirming() {
-        val started = AppReducer.reduce(AppState(address = "10.0.2.2:65531"), UiEvent.StartSasPairing).state
-        val cancelled = AppReducer.reduce(started, UiEvent.CancelPairing)
-        assertEquals(AppScreen.HOME, cancelled.state.screen)
-        assertNull(cancelled.state.pairing)
-        assertEquals(AppCommand.CancelPairing, cancelled.command)
     }
 }

@@ -1,0 +1,205 @@
+name: Android CI
+
+# Automated gates for the wire-protocol-v2 Android Client (android-client-v2).
+#
+# Scope (ticket 09 §3 / spec "Build and toolchain"):
+#   Job A — JVM/Robolectric tests on JDK 21 (Robolectric SDK 36).
+#   Job B — test-signed dual-ABI release build + artifact/contract assertions.
+#
+# This workflow intentionally runs NO emulator or physical device. The
+# `EMULATOR` matrix (zh-CN, 200% font, TalkBack, API 26 smoke, rotation/process
+# death, Light/Dark screenshots) and the real-device beta-critical paths are
+# manual evidence per ticket 08; CI results only strengthen those gates and
+# never replace them.
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches:
+      - "refactor/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: android-client-v2
+
+jobs:
+  jvm-tests:
+    name: JVM / Robolectric tests (JDK 21, no native)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # The app compiles to Java 17 bytecode (jvmToolchain(17)); Robolectric
+      # 4.18 runs the SDK 36 sandbox on JDK 21. Install both. setup-java puts
+      # the LAST version on PATH, so list 21 last: it is the Gradle default
+      # JVM, while 17 stays discoverable as a toolchain.
+      - name: Set up JDK 17 toolchain + JDK 21 (default)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install build-tools, platform, and NDK
+        run: |
+          sdkmanager --install \
+            "build-tools;36.0.0" \
+            "platforms;android-37.0" \
+            "ndk;27.2.12479018"
+
+      # -PnoNative=true skips cargo/NDK linking; the JVM suite needs no .so.
+      # The first run downloads Robolectric's ~210 MB android-all-instrumented
+      # jar for SDK 36. That download is expected, not a hang.
+      - name: Run JVM tests
+        run: ./gradlew test -PnoNative=true --console=plain
+
+      - name: Upload JVM test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-jvm-test-reports
+          path: |
+            android-client-v2/app/build/reports/tests/
+            android-client-v2/app/build/test-results/
+          if-no-files-found: ignore
+
+  build-assertions:
+    name: Test-signed release build + artifact assertions (JDK 17)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history for the .proto base comparison.
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Rust stable (Android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install build-tools, platform, and NDK
+        run: |
+          sdkmanager --install \
+            "build-tools;36.0.0" \
+            "platforms;android-37.0" \
+            "ndk;27.2.12479018"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: android-client-v2/native -> target
+
+      # The wire schema is frozen for the beta refactor. A PR (or pushed
+      # commit) that edits protos/ fails here before any artifact is built.
+      - name: Assert .proto is unchanged from the base
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ github.base_ref }}" ]]; then
+            base_ref="${{ github.base_ref }}"
+            git fetch --no-tags origin "$base_ref"
+            range="origin/${base_ref}...HEAD"
+          elif [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            range="${{ github.event.before }}...HEAD"
+          else
+            range="HEAD^...HEAD"
+          fi
+          echo "checking protos/ against ${range}"
+          git diff --exit-code "$range" -- protos/
+
+      # native/.cargo/config.toml contains developer-machine NDK paths; the
+      # release workflow overrides them the same way without editing the file.
+      - name: Build test-signed dual-ABI release APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK/aarch64-linux-android26-clang"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$NDK/x86_64-linux-android26-clang"
+          export CC_aarch64_linux_android="$NDK/aarch64-linux-android26-clang"
+          export AR_aarch64_linux_android="$NDK/llvm-ar"
+          export CC_x86_64_linux_android="$NDK/x86_64-linux-android26-clang"
+          export AR_x86_64_linux_android="$NDK/llvm-ar"
+          ./gradlew assembleRelease assembleReleaseAndroidTest \
+            -PandroidAbis=arm64-v8a,x86_64 \
+            -PtestSupport=true -PdeviceTests=true --console=plain
+
+      - name: Assert ABIs, JNI symbols, 16 KB alignment, and signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          abi_dir=app/build/generated/jniLibs
+          so_arm64="$abi_dir/arm64-v8a/libaudio_share_client_v2_native.so"
+          so_x86_64="$abi_dir/x86_64/libaudio_share_client_v2_native.so"
+          apk=app/build/outputs/apk/release/app-release.apk
+          test_apk=app/build/outputs/apk/androidTest/release/app-release-androidTest.apk
+          readelf="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          zipalign="$ANDROID_HOME/build-tools/36.0.0/zipalign"
+          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+
+          test -f "$so_arm64"
+          test -f "$so_x86_64"
+          test -f "$apk"
+          test -f "$test_apk"
+
+          # Both ABIs are packaged in the one universal APK.
+          unzip -l "$apk" | grep -q 'lib/arm64-v8a/libaudio_share_client_v2_native.so'
+          unzip -l "$apk" | grep -q 'lib/x86_64/libaudio_share_client_v2_native.so'
+
+          # The JNI entry points keep the ClientNative package/symbol prefix.
+          for so in "$so_arm64" "$so_x86_64"; do
+            "$readelf" --dyn-syms --wide "$so" |
+              grep -q 'Java_dev_audioshare_v2_ClientNative_'
+          done
+
+          # 16 KB page compatibility: LOAD alignment + RELRO + zipalign -P 16.
+          ./scripts/check-elf-alignment.sh "$so_arm64" "$so_x86_64" "$apk"
+          "$zipalign" -c -P 16 4 "$apk"
+
+          # Explicit test builds must carry the debug certificate, never the
+          # dedicated production/beta key.
+          "$apksigner" verify --print-certs "$apk" > /tmp/app-certs.txt
+          "$apksigner" verify --print-certs "$test_apk" > /tmp/test-certs.txt
+          grep -qi 'Android Debug' /tmp/app-certs.txt
+          grep -qi 'Android Debug' /tmp/test-certs.txt
+
+      # A default (testSupport=false) build must have no fixture identities or
+      # test-harness addressing path. deviceTests=true only switches signing to
+      # the debug key (test builds must never carry the production cert); it
+      # does not add the testSupport source set.
+      - name: Assert no test-support path in a default build
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew assembleRelease \
+            -PandroidAbis=arm64-v8a,x86_64 \
+            -PtestSupport=false -PdeviceTests=true -PnoNative=true --console=plain
+          apk=app/build/outputs/apk/release/app-release.apk
+          if unzip -p "$apk" 'classes*.dex' | strings |
+            grep -qE 'TestSupportHarness|pinnedSpki|serverKey|smoke-client'; then
+            echo 'error: test-support path found in a -PtestSupport=false APK' >&2
+            exit 1
+          fi

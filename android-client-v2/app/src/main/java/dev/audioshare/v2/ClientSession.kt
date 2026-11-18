@@ -7,13 +7,17 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
-import org.json.JSONObject
+import android.os.ParcelFileDescriptor
+import dev.audioshare.v2.session.MediaController
+import dev.audioshare.v2.session.MediaControllerFactory
+import dev.audioshare.v2.session.NativeSession
+import dev.audioshare.v2.session.NetworkMonitor
+import dev.audioshare.v2.session.Scheduler
+import dev.audioshare.v2.session.SessionEngine
+import dev.audioshare.v2.session.SessionLifecycleDriver
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.min
 import kotlin.random.Random
 
@@ -50,237 +54,57 @@ internal object SessionStartupPolicy {
 }
 
 /**
- * Kotlin-side session owner (ticket 08): JNI handle lifecycle, bounded
- * exponential backoff with ±20% jitter, and the ConnectivityManager
- * NetworkCallback migration (rebind with fd handoff, fallback to
- * teardown + backoff reconnect).
+ * Android adapter for the JVM-testable [SessionLifecycleDriver] (ticket 22).
+ * It owns every platform object — Context, ConnectivityManager, Handler,
+ * [MediaPlayer] and [ClientNative] — while the driver owns session timing,
+ * generation and teardown order.
  *
- * Ticket 14 adds playback: [MediaPlayer] owns the native ring and the
- * AudioTrack, attached once per native session and started only while the
- * session can carry media.
+ * [bindHintEnabled] is false by default: the UDP bind hint pins the socket to
+ * the active network's interface, which breaks routing when the server is
+ * reached through a VPN overlay (e.g. tailscale) because the route lives on
+ * tun, not on the physical network the hint names. Device finding, 2026-11-11.
  */
 class ClientSession(
-    private val appContext: Context,
-    private val listener: Listener,
-) {
-    interface Listener {
-        /** Called on a worker thread whenever counters/state are refreshed. */
-        fun onStats(json: JSONObject)
-
-        /** Called when the user-visible session state name changes. */
-        fun onStateChange(state: String)
-
-        /** Info/error lines for a log view. */
-        fun onLog(line: String)
-
-        /** Pairing display material/phase changed (native JSON). */
-        fun onPairingState(json: String) {}
-
-        /** `PairingResult(OK)` arrived; persist this public credential. */
-        fun onCredential(json: String) {}
-    }
-
-    companion object {
-        private const val TAG = "ClientSession"
-        /** §6.3 backoff policy lives in [ReconnectPolicy]. */
-        private const val STATS_POLL_MS = 250L
-    }
-
-    private val handle = AtomicLong(0)
-    private val running = AtomicBoolean(false)
-    private val lifecycleLock = Any()
-    private var lifecycle: Any? = null
-    private val currentState = SessionStateRelay(listener::onStateChange)
-    private var stateSource: SessionStateRelay.Source? = null
-    private var mediaPlayer: MediaPlayer? = null
-
-    /** 最近一次实际 native 状态；停止后保持 CLOSED，不暴露已失效的 handle。 */
-    fun stateSnapshot(): String = currentState.snapshot()
-
-    private var configuration = SessionConfiguration("", 0, "", "", "")
-    /** Reconnect attempt counter; reset on start(). */
-    private val backoffAttempts = AtomicLong(0)
-
-    // ---- migration scaffold -----------------------------------------------
-    private val connectivityManager =
-        appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    private var networkCallbackRegistered = false
-    private val executor = Executors.newSingleThreadExecutor()
-    private val mainHandler = Handler(Looper.getMainLooper())
-
-    @Volatile private var activeNetworkAddress: String? = null
-    @Volatile private var registeredCallback: ConnectivityManager.NetworkCallback? = null
-
-    fun start(configuration: SessionConfiguration) {
-        synchronized(lifecycleLock) {
-            if (running.getAndSet(true)) return
-            this.configuration = configuration
-            backoffAttempts.set(0)
-            val lifetime = Any().also { lifecycle = it }
-            val source = currentState.beginSession().also { stateSource = it }
-            registerNetworkCallback(lifetime)
-            startSession(lifetime, source)
-        }
-    }
-
-    fun stop() {
-        val player: MediaPlayer?
-        val h = synchronized(lifecycleLock) {
-            if (!running.getAndSet(false)) return
-            lifecycle = null
-            unregisterNetworkCallback()
-            val current = handle.getAndSet(0)
-            // 先使状态来源失效，再清理 native；进行中的旧读不能发布，
-            // 已排队的创建/重连任务也属于旧生命周期。
-            stateSource?.close()
-            stateSource = null
-            // The playback owner must stop before the native session dies.
-            player = stopMediaLocked()
-            current
-        }
-        player?.stop()
-        if (h != 0L) {
-            ClientNative.stop(h)
-            ClientNative.destroy(h)
-        }
-        listener.onLog("stopped by user")
-    }
-
-    fun isRunning() = running.get()
-
-    /**
-     * Automation/testing switch: when false the UDP socket uses system
-     * default routing instead of the NetworkCallback's local-address hint.
-     * The hint pins the socket to the active network's interface — which
-     * breaks routing when the server is reached through a VPN overlay
-     * (e.g. tailscale), because the route to it lives on tun, not on the
-     * physical network the hint names. Device finding, 2026-11-11.
-     */
+    appContext: Context,
+    private val listener: SessionEngine.Listener,
+    /** Generation-scoped outcome owner supplied by the Service. */
+    sink: OutcomeSink,
+) : SessionEngine {
     @Volatile var bindHintEnabled = false
 
-    // ---- session lifecycle with backoff ------------------------------------
+    private val connectivityManager =
+        appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-    /** 调用者持有 lifecycleLock；数值 handle 不能独自标识事件来源。 */
-    private fun ownsSessionLocked(lifetime: Any, source: SessionStateRelay.Source, h: Long): Boolean =
-        running.get() && lifecycle === lifetime && stateSource === source && handle.get() == h
+    private val driver = SessionLifecycleDriver(
+        native = ClientNativeSession(listener),
+        network = AndroidNetworkMonitor(connectivityManager),
+        scheduler = AndroidScheduler(),
+        mediaFactory = MediaControllerFactory {
+            MediaPlayerController(MediaPlayer(NativeMediaBridge))
+        },
+        sink = sink,
+        listener = listener,
+        random = { Random.nextDouble() },
+        bindHintEnabled = { bindHintEnabled },
+    )
 
-    private fun startSession(lifetime: Any, previousSource: SessionStateRelay.Source) {
-        executor.execute {
-            val configuration = synchronized(lifecycleLock) {
-                if (!ownsSessionLocked(lifetime, previousSource, 0)) return@execute
-                this.configuration
-            }
-            val h = createNativeSession(configuration)
-            if (h == 0L) {
-                synchronized(lifecycleLock) {
-                    if (ownsSessionLocked(lifetime, previousSource, 0)) {
-                        listener.onLog("createSession failed; retrying after backoff")
-                    }
-                }
-                scheduleReconnect(0, previousSource, lifetime)
-                return@execute
-            }
-            val connected = synchronized(lifecycleLock) {
-                if (!ownsSessionLocked(lifetime, previousSource, 0)) {
-                    null
-                } else {
-                    handle.set(h)
-                    val source = currentState.beginSession().also { stateSource = it }
-                    val bind = if (bindHintEnabled) (activeNetworkAddress ?: "") else ""
-                    listener.onLog("connect(host=${configuration.host} port=${configuration.port} bind=$bind)")
-                    // The ring is attached once per native session, before any
-                    // media can arrive; playback starts with the session and
-                    // simply idles until native reports PLAYING.
-                    val player = MediaPlayer(NativeMediaBridge).also { it.attach(h) }
-                    synchronized(lifecycleLock) { mediaPlayer = player }
-                    player.start()
-                    if (configuration.pairing != null) {
-                        // Pairing results must be captured even when the
-                        // Server closes right after PairingResult (as-cmd pair
-                        // exits by design), so this watcher does not depend on
-                        // the state source or the 250 ms stats poll.
-                        startPairingWatcher(h, lifetime)
-                    }
-                    source to ClientNative.connect(h, bind)
-                }
-            }
-            if (connected == null) {
-                // createSession 执行期间，STOP 或其他尝试已取得所有权。
-                ClientNative.destroy(h)
-                return@execute
-            }
-            val (source, ok) = connected
-            if (!ok) {
-                synchronized(lifecycleLock) {
-                    if (ownsSessionLocked(lifetime, source, h)) {
-                        listener.onLog("native connect() rejected; retrying after backoff")
-                    }
-                }
-                scheduleReconnect(h, source, lifetime)
-                return@execute
-            }
-            startStatsPolling(h, source, lifetime)
-        }
-    }
+    override fun start(configuration: SessionConfiguration) = driver.start(configuration)
 
-    /**
-     * Dedicated pairing-state/credential watcher. Native pairing state is a
-     * one-shot result that must survive transport teardown: `as-cmd pair`
-     * closes the connection immediately after `PairingResult(OK)`, so relying
-     * on the state relay (which is invalidated by reconnect) would lose the
-     * credential.
-     */
-    private fun startPairingWatcher(h: Long, lifetime: Any) {
-        val watcher = Thread {
-            var credentialSeen = false
-            var failed = false
-            // This watcher must outlive a native transport close so that
-            // PairingResult(OK) + credential are still captured (as-cmd pair
-            // closes immediately after writing them). It is tied to the
-            // ClientSession lifetime, NOT to a numeric handle: a reconnect
-            // clears the handle before the 25 ms poll observes the credential.
-            // Stale pairing snapshots are independently rejected by the
-            // Service's PairingStateRelay source ownership.
-            fun ownsLifetime(): Boolean = synchronized(lifecycleLock) {
-                running.get() && lifecycle === lifetime
-            }
-            while (ownsLifetime()) {
-                val pairingJson = ClientNative.getPairingState(h)
-                if (!pairingJson.isNullOrEmpty() && ownsLifetime()) {
-                    listener.onPairingState(pairingJson)
-                    failed = pairingJson.contains("\"phase\":\"FAILED\"")
-                }
-                val credential = ClientNative.getCredentialSummary(h)
-                if (!credential.isNullOrEmpty()) {
-                    if (!credentialSeen && ownsLifetime()) {
-                        credentialSeen = true
-                        listener.onCredential(credential)
-                    }
-                    break
-                }
-                val state = ClientNative.getState(h) ?: ""
-                if (state.isEmpty() && pairingJson.isNullOrEmpty()) break
-                if (failed) break
-                if (state.isNotEmpty() && state != "IDLE" &&
-                    state != "AUTHENTICATING" && state != "NEGOTIATING" &&
-                    state != "READY" && state != "PLAYING" && pairingJson.isNullOrEmpty()
-                ) {
-                    break
-                }
-                Thread.sleep(25)
-            }
-        }
-        watcher.name = "v2-pairing-watch"
-        watcher.start()
-    }
+    override fun stop(reason: StopReason) = driver.stop(reason)
 
-    /**
-     * Pick the native constructor for this configuration:
-     * - a pairing session sends `PairingRequest`;
-     * - the explicit test-support path keeps the native fixture identity;
-     * - production reconnection passes the Keystore-backed signer.
-     */
-    private fun createNativeSession(configuration: SessionConfiguration): Long {
+    override fun confirmPairing(): Boolean = driver.confirmPairing()
+}
+
+/**
+ * Pick the native constructor for this configuration:
+ * - a pairing session sends `PairingRequest`;
+ * - the explicit test-support path keeps the native fixture identity;
+ * - production reconnection passes the Keystore-backed signer.
+ */
+private class ClientNativeSession(
+    private val listener: SessionEngine.Listener,
+) : NativeSession {
+    override fun create(configuration: SessionConfiguration): Long {
         val pairing = configuration.pairing
         if (pairing != null) {
             val signer = configuration.signer
@@ -325,248 +149,120 @@ class ClientSession(
         )
     }
 
-    /** Confirm a verified pairing; true when the confirmation was queued. */
-    fun confirmPairing(): Boolean {
-        val h = handle.get()
-        return h != 0L && ClientNative.confirmPairing(h)
+    override fun connect(handle: Long, bindLocalAddress: String): Boolean =
+        ClientNative.connect(handle, bindLocalAddress)
+
+    override fun stop(handle: Long) = ClientNative.stop(handle)
+
+    override fun destroy(handle: Long) = ClientNative.destroy(handle)
+
+    override fun getState(handle: Long): String? = ClientNative.getState(handle)
+
+    override fun getStats(handle: Long): String? = ClientNative.getStats(handle)
+
+    override fun rebind(handle: Long, fd: Int): Boolean = ClientNative.rebind(handle, fd)
+
+    override fun getPairingState(handle: Long): String? = ClientNative.getPairingState(handle)
+
+    override fun getCredentialSummary(handle: Long): String? =
+        ClientNative.getCredentialSummary(handle)
+
+    override fun confirmPairing(handle: Long): Boolean = ClientNative.confirmPairing(handle)
+}
+
+/** Production [Scheduler]: one worker for create/connect, main Handler for backoff. */
+private class AndroidScheduler : Scheduler {
+    private val worker = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "v2-session-worker")
+    }
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    override fun execute(task: () -> Unit) {
+        worker.execute(task)
     }
 
-    /** The current native pairing JSON, or null when not pairing/unknown. */
-    fun pairingStateJson(): String? {
-        val h = handle.get()
-        if (h == 0L) return null
-        val json = ClientNative.getPairingState(h)
-        return if (json.isNullOrEmpty()) null else json
+    override fun postDelayed(delayMs: Long, task: () -> Unit) {
+        mainHandler.postDelayed({ execute(task) }, delayMs)
     }
 
-    private fun scheduleReconnect(h: Long, source: SessionStateRelay.Source, lifetime: Any) {
-        synchronized(lifecycleLock) {
-            if (!ownsSessionLocked(lifetime, source, h)) return
-            handle.set(0)
-            source.close()
-            val attempt = backoffAttempts.getAndIncrement()
-            val delay = ReconnectPolicy.backoffDelayMs(attempt, Random.nextDouble())
-            listener.onLog("reconnect attempt ${attempt + 1} in ${delay}ms")
-            mainHandler.postDelayed({
-                synchronized(lifecycleLock) {
-                    if (ownsSessionLocked(lifetime, source, 0)) startSession(lifetime, source)
-                }
-            }, delay)
-        }
-        if (h != 0L) ClientNative.destroy(h)
-        stopMedia()
-    }
-
-    /** Stop and drop the playback owner for the current native session. */
-    private fun stopMedia() {
-        val player = synchronized(lifecycleLock) { stopMediaLocked() }
-        player?.stop()
-    }
-
-    /** Caller holds [lifecycleLock]; returns the detached player to stop outside the lock. */
-    private fun stopMediaLocked(): MediaPlayer? {
-        val current = mediaPlayer
-        mediaPlayer = null
-        return current
-    }
-
-    private fun startStatsPolling(
-        h: Long,
-        source: SessionStateRelay.Source,
-        lifetime: Any,
-    ) {
-        val poller = Thread {
-            val myHandle = h
-            // §6.3: only retryable closes (and transport loss with no Close,
-            // close_code null) reconnect. Pairing/admin/security closes surface
-            // to the user and must not auto-retry.
-            var reconnectOnExit = true
+    override fun loop(name: String, tick: () -> Long?, onExit: () -> Unit) {
+        val thread = Thread({
             try {
-                while (synchronized(lifecycleLock) { ownsSessionLocked(lifetime, source, myHandle) }) {
-                    val state = source.poll { ClientNative.getState(myHandle) ?: "" }
-                    if (state.isEmpty() && !source.isCurrent()) break
-                    if (state == "READY") {
-                        // §6.3：仅当前会话可以重置 backoff。
-                        synchronized(lifecycleLock) {
-                            if (ownsSessionLocked(lifetime, source, myHandle)) backoffAttempts.set(0)
-                        }
-                    }
-                    val statsJson = ClientNative.getStats(myHandle)
-                    if (statsJson.isNullOrEmpty()) continue
-                    try {
-                        val obj = JSONObject(statsJson)
-                        synchronized(lifecycleLock) {
-                            if (ownsSessionLocked(lifetime, source, myHandle)) listener.onStats(obj)
-                        }
-                        if (state == "CLOSED") {
-                            val closeCode =
-                                if (obj.isNull("close_code")) null else obj.optInt("close_code")
-                            reconnectOnExit = ReconnectPolicy.shouldReconnect(closeCode)
-                            synchronized(lifecycleLock) {
-                                if (ownsSessionLocked(lifetime, source, myHandle)) {
-                                    listener.onLog(
-                                        if (reconnectOnExit) {
-                                            "session closed (close_code=$closeCode); reconnecting"
-                                        } else {
-                                            "session closed (close_code=$closeCode); no automatic reconnect"
-                                        }
-                                    )
-                                }
-                            }
-                            break
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "stats parse: ${e.message}")
-                    }
-                    Thread.sleep(STATS_POLL_MS)
+                while (true) {
+                    val nextDelay = tick() ?: break
+                    Thread.sleep(nextDelay)
                 }
             } catch (_: InterruptedException) {
+                // Session teardown interrupts naturally through ownership.
             } finally {
-                stopMedia()
-                if (reconnectOnExit) scheduleReconnect(myHandle, source, lifetime)
+                onExit()
             }
-        }
-        poller.name = "v2-stats-poll"
-        poller.start()
+        }, name)
+        thread.start()
     }
+}
 
-    // ---- NetworkCallback migration -----------------------------------------
-    //
-    // We observe the default network; on onAvailable we create a
-    // DatagramSocket bound to the new Network (Network.bindSocket — real
-    // route pinning) and hand its raw fd to ClientNative.rebind(), which
-    // calls quinn Endpoint::rebind(), moving the connection to the new
-    // socket live. If the rebind fails, the pre-existing teardown +
-    // bounded-backoff reconnect is the fallback (noBindHint: the fallback
-    // session starts without a bind hint). onLost always tears down: the
-    // route is gone, there is nothing to rebind to.
-    //
-    // FD OWNERSHIP: the fd (and its owning socket/pfd objects) transfers to
-    // native on the rebind call — never close them on the JVM side.
+/**
+ * Production [NetworkMonitor]. The fd handoff stays here:
+ * [Network.bindSocket] route-pins a fresh DatagramSocket and
+ * [ParcelFileDescriptor.fromDatagramSocket] wraps its existing fd (no dup).
+ * After the rebind call native owns the fd; the JVM side never closes it.
+ */
+private class AndroidNetworkMonitor(
+    private val connectivityManager: ConnectivityManager,
+) : NetworkMonitor {
+    private var callback: ConnectivityManager.NetworkCallback? = null
 
-    private fun registerNetworkCallback(lifetime: Any) {
-        if (networkCallbackRegistered) return
+    override fun register(listener: NetworkMonitor.Listener) {
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
-        val callback = object : ConnectivityManager.NetworkCallback() {
+        val registered = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                val address = localAddressOf(network)
-                val current = synchronized(lifecycleLock) {
-                    if (!running.get() || lifecycle !== lifetime) return
-                    activeNetworkAddress = address
-                    listener.onLog("network available: $activeNetworkAddress")
-                    stateSource?.let { it to handle.get() }
-                } ?: return
-                val (source, h) = current
-                when (SessionStartupPolicy.availabilityAction(h, h != 0L && nativeEndpointConnected(h))) {
-                    AvailabilityAction.IN_FLIGHT_OWNS_START -> {
-                        // 注册回调会立即投递当前网络。此时启动/重连任务已在队列中，
-                        // 额外 scheduleReconnect 会关闭来源并制造第二条连接。
-                        listener.onLog("network available before a native session; in-flight start owns it")
-                        return
-                    }
-                    AvailabilityAction.AWAIT_ENDPOINT -> {
-                        // handle 已存在但 QUIC endpoint 尚未写入（握手进行中）。
-                        // 此刻 rebind 必定返回 "no endpoint (not connected)"，
-                        // 其 teardown 回退会杀掉正在进行的握手。
-                        listener.onLog("network available before the QUIC endpoint exists; skipping rebind")
-                        return
-                    }
-                    AvailabilityAction.REBIND -> Unit
-                }
-                if (tryRebind(h, network)) return
-                // rebind 可与 STOP/重连交错；只清理本次来源。
-                teardownForReconnect("network change (rebind fallback)", h, source, lifetime)
+                listener.onAvailable(AndroidLink(network, localAddressOf(network)))
             }
 
             override fun onLost(network: Network) {
-                val current = synchronized(lifecycleLock) {
-                    if (!running.get() || lifecycle !== lifetime) return
-                    listener.onLog("network lost")
-                    stateSource?.let { it to handle.get() }
-                } ?: return
-                val (source, h) = current
-                if (h != 0L) teardownForReconnect("network lost", h, source, lifetime)
+                listener.onLost(AndroidLink(network, localAddress = null))
             }
         }
-        connectivityManager.registerNetworkCallback(request, callback)
-        registeredCallback = callback
-        networkCallbackRegistered = true
+        connectivityManager.registerNetworkCallback(request, registered)
+        callback = registered
     }
 
-    /**
-     * True only after the native run has stored the QUIC endpoint (the
-     * `connected` stat is set immediately after it). rebind() before that
-     * point fails with "no endpoint (not connected)".
-     */
-    private fun nativeEndpointConnected(h: Long): Boolean = try {
-        val stats = ClientNative.getStats(h)
-        !stats.isNullOrEmpty() && JSONObject(stats).optBoolean("connected", false)
-    } catch (e: Exception) {
-        Log.w(TAG, "read connected stat: ${e.message}")
-        false
+    override fun unregister() {
+        callback?.let { connectivityManager.unregisterNetworkCallback(it) }
+        callback = null
     }
 
-    /**
-     * Try the migration path: a socket route-pinned to [network], handed to
-     * native rebind() as a raw fd. Returns true when the endpoint was
-     * rebound (fd ownership moved to native either way).
-     */
-    private fun tryRebind(h: Long, network: Network): Boolean {
-        return try {
+    /** Best effort: IPv4 default-route address first, then any address. */
+    private fun localAddressOf(network: Network): String? = try {
+        val lp = connectivityManager.getLinkProperties(network) ?: return null
+        lp.linkAddresses.firstOrNull { it.address is Inet4Address }?.address?.hostAddress
+            ?: lp.linkAddresses.firstOrNull { it.address is Inet6Address }?.address?.hostAddress
+    } catch (_: Exception) {
+        null
+    }
+
+    private class AndroidLink(
+        private val network: Network,
+        override val localAddress: String?,
+    ) : NetworkMonitor.Link {
+        override fun openFd(): Int? {
             val socket = java.net.DatagramSocket()
             network.bindSocket(socket) // route-pin to this Network
-            // fromDatagramSocket wraps the socket's existing fd (no dup);
-            // after the handoff below, native owns the fd and neither the
-            // socket nor the pfd may be closed on the JVM side.
-            val pfd = android.os.ParcelFileDescriptor.fromDatagramSocket(socket)
-            val fd = pfd.fd
-            val ok = ClientNative.rebind(h, fd)
-            if (ok) {
-                listener.onLog("endpoint rebound to network $network (fd $fd)")
-            } else {
-                listener.onLog("native rebind failed; falling back to reconnect")
-            }
-            ok
-        } catch (e: Exception) {
-            Log.w(TAG, "rebind: ${e.message}")
-            listener.onLog("rebind failed: ${e.message}")
-            false
+            return ParcelFileDescriptor.fromDatagramSocket(socket).fd
         }
     }
+}
 
-    /** Teardown of the current session, then the bounded-backoff reconnect. */
-    private fun teardownForReconnect(reason: String, h: Long, source: SessionStateRelay.Source, lifetime: Any) {
-        synchronized(lifecycleLock) {
-            if (!ownsSessionLocked(lifetime, source, h)) return
-            if (h != 0L) ClientNative.stop(h)
-            listener.onLog("teardown for reconnect: $reason")
-        }
-        scheduleReconnect(h, source, lifetime)
-    }
-
-    private fun unregisterNetworkCallback() {
-        if (!networkCallbackRegistered) return
-        registeredCallback?.let { connectivityManager.unregisterNetworkCallback(it) }
-        registeredCallback = null
-        networkCallbackRegistered = false
-    }
-
-    /**
-     * Best-effort local address of [network]: prefers the IPv4 address of
-     * the default route; falls back to any address. Migration scaffold only.
-     */
-    private fun localAddressOf(network: Network): String? {
-        return try {
-            val lp = connectivityManager.getLinkProperties(network) ?: return null
-            lp.linkAddresses.firstOrNull { it.address is Inet4Address }?.address?.hostAddress
-                ?: lp.linkAddresses.firstOrNull { it.address is Inet6Address }?.address?.hostAddress
-        } catch (e: Exception) {
-            Log.w(TAG, "localAddressOf: ${e.message}")
-            null
-        }
-    }
+/** [MediaController] over one session's [MediaPlayer] and its native ring. */
+private class MediaPlayerController(
+    private val player: MediaPlayer,
+) : MediaController {
+    override fun attach(handle: Long): Boolean = player.attach(handle)
+    override fun start() = player.start()
+    override fun stop() = player.stop()
 }
 
 /**

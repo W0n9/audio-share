@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark window theme: follows the system DayNight setting. -->
+<resources>
+    <style name="Theme.AudioShare" parent="android:Theme.Material.NoActionBar" />
+</resources>
