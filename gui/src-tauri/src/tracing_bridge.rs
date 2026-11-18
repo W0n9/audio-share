@@ -6,8 +6,9 @@
 //! could not see pairing, session, `ClientClosed(701)`, or revoke lines in
 //! `server.log` even though `as-cmd` emitted them.
 //!
-//! Only the Server's own targets are forwarded (`v2_transport`, `v2_runtime`);
-//! QUIC/TLS internals stay out of the operator log.
+//! Only the structured session events (`v2_transport::session_log`) are
+//! forwarded; the transport's own connection chatter and QUIC/TLS internals
+//! stay out of the operator log.
 
 use std::sync::Arc;
 
@@ -32,10 +33,11 @@ impl BridgeLayer {
         Self { sink }
     }
 
-    /// Only the Server's own crates are operator-relevant; third-party QUIC
-    /// and TLS events would flood `server.log`.
+    /// Only the structured session events are operator-relevant; the
+    /// transport's connection chatter and third-party QUIC/TLS events would
+    /// flood `server.log`.
     fn target_allowed(target: &str) -> bool {
-        target.starts_with("v2_transport") || target.starts_with("v2_runtime")
+        target.starts_with("v2_transport::session_log")
     }
 }
 
@@ -107,7 +109,11 @@ pub fn install() {
         Level::ERROR => crate::logging::error(line),
         _ => crate::logging::info(line),
     }));
-    let _ = tracing::subscriber::set_global_default(registry().with(layer));
+    if let Err(error) = tracing::subscriber::set_global_default(registry().with(layer)) {
+        // Never fail silently: without the bridge the Windows 701 evidence
+        // path produces no session lines in `server.log`.
+        crate::logging::error(format!("cannot install the tracing bridge: {error}"));
+    }
 }
 
 #[cfg(test)]
@@ -156,9 +162,11 @@ mod tests {
     }
 
     #[test]
-    fn third_party_targets_are_not_forwarded() {
+    fn other_targets_are_not_forwarded() {
         let lines = with_capture(|| {
             tracing::info!(target: "quinn::connection", "noise");
+            tracing::info!(target: "v2_transport::driver", "connection chatter");
+            tracing::info!(target: "v2_runtime::runtime", "session ended");
         });
         assert!(lines.is_empty(), "{lines:?}");
     }
@@ -166,7 +174,7 @@ mod tests {
     #[test]
     fn debug_events_are_not_forwarded() {
         let lines = with_capture(|| {
-            tracing::debug!(target: "v2_transport::driver", "detail");
+            tracing::debug!(target: "v2_transport::session_log", "detail");
         });
         assert!(lines.is_empty(), "{lines:?}");
     }

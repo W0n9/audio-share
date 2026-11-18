@@ -1,10 +1,11 @@
 //! Structured, secret-free v2 session lifecycle events (ticket 33).
 //!
 //! Support must be able to verify pairing, session establishment,
-//! `ClientClosed(701)`, revocation, and identity reset from `server.log`. Every
-//! event carries the public `client_id` (first 8 bytes of SHA-256 of the Client
-//! public key, lowercase hex, pairing.md §8.1) and the §6 code where one
-//! applies.
+//! `ClientClosed(701)`, revocation, and identity reset from `server.log`.
+//! Events carry only the public identifiers each one needs: the canonical
+//! `client_id` (first 8 bytes of SHA-256 of the Client public key, lowercase
+//! hex, pairing.md §8.1) for pairing and sessions, the §6 `code` for a closed
+//! session, and the public SPKI `fingerprint` for an identity reset.
 //!
 //! # Red line
 //!
@@ -13,16 +14,7 @@
 //! the test suite drives a live SAS pairing and asserts none of it appears in
 //! the captured log (`tests/session_log.rs`).
 
-use crate::auth;
 use crate::schema::PairingMode;
-
-/// The canonical public `client_id` for a Client public key, lowercase hex.
-pub fn client_id_hex(public_key: &[u8]) -> String {
-    auth::client_id(public_key)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
 
 /// The local spelling of a pairing mode (`qr` / `sas`); never a wire value.
 pub fn pairing_mode(mode: PairingMode) -> &'static str {

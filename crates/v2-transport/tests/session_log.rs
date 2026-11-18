@@ -383,11 +383,17 @@ fn pairing_request(mode: PairingMode, nonce: Vec<u8>, key: &SigningKey) -> Pairi
     }
 }
 
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Complete the Client half of the pairing proof and return the frame plus the
+/// hex of the two secret values, so the redaction test can look for them.
 async fn confirm_pairing(
     connection: &quinn::Connection,
     response: &PairingResponse,
     key: &SigningKey,
-) -> PairingConfirm {
+) -> (PairingConfirm, String, String) {
     let context = pairing::binding_context(
         PairingMode::try_from(response.pairing_mode).expect("mode"),
         &response.pairing_nonce,
@@ -404,15 +410,20 @@ async fn confirm_pairing(
         .export_keying_material(&mut binding, PAIRING_EXPORTER_LABEL, &context)
         .expect("TLS exporter");
     let proof: Signature = key.sign(&auth::build_pairing_proof_input(&binding));
-    PairingConfirm {
-        request_id: response.request_id,
-        binding_echo: binding.to_vec(),
-        client_proof: proof.to_vec(),
-    }
+    (
+        PairingConfirm {
+            request_id: response.request_id,
+            binding_echo: binding.to_vec(),
+            client_proof: proof.to_vec(),
+        },
+        hex(&binding),
+        hex(&proof.to_vec()),
+    )
 }
 
-/// Drive a QR pairing up to the operator decision. Returns the control stream
-/// plus the nonce and the verified-but-undecided approval.
+/// Drive a QR pairing up to the operator decision. Returns the control stream,
+/// the verified-but-undecided approval, and the secret values the log must
+/// never contain.
 async fn verified_pairing(
     server: &TestServer,
     nonce: Vec<u8>,
@@ -422,6 +433,8 @@ async fn verified_pairing(
     quinn::SendStream,
     quinn::RecvStream,
     pairing::ApprovalRequest,
+    String,
+    String,
 ) {
     let connection = connect(server.address).await;
     let (mut send, mut recv) = connection.open_bi().await.expect("control stream");
@@ -434,11 +447,8 @@ async fn verified_pairing(
         Some(frame::Body::PairingResponse(response)) => response,
         other => panic!("expected PairingResponse, got {other:?}"),
     };
-    send_frame(
-        &mut send,
-        frame::Body::PairingConfirm(confirm_pairing(&connection, &response, key).await),
-    )
-    .await;
+    let (confirm, binding_hex, proof_hex) = confirm_pairing(&connection, &response, key).await;
+    send_frame(&mut send, frame::Body::PairingConfirm(confirm)).await;
     let mut request = None;
     for _ in 0..200 {
         if let Some(pending) = server.core().pending_approvals().into_iter().next() {
@@ -448,7 +458,7 @@ async fn verified_pairing(
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     let request = request.expect("the verified pairing never surfaced");
-    (connection, send, recv, request)
+    (connection, send, recv, request, binding_hex, proof_hex)
 }
 
 /// Pairing presented, accepted, and declined are visible without the SAS or
@@ -465,7 +475,7 @@ async fn pairing_events_are_logged_without_pairing_secrets() {
         .core()
         .begin_qr(&format!("127.0.0.1:{}", server.address.port()));
     let nonce = invitation.nonce.clone();
-    let (_connection, _send, mut recv, request) =
+    let (_connection, _send, mut recv, request, _binding, _proof) =
         verified_pairing(&server, nonce.clone(), &key).await;
     let sas = request.sas.clone().expect("the operator sees the SAS");
     server.core().decline(request.approval_id);
@@ -480,7 +490,7 @@ async fn pairing_events_are_logged_without_pairing_secrets() {
     let invitation = server
         .core()
         .begin_qr(&format!("127.0.0.1:{}", server.address.port()));
-    let (_connection, _send, mut recv, request) =
+    let (_connection, _send, mut recv, request, binding_hex, proof_hex) =
         verified_pairing(&server, invitation.nonce, &key).await;
     server.core().approve(request.approval_id);
     match read_frame(&mut recv).await.body {
@@ -495,12 +505,25 @@ async fn pairing_events_are_logged_without_pairing_secrets() {
     assert_logged(&text, "event=pairing.declined");
     assert_logged(&text, "event=pairing.accepted");
 
-    // Red line: UUIDs/SAS/nonce/binding/proof must never reach the log.
+    // Red line: SAS, nonce, binding, proof, and the private key must never
+    // reach the log, and no binary/raw-audio bytes may appear.
     assert!(!text.contains(&sas), "the SAS leaked into the log:\n{text}");
-    let nonce_hex: String = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
+    let nonce_hex = hex(&nonce);
     assert!(
         !text.contains(&nonce_hex),
         "the pairing nonce leaked into the log:\n{text}"
+    );
+    assert!(
+        !text.contains(&binding_hex),
+        "the binding leaked into the log:\n{text}"
+    );
+    assert!(
+        !text.contains(&proof_hex),
+        "the client proof leaked into the log:\n{text}"
+    );
+    assert!(
+        !text.contains(CLIENT_SCALAR),
+        "the private key scalar leaked into the log:\n{text}"
     );
     assert!(
         !text.contains("binding"),
@@ -509,6 +532,10 @@ async fn pairing_events_are_logged_without_pairing_secrets() {
     assert!(
         !text.contains("client_proof"),
         "the client proof reached the log:\n{text}"
+    );
+    assert!(
+        !text.contains('\0'),
+        "binary/raw-audio bytes reached the log:\n{text}"
     );
 }
 

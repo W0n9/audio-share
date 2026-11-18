@@ -450,10 +450,10 @@ fn run_clients(action: ClientsAction) -> Result<(), String> {
             println!("new connections are refused immediately; a live session closes within 5 s");
             // Ticket 33: offline admin runs without the truncating server
             // logger, so append the audit line instead of installing it.
-            append_audit_line(&format!(
-                "event=client.revoked client_id={}",
-                revoked.client_id
-            ));
+            append_line(
+                &paths::paths().log,
+                &format!("event=client.revoked client_id={}", revoked.client_id),
+            );
             Ok(())
         }
     }
@@ -484,11 +484,14 @@ fn run_identity(cli: &Cli, action: IdentityAction) -> Result<(), String> {
     let identity = pairing::reset_identity(&config, &store).map_err(|error| error.to_string())?;
     println!("identity reset complete; old pairings invalidated");
     println!("Server fingerprint: {}", identity.fingerprint());
-    // Ticket 33: append-only audit; see `append_audit_line`.
-    append_audit_line(&format!(
-        "event=identity.reset fingerprint={}",
-        identity.fingerprint()
-    ));
+    // Ticket 33: append-only audit; the server logger would truncate.
+    append_line(
+        &paths::paths().log,
+        &format!(
+            "event=identity.reset fingerprint={}",
+            identity.fingerprint()
+        ),
+    );
     Ok(())
 }
 
@@ -924,18 +927,13 @@ fn init_logging(verbose: bool) {
     tracing::trace!("verbose logging enabled (trace level)");
 }
 
-/// Append one audit line to `server.log` without truncating it.
+/// Append one `[info]` line to `path`, keeping everything already there.
 ///
 /// Offline admin commands (`clients revoke`, `identity reset`) refuse to run
 /// while a Server owns the store, so no live writer competes for the file.
 /// They must not call [`init_logging`] — that truncates the file and would
 /// erase the previous session's events. Support still needs these events in
 /// the same log, so the line is appended directly.
-fn append_audit_line(message: &str) {
-    append_line(&paths::paths().log, message);
-}
-
-/// Append one `[info]` line to `path`, keeping everything already there.
 fn append_line(path: &Path, message: &str) {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
