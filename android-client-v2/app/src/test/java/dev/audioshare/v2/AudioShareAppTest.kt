@@ -1,6 +1,9 @@
 package dev.audioshare.v2
 
+import android.content.Context
+import android.content.pm.ActivityInfo
 import androidx.activity.ComponentActivity
+import androidx.annotation.StringRes
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -8,14 +11,12 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
-import android.content.Context
-import android.content.pm.ActivityInfo
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
 import org.junit.Test
@@ -29,21 +30,29 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
  * Seam 3 of ticket 21: key Compose screens under Robolectric. Assertions are
- * on user-visible text/state and emitted events, never pixels. The screen is
- * driven by the same pure reducer the app uses.
+ * on user-visible text/state and emitted events, never pixels. Copy is looked
+ * up from resources so the same tests hold for en and zh-CN.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AudioShareAppTest {
 
-    private val compose = createComposeRule()
+    private val compose = createAndroidComposeRule<ComponentActivity>()
 
     private val events = mutableListOf<UiEvent>()
+
+    private val context: Context get() = ApplicationProvider.getApplicationContext()
+
+    private fun str(@StringRes id: Int): String = context.getString(id)
+
+    private fun reconnect(attempt: Int): String =
+        context.resources.getQuantityString(R.plurals.reconnect_attempt, attempt, attempt)
 
     /**
      * `createComposeRule()` launches a bare ComponentActivity. `ui-test-manifest`
@@ -55,15 +64,15 @@ class AudioShareAppTest {
     private val registerHostActivity = TestRule { base: Statement, _: Description ->
         object : Statement() {
             override fun evaluate() {
-                val context = ApplicationProvider.getApplicationContext<Context>()
+                val ctx = ApplicationProvider.getApplicationContext<Context>()
                 val info = ActivityInfo().apply {
                     name = ComponentActivity::class.java.name
-                    packageName = context.packageName
-                    applicationInfo = context.applicationInfo
+                    packageName = ctx.packageName
+                    applicationInfo = ctx.applicationInfo
                     enabled = true
                     exported = false
                 }
-                shadowOf(context.packageManager).addOrUpdateActivity(info)
+                shadowOf(ctx.packageManager).addOrUpdateActivity(info)
                 base.evaluate()
             }
         }
@@ -92,7 +101,9 @@ class AudioShareAppTest {
     fun home_accepts_a_server_address_and_rejects_a_bare_host() {
         start(AppState())
         compose.onNodeWithTag("address-input").performTextReplacement("10.0.2.2")
-        compose.onNodeWithText("missing port").assertIsDisplayed()
+        compose.onNodeWithTag("address-error")
+            .assertIsDisplayed()
+            .assertTextContains(str(R.string.address_error_missing_port))
         compose.onNodeWithTag("address-input").performTextReplacement("10.0.2.2:65531")
         compose.onNodeWithTag("address-input").assertTextContains("10.0.2.2:65531")
         compose.onNodeWithTag("pair-code").assertIsEnabled()
@@ -101,10 +112,10 @@ class AudioShareAppTest {
     @Test
     fun home_offers_pairing_choices_and_opens_the_pairing_screen() {
         start(AppState(address = "10.0.2.2:65531", addressError = null))
-        compose.onNodeWithText("Pair with code").assertIsDisplayed()
-        compose.onNodeWithText("Scan QR code").assertIsDisplayed()
-        compose.onNodeWithTag("pair-code").performClick()
-        compose.onNodeWithText("Pair your phone").assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.home_pair_code)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.home_scan_qr)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("pair-code").performScrollTo().performClick()
+        compose.onNodeWithText(str(R.string.pairing_title)).performScrollTo().assertIsDisplayed()
         assertTrue(events.contains(UiEvent.StartSasPairing))
     }
 
@@ -112,17 +123,18 @@ class AudioShareAppTest {
     fun terminal_error_shows_guidance_and_retry_opens_repairing_pairing() {
         start(
             AppState(
-                error = ErrorGuidanceBook.forCode(204),
-                sessionPhase = SessionPhase.CLOSED,
+                screen = AppScreen.SESSION,
+                outcome = SessionOutcome.Ended(EndReason.Surfaced(204)),
                 storedServers = listOf(
                     StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")
                 ),
             )
         )
-        compose.onNodeWithText("This device was revoked").assertIsDisplayed()
-        compose.onNodeWithText("Pair again").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.error_204_title)).assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.error_action_pair_again))
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("retry").performScrollTo().performClick()
-        compose.onNodeWithText("Pair your phone").assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.pairing_title)).assertIsDisplayed()
     }
 
     @Test
@@ -134,13 +146,55 @@ class AudioShareAppTest {
                 storedServers = listOf(
                     StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")
                 ),
-                sessionPhase = SessionPhase.PLAYING,
+                outcome = SessionOutcome.Live(LivePhase.PLAYING),
             )
         )
-        compose.onNodeWithTag("session-state").assertTextContains("PLAYING")
+        compose.onNodeWithTag("session-outcome")
+            .assertTextContains(str(R.string.session_phase_playing_title))
         compose.onNodeWithTag("stop").assertIsEnabled().performClick()
         assertTrue(events.contains(UiEvent.StopRequested))
         compose.onNodeWithTag("stop").assertIsNotEnabled()
+    }
+
+    @Test
+    fun reconnecting_is_shown_in_place_with_the_attempt_number() {
+        start(
+            AppState(
+                screen = AppScreen.SESSION,
+                address = "10.0.2.2:65531",
+                outcome = SessionOutcome.Reconnecting(attempt = 3, lastCloseCode = 601),
+            )
+        )
+        compose.onNodeWithTag("session-outcome").assertTextContains(reconnect(3))
+        compose.onNodeWithTag("stop").assertIsEnabled()
+    }
+
+    @Test
+    fun ended_user_stop_is_visibly_different_from_a_surfaced_error() {
+        start(
+            AppState(
+                screen = AppScreen.SESSION,
+                address = "10.0.2.2:65531",
+                outcome = SessionOutcome.Ended(EndReason.UserStop),
+            )
+        )
+        compose.onNodeWithTag("ended-user-stop").assertIsDisplayed()
+        compose.onNodeWithTag("connect-again").assertIsDisplayed()
+        compose.onNodeWithTag("error-title").assertDoesNotExist()
+    }
+
+    @Test
+    fun ended_surfaced_shows_the_error_card_without_the_user_stop_copy() {
+        start(
+            AppState(
+                screen = AppScreen.SESSION,
+                address = "10.0.2.2:65531",
+                outcome = SessionOutcome.Ended(EndReason.Surfaced(601)),
+            )
+        )
+        compose.onNodeWithTag("error-title").assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.error_601_title)).assertIsDisplayed()
+        compose.onNodeWithTag("ended-user-stop").assertDoesNotExist()
     }
 
     @Test
@@ -182,7 +236,9 @@ class AudioShareAppTest {
             )
         )
         compose.onNodeWithTag("qr-auto-confirm").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Pairing with AAAA1111 BBBB2222…").assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.pairing_awaiting_qr_title)).assertIsDisplayed()
+        compose.onNodeWithTag("pairing-fingerprint")
+            .assertTextContains("AAAA1111 BBBB2222")
         compose.onNodeWithTag("confirm-pairing").assertDoesNotExist()
         compose.onNodeWithTag("pairing-sas-input").assertDoesNotExist()
         compose.onNodeWithText("123 456").performScrollTo().assertIsDisplayed()
@@ -203,7 +259,7 @@ class AudioShareAppTest {
             )
         )
         compose.onNodeWithTag("pairing-confirming").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Confirmed, waiting for the Server to accept.").assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.pairing_confirming_title)).assertIsDisplayed()
         compose.onNodeWithTag("confirm-pairing").assertDoesNotExist()
     }
 
@@ -222,26 +278,92 @@ class AudioShareAppTest {
                 ),
             )
         )
-        compose.onNodeWithText("Pairing was rejected").assertIsDisplayed()
-        compose.onNodeWithText(
-            "The pairing failed or its invitation is no longer valid. Ask the Server to start " +
-                "a new pairing, then use the fresh QR code or pairing code. The Server must " +
-                "still accept this device.",
-        ).assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.error_201_title))
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.error_201_guidance))
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("scan-again").performScrollTo().assertIsDisplayed().performClick()
         assertTrue(events.contains(UiEvent.RequestScan))
+    }
+
+    @Test
+    fun home_opens_settings_which_lists_the_paired_server_and_version() {
+        start(
+            AppState(
+                address = "10.0.2.2:65531",
+                storedServers = listOf(
+                    StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")
+                ),
+            )
+        )
+        compose.onNodeWithTag("settings").performClick()
+        compose.onNodeWithTag("settings-title").assertIsDisplayed()
+        compose.onNodeWithText("Pixel").assertIsDisplayed()
+        compose.onNodeWithTag("settings-version")
+            .assertTextContains("0.2.0-beta", substring = true)
+        assertTrue(events.contains(UiEvent.ShowSettings))
+        compose.onNodeWithTag("settings-about").performScrollTo().performClick()
+        assertTrue(events.contains(UiEvent.ShowAbout))
+    }
+
+    @Test
+    fun settings_without_a_pairing_shows_an_empty_state() {
+        start(AppState(screen = AppScreen.SETTINGS))
+        compose.onNodeWithTag("settings-empty").assertIsDisplayed()
+    }
+
+    @Test
+    fun system_back_from_pairing_cancels_and_returns_home() {
+        start(
+            AppState(
+                screen = AppScreen.PAIRING,
+                address = "10.0.2.2:65531",
+                pairing = PairingUi(mode = "sas", phase = "AWAITING_CONFIRMATION"),
+            )
+        )
+        compose.runOnUiThread {
+            compose.activity.onBackPressedDispatcher.onBackPressed()
+        }
+        compose.onNodeWithTag("home-title").assertIsDisplayed()
+        assertTrue(events.contains(UiEvent.BackPressed))
+        assertFalse(events.contains(UiEvent.StopRequested), "Back is not Stop")
+    }
+
+    @Test
+    fun system_back_from_session_returns_home_without_stopping_playback() {
+        start(
+            AppState(
+                screen = AppScreen.SESSION,
+                address = "10.0.2.2:65531",
+                outcome = SessionOutcome.Live(LivePhase.PLAYING),
+            )
+        )
+        compose.runOnUiThread {
+            compose.activity.onBackPressedDispatcher.onBackPressed()
+        }
+        compose.onNodeWithTag("home-title").assertIsDisplayed()
+        assertTrue(events.contains(UiEvent.BackPressed))
+        assertFalse(events.contains(UiEvent.StopRequested), "playback keeps running")
+    }
+
+    @Test
+    fun system_back_at_home_is_left_to_the_system_to_finish_the_activity() {
+        start(AppState())
+        val hasEnabledCallbacks = compose.runOnUiThread {
+            compose.activity.onBackPressedDispatcher.hasEnabledCallbacks()
+        }
+        assertFalse(
+            hasEnabledCallbacks,
+            "the HOME BackHandler is disabled so the Activity finishes normally",
+        )
     }
 
     @Test
     fun about_screen_states_the_beta_version_limits_and_v1_warning() {
         start(AppState(screen = AppScreen.ABOUT))
         compose.onNodeWithTag("about-version").assertTextContains("0.2.0-beta", substring = true)
-        compose.onNodeWithText("Known limitations").assertIsDisplayed()
-        compose.onNodeWithText(
-            "The v1 app sends audio without encryption or authentication. Use v1 only on a " +
-                "trusted network. This v2 beta is the encrypted, authenticated client; a v2 " +
-                "failure never downgrades to v1.",
-        ).assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.about_known_limitations)).assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.about_v1_warning)).assertIsDisplayed()
         assertEquals(AppScreen.ABOUT, AppState(screen = AppScreen.ABOUT).screen)
     }
 }

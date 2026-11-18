@@ -63,10 +63,30 @@ cargo test --features test-support
 The Android NDK toolchain is required only for the Gradle release build; the
 host tests above need no device.
 
+## 16 KB page-size alignment
+
+Release native libraries are linked with `-Wl,-z,max-page-size=16384` and
+`-Wl,-z,common-page-size=16384` for both ABIs (see
+`native/.cargo/config.toml`). Verify a release build non-interactively with:
+
+```sh
+ANDROID_HOME=$HOME/Android/Sdk ./scripts/check-elf-alignment.sh \
+  app/build/generated/jniLibs/arm64-v8a/libaudio_share_client_v2_native.so \
+  app/build/generated/jniLibs/x86_64/libaudio_share_client_v2_native.so \
+  app/build/outputs/apk/release/app-release.apk
+```
+
+The script uses the NDK 27.2 `llvm-readelf` and build-tools 36.0.0 `zipalign`
+(override with `--ndk-dir` / `--zipalign`). It asserts every `LOAD` segment is
+at least 16 KB-aligned, the `GNU_RELRO` end is 0x4000-aligned (or no writable
+data follows it), and `zipalign -c -P 16 4` passes. It exits non-zero unless
+every input prints `ALIGNED`.
+
 ## 前台 Service 设备回归
 
-工单 11 的设备工装直接观察真实 Activity 与公开的 `stateSnapshot()` / 本地
-Binder 监听接口，不模拟 native READY。测试 APK 只使用 Android 平台
+工单 11 的设备工装直接观察真实 Activity 与公开的 `SessionController` outcome
+监听/快照 seam：`setOutcomeListener` 注册时重放当前 `SessionOutcome`，
+`outcomeSnapshot()` 供 Activity 重建时恢复；不模拟 native READY。测试 APK 只使用 Android 平台
 Instrumentation，不增加生产依赖，也不要求提高 API 26 baseline。
 
 ```sh

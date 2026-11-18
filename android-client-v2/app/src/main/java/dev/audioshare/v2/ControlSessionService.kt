@@ -11,9 +11,13 @@ import android.graphics.drawable.Icon
 import android.media.session.MediaSession
 import android.os.Build
 import android.os.Binder
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
-import org.json.JSONObject
+import dev.audioshare.v2.session.PairingContext
+import dev.audioshare.v2.session.SessionEngineFactory
+import dev.audioshare.v2.session.SessionOrchestrator
 import java.util.UUID
 
 /**
@@ -23,12 +27,23 @@ import java.util.UUID
  * snapshot is replayed to a listener registered after Activity recreation.
  */
 interface SessionController {
-    fun setStateListener(listener: ((String) -> Unit)?)
-    fun stateSnapshot(): String
+    /** The single replayable outcome owner; registering replays the latest. */
+    fun setOutcomeListener(listener: ((SessionOutcome) -> Unit)?)
+
+    /** `null` until this Service has carried a Client Session. */
+    fun outcomeSnapshot(): SessionOutcome?
 
     fun setPairingListener(listener: ((PairingSnapshot?) -> Unit)?)
     /** Replayable current pairing state (null when no pairing is active). */
     fun pairingSnapshot(): PairingSnapshot?
+
+    /**
+     * One-shot pairing handoff (ticket 17): after the credential is persisted
+     * the Service starts the authenticated session and pushes this exactly
+     * once per exchange. A listener registered later gets no replay; a
+     * recreated Activity relies on the outcome and the restoration rule.
+     */
+    fun setPairingCompletedListener(listener: ((CredentialRecord) -> Unit)?)
 
     /** Parse and begin a QR pairing from the scanned/pasted payload URI. */
     fun beginQrPairing(uri: String)
@@ -50,9 +65,6 @@ interface SessionController {
 
     /** Stop the session. */
     fun disconnect()
-
-    /** Typed guidance for the most recent terminal error, if any. */
-    fun lastErrorGuidance(): ErrorGuidance?
 }
 
 /**
@@ -60,54 +72,63 @@ interface SessionController {
  * recreation and screen lock, as a foreground media-playback Service.
  */
 class ControlSessionService : Service(), SessionController {
-    private var session: ClientSession? = null
-    private var sessionSource: SessionStateRelay.Source? = null
-    /** Source of the pairing exchange owned by the current ClientSession. */
-    private var pairingSource: PairingStateRelay.Source? = null
-    private val relay = SessionStateRelay()
+    /** The single replayable Session outcome owner (ticket 01 / ADR-0005). */
+    private val outcomeStore = SessionOutcomeStore()
     private val pairingRelay = PairingStateRelay()
     private val binder = ControlBinder(this)
     private val credentials by lazy { SharedPreferencesCredentialStore(this) }
-
-    /** Context for the in-flight pairing, used when the credential arrives. */
-    private var pairingContext: PairingContext? = null
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     /**
-     * QR mode auto-confirms once per exchange. This gate is the durable guard
-     * for Activity recreation: a re-created Activity may replay the same
-     * AWAITING_CONFIRMATION snapshot before the native `CONFIRMING` phase is
-     * published, and a second queued confirmation would end the session with
-     * 402 (the native confirm channel is not idempotent).
+     * One-shot handoff target. It is deliberately not replayed: a late
+     * Activity registration must not re-enter SESSION after the user left.
      */
-    private val confirmGate = PairingConfirmGate()
+    @Volatile
+    private var pairingCompletedListener: ((CredentialRecord) -> Unit)? = null
+
+    /**
+     * Hand-written composition root for the session graph (ticket 21). This is
+     * the only place a [ClientSession] is constructed; the Service keeps the
+     * pairing orchestration (QR parse, identity creation, SessionConfiguration)
+     * and all platform work.
+     */
+    private val orchestrator by lazy {
+        SessionOrchestrator(
+            engineFactory = SessionEngineFactory { sink, listener ->
+                ClientSession(this, listener, sink)
+            },
+            outcomes = outcomeStore,
+            pairing = pairingRelay,
+            credentials = credentials,
+            log = { Log.i(TAG, it) },
+            // The watcher callback persists on its own thread; the handoff
+            // (teardown joins the media thread) runs later on main.
+            schedule = { task -> mainHandler.post(task) },
+            onPairingCompleted = { record -> pairingCompletedListener?.invoke(record) },
+        )
+    }
 
     /** Platform media session carried by the foreground notification. */
     private var mediaSession: MediaSession? = null
-
-    @Volatile
-    private var lastErrorCode: Int? = null
-
-    private data class PairingContext(
-        val identity: ClientIdentityResult,
-        val host: String,
-        val port: Int,
-        val displayName: String,
-        val mode: String,
-    )
 
     override fun onBind(intent: Intent?): IBinder = binder
 
     // ---- SessionController -------------------------------------------------
 
-    override fun setStateListener(listener: ((String) -> Unit)?) = relay.setListener(listener)
+    override fun setOutcomeListener(listener: ((SessionOutcome) -> Unit)?) =
+        outcomeStore.setListener(listener)
 
-    /** 即使会话已清理，也保留最后的关闭状态。 */
-    override fun stateSnapshot(): String = relay.snapshot()
+    /** A terminal outcome stays replayable after the session is gone. */
+    override fun outcomeSnapshot(): SessionOutcome? = outcomeStore.snapshot()
 
     override fun setPairingListener(listener: ((PairingSnapshot?) -> Unit)?) =
         pairingRelay.setListener(listener)
 
     override fun pairingSnapshot(): PairingSnapshot? = pairingRelay.snapshot()
+
+    override fun setPairingCompletedListener(listener: ((CredentialRecord) -> Unit)?) {
+        pairingCompletedListener = listener
+    }
 
     override fun beginQrPairing(uri: String) {
         dispatch(ACTION_PAIR_QR) { putExtra(EXTRA_PAIRING_URI, uri) }
@@ -137,8 +158,6 @@ class ControlSessionService : Service(), SessionController {
         dispatch(ACTION_STOP)
     }
 
-    override fun lastErrorGuidance(): ErrorGuidance? = ErrorGuidanceBook.forCode(lastErrorCode)
-
     private fun dispatch(action: String, configure: Intent.() -> Unit = {}) {
         val intent = Intent(this, ControlSessionService::class.java).setAction(action).apply(configure)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -153,7 +172,7 @@ class ControlSessionService : Service(), SessionController {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                stopSession()
+                stopSession(StopReason.User)
                 return START_NOT_STICKY
             }
             ACTION_PAIR_QR -> {
@@ -168,7 +187,7 @@ class ControlSessionService : Service(), SessionController {
             }
             ACTION_CONFIRM_PAIRING -> {
                 startForegroundCompat()
-                val queued = confirmGate.confirm { session?.confirmPairing() == true }
+                val queued = orchestrator.confirmPairing()
                 if (!queued) {
                     Log.i(
                         TAG,
@@ -179,7 +198,7 @@ class ControlSessionService : Service(), SessionController {
                 return START_STICKY
             }
             ACTION_CANCEL_PAIRING -> {
-                stopSession()
+                stopSession(StopReason.PairingCancel)
                 return START_NOT_STICKY
             }
             ACTION_CONNECT_STORED -> {
@@ -191,7 +210,7 @@ class ControlSessionService : Service(), SessionController {
         startForegroundCompat()
         // TEST-SUPPORT ONLY: reflectively load the adb-extras harness compiled
         // only with -PtestSupport=true. Production builds have no extras path.
-        if (BuildConfig.TEST_SUPPORT && session == null && intent != null) {
+        if (BuildConfig.TEST_SUPPORT && !orchestrator.hasEngine && intent != null) {
             val configuration = try {
                 Class.forName("dev.audioshare.v2.TestSupportHarness")
                     .getMethod("serviceConfiguration", Intent::class.java)
@@ -204,7 +223,7 @@ class ControlSessionService : Service(), SessionController {
                 return START_STICKY
             }
         }
-        if (session == null) {
+        if (!orchestrator.hasEngine) {
             stopSelf()
             return START_NOT_STICKY
         }
@@ -228,7 +247,7 @@ class ControlSessionService : Service(), SessionController {
             reportPairingFailure("qr", null, "cannot provision Client identity: ${e.message}")
             return
         }
-        pairingContext = PairingContext(identity, payload.host, payload.port, displayName, "qr")
+        val pairingContext = PairingContext(identity, payload.host, payload.port, displayName, "qr")
         val configuration = SessionConfiguration(
             host = payload.host,
             port = payload.port,
@@ -238,7 +257,7 @@ class ControlSessionService : Service(), SessionController {
             signer = identity.signer,
             pairing = PairingStart(mode = MODE_QR, nonceHex = payload.nonce.toHex(), displayName = displayName),
         )
-        startSession(configuration)
+        startSession(configuration, pairingContext)
     }
 
     private fun beginSas(address: String?) {
@@ -258,7 +277,7 @@ class ControlSessionService : Service(), SessionController {
             reportPairingFailure("sas", null, "cannot provision Client identity: ${e.message}")
             return
         }
-        pairingContext = PairingContext(identity, host, port, displayName, "sas")
+        val pairingContext = PairingContext(identity, host, port, displayName, "sas")
         val configuration = SessionConfiguration(
             host = host,
             port = port,
@@ -268,28 +287,11 @@ class ControlSessionService : Service(), SessionController {
             signer = identity.signer,
             pairing = PairingStart(mode = MODE_SAS, nonceHex = "", displayName = displayName),
         )
-        startSession(configuration)
+        startSession(configuration, pairingContext)
     }
 
     private fun reportPairingFailure(mode: String, errorCode: Int?, message: String) {
-        Log.i(TAG, "pairing failed: $message")
-        // A failure before startSession (invalid payload/address/identity) has
-        // no live exchange yet; begin one so the snapshot stays replayable.
-        val source = pairingSource?.takeIf { it.isCurrent() }
-            ?: pairingRelay.beginSession().also { pairingSource = it }
-        source.publish(
-            PairingSnapshot(
-                mode = mode,
-                phase = "FAILED",
-                sas = null,
-                fingerprint = null,
-                serverPublicKeyHex = null,
-                serverSpkiSha256Hex = null,
-                clientId = null,
-                displayName = null,
-                errorCode = errorCode,
-            )
-        )
+        orchestrator.reportPairingFailure(mode, errorCode, message)
     }
 
     private fun connectStoredNow(serverSpkiSha256Hex: String?) {
@@ -300,9 +302,8 @@ class ControlSessionService : Service(), SessionController {
         }
         if (record == null) {
             Log.i(TAG, "connectStored: no credential; pairing is required")
-            reportPairingFailure(
-                "sas",
-                errorCode = 205,
+            orchestrator.reportStoredConnectFailure(
+                code = 205,
                 message = "no saved pairing for this Server; re-pair required",
             )
             stopForegroundCompat()
@@ -314,9 +315,8 @@ class ControlSessionService : Service(), SessionController {
         } catch (e: Exception) {
             // A missing key means re-pairing; never regenerate silently.
             Log.i(TAG, "stored Client key missing for ${record.keyAlias}: ${e.message}")
-            reportPairingFailure(
-                "sas",
-                errorCode = 205,
+            orchestrator.reportStoredConnectFailure(
+                code = 205,
                 message = "the stored Client key is gone; re-pair the phone",
             )
             stopForegroundCompat()
@@ -334,82 +334,12 @@ class ControlSessionService : Service(), SessionController {
         startSession(configuration)
     }
 
-    private fun startSession(configuration: SessionConfiguration) {
-        // Clear the previous error BEFORE teardown publishes its CLOSED
-        // replay: guidanceOnClosed() must not resurface a revoke/reject banner
-        // while a new pairing exchange is starting.
-        lastErrorCode = null
-        // A QR one-step confirmation belongs to exactly one exchange.
-        confirmGate.reset()
-        teardownSession()
-        // Every session owns a fresh pairing exchange source. beginSession()
-        // invalidates the previous one and clears a stale FAILED/COMPLETE
-        // banner, so a stopped session's late watcher event can never
-        // overwrite the new exchange's AWAITING_CONFIRMATION.
-        val owningPairingSource = pairingRelay.beginSession().also { pairingSource = it }
-        val source = relay.beginSession().also { sessionSource = it }
-        val current = ClientSession(this, object : ClientSession.Listener {
-            override fun onStats(json: JSONObject) {
-                if (json.optString("state") == "CLOSED" && !json.isNull("close_code")) {
-                    lastErrorCode = json.optInt("close_code")
-                }
-            }
-            override fun onStateChange(state: String) {
-                // A recovered session must not leave a stale transport error
-                // for a later user Stop to resurface.
-                if (state == "READY" || state == "PLAYING") lastErrorCode = null
-                source.publish(state)
-            }
-            override fun onPairingState(json: String) {
-                // Source ownership: only the current exchange may publish.
-                owningPairingSource.publishJson(json)
-            }
-            override fun onCredential(json: String) { persistCredential(json) }
-            // Reconnect/migration diagnostics are the only evidence that the
-            // startup race happened; surface them in logcat (no secrets).
-            override fun onLog(line: String) { Log.i(TAG, line) }
-        })
-        session = current
-        current.start(configuration)
+    private fun startSession(configuration: SessionConfiguration, pairingContext: PairingContext? = null) {
+        orchestrator.startSession(configuration, pairingContext)
     }
 
-    private fun persistCredential(json: String) {
-        val context = pairingContext ?: run {
-            Log.i(TAG, "credential arrived without pairing context; not persisted")
-            return
-        }
-        try {
-            val obj = JSONObject(json)
-            val record = CredentialRecord(
-                serverSpkiSha256Hex = obj.getString("server_spki_sha256"),
-                serverPublicKeyHex = obj.getString("server_public_key"),
-                addressHint = "${context.host}:${context.port}",
-                keyAlias = context.identity.alias,
-                pairedAt = pairedAtNow(),
-                softwareBacked = context.identity.softwareBacked,
-                clientId = obj.getString("client_id"),
-                displayName = obj.optString("display_name").ifEmpty { context.displayName },
-                host = context.host,
-                port = context.port,
-            )
-            // Only PairingResult(OK) produces a credential summary, so this is
-            // the only persistence point.
-            credentials.upsert(record)
-            Log.i(TAG, "stored pairing for ${record.displayName} (software_backed=${record.softwareBacked})")
-        } catch (e: Exception) {
-            Log.i(TAG, "credential parse failed: ${e.message}")
-        }
-    }
-
-    private fun teardownSession() {
-        // Invalidate the pairing exchange first: a late watcher publication
-        // from the old ClientSession must not reach the new one.
-        pairingSource?.close()
-        pairingSource = null
-        sessionSource?.close()
-        sessionSource = null
-        session?.stop()
-        session = null
+    private fun teardownSession(reason: StopReason) {
+        orchestrator.teardown(reason)
     }
 
     private fun deviceDisplayName(): String {
@@ -425,7 +355,8 @@ class ControlSessionService : Service(), SessionController {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(NotificationChannel(
-                CHANNEL_ID, "Audio Share session", NotificationManager.IMPORTANCE_LOW,
+                CHANNEL_ID, getString(R.string.notification_channel_name),
+                NotificationManager.IMPORTANCE_LOW,
             ))
         }
         val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -447,15 +378,15 @@ class ControlSessionService : Service(), SessionController {
         )
         val action = Notification.Action.Builder(
             Icon.createWithResource(this, android.R.drawable.ic_media_pause),
-            "Stop",
+            getString(R.string.notification_stop),
             stopIntent,
         ).build()
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
             @Suppress("DEPRECATION") Notification.Builder(this)
-        }.setContentTitle("Audio Share")
-            .setContentText("Media session active. Audio plays while the screen is locked.")
+        }.setContentTitle(getString(R.string.notification_title))
+            .setContentText(getString(R.string.notification_body))
             .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_TRANSPORT)
@@ -494,22 +425,20 @@ class ControlSessionService : Service(), SessionController {
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
-    private fun stopSession() {
-        // An explicit Stop is not an error; clear before teardown publishes
-        // the CLOSED replay so guidanceOnClosed() cannot resurface a stale
-        // close code from an earlier interruption.
-        lastErrorCode = null
-        teardownSession()
-        confirmGate.reset()
-        pairingRelay.clear()
-        pairingContext = null
+    private fun stopSession(reason: StopReason) {
+        // An explicit Stop is not an error; the outcome store keeps the single
+        // Ended(UserStop) replayable for a recreated Activity.
+        orchestrator.stop(reason)
         releaseMediaSession()
         stopForegroundCompat()
         stopSelf()
     }
 
     override fun onDestroy() {
-        teardownSession()
+        // A pending handoff must not start a session after the Service is gone.
+        mainHandler.removeCallbacksAndMessages(null)
+        pairingCompletedListener = null
+        teardownSession(StopReason.Shutdown)
         releaseMediaSession()
         super.onDestroy()
     }
