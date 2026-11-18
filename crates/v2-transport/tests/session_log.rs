@@ -467,6 +467,7 @@ async fn verified_pairing(
 async fn pairing_events_are_logged_without_pairing_secrets() {
     let (logs, _guard) = capture_logs();
     let key = SigningKey::random(&mut rand_core::OsRng);
+    let key_hex = hex(key.to_bytes().as_slice());
     let id = client_id_hex(&key);
     let server = TestServer::start(AuthorizationStore::in_memory()).await;
 
@@ -522,7 +523,7 @@ async fn pairing_events_are_logged_without_pairing_secrets() {
         "the client proof leaked into the log:\n{text}"
     );
     assert!(
-        !text.contains(CLIENT_SCALAR),
+        !text.contains(&key_hex),
         "the private key scalar leaked into the log:\n{text}"
     );
     assert!(
