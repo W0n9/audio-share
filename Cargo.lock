@@ -335,6 +335,8 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "ureq",
  "v2-runtime",
  "windows",

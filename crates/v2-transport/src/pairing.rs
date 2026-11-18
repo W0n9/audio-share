@@ -992,6 +992,7 @@ impl PairingCore {
             .remove(&approval_id);
         match pending {
             Some(pending) => {
+                crate::session_log::pairing_accepted(&pending.request.client_id);
                 self.clear_presented(approval_id);
                 (pending.decide)(true);
                 true
@@ -1009,6 +1010,7 @@ impl PairingCore {
             .remove(&approval_id);
         match pending {
             Some(pending) => {
+                crate::session_log::pairing_declined(&pending.request.client_id);
                 self.clear_presented(approval_id);
                 (pending.decide)(false);
                 true
@@ -1107,7 +1109,9 @@ impl PairingCore {
 
     /// Revoke a client by canonical `client_id`; keeps the record for audit.
     pub fn revoke(&self, client_id: &str) -> Result<StoredClient, StoreError> {
-        self.store.revoke_client(client_id)
+        let client = self.store.revoke_client(client_id)?;
+        crate::session_log::client_revoked(&client.client_id);
+        Ok(client)
     }
 }
 
@@ -1208,5 +1212,6 @@ pub fn reset_identity(
 ) -> Result<ServerIdentity, PairingError> {
     store.clear_all()?;
     let identity = ServerIdentity::reset(config)?;
+    crate::session_log::identity_reset(&identity.fingerprint());
     Ok(identity)
 }
