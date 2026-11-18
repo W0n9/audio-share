@@ -976,10 +976,7 @@ impl StateMachine {
             .approval_id
             .unwrap_or_else(|| core.next_approval_id());
         pending.approval_id = Some(approval_id);
-        let client_id: String = auth::client_id(&pending.client_public_key)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        let client_id = auth::client_id_hex(&pending.client_public_key);
         Some(ApprovalRequest {
             approval_id,
             client_id,
@@ -1151,6 +1148,7 @@ impl StateMachine {
             .map(pairing::format_sas);
 
         let display_name = pairing::normalize_display_name(&request.client_name);
+        // Wire field: the raw 8-byte client id in PairingResponse.
         let client_id = auth::client_id(&request.client_public_key).to_vec();
         // The live operator view is handed to the driver now, but the driver
         // publishes it only after PairingResponse is written (ticket 29). It
@@ -1159,7 +1157,7 @@ impl StateMachine {
         let presented = PairingPresented {
             approval_id,
             mode,
-            client_id: client_id.iter().map(|byte| format!("{byte:02x}")).collect(),
+            client_id: auth::client_id_hex(&request.client_public_key),
             display_name: display_name.clone(),
             address: String::from_utf8_lossy(source).into_owned(),
             sas: sas.clone(),

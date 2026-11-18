@@ -955,7 +955,7 @@ impl SessionServer {
         // established session has an identity and a session id.
         if let (Some(identity), Some(_)) = (machine.identity(), machine.session_id()) {
             crate::session_log::session_closed(
-                &crate::session_log::client_id_hex(identity),
+                &crate::auth::client_id_hex(identity),
                 termination.code().code,
             );
         }
@@ -1082,10 +1082,7 @@ impl SessionServer {
             }
         }
         *registered = Some(session_id);
-        crate::session_log::session_accepted(
-            &crate::session_log::client_id_hex(identity),
-            session_id,
-        );
+        crate::session_log::session_accepted(&crate::auth::client_id_hex(identity), session_id);
     }
 
     /// Remove this session from the registry unless a newer session replaced

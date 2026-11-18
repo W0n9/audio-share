@@ -187,10 +187,7 @@ impl V2Runtime {
                             let remote = remote
                                 .map(|address| v2_transport::driver::masked_source(address.ip()))
                                 .unwrap_or_else(|| "unknown".to_owned());
-                            // The driver emits the structured `session.closed`
-                            // event at INFO (ticket 33); this line keeps the
-                            // termination detail at debug level.
-                            tracing::debug!(
+                            tracing::info!(
                                 remote = %remote,
                                 "v2 session ended: {:?}",
                                 termination

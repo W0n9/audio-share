@@ -61,6 +61,14 @@ pub fn client_id(client_public_key: &[u8]) -> [u8; 8] {
     digest[..8].try_into().expect("sha256 is 32 bytes")
 }
 
+/// The canonical public `client_id` as lowercase hex (pairing.md §8.1).
+pub fn client_id_hex(client_public_key: &[u8]) -> String {
+    client_id(client_public_key)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// The failure verdict of one signature verification; success is `Ok(())`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProofVerdict {
