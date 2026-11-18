@@ -13,6 +13,7 @@ pub mod maintenance;
 pub mod model;
 pub mod options;
 pub mod strings;
+pub mod tracing_bridge;
 pub mod update;
 pub mod v2;
 pub mod webview2_check;

@@ -625,6 +625,9 @@ fn main() {
     // truncated it at launch; the rewrite keeps that behavior.
     let resolved_paths = paths::paths();
     logging::init(&resolved_paths.log);
+    // Ticket 33: the shared v2 crates log structured session events through
+    // `tracing`; without a subscriber they never reach `server.log`.
+    audio_share_server_gui::tracing_bridge::install();
     logging::info(format!(
         "Audio Share Server {} starting",
         env!("CARGO_PKG_VERSION")

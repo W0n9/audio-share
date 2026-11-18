@@ -780,6 +780,13 @@ impl SessionServer {
                                 // not receive.
                                 if let Some(mut presented) = machine.take_pairing_presented() {
                                     if let Some(pairing) = self.pairing.as_ref() {
+                                        // Ticket 33: the operator-facing log
+                                        // records the public client id and the
+                                        // mode only — never the SAS.
+                                        crate::session_log::pairing_presented(
+                                            &presented.client_id,
+                                            crate::session_log::pairing_mode(presented.mode),
+                                        );
                                         presented.address = peer.to_string();
                                         pairing.publish_presented(presented);
                                     }
@@ -943,6 +950,15 @@ impl SessionServer {
             // an operator cannot approve a dead connection.
             pairing.cancel_approval(approval_id);
         }
+        // Ticket 33: one structured line covers every terminal path (Client
+        // stop 701, revocation 204, supersede 303, loss 601, …). Only an
+        // established session has an identity and a session id.
+        if let (Some(identity), Some(_)) = (machine.identity(), machine.session_id()) {
+            crate::session_log::session_closed(
+                &crate::auth::client_id_hex(identity),
+                termination.code().code,
+            );
+        }
         self.release(machine, registered);
         termination
     }
@@ -1066,6 +1082,7 @@ impl SessionServer {
             }
         }
         *registered = Some(session_id);
+        crate::session_log::session_accepted(&crate::auth::client_id_hex(identity), session_id);
     }
 
     /// Remove this session from the registry unless a newer session replaced
