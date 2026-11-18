@@ -129,20 +129,19 @@ class MainActivity : ComponentActivity() {
         val outcome = service.outcomeSnapshot()
         val pairing = service.pairingSnapshot()
 
-        if (firstBind && hadSavedState) {
-            // The listeners registered in onServiceConnected already replayed
-            // the current pairing snapshot. Reconcile the restored screen
-            // against what the Service owns; the reducer keeps ownership of
-            // the resulting destination (ticket 06 §4).
-            dispatch(
-                UiEvent.RestorationReconciled(
-                    outcome = outcome,
-                    pairingSnapshotPresent = pairing != null,
-                )
+        // Reconcile the current screen on every bind, not only the first one.
+        // The pairing-completion push is deliberately one-shot and is dropped
+        // when no Activity is bound; if the phone was stopped/backgrounded when
+        // the Server accepted the device, the handoff still happened and the
+        // authenticated session is live. Leaving PAIRING for SESSION here is
+        // the only recovery path that does not replay the one-shot event
+        // (real-device finding, 2026-11-18).
+        dispatch(
+            UiEvent.RestorationReconciled(
+                outcome = outcome,
+                pairingSnapshotPresent = pairing != null,
             )
-        } else if (outcome != null) {
-            dispatch(UiEvent.SessionOutcomeChanged(outcome))
-        }
+        )
 
         if (firstBind) {
             requestNotificationPermissionIfNeeded()
