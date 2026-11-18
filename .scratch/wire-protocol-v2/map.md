@@ -31,7 +31,7 @@
 | 顺序 | 工单 | Status | Blocked by | 下一步 | 执行者 |
 |---|---|---|---|---|---|
 | 1 | [33 — Server 日志补 v2 会话事件](issues/33-server-log-session-events.md) | `ready-for-human` | — | 在 Windows 用重建产物复跑 GUI 701 路径并确认 `session.closed code=701` | 人工（代码已合入 `de83686`） |
-| 2 | [24 — Beta 打包签名与正式发布](issues/24-beta-release-packaging-signing.md) | `ready-for-human` | 20/21/22（均 resolved）；35 已 `resolved` | 产物已从 `362d023` 重建、JVM 250/250；最终产物复验 `WAIVED`；剩正式 GitHub Release 发布 | 人工（secrets/push） |
+| 2 | [24 — Beta 打包签名与正式发布](issues/24-beta-release-packaging-signing.md) | `ready-for-human` | 20/21/22（均 resolved）；35 已 `resolved` | tag 已推 fork；draft Release（id `450126052`，7 资产，digest 全匹配）待审阅后 publish | 人工（发布按钮） |
 
 34 已按维护者决定 (b) `resolved`；33 代码已合入、仅剩 Windows 人工门。**AFK frontier 为空**；当前打开项都需要人工裁决或真机/Windows 操作。
 
