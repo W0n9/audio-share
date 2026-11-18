@@ -36,6 +36,10 @@ tauri-plugin-single-instance = "2.5.5"
 tauri-plugin-opener = "2.7.2"
 tauri-plugin-notification = "2.8.0"
 sys-locale = "0.3"
+# Ticket 33: forward the shared v2 crates' structured session events into
+# `server.log` (the GUI owns its own file logger).
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 # rustls (ring) needs a C toolchain for the Windows *compile check*, which this
 # environment lacks; Windows uses the OS TLS stack (schannel) instead.
