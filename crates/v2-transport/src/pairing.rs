@@ -14,8 +14,8 @@
 //! - persistence through [`AuthorizationStore::upsert`] only (§8.1).
 //!
 //! Red line: nonces, SAS values, binding values, and keys are never exposed in
-//! `Debug` output or log lines. The driver logs only registry codes and masked
-//! source addresses.
+//! `Debug` output or log lines. The driver logs only the public client id, the
+//! pairing mode, §6 registry codes, and a masked source address.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -992,8 +992,12 @@ impl PairingCore {
             .remove(&approval_id);
         match pending {
             Some(pending) => {
+                let client_id = pending.request.client_id.clone();
                 self.clear_presented(approval_id);
                 (pending.decide)(true);
+                // Log the decision after it is delivered: a dead connection
+                // must not produce an "accepted" line the Client never saw.
+                crate::session_log::pairing_accepted(&client_id);
                 true
             }
             None => false,
@@ -1009,8 +1013,10 @@ impl PairingCore {
             .remove(&approval_id);
         match pending {
             Some(pending) => {
+                let client_id = pending.request.client_id.clone();
                 self.clear_presented(approval_id);
                 (pending.decide)(false);
+                crate::session_log::pairing_declined(&client_id);
                 true
             }
             None => false,
@@ -1076,10 +1082,7 @@ impl PairingCore {
             .map(|record| record.created_at)
             .filter(|created| !created.is_empty())
             .unwrap_or_else(|| now.clone());
-        let client_id: String = auth::client_id(public_key)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        let client_id = auth::client_id_hex(public_key);
         let client = StoredClient {
             client_id,
             public_key: public_key.to_vec(),
@@ -1107,7 +1110,9 @@ impl PairingCore {
 
     /// Revoke a client by canonical `client_id`; keeps the record for audit.
     pub fn revoke(&self, client_id: &str) -> Result<StoredClient, StoreError> {
-        self.store.revoke_client(client_id)
+        let client = self.store.revoke_client(client_id)?;
+        crate::session_log::client_revoked(&client.client_id);
+        Ok(client)
     }
 }
 
@@ -1208,5 +1213,6 @@ pub fn reset_identity(
 ) -> Result<ServerIdentity, PairingError> {
     store.clear_all()?;
     let identity = ServerIdentity::reset(config)?;
+    crate::session_log::identity_reset(&identity.fingerprint());
     Ok(identity)
 }

@@ -448,6 +448,12 @@ fn run_clients(action: ClientsAction) -> Result<(), String> {
                 revoked.client_id, revoked.display_name
             );
             println!("new connections are refused immediately; a live session closes within 5 s");
+            // Ticket 33: offline admin runs without the truncating server
+            // logger, so append the audit line instead of installing it.
+            append_line(
+                &paths::paths().log,
+                &format!("event=client.revoked client_id={}", revoked.client_id),
+            );
             Ok(())
         }
     }
@@ -478,6 +484,14 @@ fn run_identity(cli: &Cli, action: IdentityAction) -> Result<(), String> {
     let identity = pairing::reset_identity(&config, &store).map_err(|error| error.to_string())?;
     println!("identity reset complete; old pairings invalidated");
     println!("Server fingerprint: {}", identity.fingerprint());
+    // Ticket 33: append-only audit; the server logger would truncate.
+    append_line(
+        &paths::paths().log,
+        &format!(
+            "event=identity.reset fingerprint={}",
+            identity.fingerprint()
+        ),
+    );
     Ok(())
 }
 
@@ -913,6 +927,28 @@ fn init_logging(verbose: bool) {
     tracing::trace!("verbose logging enabled (trace level)");
 }
 
+/// Append one `[info]` line to `path`, keeping everything already there.
+///
+/// Offline admin commands (`clients revoke`, `identity reset`) refuse to run
+/// while a Server owns the store, so no live writer competes for the file.
+/// They must not call [`init_logging`] — that truncates the file and would
+/// erase the previous session's events. Support still needs these events in
+/// the same log, so the line is appended directly.
+fn append_line(path: &Path, message: &str) {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(file, "[{}] [info] {}", utc_timestamp(), message);
+    }
+}
+
 fn open_log_file(path: &Path) -> std::io::Result<std::fs::File> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1156,5 +1192,29 @@ mod tests {
         assert_eq!(bytes[13], b':');
         assert_eq!(bytes[16], b':');
         assert_eq!(bytes[19], b'.');
+    }
+
+    #[test]
+    fn offline_audit_line_appends_without_truncating() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("server.log");
+        std::fs::write(&path, "[2026-11-17 00:00:00.000] [info] server started\n")
+            .expect("seed log");
+        append_line(&path, "event=client.revoked client_id=cf7940b474310246");
+        let text = std::fs::read_to_string(&path).expect("read log");
+        assert!(
+            text.contains("server started"),
+            "the previous session's lines must survive: {text}"
+        );
+        assert!(
+            text.contains("event=client.revoked client_id=cf7940b474310246"),
+            "{text}"
+        );
+        assert!(
+            text.lines()
+                .last()
+                .is_some_and(|line| line.starts_with('[')),
+            "{text}"
+        );
     }
 }

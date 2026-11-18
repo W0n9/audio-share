@@ -83,10 +83,7 @@ struct StoredClientJson {
 /// Canonical `client_id`: first 8 bytes of SHA-256(public_key), lowercase hex
 /// (pairing.md §8.1). This is the only spelling the store accepts or writes.
 fn canonical_client_id(public_key: &[u8]) -> String {
-    crate::auth::client_id(public_key)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    crate::auth::client_id_hex(public_key)
 }
 
 impl StoredClient {
