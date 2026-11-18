@@ -400,7 +400,14 @@ internal class SessionLifecycleDriver(
         }
         // A stop may have won the race since this tick began; never publish a
         // Live outcome for a session the driver no longer owns.
-        if (!synchronized(lock) { ownsLocked(lifetime, h) }) return
+        val owned = synchronized(lock) { ownsLocked(lifetime, h) }
+        if (!owned) return
+        // While a bounded-backoff retry is in flight, the outcome stays
+        // Reconnecting(attempt, lastCloseCode). Publishing Live(CONNECTING)
+        // here would replace the attempt counter for the whole handshake, which
+        // is most of the visible reconnect window (real-device finding,
+        // 2026-11-18). The live phase resumes at AUTHENTICATING.
+        if (phase == LivePhase.CONNECTING && synchronized(lock) { backoffAttempts > 0 }) return
         sink.publish(SessionOutcome.Live(phase))
     }
 
