@@ -23,6 +23,7 @@
 - [34 — 旧 beta 升级 205](issues/34-upgrade-path-205.md#answer)：`resolved`。维护者 2026-11-18 选择出口 (b)——不做凭据迁移修复，把「先卸载旧 v2 beta 再安装」写入发布说明与 Windows handoff；修复与回归测试 `WAIVED`。文档已落地：[release notes](../release-notes-v0.5.0-beta.md)、[windows-handoff](../../docs/beta-acceptance/windows-handoff.md)。
 - Android 现代化（`.scratch/android-modernization/`）：map `complete`，13–27 全 `resolved`；2026-11-18 15:31 以 `--no-ff` 合入 beta 集成分支 `89f84b0`（JVM 250 tests/variant PASS，`VERSION`/versionName/versionCode 未变，未 push）。该合入位于原 `v0.5.0-beta` tag（`8858c91`）之后 41 个提交。
 - [35 — Beta tag 位置裁决](issues/35-beta-tag-placement-decision.md#answer)：`resolved`。维护者 2026-11-18 选 **B**（发布含现代化的构建）；tag 目标取当前 tip `362d023`（含 33），本地删除并重建 annotated `v0.5.0-beta`，不新增 `.2`。产物重建与证据重跑见工单 24。
+- [24 — Beta 发布](issues/24-beta-release-packaging-signing.md)：`resolved`。产物从 `362d023` 重建，JVM 250/250；最终产物真机/Windows/EMULATOR 复验按代码等价性 `WAIVED`（不是 `PASS`）。2026-11-18 已发布 pre-release：`https://github.com/W0n9/audio-share/releases/tag/v0.5.0-beta`（7 资产，digest 全匹配）。
 
 ## Fog
 
@@ -31,13 +32,12 @@
 | 顺序 | 工单 | Status | Blocked by | 下一步 | 执行者 |
 |---|---|---|---|---|---|
 | 1 | [33 — Server 日志补 v2 会话事件](issues/33-server-log-session-events.md) | `ready-for-human` | — | 在 Windows 用重建产物复跑 GUI 701 路径并确认 `session.closed code=701` | 人工（代码已合入 `de83686`） |
-| 2 | [24 — Beta 打包签名与正式发布](issues/24-beta-release-packaging-signing.md) | `ready-for-human` | 20/21/22（均 resolved）；35 已 `resolved` | tag 已推 fork；draft Release（id `450126052`，7 资产，digest 全匹配）待审阅后 publish | 人工（发布按钮） |
 
-34 已按维护者决定 (b) `resolved`；33 代码已合入、仅剩 Windows 人工门。**AFK frontier 为空**；当前打开项都需要人工裁决或真机/Windows 操作。
+34 已按维护者决定 (b) `resolved`；24 已发布（`v0.5.0-beta` pre-release）；33 代码已合入、仅剩 Windows 人工门。**AFK frontier 为空**；当前唯一打开项需要 Windows 操作。
 
 **待裁决（尚未开票）**
 
-1. **`v0.5.0-beta` tag**：已由 [35](issues/35-beta-tag-placement-decision.md) 裁决为 B；本地 tag 已指向 `362d023`，尚无 push/Release。
+1. **`v0.5.0-beta` tag**：已由 [35](issues/35-beta-tag-placement-decision.md) 裁决为 B；tag 已推送至 fork，Release 已发布（pre-release）。
 2. **M5 提案三问**：60 ms target / 200 ms hard limit 是否修改；AudioTrack 缓冲 128 ms 下降算 M4 已知限制还是 M5 范围；MIUI `underruns` 计数是否可信。见 [m5-proposal.md](m5-proposal.md)。
 3. **M5–M7 编号冲突**：`roadmap.md` §2 预留的 16–21 与 Beta 实际占用的 19–32 撞号；开票前须重排编号或改用 `M5-01` 形式。
 
