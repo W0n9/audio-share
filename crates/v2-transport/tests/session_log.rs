@@ -571,5 +571,8 @@ fn server_side_media_drops_are_logged_with_public_counters_only() {
     assert_logged(&text, "queue_dropped_newest=2");
     assert_logged(&text, "pending_frames=100");
     // Red line: nothing secret or raw reached the log.
-    assert!(!text.contains("audio"), "raw audio reached the log:\n{text}");
+    assert!(
+        !text.contains("audio"),
+        "raw audio reached the log:\n{text}"
+    );
 }

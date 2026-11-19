@@ -288,8 +288,8 @@ impl DropReporter {
             }
             Some(last) => now.saturating_duration_since(last) >= self.cadence,
         };
-        let changed = pump_dropped_chunks != self.last_pump
-            || queue_dropped_newest != self.last_queue;
+        let changed =
+            pump_dropped_chunks != self.last_pump || queue_dropped_newest != self.last_queue;
         if !due || !changed {
             return None;
         }
@@ -480,7 +480,9 @@ mod tests {
         // Initial poll at t0 with zero counters logs nothing (nothing changed).
         assert!(reporter.poll(t0, 0, 0, 0).is_none());
         // A drop happens but no diagnostics tick has elapsed.
-        assert!(reporter.poll(t0 + Duration::from_secs(1), 3, 0, 0).is_none());
+        assert!(reporter
+            .poll(t0 + Duration::from_secs(1), 3, 0, 0)
+            .is_none());
         // At the 5 s tick the changed counters are reported once.
         let report = reporter
             .poll(t0 + Duration::from_secs(5), 3, 2, 100)
@@ -539,7 +541,8 @@ mod tests {
         // Fill the 500 ms pending bound: 24 chunks × 1024 frames = 24576 > 24000.
         // The last chunk that crosses the bound is dropped and counted.
         for i in 0..24u64 {
-            pump.accept(chunk(1, 1, i * 1_024, 1_024 * 8)).expect("accept");
+            pump.accept(chunk(1, 1, i * 1_024, 1_024 * 8))
+                .expect("accept");
         }
         assert!(pump.dropped_chunks() > 0, "a chunk must have been dropped");
         let dropped_before = pump.dropped_chunks();
@@ -548,7 +551,8 @@ mod tests {
         // chunk with start_frame = 24 * 1024 (the true capture position).
         let first_batch = drain_all(&mut pump, &mut now);
         assert!(!first_batch.is_empty());
-        pump.accept(chunk(1, 1, 24 * 1_024, 1_024 * 8)).expect("accept");
+        pump.accept(chunk(1, 1, 24 * 1_024, 1_024 * 8))
+            .expect("accept");
         assert_eq!(pump.dropped_chunks(), dropped_before, "no new drop");
         let second_batch = drain_all(&mut pump, &mut now);
         assert!(!second_batch.is_empty());
