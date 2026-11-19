@@ -92,6 +92,13 @@ fn row6_congestion_bounded_backlog_and_full_rate_recovery() {
     let start = Instant::now();
     let mut biggest_pending = 0u64;
     let mut start_frame = 0u64;
+    // The link budget accumulates between ticks: a 1192-byte datagram does not
+    // fit a single 10 ms / 375-byte slice, so without carry-over NOTHING at
+    // the nominal datagram size would ever be transmitted and the "300 kbit/s"
+    // label would be a lie. `budget` is bytes earned but not yet spent.
+    let mut budget = 0u64;
+    let mut transmitted_bytes = 0u64;
+    let mut transmitted_datagrams = 0u64;
 
     // One second of capture at full rate against the slow link.
     for index in 0..100u64 {
@@ -109,23 +116,24 @@ fn row6_congestion_bounded_backlog_and_full_rate_recovery() {
 
         // Move what fits into the link's bounded queue (never blocks).
         while link.len() < LINK_QUEUE_DATAGRAMS {
-            let Some(front) = queue.front() else {
+            if queue.is_empty() {
                 break;
-            };
-            let bytes = front.len() as u64;
-            let _ = bytes;
+            }
             let datagram = queue.pop_front().expect("front exists");
             link.push_back(datagram.len() as u64);
         }
 
-        // Transmit at the link rate: 375 bytes per 10 ms.
-        let mut budget = LINK_BYTES_PER_SEC * TICK_MS / 1_000;
+        // Transmit at the link rate: 375 bytes per 10 ms, accumulated until a
+        // whole datagram fits.
+        budget += LINK_BYTES_PER_SEC * TICK_MS / 1_000;
         while let Some(&bytes) = link.front() {
             if bytes > budget {
                 break;
             }
             budget -= bytes;
             link.pop_front();
+            transmitted_bytes += bytes;
+            transmitted_datagrams += 1;
         }
 
         assert!(
@@ -137,6 +145,29 @@ fn row6_congestion_bounded_backlog_and_full_rate_recovery() {
             "the per-Client send queue is bounded"
         );
     }
+
+    // The row really exercised 300 kbit/s: every earned byte was either sent
+    // or is still carried, and the achieved throughput is within 5 % of the
+    // link rate (the rest is the in-flight datagram remainder).
+    let earned = LINK_BYTES_PER_SEC * (TICK_MS * 100) / 1_000;
+    assert_eq!(
+        transmitted_bytes + budget,
+        earned,
+        "no budget is lost or invented between ticks"
+    );
+    assert!(
+        transmitted_datagrams > 0,
+        "row 6 must actually transmit datagrams"
+    );
+    assert!(
+        transmitted_bytes * 100 >= earned * 95,
+        "achieved {} B/s is not within 5 % of the 300 kbit/s link ({earned} B/s)",
+        transmitted_bytes
+    );
+    assert!(
+        transmitted_bytes <= earned,
+        "never send faster than the link"
+    );
 
     assert!(
         queue.dropped_newest() > 0,

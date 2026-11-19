@@ -106,8 +106,14 @@ impl DriftEstimator {
             _ => {}
         }
         self.samples.push_back(sample);
+        // Keep ONE sample at or before the cutoff. Evicting every sample older
+        // than the cutoff leaves the retained span strictly shorter than the
+        // window whenever arrivals are jittered (`front > cutoff`), and `ppm()`
+        // then never returns `Some`. Retaining the latest sample at/before the
+        // cutoff guarantees `last - front >= window_ms` while still bounding
+        // the window to one extra cadence interval.
         let cutoff = now_ms.saturating_sub(self.window_ms);
-        while self.samples.len() > 1 && self.samples.front().unwrap().now_ms < cutoff {
+        while self.samples.len() > 1 && self.samples[1].now_ms <= cutoff {
             self.samples.pop_front();
         }
     }
@@ -315,5 +321,38 @@ mod tests {
         assert_eq!(e.ppm(), None);
         e.observe(0, 0, 0);
         assert_eq!(e.ppm(), None);
+    }
+
+    /// RED before the eviction fix: retaining the oldest sample strictly newer
+    /// than the cutoff left a span just under 10 s, so a realistic (jittered)
+    /// arrival cadence never produced an estimate.
+    #[test]
+    fn estimator_reports_within_a_bounded_number_of_jittered_updates() {
+        let mut estimator = DriftEstimator::new(DRIFT_WINDOW_MS, 48_000);
+        // Real playback reports are ~10/s with scheduling jitter.
+        let cadence_ms = [100u64, 101, 99, 100, 102, 98, 100, 100, 103, 97];
+        let mut now_ms = 0u64;
+        let mut updates = 0u64;
+        let mut measurement = None;
+
+        while measurement.is_none() && now_ms <= 13_000 {
+            // Capture runs +100 ppm: 48.0048 frames/ms; playback is nominal.
+            let capture = (u128::from(now_ms) * 48_000 * 1_000_100 / 1_000_000_000) as u64;
+            let playback = now_ms * 48;
+            estimator.observe(now_ms, capture, playback);
+            updates += 1;
+            measurement = estimator.ppm().map(|ppm| (updates, ppm));
+            now_ms += cadence_ms[(updates as usize) % cadence_ms.len()];
+        }
+
+        let (updates, ppm) = measurement.expect("a jittered cadence must produce an estimate");
+        assert!(
+            updates <= 112,
+            "the 10 s window plus one cadence must fill in bounded updates, took {updates}"
+        );
+        assert!(
+            (95..=105).contains(&ppm),
+            "a +100 ppm synthetic capture clock must measure ~100 ppm, got {ppm}"
+        );
     }
 }

@@ -66,7 +66,7 @@ fn drive(session: &mut MediaSession, from_ms: u64, to_ms: u64, ppm: i32, underru
     let mut previous_capture = if from_ms == 0 {
         0
     } else {
-        capture_at(from_ms - 100, ppm) + 0
+        capture_at(from_ms - 100, ppm)
     };
     let mut sequence = (from_ms / 100) as u32;
     let mut now = from_ms;

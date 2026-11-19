@@ -135,7 +135,11 @@ fn held_datagrams_released_on_config_change_keep_the_frontier_in_sync() {
         media.on_datagram(0, &held),
         DatagramOutcome::HeldUnknownConfig
     );
-    assert_eq!(media.delivered_frames(), 64, "held media is not decoded early");
+    assert_eq!(
+        media.delivered_frames(),
+        64,
+        "held media is not decoded early"
+    );
 
     // The reliable config releases the held frame. It must advance the jitter
     // frontier to seq 2; otherwise the frontier still expects seq 1.
@@ -151,7 +155,10 @@ fn held_datagrams_released_on_config_change_keep_the_frontier_in_sync() {
         assert_eq!(media.on_datagram(0, &d), DatagramOutcome::Delivered);
     }
     let d = media.diagnostics(60);
-    assert_eq!(d.cumulative_concealments, 0, "no duplicate silence at config change");
+    assert_eq!(
+        d.cumulative_concealments, 0,
+        "no duplicate silence at config change"
+    );
     assert_eq!(d.concealed_frames, 0);
     assert_eq!(d.cumulative_late_drops, 0);
     // One gen-1 + one held + 46 live datagrams, each written exactly once.
@@ -177,9 +184,15 @@ fn a_server_side_drop_is_a_contiguous_sequence_with_jumped_timestamp() {
         DatagramOutcome::Delivered
     );
     let d = media.diagnostics(60);
-    assert_eq!(d.cumulative_lost, 0, "sequence is contiguous — not network loss");
+    assert_eq!(
+        d.cumulative_lost, 0,
+        "sequence is contiguous — not network loss"
+    );
     assert_eq!(d.cumulative_late_drops, 0, "no playout deadline was missed");
-    assert_eq!(d.cumulative_concealments, 0, "no silence inserted for a server drop");
+    assert_eq!(
+        d.cumulative_concealments, 0,
+        "no silence inserted for a server drop"
+    );
     assert_eq!(d.concealed_frames, 0);
 }
 
@@ -212,7 +225,11 @@ fn a_gap_is_concealed_with_silence_and_counted() {
     assert_eq!(d.concealed_frames, 64, "64 frames of silence inserted");
     // The gap region (frames 64..128 → bytes 512..1024) must be all zeros,
     // while real datagrams carry 0x7f.
-    assert_eq!(&backing[512..1024], &vec![0u8; 512], "gap filled with silence");
+    assert_eq!(
+        &backing[512..1024],
+        &vec![0u8; 512],
+        "gap filled with silence"
+    );
 }
 
 // (d) underrun fill counts as its own intervention through the M5-04-ready hook.
@@ -223,7 +240,10 @@ fn underrun_and_drift_concealments_share_one_counter_api() {
     media.record_concealment(ConcealmentKind::Underrun, 10);
     media.record_concealment(ConcealmentKind::Drift, -3);
     let d = media.diagnostics(60);
-    assert_eq!(d.cumulative_concealments, 2, "each intervention counts once");
+    assert_eq!(
+        d.cumulative_concealments, 2,
+        "each intervention counts once"
+    );
     assert_eq!(d.concealed_frames, 7, "inserted − deleted = 10 − 3");
 }
 
@@ -258,7 +278,10 @@ fn jitter_estimate_is_measured_at_the_published_sample_rate() {
         );
     }
     let d = media.diagnostics(60);
-    assert!(d.jitter_microseconds > 0, "a real drift must produce jitter > 0");
+    assert!(
+        d.jitter_microseconds > 0,
+        "a real drift must produce jitter > 0"
+    );
 }
 
 // (e) diagnostics returns measured values and resets only interval counters.
@@ -276,9 +299,207 @@ fn diagnostics_reports_real_values_and_resets_intervals_only() {
     let first = media.diagnostics(60);
     assert_eq!(first.cumulative_concealments, 1);
     assert_eq!(first.interval_concealments, 1);
-    assert_eq!(first.submitted_position, 0, "no platform bytes, no progress");
+    assert_eq!(
+        first.submitted_position, 0,
+        "no platform bytes, no progress"
+    );
     assert_eq!(first.buffer_target_ms, 60);
     let second = media.diagnostics(60);
-    assert_eq!(second.interval_concealments, 0, "interval reset after report");
-    assert_eq!(second.cumulative_concealments, 1, "cumulative survives report");
+    assert_eq!(
+        second.interval_concealments, 0,
+        "interval reset after report"
+    );
+    assert_eq!(
+        second.cumulative_concealments, 1,
+        "cumulative survives report"
+    );
+}
+
+// (b, deadline) A sender that pauses leaves the frontier parked. The next
+// datagram's slot is long past by wall clock, so it must be a counted late
+// drop even though the sequence is contiguous with the frontier.
+#[test]
+fn a_late_arrival_after_a_sender_pause_is_late_dropped() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let mut media = session_with(&mut backing);
+    assert_eq!(
+        media.on_datagram(0, &datagram_filled(0, 0, 0x7f)),
+        DatagramOutcome::Delivered
+    );
+    let before = media.delivered_frames();
+    assert_eq!(
+        media.on_datagram(5_000, &datagram_filled(1, 64, 0x7f)),
+        DatagramOutcome::LateDropped,
+        "5 s of silence with an unchanged capture clock is a late arrival"
+    );
+    assert_eq!(
+        media.delivered_frames(),
+        before,
+        "late media is never written"
+    );
+    let d = media.diagnostics(60);
+    assert_eq!(d.cumulative_late_drops, 1);
+    assert_eq!(d.cumulative_lost, 0, "a late arrival is not network loss");
+}
+
+// (b, reorder) A reorder that stays inside the 60 ms target still plays: the
+// playout deadline is target-relative, not a strict sequence order.
+#[test]
+fn a_timely_reorder_still_plays_under_the_deadline_rule() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let mut media = session_with(&mut backing);
+    assert_eq!(
+        media.on_datagram(0, &datagram_filled(0, 0, 0x7f)),
+        DatagramOutcome::Delivered
+    );
+    assert_eq!(
+        media.on_datagram(40, &datagram_filled(2, 128, 0x7f)),
+        DatagramOutcome::Delivered
+    );
+    assert_eq!(
+        media.on_datagram(50, &datagram_filled(1, 64, 0x7f)),
+        DatagramOutcome::Delivered,
+        "seq 1 arrives well before its 60 ms deadline"
+    );
+    assert_eq!(media.delivered_frames(), 3 * 64);
+    let d = media.diagnostics(60);
+    assert_eq!(d.cumulative_late_drops, 0);
+    assert_eq!(d.cumulative_concealments, 0);
+}
+
+// A.8 must not count a held datagram's release as a new arrival (its old
+// arrival instant would inject a bogus step into the estimate).
+#[test]
+fn releasing_held_media_does_not_inflate_the_jitter_estimate() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let mut media = session_with(&mut backing);
+    assert_eq!(
+        media.on_datagram(0, &datagram_filled(0, 0, 0x7f)),
+        DatagramOutcome::Delivered
+    );
+    let mut held = datagram_filled(1, 64, 0x11);
+    held[4..8].copy_from_slice(&2u32.to_be_bytes());
+    assert_eq!(
+        media.on_datagram(0, &held),
+        DatagramOutcome::HeldUnknownConfig
+    );
+    media.apply_configuration(&config(2));
+    let d = media.diagnostics(60);
+    assert_eq!(d.jitter_microseconds, 0, "release is not an arrival");
+    assert_eq!(media.delivered_frames(), 2 * 64);
+}
+
+// A timestamp re-base (server-side drop) is a position step, not interarrival
+// jitter: the A.8 window must be discarded.
+#[test]
+fn a_timestamp_rebase_does_not_inflate_the_jitter_estimate() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let mut media = session_with(&mut backing);
+    assert_eq!(
+        media.on_datagram(0, &datagram_filled(0, 0, 0x7f)),
+        DatagramOutcome::Delivered
+    );
+    assert_eq!(
+        media.on_datagram(1, &datagram_filled(1, 1_064, 0x7f)),
+        DatagramOutcome::Delivered,
+        "contiguous sequence with a jumped timestamp"
+    );
+    let d = media.diagnostics(60);
+    assert_eq!(d.jitter_microseconds, 0, "the re-base resets A.8");
+    assert_eq!(d.cumulative_lost, 0);
+    assert_eq!(d.cumulative_concealments, 0);
+}
+
+// §8 underrun fill: the playback loop fed silence because no data was ready.
+// It is a concealment intervention, separate from the platform `underruns`
+// counter, and inserted frames carry no capture position.
+#[test]
+fn an_underrun_fill_is_counted_as_its_own_intervention() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let mut media = session_with(&mut backing);
+    media.record_underrun(96);
+    let d = media.diagnostics(60);
+    assert_eq!(d.cumulative_concealments, 1);
+    assert_eq!(d.concealed_frames, 96, "inserted silence is positive");
+    assert_eq!(d.underruns, 0, "the platform field is not double-counted");
+    assert_eq!(media.concealment_counts().underrun, 1);
+    assert_eq!(media.concealment_counts().gap, 0);
+
+    // Those 96 frames were silence with no capture position: reporting the
+    // platform-accepted bytes must not advance `submitted_position`.
+    media.record_playback(PlaybackReport {
+        submitted_bytes: 96 * FRAME_BYTES as u64,
+        underruns: 0,
+        buffer_current_ms: 60,
+    });
+    assert_eq!(media.submitted_position(), 0);
+}
+
+#[test]
+fn concealment_kinds_are_kept_as_a_breakdown() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let mut media = session_with(&mut backing);
+    media.record_concealment(ConcealmentKind::Gap, 64);
+    media.record_concealment(ConcealmentKind::Underrun, 10);
+    media.record_concealment(ConcealmentKind::Drift, -3);
+    media.record_concealment(ConcealmentKind::ReAnchor, -5);
+    let counts = media.concealment_counts();
+    assert_eq!(counts.gap, 1);
+    assert_eq!(counts.underrun, 1);
+    assert_eq!(counts.drift, 1);
+    assert_eq!(counts.reanchor, 1);
+    assert_eq!(counts.total(), 4);
+    let d = media.diagnostics(60);
+    assert_eq!(d.cumulative_concealments, 4, "the §9 total is unchanged");
+}
+
+// M5-03: a soft trim above the target is normal buffer steering, counted
+// separately and NOT as concealment; the playout cursor still advances over
+// the skipped capture positions.
+#[test]
+fn a_soft_target_trim_is_not_concealment() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let mut media = session_with(&mut backing);
+    media.record_soft_trim(240);
+    let d = media.diagnostics(60);
+    assert_eq!(
+        d.cumulative_concealments, 0,
+        "soft trim is not an intervention"
+    );
+    assert_eq!(d.concealed_frames, 0);
+    assert_eq!(media.soft_trimmed_frames(), 240);
+    assert_eq!(media.soft_trim_events(), 1);
+    assert_eq!(
+        media.trimmed_frames(),
+        0,
+        "not the hard-limit counter either"
+    );
+    assert_eq!(
+        media.submitted_position(),
+        240,
+        "the cursor advanced over it"
+    );
+}
+
+// Finding 6: Kotlin reads the active bounds from native instead of
+// duplicating 60/200.
+#[test]
+fn jitter_bounds_are_exposed_from_the_active_configuration() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let ring = unsafe { MediaRing::attach(backing.as_mut_ptr(), backing.len()) };
+    let media = MediaSession::start_with_config(
+        1,
+        1,
+        0,
+        &config(1),
+        Some(ring),
+        JitterConfig {
+            target_ms: 40,
+            hard_limit_ms: 120,
+        },
+    )
+    .expect("geometry");
+    let active = media.jitter_config();
+    assert_eq!(active.target_ms, 40);
+    assert_eq!(active.hard_limit_ms, 120);
 }
