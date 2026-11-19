@@ -47,9 +47,10 @@ impl JitterConfig {
     }
 }
 
-/// The four §8 concealment interventions. `Drift` and `ReAnchor` are reserved
-/// for M5-04; this module emits only `Gap` but the counter API accepts all
-/// four so M5-04 can increment its interventions without a schema change.
+/// The four §8 concealment interventions. M5-03 emits `Gap` and `Underrun`
+/// (underrun fill, recorded by the playback loop); M5-04 emits `Drift` (frame
+/// insert/delete) and `ReAnchor` (hard-limit deletion). The counter API accepts
+/// all four so no schema change is needed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConcealmentKind {
     Gap,
@@ -89,6 +90,14 @@ pub struct JitterBuffer {
     pending: BTreeMap<u64, PendingFrame>,
     frontier: Option<u64>,
     frontier_ts: u64,
+    /// Capture-clock → session-clock anchor for the playout deadline: the
+    /// `(session now_ms, wire timestamp)` of the most recently accepted
+    /// datagram. A datagram whose slot is more than `target_ms` behind the
+    /// newest arrival is late even when the frontier never advances (a sender
+    /// that pauses). Refreshing the anchor on every accepted datagram keeps a
+    /// slow-but-steady producer (synthetic test clocks, a capture device under
+    /// load) from being mistaken for lateness.
+    playout_anchor: Option<(u64, u64)>,
     // RFC 3550 A.8 interarrival jitter, in frame units.
     jitter_frames: f64,
     last_arrival: Option<(u64, u64)>, // (arrival position in frames, timestamp)
@@ -103,9 +112,16 @@ impl JitterBuffer {
             pending: BTreeMap::new(),
             frontier: None,
             frontier_ts: 0,
+            playout_anchor: None,
             jitter_frames: 0.0,
             last_arrival: None,
         }
+    }
+
+    /// The active §8 target/hard-limit configuration (exposed so the JVM can
+    /// read the real values instead of duplicating constants).
+    pub const fn config(&self) -> JitterConfig {
+        self.config
     }
 
     /// RFC 3550 A.8 interarrival J, updated once per accepted datagram in
@@ -122,6 +138,16 @@ impl JitterBuffer {
         self.last_arrival = Some((arrival, timestamp));
     }
 
+    /// Forget the A.8 arrival history. Called on a timestamp re-base (a
+    /// server-side drop) and whenever media is replayed without a real
+    /// arrival instant (held datagrams released by a configuration change):
+    /// either would otherwise inject a bogus step into the interarrival
+    /// estimate.
+    pub fn reset_arrival(&mut self) {
+        self.jitter_frames = 0.0;
+        self.last_arrival = None;
+    }
+
     /// The A.8 estimate converted to microseconds at the published rate.
     pub fn jitter_microseconds(&self) -> u32 {
         let micros = self.jitter_frames * 1_000_000.0 / f64::from(self.sample_rate);
@@ -131,21 +157,83 @@ impl JitterBuffer {
         micros.min(u32::MAX as f64) as u32
     }
 
-    /// Submit one newly observed, non-duplicate datagram. `write` appends the
-    /// given bytes to the ring in playout order (real payload or all-zero
-    /// silence). Returns whether this was a late drop and any silence fills.
+    /// Whether this datagram arrived after its playout deadline: its freshest
+    /// frame is more than the target delay behind the most recently accepted
+    /// datagram. Measured on the capture-clock → session-clock anchor so a
+    /// stalled sender (no frontier advance) still trips it.
+    ///
+    /// The last frame (`timestamp + frames`) is the right probe: a datagram is
+    /// still useful while any of its frames can be played, and a batched
+    /// sender's header timestamp names the *first* frame of the batch.
+    fn past_deadline(&self, now_ms: u64, timestamp: u64, frames: u64) -> bool {
+        let Some((anchor_now, anchor_ts)) = self.playout_anchor else {
+            return false;
+        };
+        let end = timestamp.saturating_add(frames);
+        let capture_delta_ms =
+            (end as i128 - anchor_ts as i128) * 1_000 / i128::from(self.sample_rate);
+        let deadline = anchor_now as i128 + i128::from(self.config.target_ms) + capture_delta_ms;
+        i128::from(now_ms) > deadline
+    }
+
+    /// Submit one newly observed, non-duplicate datagram at session-clock
+    /// `now_ms`. `write` appends the given bytes to the ring in playout order
+    /// (real payload or all-zero silence). Returns whether this was a late
+    /// drop and any silence fills.
     pub fn submit(
         &mut self,
+        now_ms: u64,
         extended: u64,
         timestamp: u64,
         frames: u64,
         payload: &[u8],
         write: &mut dyn FnMut(&[u8]),
     ) -> SubmitResult {
+        self.submit_inner(now_ms, extended, timestamp, frames, payload, write, true)
+    }
+
+    /// Submit media that is being replayed from the §7.6 hold. `now_ms` is the
+    /// instant it really arrived, but the live arrival clock must not move
+    /// backwards to it: the playout anchor stays at the newest live datagram.
+    pub fn submit_replay(
+        &mut self,
+        arrival_ms: u64,
+        extended: u64,
+        timestamp: u64,
+        frames: u64,
+        payload: &[u8],
+        write: &mut dyn FnMut(&[u8]),
+    ) -> SubmitResult {
+        self.submit_inner(
+            arrival_ms, extended, timestamp, frames, payload, write, false,
+        )
+    }
+
+    fn submit_inner(
+        &mut self,
+        now_ms: u64,
+        extended: u64,
+        timestamp: u64,
+        frames: u64,
+        payload: &[u8],
+        write: &mut dyn FnMut(&[u8]),
+        update_anchor: bool,
+    ) -> SubmitResult {
+        if self.past_deadline(now_ms, timestamp, frames) {
+            // Arrived after its playout deadline (§8): late drop, never a
+            // network loss and never ring data. This is the pause case where
+            // the frontier has not advanced either.
+            return SubmitResult {
+                late: true,
+                rebased: false,
+                concealments: Vec::new(),
+            };
+        }
         let Some(frontier) = self.frontier else {
-            // First datagram anchors the frontier and re-bases the clock.
+            // First datagram anchors the frontier and the clock.
             self.frontier = Some(extended + 1);
             self.frontier_ts = timestamp.saturating_add(frames);
+            self.playout_anchor = Some((now_ms, timestamp));
             write(payload);
             return SubmitResult::default();
         };
@@ -157,6 +245,9 @@ impl JitterBuffer {
                 rebased: false,
                 concealments: Vec::new(),
             };
+        }
+        if update_anchor {
+            self.playout_anchor = Some((now_ms, timestamp));
         }
         self.pending.insert(
             extended,
@@ -243,7 +334,9 @@ mod tests {
         let mut jb = JitterBuffer::new(JitterConfig::default(), 48_000, 8);
         let mut written = Vec::new();
         for seq in 0..5u64 {
-            let r = jb.submit(seq, seq * 64, 64, &[0x7f; 512], &mut |b| written.extend_from_slice(b));
+            let r = jb.submit(0, seq, seq * 64, 64, &[0x7f; 512], &mut |b| {
+                written.extend_from_slice(b)
+            });
             assert!(!r.late);
             assert!(r.concealments.is_empty());
         }
@@ -254,10 +347,16 @@ mod tests {
     fn a_timely_reorder_needs_no_concealment() {
         let mut jb = JitterBuffer::new(JitterConfig::default(), 48_000, 8);
         let mut written = Vec::new();
-        jb.submit(0, 0, 64, &[1; 512], &mut |b| written.extend_from_slice(b));
-        jb.submit(2, 128, 64, &[3; 512], &mut |b| written.extend_from_slice(b));
+        jb.submit(0, 0, 0, 64, &[1; 512], &mut |b| {
+            written.extend_from_slice(b)
+        });
+        jb.submit(40, 2, 128, 64, &[3; 512], &mut |b| {
+            written.extend_from_slice(b)
+        });
         // seq 1 arrives before the target delay elapses → fills the hole.
-        jb.submit(1, 64, 64, &[2; 512], &mut |b| written.extend_from_slice(b));
+        jb.submit(50, 1, 64, 64, &[2; 512], &mut |b| {
+            written.extend_from_slice(b)
+        });
         assert_eq!(written.len(), 3 * 512);
         assert!(written.chunks(512).all(|c| c.iter().all(|&x| x != 0)));
     }
@@ -267,21 +366,79 @@ mod tests {
         let mut jb = JitterBuffer::new(JitterConfig::default(), 48_000, 8);
         let mut written = Vec::new();
         for seq in 0..50u64 {
-            jb.submit(seq, seq * 64, 64, &[0x7f; 512], &mut |b| written.extend_from_slice(b));
+            jb.submit(0, seq, seq * 64, 64, &[0x7f; 512], &mut |b| {
+                written.extend_from_slice(b)
+            });
         }
-        let r = jb.submit(1, 64, 64, &[0x7f; 512], &mut |b| written.extend_from_slice(b));
+        let r = jb.submit(0, 1, 64, 64, &[0x7f; 512], &mut |b| {
+            written.extend_from_slice(b)
+        });
         assert!(r.late);
+    }
+
+    /// RED before the deadline fix: with only a sequence-frontier check, a
+    /// sender that pauses leaves the frontier parked, so the next datagram
+    /// looked timely even minutes after its slot passed.
+    #[test]
+    fn an_arrival_after_a_sender_pause_is_late_by_deadline() {
+        let mut jb = JitterBuffer::new(JitterConfig::default(), 48_000, 8);
+        let mut written = Vec::new();
+        // Anchor seq 0 (64 frames = 1.33 ms) at t=0; then the sender pauses
+        // for five seconds and sends seq 1 with an unchanged capture clock.
+        jb.submit(0, 0, 0, 64, &[0x7f; 512], &mut |b| {
+            written.extend_from_slice(b)
+        });
+        let r = jb.submit(5_000, 1, 64, 64, &[0x7f; 512], &mut |b| {
+            written.extend_from_slice(b)
+        });
+        assert!(r.late, "5 s after its 60 ms slot the datagram is late");
+        assert_eq!(written.len(), 512, "late media never reaches the ring");
+    }
+
+    /// A paused sender that resumes with genuinely new capture positions is
+    /// not late: the capture clock advanced with wall time.
+    #[test]
+    fn a_resumed_sender_with_advanced_capture_clock_is_not_late() {
+        let mut jb = JitterBuffer::new(JitterConfig::default(), 48_000, 8);
+        let mut written = Vec::new();
+        jb.submit(0, 0, 0, 64, &[0x7f; 512], &mut |b| {
+            written.extend_from_slice(b)
+        });
+        let r = jb.submit(5_000, 1, 240_064, 64, &[0x7f; 512], &mut |b| {
+            written.extend_from_slice(b)
+        });
+        assert!(!r.late, "5 s of new capture audio is not a late datagram");
+        assert_eq!(written.len(), 2 * 512);
     }
 
     #[test]
     fn a_contiguous_timestamp_jump_is_rebased_without_silence() {
         let mut jb = JitterBuffer::new(JitterConfig::default(), 48_000, 8);
         let mut written = Vec::new();
-        jb.submit(0, 0, 64, &[1; 512], &mut |b| written.extend_from_slice(b));
+        jb.submit(0, 0, 0, 64, &[1; 512], &mut |b| {
+            written.extend_from_slice(b)
+        });
         // Server dropped frames: sequence contiguous but timestamp jumped by
         // 1000 frames. Must NOT insert silence (M5-05 timestamp offset).
-        let r = jb.submit(1, 1064, 64, &[2; 512], &mut |b| written.extend_from_slice(b));
-        assert!(r.concealments.is_empty(), "no silence for a server-side drop");
+        let r = jb.submit(0, 1, 1064, 64, &[2; 512], &mut |b| {
+            written.extend_from_slice(b)
+        });
+        assert!(
+            r.concealments.is_empty(),
+            "no silence for a server-side drop"
+        );
         assert_eq!(written.len(), 2 * 512);
+    }
+
+    /// A timestamp re-base must not leave a bogus interarrival step behind.
+    #[test]
+    fn a_rebase_resets_the_arrival_estimate() {
+        let mut jb = JitterBuffer::new(JitterConfig::default(), 48_000, 8);
+        // 1 ms of media presented 50 ms late is a large interarrival step.
+        jb.observe_arrival(0, 0);
+        jb.observe_arrival(50, 48);
+        assert!(jb.jitter_microseconds() > 0);
+        jb.reset_arrival();
+        assert_eq!(jb.jitter_microseconds(), 0);
     }
 }

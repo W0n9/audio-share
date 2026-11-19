@@ -25,41 +25,13 @@ use audio_share_client_v2_native::proto::{
 };
 use prost::Message as _;
 
-// ---------------------------------------------------------------------------
-// Deterministic PRNG
-// ---------------------------------------------------------------------------
+mod common;
+use common::Rng;
 
-struct Rng(u64);
-
-impl Rng {
-    fn new(seed: u64) -> Self {
-        Self(seed)
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-
-    fn below(&mut self, n: u64) -> u64 {
-        self.next_u64() % n
-    }
-
-    fn bytes(&mut self, len: usize) -> Vec<u8> {
-        (0..len).map(|_| self.next_u64() as u8).collect()
-    }
-}
+const DEFAULT_SEED: u64 = 0x4D35_0006_F022_0001;
 
 fn seed() -> u64 {
-    let seed = std::env::var("M5_FUZZ_SEED")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0x4D35_0006_F022_0001);
-    eprintln!("m5-06 client fuzz seed = {seed}");
-    seed
+    common::seed(DEFAULT_SEED, "m5-06 client fuzz")
 }
 
 const CASES: usize = 10_000;
@@ -261,11 +233,6 @@ fn fuzz_on_datagram_never_panics_and_is_deterministic() {
         first.0, first.1, first.2, first.3, first.4, first.5, first.6
     );
 }
-
-/// Held media that overflows its bounded queue is counted as an unknown-config
-/// drop too; the exact split is internal, so the fuzz run only requires the
-/// total counter to cover the explicit stale outcomes. Overflow itself is
-/// exercised by the dedicated bounded-hold contract test.
 
 // ---------------------------------------------------------------------------
 // Target 3 — control framing + Client state machine

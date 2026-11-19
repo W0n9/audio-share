@@ -32,6 +32,12 @@ internal object NativeMediaBridge : MediaPlayer.NativeMedia {
         ClientNative.recordPlayback(handle, submittedBytes, underruns, bufferCurrentMs)
     override fun recordTrim(handle: Long, frames: Long) =
         ClientNative.recordTrim(handle, frames)
+    override fun recordSoftTrim(handle: Long, frames: Long) =
+        ClientNative.recordSoftTrim(handle, frames)
+    override fun recordUnderrun(handle: Long, frames: Long) =
+        ClientNative.recordUnderrun(handle, frames)
+    override fun jitterTargetMs(handle: Long): Int = ClientNative.jitterTargetMs(handle)
+    override fun jitterHardLimitMs(handle: Long): Int = ClientNative.jitterHardLimitMs(handle)
     override fun driftCorrectionPpm(handle: Long): Int =
         ClientNative.driftCorrectionPpm(handle)
     override fun takeDriftIntervention(handle: Long): Int =

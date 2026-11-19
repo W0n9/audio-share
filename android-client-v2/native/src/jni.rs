@@ -548,6 +548,70 @@ pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordTrim(
     });
 }
 
+/// recordSoftTrim(handle, frames): frames dropped by the Kotlin reader's soft
+/// target trim (backlog above the §8 target). Counted separately from
+/// concealment — normal buffer steering, never `ReAnchor`.
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordSoftTrim(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    frames: jlong,
+) {
+    let _ = guard(|| {
+        let session = get_session(handle)?;
+        session.record_soft_trim(frames.max(0) as u64);
+        Ok::<(), String>(())
+    });
+}
+
+/// recordUnderrun(handle, frames): the playback loop had no data for one
+/// playback period and fed `frames` of silence. Counts the §8 underrun-fill
+/// concealment; the platform `underruns` counter stays a separate §9 field.
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordUnderrun(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    frames: jlong,
+) {
+    let _ = guard(|| {
+        let session = get_session(handle)?;
+        session.record_underrun(frames.max(0) as u64);
+        Ok::<(), String>(())
+    });
+}
+
+/// jitterTargetMs(handle): the active §8 jitter-buffer target (60 ms by
+/// default). Exposed so Kotlin does not duplicate the native constant.
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_jitterTargetMs(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    guard(|| {
+        let session = get_session(handle)?;
+        Ok(session.jitter_target_ms() as jint)
+    })
+    .unwrap_or(0)
+}
+
+/// jitterHardLimitMs(handle): the active §8 jitter-buffer hard limit (200 ms
+/// by default).
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_jitterHardLimitMs(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    guard(|| {
+        let session = get_session(handle)?;
+        Ok(session.jitter_hard_limit_ms() as jint)
+    })
+    .unwrap_or(0)
+}
+
 /// driftPpm(handle): the §8 capture-vs-playback drift estimate in ppm, or 0
 /// until a full 10 s window exists. The accepted §9 `PlaybackDiagnostics` has
 /// no drift field; this accessor plus the `playback.drift` log line is the

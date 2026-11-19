@@ -39,15 +39,56 @@ class MediaRingBuffer(capacityBytes: Int = DEFAULT_CAPACITY) {
         writePosition >= 0 && writePosition - readPosition > capacity
 
     /**
-     * M5-03: the reader's re-anchor position given the jitter-buffer bounds.
+     * One trim decision: where the reader should resume, how many whole
+     * frames were dropped, and whether this was a hard-limit re-anchor.
+     */
+    data class TrimResult(
+        val readPosition: Long,
+        val trimmedFrames: Long,
+        val reanchor: Boolean,
+    )
+
+    /**
+     * M5-03: steer the reader backlog toward the jitter target.
      *
-     * When the unread backlog (`write - read`) exceeds [hardLimitBytes], the
-     * oldest media is stale: jump the read cursor forward to `write - target`,
-     * frame-aligned, so only [targetBytes] of the newest media remain. Keeping
-     * a small target backlog (rather than snapping to `write`) avoids the
-     * permanent startup fill and gives the sink a little cushion, which is how
-     * a re-anchor avoids an audible click. A backlog within the hard limit is
-     * left untouched.
+     * - Backlog within [targetBytes] is left untouched.
+     * - Backlog above [targetBytes] (the normal "积压超过目标" case) drops the
+     *   OLDEST frames down to the target: a soft trim, counted separately from
+     *   concealment, frame-aligned and gap-free.
+     * - Backlog above [hardLimitBytes] is the §8 hard-limit re-anchor: the
+     *   same jump, but reported as `ReAnchor` concealment because it is a
+     *   large, audible deletion.
+     *
+     * Returns the new read position (never greater than the write cursor) and
+     * the whole frames removed.
+     */
+    fun trim(
+        writePosition: Long,
+        readPosition: Long,
+        targetBytes: Int,
+        hardLimitBytes: Int,
+        frameBytes: Int,
+    ): TrimResult {
+        if (frameBytes <= 0 || writePosition < 0 || writePosition <= readPosition) {
+            return TrimResult(readPosition, 0, false)
+        }
+        val backlog = writePosition - readPosition
+        val targetFrames = (targetBytes.coerceAtLeast(0) / frameBytes).toLong()
+        if (backlog / frameBytes <= targetFrames) {
+            return TrimResult(readPosition, 0, false)
+        }
+        var target = targetBytes.coerceAtLeast(0)
+        target -= target % frameBytes // frame-align
+        val reanchorPosition = writePosition - target
+        if (reanchorPosition <= readPosition) {
+            return TrimResult(readPosition, 0, false)
+        }
+        val trimmed = (reanchorPosition - readPosition) / frameBytes
+        return TrimResult(reanchorPosition, trimmed, backlog > hardLimitBytes)
+    }
+
+    /**
+     * Backwards-compatible position-only view of [trim].
      *
      * Returns the new read position (never greater than the write cursor).
      */
@@ -57,15 +98,7 @@ class MediaRingBuffer(capacityBytes: Int = DEFAULT_CAPACITY) {
         targetBytes: Int,
         hardLimitBytes: Int,
         frameBytes: Int,
-    ): Long {
-        if (frameBytes <= 0 || writePosition < 0 || writePosition <= readPosition) return readPosition
-        val backlog = writePosition - readPosition
-        if (backlog <= hardLimitBytes) return readPosition
-        var target = targetBytes.coerceAtLeast(0)
-        target -= target % frameBytes // frame-align
-        val reanchor = writePosition - target
-        return if (reanchor > readPosition) reanchor else readPosition
-    }
+    ): Long = trim(writePosition, readPosition, targetBytes, hardLimitBytes, frameBytes).readPosition
 
     /**
      * Copy up to [maxBytes] whole frames from ring position [readPosition] into
