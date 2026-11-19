@@ -148,6 +148,23 @@ pub struct PlaybackReport {
     pub buffer_current_ms: u32,
 }
 
+/// The four §8 intervention kinds, kept as a breakdown. `cumulative_concealments`
+/// remains the single §9 field; the breakdown is for the local L1 log line so
+/// the kind recorded by [`MediaSession::record_concealment`] is not lost.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ConcealmentCounts {
+    pub gap: u64,
+    pub underrun: u64,
+    pub drift: u64,
+    pub reanchor: u64,
+}
+
+impl ConcealmentCounts {
+    pub const fn total(self) -> u64 {
+        self.gap + self.underrun + self.drift + self.reanchor
+    }
+}
+
 /// One Client session's media state (§7.5–§7.9).
 pub struct MediaSession {
     instance: u32,
@@ -158,7 +175,10 @@ pub struct MediaSession {
     receiver: MediaReceiver,
     ring: Option<MediaRing>,
     /// Generation of held datagrams that could not be decoded yet (§7.6).
-    holding: Option<(u32, VecDeque<Vec<u8>>)>,
+    /// The session instant at which each datagram actually arrived is kept so
+    /// releasing the hold cannot manufacture a late drop (its deadline was
+    /// judged when it arrived, not when the configuration caught up).
+    holding: Option<(u32, VecDeque<(u64, Vec<u8>)>)>,
     /// Session-clock ms at which the current hold began (§7.6 2 s bound).
     held_since_ms: Option<u64>,
     report: PlaybackReport,
@@ -180,10 +200,16 @@ pub struct MediaSession {
     /// Late drops (§8): arrivals after their playout deadline. Separate from
     /// network loss (`receiver.cumulative_lost`).
     late_drops: u64,
-    /// Frames/batches trimmed by the Kotlin reader (re-anchor, §8 hard limit).
+    /// Frames/batches trimmed by the Kotlin reader's §8 hard-limit re-anchor.
     /// Also counted as `ReAnchor` concealment (M5-04).
     trimmed_frames: u64,
     trim_events: u64,
+    /// Frames/batches trimmed by the reader's *soft* target trim (backlog
+    /// above the §8 target). Counted separately and NOT as concealment.
+    soft_trimmed_frames: u64,
+    soft_trim_events: u64,
+    /// Per-kind §8 intervention breakdown behind `concealments`.
+    concealment_counts: ConcealmentCounts,
     /// Latest capture-clock position seen on the wire (wire `timestamp` +
     /// frames). The capture side of the §8 drift measurement.
     capture_position: u64,
@@ -258,6 +284,9 @@ impl MediaSession {
             late_drops: 0,
             trimmed_frames: 0,
             trim_events: 0,
+            soft_trimmed_frames: 0,
+            soft_trim_events: 0,
+            concealment_counts: ConcealmentCounts::default(),
             capture_position: 0,
             saw_capture: false,
             drift: DriftEstimator::new(drift_config.window_ms, geometry.sample_rate),
@@ -313,6 +342,12 @@ impl MediaSession {
         self.anchor
     }
 
+    /// The active §8 jitter-buffer bounds. The Kotlin reader asks for these
+    /// instead of duplicating the 60/200 ms constants.
+    pub const fn jitter_config(&self) -> JitterConfig {
+        self.jitter.config()
+    }
+
     /// Attach/replace the ring once the JVM hands over its direct ByteBuffer.
     pub fn set_ring(&mut self, ring: MediaRing) {
         self.ring = Some(ring);
@@ -341,8 +376,8 @@ impl MediaSession {
             }
             if let Some((held_generation, held)) = self.holding.take() {
                 if held_generation == generation {
-                    for datagram in held {
-                        self.deliver(&datagram);
+                    for (arrival_ms, datagram) in held {
+                        self.deliver(arrival_ms, &datagram);
                     }
                 }
             }
@@ -377,7 +412,7 @@ impl MediaSession {
         if header.config_generation > self.generation {
             return self.hold(now_ms, datagram, header.config_generation);
         }
-        self.accept_observed(now_ms, &header, payload)
+        self.accept_observed(now_ms, &header, payload, true)
     }
 
     /// Record what the platform playback API actually accepted (§9 evidence).
@@ -530,17 +565,70 @@ impl MediaSession {
 
     /// Record one §8 concealment intervention.
     ///
-    /// M5-03 emits `Gap` (timestamp hole) and exposes `Underrun`; `Drift` and
-    /// `ReAnchor` are the documented hook for M5-04. Every intervention counts
-    /// once in `concealments`; `concealed_frames` accumulates the signed frame
-    /// delta (inserted positive, deleted negative). M5-04 calls this from its
-    /// drift insert/delete and hard-limit re-anchor paths without any proto
-    /// change.
+    /// All four §8 interventions share the one §9 `concealments` counter
+    /// (fields 17/18) and the signed `concealed_frames` (field 19); `kind` is
+    /// kept in a per-kind breakdown that the `playback.concealments` log line
+    /// reports, so the caller's classification is not discarded.
     pub fn record_concealment(&mut self, kind: ConcealmentKind, frames_delta: i64) {
-        let _ = kind; // all four kinds share the one §9 counter (field 17/18/19)
+        match kind {
+            ConcealmentKind::Gap => self.concealment_counts.gap += 1,
+            ConcealmentKind::Underrun => self.concealment_counts.underrun += 1,
+            ConcealmentKind::Drift => self.concealment_counts.drift += 1,
+            ConcealmentKind::ReAnchor => self.concealment_counts.reanchor += 1,
+        }
         self.concealments += 1;
         self.interval.concealments += 1;
         self.concealed_frames = self.concealed_frames.saturating_add(frames_delta);
+    }
+
+    /// Per-kind §8 intervention counts (the local L1 breakdown; §9 only has
+    /// the total).
+    pub const fn concealment_counts(&self) -> ConcealmentCounts {
+        self.concealment_counts
+    }
+
+    /// A playback-loop underrun: the reader had no data for one playback
+    /// period while playing, so it fed `inserted_frames` of silence. This is
+    /// the §8 "underrun fill" intervention — distinct from the platform's
+    /// `underruns` counter, which stays as reported in §9 field 20.
+    ///
+    /// Inserted silence carries no capture position, so the platform-accepted
+    /// bytes it contributes are offset out of `submitted_position` (the
+    /// playback cursor advanced in wall time, not on the capture clock).
+    pub fn record_underrun(&mut self, inserted_frames: u64) {
+        if inserted_frames == 0 {
+            return;
+        }
+        self.record_concealment(ConcealmentKind::Underrun, inserted_frames as i64);
+        self.position_adjust_frames = self
+            .position_adjust_frames
+            .saturating_sub(inserted_frames as i64);
+    }
+
+    /// Record frames trimmed from the ring by the reader's *soft* target trim
+    /// (backlog above the 60 ms target but still below the 200 ms hard limit).
+    /// Ticket M5-03: the oldest frames are dropped and counted separately —
+    /// this is normal buffer steering, NOT a §8 concealment intervention, so
+    /// it must not touch `concealments`/`concealed_frames`.
+    pub fn record_soft_trim(&mut self, frames: u64) {
+        if frames == 0 {
+            return;
+        }
+        self.soft_trimmed_frames = self.soft_trimmed_frames.saturating_add(frames);
+        self.soft_trim_events += 1;
+        // The skipped media had capture positions, so the playout cursor
+        // advanced over them even though it was not a concealment event.
+        self.position_adjust_frames = self.position_adjust_frames.saturating_add(frames as i64);
+    }
+
+    /// Total frames dropped by soft target trims.
+    pub const fn soft_trimmed_frames(&self) -> u64 {
+        self.soft_trimmed_frames
+    }
+
+    /// Number of soft target-trim batches.
+    pub const fn soft_trim_events(&self) -> u64 {
+        self.soft_trim_events
     }
 
     /// Record frames trimmed from the ring by the Kotlin reader's §8 hard-limit
@@ -595,7 +683,7 @@ impl MediaSession {
         // drops the oldest held datagram. Never decoded with the old config.
         match &mut self.holding {
             Some((held_generation, held)) if *held_generation == generation => {
-                held.push_back(datagram.to_vec());
+                held.push_back((now_ms, datagram.to_vec()));
                 self.trim_hold();
             }
             Some((held_generation, held)) if generation < *held_generation => {
@@ -607,11 +695,11 @@ impl MediaSession {
             }
             Some(_) => {
                 // A newer unknown generation replaces the hold.
-                self.holding = Some((generation, VecDeque::from([datagram.to_vec()])));
+                self.holding = Some((generation, VecDeque::from([(now_ms, datagram.to_vec())])));
                 self.held_since_ms = Some(now_ms);
             }
             None => {
-                self.holding = Some((generation, VecDeque::from([datagram.to_vec()])));
+                self.holding = Some((generation, VecDeque::from([(now_ms, datagram.to_vec())])));
                 self.held_since_ms = Some(now_ms);
             }
         }
@@ -627,10 +715,10 @@ impl MediaSession {
         };
         let mut held_frames: u64 = held
             .iter()
-            .map(|datagram| (datagram.len().saturating_sub(HEADER_SIZE) / frame_bytes) as u64)
+            .map(|(_, datagram)| (datagram.len().saturating_sub(HEADER_SIZE) / frame_bytes) as u64)
             .sum();
         while held.len() > UNKNOWN_CONFIG_MAX_DATAGRAMS || held_frames > max_hold_frames {
-            let Some(dropped) = held.pop_front() else {
+            let Some((_, dropped)) = held.pop_front() else {
                 break;
             };
             let frames = (dropped.len().saturating_sub(HEADER_SIZE) / frame_bytes) as u64;
@@ -671,13 +759,17 @@ impl MediaSession {
         }
     }
 
-    fn deliver(&mut self, datagram: &[u8]) {
+    fn deliver(&mut self, arrival_ms: u64, datagram: &[u8]) {
         if let Ok((header, payload)) = MediaHeader::parse(datagram) {
             if header.config_generation == self.generation {
                 // Held media released by a configuration change must cross the
                 // SAME playout frontier as live media, or the frontier is left
                 // behind and the next live datagram triggers bogus silence.
-                self.accept_observed(0, &header, payload);
+                //
+                // It is *not* a new arrival: `arrival_ms` is the instant the
+                // datagram really arrived, and A.8 must not observe it again
+                // (that would inject a bogus 0/old-time sample at release).
+                self.accept_observed(arrival_ms, &header, payload, false);
             }
         }
     }
@@ -685,7 +777,18 @@ impl MediaSession {
     /// The shared observe → jitter → deliver path for both live datagrams and
     /// held media released by `apply_configuration`. Keeping one path is what
     /// keeps the playout frontier in sync across a config change (§7.6/§8).
-    fn accept_observed(&mut self, now_ms: u64, header: &MediaHeader, payload: &[u8]) -> DatagramOutcome {
+    ///
+    /// `observe_arrival` is true only for a live receive: it is the only case
+    /// where `now_ms` is a genuine arrival instant for the RFC 3550 A.8
+    /// estimate. Replaying held media passes the original arrival time and
+    /// `false`.
+    fn accept_observed(
+        &mut self,
+        now_ms: u64,
+        header: &MediaHeader,
+        payload: &[u8],
+        observe_arrival: bool,
+    ) -> DatagramOutcome {
         let verdict = self.receiver.observe(header);
         let (extended, outcome) = match verdict {
             ObserveVerdict::Duplicate => {
@@ -701,22 +804,46 @@ impl MediaSession {
                 self.interval.received += 1;
                 self.interval.reordered += 1;
                 (
-                    self.receiver.extended_highest.saturating_sub(u64::from(distance)),
+                    self.receiver
+                        .extended_highest
+                        .saturating_sub(u64::from(distance)),
                     DatagramOutcome::Delivered,
                 )
             }
         };
 
-        // §8: RFC 3550 A.8 jitter is measured on every accepted arrival in
-        // arrival order, independent of the playout scheduling below.
-        self.jitter.observe_arrival(now_ms, header.timestamp);
+        // §8: RFC 3550 A.8 jitter is measured on every accepted *live*
+        // arrival in arrival order, independent of the playout scheduling
+        // below. Held media replay is not a new arrival.
+        if observe_arrival {
+            self.jitter.observe_arrival(now_ms, header.timestamp);
+        }
         let frames = self.geometry.frames(payload.len()).unwrap_or(0);
         let mut chunks: Vec<Vec<u8>> = Vec::new();
         let result = {
             let jitter = &mut self.jitter;
-            jitter.submit(extended, header.timestamp, frames, payload, &mut |bytes| {
-                chunks.push(bytes.to_vec());
-            })
+            let mut write = |bytes: &[u8]| chunks.push(bytes.to_vec());
+            if observe_arrival {
+                jitter.submit(
+                    now_ms,
+                    extended,
+                    header.timestamp,
+                    frames,
+                    payload,
+                    &mut write,
+                )
+            } else {
+                // Released held media keeps its real arrival instant for the
+                // deadline check but must not move the live playout anchor.
+                jitter.submit_replay(
+                    now_ms,
+                    extended,
+                    header.timestamp,
+                    frames,
+                    payload,
+                    &mut write,
+                )
+            }
         };
         for chunk in &chunks {
             self.deliver_payload(chunk);
@@ -734,9 +861,11 @@ impl MediaSession {
         }
         if result.rebased {
             // M5-05: a contiguous sequence with a jumped timestamp is a
-            // server-side drop. The position step is not clock drift.
+            // server-side drop. The position step is not clock drift, and it
+            // is not interarrival jitter either: reset both windows.
             self.drift.reset();
             self.drift_ppm = None;
+            self.jitter.reset_arrival();
         }
         if result.late {
             self.interval.late_drops += 1;
