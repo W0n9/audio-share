@@ -165,6 +165,25 @@ object ClientNative {
     external fun recordTrim(handle: Long, frames: Long)
 
     /**
+     * Report frames dropped by the reader's soft target trim (backlog above
+     * the §8 target). Counted separately from concealment; NOT `ReAnchor`.
+     */
+    external fun recordSoftTrim(handle: Long, frames: Long)
+
+    /**
+     * Report a playback-loop underrun fill: [frames] of silence were fed
+     * because no media was ready for one playback period. Counts the §8
+     * underrun concealment; the platform `underruns` counter stays separate.
+     */
+    external fun recordUnderrun(handle: Long, frames: Long)
+
+    /** Active §8 jitter target in ms (native `JitterConfig` authority). */
+    external fun jitterTargetMs(handle: Long): Int
+
+    /** Active §8 jitter hard limit in ms (native `JitterConfig` authority). */
+    external fun jitterHardLimitMs(handle: Long): Int
+
+    /**
      * §8 capture-vs-playback drift estimate in ppm, or 0 until a full 10 s
      * window exists. The accepted §9 diagnostics schema has no drift field;
      * this accessor (and the `playback.drift` log line) is the non-protocol L1

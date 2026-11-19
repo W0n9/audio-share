@@ -237,6 +237,14 @@ class MediaPlayer(
         fun recordPlayback(handle: Long, submittedBytes: Long, underruns: Long, bufferCurrentMs: Int)
         /** Report frames dropped by the reader's jitter-buffer re-anchor (§8). */
         fun recordTrim(handle: Long, frames: Long)
+        /** Report frames dropped by the soft target trim (not concealment). */
+        fun recordSoftTrim(handle: Long, frames: Long) = Unit
+        /** Report an underrun fill: silence fed because no media was ready. */
+        fun recordUnderrun(handle: Long, frames: Long) = Unit
+        /** Active §8 target; `0` means "native has no media session yet". */
+        fun jitterTargetMs(handle: Long): Int = 0
+        /** Active §8 hard limit; `0` means "native has no media session yet". */
+        fun jitterHardLimitMs(handle: Long): Int = 0
         /** §8 smooth ±100 ppm playback-rate correction currently commanded. */
         fun driftCorrectionPpm(handle: Long): Int = 0
         /** Take the pending whole-frame drift adjustment (+ insert, − delete). */
@@ -249,11 +257,16 @@ class MediaPlayer(
         private const val TAG = "MediaPlayer"
         private const val LOOP_SLEEP_MS = 10L
         private const val REPORT_INTERVAL_MS = 100L
-        // §8 jitter-buffer bounds, mirrored from native JitterConfig::default.
-        // Derived from the active sample rate at runtime (frameBytes known there).
-        internal const val JITTER_TARGET_MS = 60
-        internal const val JITTER_HARD_LIMIT_MS = 200
+        // §8 jitter-buffer bounds come from native (`JitterConfig`) so the two
+        // sides cannot silently diverge. These are only fallbacks for the
+        // window before a native media session exists / when the accessor
+        // fails; they are not the authority.
+        internal const val FALLBACK_TARGET_MS = 60
+        internal const val FALLBACK_HARD_LIMIT_MS = 200
     }
+
+    /** Resolved §8 bounds in bytes for the active geometry. */
+    internal data class JitterBounds(val targetBytes: Int, val hardLimitBytes: Int)
 
     private val running = AtomicBoolean(false)
     @Volatile private var thread: Thread? = null
@@ -293,10 +306,10 @@ class MediaPlayer(
     internal fun submittedBytesTotal(): Long = submittedBytes
 
     /**
-     * M5-03: apply the jitter-buffer re-anchor policy at the reader cursor.
-     * Trims the oldest backlog down to the target when the hard limit is
-     * exceeded, and reports the dropped frame count to native. Exposed to the
-     * unit tests: the playback loop calls exactly this.
+     * M5-03: apply the jitter-buffer steering policy at the reader cursor.
+     * A backlog above the target is trimmed (soft, counted separately); above
+     * the hard limit it is a §8 `ReAnchor` concealment. Both report the frame
+     * count to native. Exposed to the unit tests: the loop calls exactly this.
      */
     internal fun applyReadPosition(
         writePosition: Long,
@@ -305,13 +318,58 @@ class MediaPlayer(
         hardLimitBytes: Int,
         frameBytes: Int,
     ): Long {
-        val next = ringBuffer.trimmedReadPosition(
+        val result = ringBuffer.trim(
             writePosition, readPosition, targetBytes, hardLimitBytes, frameBytes,
         )
-        if (next > readPosition && frameBytes > 0) {
-            native.recordTrim(handle, (next - readPosition) / frameBytes)
+        if (result.trimmedFrames > 0) {
+            if (result.reanchor) {
+                native.recordTrim(handle, result.trimmedFrames)
+            } else {
+                native.recordSoftTrim(handle, result.trimmedFrames)
+            }
         }
-        return next
+        return result.readPosition
+    }
+
+    /**
+     * Resolve the §8 bounds from native, falling back to the normative values
+     * only when the accessor cannot answer (no media session yet).
+     */
+    internal fun resolveJitterBounds(
+        session: Long,
+        sampleRate: Int,
+        frameBytes: Int,
+    ): JitterBounds {
+        val targetMs = native.jitterTargetMs(session).takeIf { it > 0 } ?: FALLBACK_TARGET_MS
+        val hardLimitMs =
+            native.jitterHardLimitMs(session).takeIf { it > 0 } ?: FALLBACK_HARD_LIMIT_MS
+        val rate = sampleRate.coerceAtLeast(0)
+        val usableFrameBytes = frameBytes.coerceAtLeast(0)
+        val targetBytes = (targetMs.coerceAtLeast(0) * rate / 1000) * usableFrameBytes
+        val hardLimitBytes = (hardLimitMs.coerceAtLeast(0) * rate / 1000) * usableFrameBytes
+        return JitterBounds(targetBytes, hardLimitBytes)
+    }
+
+    /**
+     * §8 underrun fill: no media was ready for one playback period. Feed one
+     * period of silence so the platform sink stays fed, and report the
+     * inserted frames to native as an `Underrun` concealment. The platform's
+     * own `underruns` counter remains a separate §9 field.
+     *
+     * Returns the whole frames of silence the sink accepted.
+     */
+    internal fun fillUnderrun(session: Long, sampleRate: Int, sink: AudioSink): Int {
+        val frameBytes = sink.frameBytes
+        if (frameBytes <= 0 || sampleRate <= 0) return 0
+        val frames = (sampleRate.toLong() * LOOP_SLEEP_MS / 1000).toInt().coerceAtLeast(1)
+        val silence = ByteArray(frames * frameBytes)
+        val accepted = sink.write(silence, silence.size).coerceIn(0, silence.size)
+        val acceptedFrames = accepted / frameBytes
+        if (acceptedFrames > 0) {
+            submittedBytes += acceptedFrames.toLong() * frameBytes
+            native.recordUnderrun(session, acceptedFrames.toLong())
+        }
+        return acceptedFrames
     }
 
     /** Result of applying one §8 drift frame adjustment. */
@@ -378,6 +436,11 @@ class MediaPlayer(
         var readPosition = 0L
         var scratch = ByteArray(0)
         var lastReport = 0L
+        // §8 underrun fill is only counted after real media has played once:
+        // an empty ring before the first data is startup, not an underrun.
+        var hasPlayed = false
+        // Native's JitterConfig is fixed for a geometry; cache it per sink.
+        var jitterBounds: JitterBounds? = null
         try {
             while (running.get()) {
                 val session = handle
@@ -396,6 +459,8 @@ class MediaPlayer(
                     }
                     readPosition = 0
                     submittedBytes = 0
+                    hasPlayed = false
+                    jitterBounds = null
                     Thread.sleep(LOOP_SLEEP_MS)
                     continue
                 }
@@ -413,6 +478,7 @@ class MediaPlayer(
                     sinkKey = key
                     readPosition = 0
                     submittedBytes = 0
+                    hasPlayed = false
                     if (sink == null) {
                         // Unsupported platform mapping is a 403-class condition;
                         // nothing to play, so stop consuming rather than spin.
@@ -422,6 +488,7 @@ class MediaPlayer(
                     }
                     val frameBytes = sink.frameBytes
                     scratch = ByteArray(maxOf(frameBytes, 4096 - 4096 % frameBytes))
+                    jitterBounds = resolveJitterBounds(session, sampleRate, frameBytes)
                     // Native restarts its ring cursor per instance; begin at the
                     // writer's cursor so a late subscriber never plays pre-anchor audio.
                     readPosition = native.ringPosition(session)
@@ -432,13 +499,17 @@ class MediaPlayer(
                 val frameBytes = currentSink.frameBytes
                 val writePosition = native.ringPosition(session)
                 // §8: the application-layer jitter buffer keeps a bounded
-                // backlog. When it exceeds the hard limit, drop the OLDEST
-                // media down to the target and report the trim separately from
-                // concealment. This also replaces the M4 lap-resync.
-                val targetBytes = (JITTER_TARGET_MS * sampleRate / 1000) * frameBytes
-                val hardLimitBytes = (JITTER_HARD_LIMIT_MS * sampleRate / 1000) * frameBytes
+                // backlog. Backlog above the target is trimmed (soft, counted
+                // separately); above the hard limit it is a ReAnchor
+                // concealment. The bounds come from native JitterConfig.
+                val bounds = jitterBounds
+                    ?: resolveJitterBounds(session, sampleRate, frameBytes).also { jitterBounds = it }
                 readPosition = applyReadPosition(
-                    writePosition, readPosition, targetBytes, hardLimitBytes, frameBytes,
+                    writePosition,
+                    readPosition,
+                    bounds.targetBytes,
+                    bounds.hardLimitBytes,
+                    frameBytes,
                 )
                 val available = ringBuffer.available(writePosition, readPosition)
                 if (available >= frameBytes) {
@@ -448,7 +519,12 @@ class MediaPlayer(
                         // Only the sink's accepted bytes count as played (§9).
                         val accepted = playOnce(currentSink, scratch, copied)
                         readPosition += accepted
+                        if (accepted > 0) hasPlayed = true
                     }
+                } else if (hasPlayed) {
+                    // §8 underrun fill: nothing was ready for this playback
+                    // period while playing, so feed one period of silence.
+                    fillUnderrun(session, sampleRate, currentSink)
                 }
 
                 val now = System.nanoTime()

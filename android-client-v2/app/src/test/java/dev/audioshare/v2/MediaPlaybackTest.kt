@@ -303,8 +303,125 @@ class MediaPlaybackTest {
         assertEquals(-48, fake.driftFramesTotal)
     }
 
+    /**
+     * M5-03 ticket: backlog above the *target* is trimmed even below the hard
+     * limit, and that soft trim is counted separately from the hard-limit
+     * `ReAnchor` concealment.
+     */
+    @Test
+    fun soft_target_trim_is_reported_separately_from_reanchor() {
+        val fake = RecordingNative()
+        val player = MediaPlayer(fake)
+        val trimmed = player.applyReadPosition(
+            writePosition = 8L * 800,
+            readPosition = 0L,
+            targetBytes = 8 * 240,
+            hardLimitBytes = 8 * 2_000,
+            frameBytes = 8,
+        )
+        assertEquals(8L * 560, trimmed, "drop the oldest frames down to the target")
+        assertEquals(560L, fake.softTrimmedFramesTotal, "soft trim is counted")
+        assertEquals(0L, fake.trimmedFramesTotal, "not mislabelled ReAnchor")
+    }
+
+    @Test
+    fun ring_trim_reports_whether_it_was_a_hard_limit_reanchor() {
+        val ring = MediaRingBuffer(64 * 1024)
+        val soft = ring.trim(
+            writePosition = 8L * 800,
+            readPosition = 0L,
+            targetBytes = 8 * 240,
+            hardLimitBytes = 8 * 2_000,
+            frameBytes = 8,
+        )
+        assertFalse(soft.reanchor)
+        assertEquals(560L, soft.trimmedFrames)
+
+        val hard = ring.trim(
+            writePosition = 8L * 1_200,
+            readPosition = 0L,
+            targetBytes = 8 * 240,
+            hardLimitBytes = 8 * 960,
+            frameBytes = 8,
+        )
+        assertTrue(hard.reanchor, "above the hard limit is a ReAnchor")
+        assertEquals(960L, hard.trimmedFrames)
+    }
+
+    @Test
+    fun soft_trim_is_frame_aligned_with_an_unaligned_target() {
+        val ring = MediaRingBuffer(64 * 1024)
+        val result = ring.trim(
+            writePosition = 8L * 1_200,
+            readPosition = 0L,
+            targetBytes = 1_919, // just under 240 frames
+            hardLimitBytes = 8 * 2_000,
+            frameBytes = 8,
+        )
+        assertEquals(0, (result.readPosition % 8).toInt(), "frame aligned")
+        assertEquals(1_200L - 239L, result.trimmedFrames)
+        assertEquals(0L, result.readPosition - (8L * 1_200 - 1_912))
+    }
+
+    /**
+     * Finding 6: the active §8 bounds come from native, so the JVM cannot
+     * silently diverge from `JitterConfig`. The normative values are only a
+     * fallback when native has no media session yet.
+     */
+    @Test
+    fun jitter_bounds_use_native_values_with_normative_fallbacks() {
+        val fake = RecordingNative()
+        fake.jitterTarget = 40
+        fake.jitterHardLimit = 120
+        val player = MediaPlayer(fake)
+        val bounds = player.resolveJitterBounds(7, 48_000, 8)
+        assertEquals(40 * 48 * 8, bounds.targetBytes)
+        assertEquals(120 * 48 * 8, bounds.hardLimitBytes)
+
+        val fallback = MediaPlayer(RecordingNative()).resolveJitterBounds(7, 48_000, 8)
+        assertEquals(
+            MediaPlayer.FALLBACK_TARGET_MS * 48 * 8,
+            fallback.targetBytes,
+            "a native session without media falls back to 60 ms",
+        )
+        assertEquals(MediaPlayer.FALLBACK_HARD_LIMIT_MS * 48 * 8, fallback.hardLimitBytes)
+        assertEquals(60, MediaPlayer.FALLBACK_TARGET_MS)
+        assertEquals(200, MediaPlayer.FALLBACK_HARD_LIMIT_MS)
+    }
+
+    /**
+     * §8 underrun fill: one playback period of silence is fed and reported as
+     * a native underrun concealment; the platform `underruns` field is a
+     * different counter and is not touched by this path.
+     */
+    @Test
+    fun an_underrun_feeds_one_playback_period_of_silence_and_reports_it() {
+        val fake = RecordingNative()
+        val player = MediaPlayer(fake)
+        val sink = FakeSink(frameBytes = 8)
+        val frames = player.fillUnderrun(session = 7, sampleRate = 48_000, sink = sink)
+        assertEquals(480, frames, "10 ms at 48 kHz = 480 frames of silence")
+        assertEquals(480L, fake.underrunFramesTotal)
+        assertEquals(480L * 8, player.submittedBytesTotal())
+        assertEquals(480 * 8, sink.accepted)
+    }
+
+    @Test
+    fun an_underrun_the_sink_refuses_is_not_counted() {
+        val fake = RecordingNative()
+        val player = MediaPlayer(fake)
+        val sink = FakeSink(frameBytes = 8, acceptAtMost = 0)
+        assertEquals(0, player.fillUnderrun(7, 48_000, sink))
+        assertEquals(0L, fake.underrunFramesTotal)
+        assertEquals(0L, player.submittedBytesTotal())
+    }
+
     private class RecordingNative : MediaPlayer.NativeMedia {
         var trimmedFramesTotal: Long = 0
+        var softTrimmedFramesTotal: Long = 0
+        var underrunFramesTotal: Long = 0
+        var jitterTarget: Int = 0
+        var jitterHardLimit: Int = 0
         var driftRatePpm: Int = 0
         var pendingAdjust: Int = 0
         var driftFramesTotal: Int = 0
@@ -321,6 +438,14 @@ class MediaPlaybackTest {
         override fun recordTrim(handle: Long, frames: Long) {
             trimmedFramesTotal += frames
         }
+        override fun recordSoftTrim(handle: Long, frames: Long) {
+            softTrimmedFramesTotal += frames
+        }
+        override fun recordUnderrun(handle: Long, frames: Long) {
+            underrunFramesTotal += frames
+        }
+        override fun jitterTargetMs(handle: Long): Int = jitterTarget
+        override fun jitterHardLimitMs(handle: Long): Int = jitterHardLimit
         override fun driftCorrectionPpm(handle: Long): Int = driftRatePpm
         override fun takeDriftIntervention(handle: Long): Int = pendingAdjust.also { pendingAdjust = 0 }
         override fun recordDriftIntervention(handle: Long, frames: Int) {

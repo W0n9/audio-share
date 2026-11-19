@@ -53,9 +53,6 @@ const KEEP_ALIVE_SECS: u64 = 10;
 /// §7.6 give-up bound). Short enough to react promptly, long enough to stay
 /// off the hot path.
 const MEDIA_POLL: std::time::Duration = std::time::Duration::from_millis(250);
-/// §9 `buffer_target_ms` reported for the M5-03 jitter buffer (D12: 60 ms).
-/// Mirrors `JitterConfig::default().target_ms`; the buffer now really exists.
-const BUFFER_TARGET_MS: u32 = 60;
 
 /// Per-request response deadlines (§4.2). Each pending request is armed once,
 /// from the moment it is sent, and is never extended by unrelated reads. A
@@ -1009,6 +1006,46 @@ impl Session {
         }
     }
 
+    /// Record frames dropped by the reader's soft target trim (backlog above
+    /// the §8 target). Counted separately; NOT a concealment intervention.
+    pub fn record_soft_trim(&self, frames: u64) {
+        if let Some(media) = self.shared.media.lock().unwrap().clone() {
+            media.lock().unwrap().record_soft_trim(frames);
+        }
+    }
+
+    /// Record a playback-loop underrun fill: `frames` of silence were fed
+    /// because the reader had no data for one playback period (§8 underrun
+    /// concealment). Separate from the platform `underruns` counter.
+    pub fn record_underrun(&self, frames: u64) {
+        if let Some(media) = self.shared.media.lock().unwrap().clone() {
+            media.lock().unwrap().record_underrun(frames);
+        }
+    }
+
+    /// The active §8 jitter target in milliseconds, or the normative default
+    /// when no media session exists yet.
+    pub fn jitter_target_ms(&self) -> u32 {
+        self.shared
+            .media
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|media| media.lock().unwrap().jitter_config().target_ms)
+            .unwrap_or_else(|| crate::jitter::JitterConfig::default().target_ms)
+    }
+
+    /// The active §8 jitter hard limit in milliseconds.
+    pub fn jitter_hard_limit_ms(&self) -> u32 {
+        self.shared
+            .media
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|media| media.lock().unwrap().jitter_config().hard_limit_ms)
+            .unwrap_or_else(|| crate::jitter::JitterConfig::default().hard_limit_ms)
+    }
+
     /// Take the pending whole-frame drift adjustment (+ insert, − delete).
     /// The player applies it and reports back through
     /// [`Self::record_drift_intervention`].
@@ -1065,14 +1102,30 @@ impl Session {
         let Some(media) = current else {
             return false;
         };
-        let (diagnostics, drift_ppm, correction_ppm) = {
+        let (diagnostics, drift_ppm, correction_ppm, concealments) = {
             let mut media = media.lock().unwrap();
-            let diagnostics = media.diagnostics(BUFFER_TARGET_MS);
-            (diagnostics, media.drift_ppm(), media.drift_correction_ppm())
+            let target_ms = media.jitter_config().target_ms;
+            let diagnostics = media.diagnostics(target_ms);
+            (
+                diagnostics,
+                media.drift_ppm(),
+                media.drift_correction_ppm(),
+                media.concealment_counts(),
+            )
         };
-        // §9 has NO drift field (and adding one is a protocol change needing
-        // maintainer adjudication), so the §8 estimate reaches L1 tooling
-        // through this log line and the `driftPpm` JNI accessor instead.
+        // §9 has NO drift or per-kind concealment field (adding one is a
+        // protocol change needing maintainer adjudication), so the breakdown
+        // reaches L1 tooling through these log lines and the JNI accessors.
+        if concealments.total() > 0 {
+            log::info!(
+                "event = playback.concealments gap={} underrun={} drift={} reanchor={} total={}",
+                concealments.gap,
+                concealments.underrun,
+                concealments.drift,
+                concealments.reanchor,
+                concealments.total(),
+            );
+        }
         if let Some(drift_ppm) = drift_ppm {
             log::info!(
                 "event = {} drift_ppm={} correction_ppm={} buffer_current_ms={} buffer_target_ms={}",
