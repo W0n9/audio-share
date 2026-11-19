@@ -555,3 +555,24 @@ async fn identity_reset_is_logged_with_the_new_fingerprint() {
     assert_logged(&text, "event=identity.reset");
     assert_logged(&text, &format!("fingerprint={}", identity.fingerprint()));
 }
+
+/// M5-05: server-side drop counters are emitted as a `media.drops` event with
+/// only public counters (no key material or audio), so they reach server.log
+/// via tracing_bridge and can be distinguished from Client-side network loss.
+#[test]
+fn server_side_media_drops_are_logged_with_public_counters_only() {
+    let (logs, _guard) = capture_logs();
+    v2_transport::session_log::media_drops(42, 7, 3, 2, 100);
+    let text = logs.text();
+    assert_logged(&text, "event=media.drops");
+    assert_logged(&text, "session_id=42");
+    assert_logged(&text, "instance=7");
+    assert_logged(&text, "pump_dropped_chunks=3");
+    assert_logged(&text, "queue_dropped_newest=2");
+    assert_logged(&text, "pending_frames=100");
+    // Red line: nothing secret or raw reached the log.
+    assert!(
+        !text.contains("audio"),
+        "raw audio reached the log:\n{text}"
+    );
+}
