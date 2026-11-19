@@ -115,6 +115,49 @@ fn a_datagram_after_its_playout_deadline_is_a_late_drop() {
     assert_eq!(d.interval_late_drops, 1);
 }
 
+// Held datagrams released by a config change must go through the SAME jitter
+// frontier as live media. Otherwise their sequences are written directly to
+// the ring while the frontier still waits at the old generation's position,
+// and the next live datagram triggers a bogus gap fill + stall.
+#[test]
+fn held_datagrams_released_on_config_change_keep_the_frontier_in_sync() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let mut media = session_with(&mut backing);
+    // A gen-1 live frame commits the frontier at seq 1 (expects seq 1 next).
+    assert_eq!(
+        media.on_datagram(0, &datagram_filled(0, 0, 0x7f)),
+        DatagramOutcome::Delivered
+    );
+    // Gen-2 media at seq 1 arrives before its configuration: held, not decoded.
+    let mut held = datagram_filled(1, 64, 0x11);
+    held[4..8].copy_from_slice(&2u32.to_be_bytes());
+    assert_eq!(
+        media.on_datagram(0, &held),
+        DatagramOutcome::HeldUnknownConfig
+    );
+    assert_eq!(media.delivered_frames(), 64, "held media is not decoded early");
+
+    // The reliable config releases the held frame. It must advance the jitter
+    // frontier to seq 2; otherwise the frontier still expects seq 1.
+    media.apply_configuration(&config(2));
+
+    // Push a contiguous gen-2 run far enough to exceed the 60 ms target span.
+    // If the held frame bypassed the frontier, seq 1 looks like a hole that was
+    // never filled → a bogus 64-frame silence gap for media already in the ring.
+    for i in 0..46u32 {
+        let seq = 2 + i;
+        let mut d = datagram_filled(seq, 128 + u64::from(i) * 64, 0x22);
+        d[4..8].copy_from_slice(&2u32.to_be_bytes());
+        assert_eq!(media.on_datagram(0, &d), DatagramOutcome::Delivered);
+    }
+    let d = media.diagnostics(60);
+    assert_eq!(d.cumulative_concealments, 0, "no duplicate silence at config change");
+    assert_eq!(d.concealed_frames, 0);
+    assert_eq!(d.cumulative_late_drops, 0);
+    // One gen-1 + one held + 46 live datagrams, each written exactly once.
+    assert_eq!(media.delivered_frames(), 48 * 64);
+}
+
 // M5-05 handoff: server-side pre-packetize / MediaTap-full drops re-anchor
 // the packetizer timestamp to chunk.start_frame, so `timestamp` jumps while
 // `sequence` stays contiguous. The client must NOT report these as network
