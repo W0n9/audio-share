@@ -191,12 +191,18 @@ class MediaPlayer(
         fun ringPosition(handle: Long): Long
         fun mediaFormatJson(handle: Long): String?
         fun recordPlayback(handle: Long, submittedBytes: Long, underruns: Long, bufferCurrentMs: Int)
+        /** Report frames dropped by the reader's jitter-buffer re-anchor (§8). */
+        fun recordTrim(handle: Long, frames: Long)
     }
 
     companion object {
         private const val TAG = "MediaPlayer"
         private const val LOOP_SLEEP_MS = 10L
         private const val REPORT_INTERVAL_MS = 100L
+        // §8 jitter-buffer bounds, mirrored from native JitterConfig::default.
+        // Derived from the active sample rate at runtime (frameBytes known there).
+        internal const val JITTER_TARGET_MS = 60
+        internal const val JITTER_HARD_LIMIT_MS = 200
     }
 
     private val running = AtomicBoolean(false)
@@ -235,6 +241,28 @@ class MediaPlayer(
 
     /** Bytes the sink accepted so far (never ring writes or received media). */
     internal fun submittedBytesTotal(): Long = submittedBytes
+
+    /**
+     * M5-03: apply the jitter-buffer re-anchor policy at the reader cursor.
+     * Trims the oldest backlog down to the target when the hard limit is
+     * exceeded, and reports the dropped frame count to native. Exposed to the
+     * unit tests: the playback loop calls exactly this.
+     */
+    internal fun applyReadPosition(
+        writePosition: Long,
+        readPosition: Long,
+        targetBytes: Int,
+        hardLimitBytes: Int,
+        frameBytes: Int,
+    ): Long {
+        val next = ringBuffer.trimmedReadPosition(
+            writePosition, readPosition, targetBytes, hardLimitBytes, frameBytes,
+        )
+        if (next > readPosition && frameBytes > 0) {
+            native.recordTrim(handle, (next - readPosition) / frameBytes)
+        }
+        return next
+    }
 
     private fun loop() {
         var sink: AudioSink? = null
@@ -295,11 +323,15 @@ class MediaPlayer(
                 val currentSink = sink ?: continue
                 val frameBytes = currentSink.frameBytes
                 val writePosition = native.ringPosition(session)
-                if (ringBuffer.lapped(writePosition, readPosition)) {
-                    // The producer outran us: resync to live audio (M4 drops the
-                    // backlog; M5 owns re-anchoring policy and concealment).
-                    readPosition = writePosition
-                }
+                // §8: the application-layer jitter buffer keeps a bounded
+                // backlog. When it exceeds the hard limit, drop the OLDEST
+                // media down to the target and report the trim separately from
+                // concealment. This also replaces the M4 lap-resync.
+                val targetBytes = (JITTER_TARGET_MS * sampleRate / 1000) * frameBytes
+                val hardLimitBytes = (JITTER_HARD_LIMIT_MS * sampleRate / 1000) * frameBytes
+                readPosition = applyReadPosition(
+                    writePosition, readPosition, targetBytes, hardLimitBytes, frameBytes,
+                )
                 val available = ringBuffer.available(writePosition, readPosition)
                 if (available >= frameBytes) {
                     val toRead = minOf(available, scratch.size)
