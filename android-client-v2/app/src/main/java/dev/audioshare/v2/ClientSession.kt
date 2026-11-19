@@ -32,6 +32,12 @@ internal object NativeMediaBridge : MediaPlayer.NativeMedia {
         ClientNative.recordPlayback(handle, submittedBytes, underruns, bufferCurrentMs)
     override fun recordTrim(handle: Long, frames: Long) =
         ClientNative.recordTrim(handle, frames)
+    override fun driftCorrectionPpm(handle: Long): Int =
+        ClientNative.driftCorrectionPpm(handle)
+    override fun takeDriftIntervention(handle: Long): Int =
+        ClientNative.takeDriftIntervention(handle)
+    override fun recordDriftIntervention(handle: Long, frames: Int) =
+        ClientNative.recordDriftIntervention(handle, frames)
 }
 
 /** What the ConnectivityManager `onAvailable` callback should do. */
