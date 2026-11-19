@@ -19,9 +19,14 @@
 
 use std::collections::VecDeque;
 
+use crate::jitter::JitterBuffer;
 use crate::media::{MediaHeader, MediaReceiver, ObserveVerdict, HEADER_SIZE};
 use crate::proto::{Configuration, PlaybackDiagnostics};
 use crate::ring::MediaRing;
+
+/// Re-export the jitter types so host tests and the session layer share one
+/// definition of the §8 target/hard-limit defaults and concealment kinds.
+pub use crate::jitter::{ConcealmentKind, JitterConfig};
 
 /// §7.6 bounds: hold at most 100 ms of media or 32 datagrams, whichever fills
 /// first; overflow drops the oldest held datagram.
@@ -125,6 +130,9 @@ pub enum DatagramOutcome {
     StaleGeneration,
     /// Generation newer than anything published: held (§7.6).
     HeldUnknownConfig,
+    /// Arrived after its playout deadline (§8): dropped, counted separately
+    /// from network loss. Never written to the ring.
+    LateDropped,
     /// Not playing (no active stream): ignored.
     Ignored,
 }
@@ -162,6 +170,19 @@ pub struct MediaSession {
     gave_up_unknown_config: bool,
     /// Frames delivered to the ring since the instance started.
     delivered_frames: u64,
+    /// The §8 bounded jitter buffer (reorder + late drop + silence gap fill).
+    jitter: JitterBuffer,
+    /// Cumulative concealment count (all four §8 interventions). `concealed_frames`
+    /// is inserted − deleted, signed (proto sint64).
+    concealments: u64,
+    concealed_frames: i64,
+    /// Late drops (§8): arrivals after their playout deadline. Separate from
+    /// network loss (`receiver.cumulative_lost`).
+    late_drops: u64,
+    /// Frames/batches trimmed by the Kotlin reader (re-anchor, M5-04 owns the
+    /// concealment accounting). Reported separately here.
+    trimmed_frames: u64,
+    trim_events: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -171,6 +192,8 @@ struct IntervalCounters {
     reordered: u64,
     lost: i64,
     unknown_config_drops: u64,
+    late_drops: u64,
+    concealments: u64,
 }
 
 impl MediaSession {
@@ -204,7 +227,35 @@ impl MediaSession {
             interval: IntervalCounters::default(),
             gave_up_unknown_config: false,
             delivered_frames: 0,
+            jitter: JitterBuffer::new(
+                JitterConfig::default(),
+                geometry.sample_rate,
+                geometry.frame_bytes(),
+            ),
+            concealments: 0,
+            concealed_frames: 0,
+            late_drops: 0,
+            trimmed_frames: 0,
+            trim_events: 0,
         })
+    }
+
+    /// Start with an explicit jitter configuration (host tests / future tuning).
+    pub fn start_with_config(
+        instance: u32,
+        generation: u32,
+        initial_timestamp: u64,
+        configuration: &Configuration,
+        ring: Option<MediaRing>,
+        jitter_config: JitterConfig,
+    ) -> Option<Self> {
+        let mut session = Self::start(instance, generation, initial_timestamp, configuration, ring)?;
+        session.jitter = JitterBuffer::new(
+            jitter_config,
+            session.geometry.sample_rate,
+            session.geometry.frame_bytes(),
+        );
+        Some(session)
     }
 
     /// The active instance.
@@ -280,26 +331,7 @@ impl MediaSession {
         if header.config_generation > self.generation {
             return self.hold(now_ms, datagram, header.config_generation);
         }
-        match self.receiver.observe(&header) {
-            ObserveVerdict::Duplicate => {
-                self.interval.duplicates += 1;
-                DatagramOutcome::Duplicate
-            }
-            ObserveVerdict::Ok { gap } => {
-                self.interval.received += 1;
-                self.interval.lost += i64::from(gap);
-                self.deliver_payload(payload);
-                DatagramOutcome::Delivered
-            }
-            ObserveVerdict::Reordered { distance: _ } => {
-                self.interval.received += 1;
-                self.interval.reordered += 1;
-                // M4 has no playout scheduling: a reordered-but-unseen packet
-                // is still delivered in arrival order. M5 owns late drops.
-                self.deliver_payload(payload);
-                DatagramOutcome::Delivered
-            }
-        }
+        self.accept_observed(now_ms, &header, payload)
     }
 
     /// Record what the platform playback API actually accepted (§9 evidence).
@@ -328,19 +360,16 @@ impl MediaSession {
             cumulative_reordered: self.receiver.cumulative_reordered,
             interval_reordered: self.interval.reordered,
             max_reorder_distance: self.receiver.max_reorder_distance,
-            cumulative_late_drops: 0,
-            interval_late_drops: 0,
+            cumulative_late_drops: self.late_drops,
+            interval_late_drops: self.interval.late_drops,
             cumulative_unknown_config_drops: self.receiver.unknown_config_drops,
             interval_unknown_config_drops: self.interval.unknown_config_drops,
-            cumulative_concealments: 0,
-            interval_concealments: 0,
-            concealed_frames: 0,
+            cumulative_concealments: self.concealments,
+            interval_concealments: self.interval.concealments,
+            concealed_frames: self.concealed_frames,
             underruns: self.report.underruns,
-            // §9 explicit-zero semantics: RFC 3550 A.8 jitter estimation and
-            // the M5 playout interventions below are NOT implemented in M4.
-            // Reporting 0 (not a fabricated estimate) is the ticket-14 rule;
-            // M5 owns the estimator, late drops, concealment and target buffer.
-            jitter_microseconds: 0,
+            // §9: RFC 3550 A.8 estimate converted at the published sample_rate.
+            jitter_microseconds: self.jitter.jitter_microseconds(),
             buffer_current_ms: self.report.buffer_current_ms,
             buffer_target_ms,
             submitted_position: self.submitted_position(),
@@ -362,6 +391,39 @@ impl MediaSession {
     /// Frames written to the ring (native delivery, not playback).
     pub const fn delivered_frames(&self) -> u64 {
         self.delivered_frames
+    }
+
+    /// Record one §8 concealment intervention.
+    ///
+    /// M5-03 emits `Gap` (timestamp hole) and exposes `Underrun`; `Drift` and
+    /// `ReAnchor` are the documented hook for M5-04. Every intervention counts
+    /// once in `concealments`; `concealed_frames` accumulates the signed frame
+    /// delta (inserted positive, deleted negative). M5-04 calls this from its
+    /// drift insert/delete and hard-limit re-anchor paths without any proto
+    /// change.
+    pub fn record_concealment(&mut self, kind: ConcealmentKind, frames_delta: i64) {
+        let _ = kind; // all four kinds share the one §9 counter (field 17/18/19)
+        self.concealments += 1;
+        self.interval.concealments += 1;
+        self.concealed_frames = self.concealed_frames.saturating_add(frames_delta);
+    }
+
+    /// Record frames trimmed from the ring by the Kotlin reader's re-anchor.
+    /// Kept separate from concealment: M5-04 owns re-anchor accounting, and
+    /// reporting it as a concealment here would preempt that ticket.
+    pub fn record_trim(&mut self, frames: u64) {
+        self.trimmed_frames = self.trimmed_frames.saturating_add(frames);
+        self.trim_events += 1;
+    }
+
+    /// Total frames trimmed by the reader (re-anchor, M5-04 boundary).
+    pub const fn trimmed_frames(&self) -> u64 {
+        self.trimmed_frames
+    }
+
+    /// Number of trim/resync batches the reader performed.
+    pub const fn trim_events(&self) -> u64 {
+        self.trim_events
     }
 
     /// Bytes written into the native ring so far, or `None` without a ring.
@@ -468,9 +530,61 @@ impl MediaSession {
     fn deliver(&mut self, datagram: &[u8]) {
         if let Ok((header, payload)) = MediaHeader::parse(datagram) {
             if header.config_generation == self.generation {
-                self.receiver.observe(&header);
-                self.deliver_payload(payload);
+                // Held media released by a configuration change must cross the
+                // SAME playout frontier as live media, or the frontier is left
+                // behind and the next live datagram triggers bogus silence.
+                self.accept_observed(0, &header, payload);
             }
         }
+    }
+
+    /// The shared observe → jitter → deliver path for both live datagrams and
+    /// held media released by `apply_configuration`. Keeping one path is what
+    /// keeps the playout frontier in sync across a config change (§7.6/§8).
+    fn accept_observed(&mut self, now_ms: u64, header: &MediaHeader, payload: &[u8]) -> DatagramOutcome {
+        let verdict = self.receiver.observe(header);
+        let (extended, outcome) = match verdict {
+            ObserveVerdict::Duplicate => {
+                self.interval.duplicates += 1;
+                return DatagramOutcome::Duplicate;
+            }
+            ObserveVerdict::Ok { gap } => {
+                self.interval.received += 1;
+                self.interval.lost += i64::from(gap);
+                (self.receiver.extended_highest, DatagramOutcome::Delivered)
+            }
+            ObserveVerdict::Reordered { distance } => {
+                self.interval.received += 1;
+                self.interval.reordered += 1;
+                (
+                    self.receiver.extended_highest.saturating_sub(u64::from(distance)),
+                    DatagramOutcome::Delivered,
+                )
+            }
+        };
+
+        // §8: RFC 3550 A.8 jitter is measured on every accepted arrival in
+        // arrival order, independent of the playout scheduling below.
+        self.jitter.observe_arrival(now_ms, header.timestamp);
+        let frames = self.geometry.frames(payload.len()).unwrap_or(0);
+        let mut chunks: Vec<Vec<u8>> = Vec::new();
+        let result = {
+            let jitter = &mut self.jitter;
+            jitter.submit(extended, header.timestamp, frames, payload, &mut |bytes| {
+                chunks.push(bytes.to_vec());
+            })
+        };
+        for chunk in &chunks {
+            self.deliver_payload(chunk);
+        }
+        for (kind, delta) in result.concealments {
+            self.record_concealment(kind, delta);
+        }
+        if result.late {
+            self.interval.late_drops += 1;
+            self.late_drops += 1;
+            return DatagramOutcome::LateDropped;
+        }
+        outcome
     }
 }

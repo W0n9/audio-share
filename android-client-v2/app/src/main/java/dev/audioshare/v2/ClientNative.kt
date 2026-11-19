@@ -156,4 +156,11 @@ object ClientNative {
         underruns: Long,
         bufferCurrentMs: Int,
     )
+
+    /**
+     * Report frames dropped by the reader's §8 jitter-buffer re-anchor. Kept
+     * separate from concealment, which is owned by native (gap/underrun) and
+     * M5-04 (drift/re-anchor) — the trim count is diagnostic only (§9).
+     */
+    external fun recordTrim(handle: Long, frames: Long)
 }
