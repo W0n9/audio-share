@@ -70,6 +70,11 @@ pub struct SubmitResult {
     /// The datagram's slot had already been committed: a late drop, not a
     /// network loss and not a reorder.
     pub late: bool,
+    /// A committed contiguous frame carried a jumped wire timestamp (the
+    /// M5-05 server-side drop). The playout clock was re-based on the actual
+    /// timestamp, so the capture-clock position stepped without a matching
+    /// playback step. M5-04 resets its drift window on this signal.
+    pub rebased: bool,
     /// Silence-fill interventions: (kind, signed frame delta).
     pub concealments: Vec<(ConcealmentKind, i64)>,
 }
@@ -149,6 +154,7 @@ impl JitterBuffer {
             // network loss and never ring data.
             return SubmitResult {
                 late: true,
+                rebased: false,
                 concealments: Vec::new(),
             };
         }
@@ -177,6 +183,9 @@ impl JitterBuffer {
             if let Some(frame) = self.pending.remove(&frontier) {
                 // Re-base on the actual timestamp: a contiguous sequence with
                 // a jumped timestamp is a server-side drop (M5-05), not a gap.
+                if frame.timestamp != self.frontier_ts {
+                    result.rebased = true;
+                }
                 write(&frame.payload);
                 self.frontier = Some(frontier + 1);
                 self.frontier_ts = frame.timestamp.saturating_add(frame.frames);

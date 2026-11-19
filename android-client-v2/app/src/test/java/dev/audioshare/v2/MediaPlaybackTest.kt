@@ -22,12 +22,17 @@ class MediaPlaybackTest {
         var offered = 0
         var released = false
         var underrunCount = 0L
+        var lastPlaybackRateHz = -1
 
         override fun write(bytes: ByteArray, length: Int): Int {
             val acceptedNow = minOf(length, acceptAtMost)
             offered += length
             accepted += acceptedNow
             return acceptedNow
+        }
+
+        override fun setPlaybackRateHz(rateHz: Int) {
+            lastPlaybackRateHz = rateHz
         }
 
         override fun underruns(): Long = underrunCount
@@ -186,9 +191,13 @@ class MediaPlaybackTest {
         }
     }
 
-    /** The trim/resync path reports dropped frames to native, separately from concealment. */
+    /**
+     * The §8 hard-limit re-anchor reports dropped frames to native, which
+     * counts them as `ReAnchor` concealment and advances the submitted
+     * position. The JVM side reports the actual trim it performed.
+     */
     @Test
-    fun ring_trim_reports_dropped_frames_to_native() {
+    fun reanchor_trim_reports_dropped_frames_to_native() {
         val fake = RecordingNative()
         val player = MediaPlayer(fake)
         val trimmed = player.applyReadPosition(
@@ -206,8 +215,99 @@ class MediaPlaybackTest {
         )
     }
 
+    /**
+     * M5-04: the ±100 ppm correction is applied as an integer `AudioTrack`
+     * sample rate. At 48 kHz one Hz is ~20.8 ppm, so 100 ppm rounds to 5 Hz.
+     */
+    @Test
+    fun drift_ppm_maps_to_the_platform_hz_granularity() {
+        assertEquals(48_000, playbackRateHz(48_000, 0))
+        assertEquals(48_005, playbackRateHz(48_000, 100))
+        assertEquals(47_995, playbackRateHz(48_000, -100))
+        assertEquals(48_002, playbackRateHz(48_000, 50), "2.4 Hz rounds to 2")
+        assertEquals(44_104, playbackRateHz(44_100, 100), "4.41 Hz rounds to 4")
+        assertEquals(48_005, playbackRateHz(48_000, 10_000), "defensive clamp to ±100 ppm")
+        assertEquals(47_995, playbackRateHz(48_000, -10_000))
+    }
+
+    /** A positive drift adjustment inserts silence and is platform-accepted. */
+    @Test
+    fun drift_insertion_feeds_silence_and_counts_platform_acceptance() {
+        val player = MediaPlayer(RecordingNative())
+        val sink = FakeSink(frameBytes = 8)
+        val applied = player.applyDriftIntervention(
+            frames = 96,
+            sink = sink,
+            readPosition = 0,
+            writePosition = 0,
+        )
+        assertEquals(0L, applied.readPosition, "insertion is written, not read from the ring")
+        assertEquals(96, applied.appliedFrames)
+        assertEquals(96 * 8, sink.offered)
+        assertEquals(96L * 8, player.submittedBytesTotal())
+    }
+
+    /** A negative adjustment skips buffered frames without submitting them. */
+    @Test
+    fun drift_deletion_advances_the_reader_without_submitting() {
+        val player = MediaPlayer(RecordingNative())
+        val sink = FakeSink(frameBytes = 8)
+        val applied = player.applyDriftIntervention(
+            frames = -96,
+            sink = sink,
+            readPosition = 0,
+            writePosition = 8L * 800,
+        )
+        assertEquals(8L * 96, applied.readPosition)
+        assertEquals(-96, applied.appliedFrames)
+        assertEquals(0L, player.submittedBytesTotal(), "deleted media was never played")
+    }
+
+    /** A deletion may never jump past the writer cursor. */
+    @Test
+    fun drift_deletion_never_passes_the_writer() {
+        val player = MediaPlayer(RecordingNative())
+        val sink = FakeSink(frameBytes = 8)
+        val applied = player.applyDriftIntervention(
+            frames = -10_000,
+            sink = sink,
+            readPosition = 0,
+            writePosition = 8L * 100,
+        )
+        assertEquals(8L * 100, applied.readPosition)
+        assertEquals(-100, applied.appliedFrames, "only applied frames are acknowledged")
+    }
+
+    /**
+     * The loop applies the native rate to the sink and acknowledges only the
+     * frames it actually applied — native counts the concealment on the ack.
+     */
+    @Test
+    fun the_player_applies_the_native_rate_and_acks_only_applied_frames() {
+        val fake = RecordingNative()
+        fake.driftRatePpm = -100
+        fake.pendingAdjust = -48
+        val player = MediaPlayer(fake)
+        val sink = FakeSink(frameBytes = 8)
+
+        val read = player.applyDriftControl(
+            session = 7,
+            sampleRate = 48_000,
+            sink = sink,
+            readPosition = 0,
+            writePosition = 8L * 500,
+        )
+
+        assertEquals(47_995, sink.lastPlaybackRateHz)
+        assertEquals(8L * 48, read)
+        assertEquals(-48, fake.driftFramesTotal)
+    }
+
     private class RecordingNative : MediaPlayer.NativeMedia {
         var trimmedFramesTotal: Long = 0
+        var driftRatePpm: Int = 0
+        var pendingAdjust: Int = 0
+        var driftFramesTotal: Int = 0
         override fun getState(handle: Long): String = "PLAYING"
         override fun attachMediaRing(handle: Long, buffer: java.nio.ByteBuffer): Boolean = true
         override fun ringPosition(handle: Long): Long = 0
@@ -220,6 +320,11 @@ class MediaPlaybackTest {
         ) = Unit
         override fun recordTrim(handle: Long, frames: Long) {
             trimmedFramesTotal += frames
+        }
+        override fun driftCorrectionPpm(handle: Long): Int = driftRatePpm
+        override fun takeDriftIntervention(handle: Long): Int = pendingAdjust.also { pendingAdjust = 0 }
+        override fun recordDriftIntervention(handle: Long, frames: Int) {
+            driftFramesTotal += frames
         }
     }
 

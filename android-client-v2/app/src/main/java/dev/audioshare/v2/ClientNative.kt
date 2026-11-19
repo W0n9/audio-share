@@ -158,9 +158,33 @@ object ClientNative {
     )
 
     /**
-     * Report frames dropped by the reader's §8 jitter-buffer re-anchor. Kept
-     * separate from concealment, which is owned by native (gap/underrun) and
-     * M5-04 (drift/re-anchor) — the trim count is diagnostic only (§9).
+     * Report frames dropped by the reader's §8 hard-limit re-anchor. M5-04
+     * counts the deletion as `ReAnchor` concealment and advances the
+     * submitted position over the skipped media.
      */
     external fun recordTrim(handle: Long, frames: Long)
+
+    /**
+     * §8 capture-vs-playback drift estimate in ppm, or 0 until a full 10 s
+     * window exists. The accepted §9 diagnostics schema has no drift field;
+     * this accessor (and the `playback.drift` log line) is the non-protocol L1
+     * channel.
+     */
+    external fun driftPpm(handle: Long): Int
+
+    /**
+     * Smooth, ±100 ppm-clamped playback-rate correction. Apply with
+     * `AudioTrack.setPlaybackRate(playbackRateHz(sampleRate, ppm))`.
+     */
+    external fun driftCorrectionPpm(handle: Long): Int
+
+    /**
+     * Take the pending whole-frame drift adjustment (+ insert silence,
+     * − delete frames). Taking clears it; the concealment is counted only
+     * when [recordDriftIntervention] reports what was applied.
+     */
+    external fun takeDriftIntervention(handle: Long): Int
+
+    /** Acknowledge the frames actually applied (positive insert, negative delete). */
+    external fun recordDriftIntervention(handle: Long, frames: Int)
 }

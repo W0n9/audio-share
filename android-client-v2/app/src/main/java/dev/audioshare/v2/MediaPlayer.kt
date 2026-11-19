@@ -8,6 +8,24 @@ import org.json.JSONObject
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.roundToInt
+
+/**
+ * M5-04: map a §8 drift correction in ppm to the integer sample rate
+ * `AudioTrack.setPlaybackRate` accepts.
+ *
+ * At 48 kHz one Hz is ~20.8 ppm, so ±100 ppm rounds to ±5 Hz — the effective
+ * application granularity. The residual (up to ~10 ppm) is absorbed by the
+ * buffer, and a sustained >20 ms deviation is corrected by whole frames.
+ * The input is defensively clamped to the §8 ±100 ppm bound even though the
+ * native controller already clamps.
+ */
+internal fun playbackRateHz(sampleRate: Int, ppm: Int): Int {
+    if (sampleRate <= 0) return sampleRate
+    val clamped = ppm.coerceIn(-100, 100)
+    val delta = (clamped.toLong() * sampleRate / 1_000_000.0).roundToInt()
+    return (sampleRate + delta).coerceIn(1, sampleRate * 2)
+}
 
 /**
  * The wire Transfer Format values Kotlin can actually play.
@@ -50,6 +68,14 @@ interface AudioSink {
 
     /** Total underruns reported by the platform since this sink was opened. */
     fun underruns(): Long
+
+    /**
+     * Apply a §8 playback-rate correction (integer Hz).
+     *
+     * Default is a no-op so test sinks and sinks without rate control still
+     * satisfy the seam.
+     */
+    fun setPlaybackRateHz(rateHz: Int) {}
 
     /** Drop anything the platform buffered (stream end / stop). */
     fun flush()
@@ -136,6 +162,9 @@ class AudioTrackSink(
     override val frameBytes: Int,
     private val floatEncoding: Boolean,
 ) : AudioSink {
+    /** Last rate accepted by the platform; native rate until told otherwise. */
+    private var appliedRateHz: Int = track.sampleRate
+
     override fun write(bytes: ByteArray, length: Int): Int {
         // ENCODING_PCM_FLOAT tracks reject byte[] writes outright
         // (ERROR_INVALID_OPERATION), so F32 media must be offered as floats.
@@ -156,6 +185,21 @@ class AudioTrackSink(
     }
 
     override fun underruns(): Long = track.underrunCount.toLong()
+
+    /**
+     * M5-04 §8 drift correction path: `AudioTrack.setPlaybackRate` resamples
+     * the stream, so the correction is a rate, not a per-frame edit. One Hz at
+     * 48 kHz is ~20.8 ppm; a rejected rate (some routes do not support SRC) is
+     * logged and leaves playback at the last accepted rate.
+     */
+    override fun setPlaybackRateHz(rateHz: Int) {
+        if (rateHz == appliedRateHz) return
+        if (track.setPlaybackRate(rateHz) == AudioTrack.SUCCESS) {
+            appliedRateHz = rateHz
+        } else {
+            Log.w("AudioTrackSink", "setPlaybackRate($rateHz) rejected")
+        }
+    }
 
     override fun flush() {
         track.pause()
@@ -193,6 +237,12 @@ class MediaPlayer(
         fun recordPlayback(handle: Long, submittedBytes: Long, underruns: Long, bufferCurrentMs: Int)
         /** Report frames dropped by the reader's jitter-buffer re-anchor (§8). */
         fun recordTrim(handle: Long, frames: Long)
+        /** §8 smooth ±100 ppm playback-rate correction currently commanded. */
+        fun driftCorrectionPpm(handle: Long): Int = 0
+        /** Take the pending whole-frame drift adjustment (+ insert, − delete). */
+        fun takeDriftIntervention(handle: Long): Int = 0
+        /** Acknowledge the frames actually applied (positive insert, negative delete). */
+        fun recordDriftIntervention(handle: Long, frames: Int) = Unit
     }
 
     companion object {
@@ -262,6 +312,64 @@ class MediaPlayer(
             native.recordTrim(handle, (next - readPosition) / frameBytes)
         }
         return next
+    }
+
+    /** Result of applying one §8 drift frame adjustment. */
+    internal data class DriftApplication(val readPosition: Long, val appliedFrames: Int)
+
+    /**
+     * M5-04 §8 sustained-deviation correction at the playout point.
+     *
+     * Native decides the signed frame count (positive insert, negative delete)
+     * after the buffer has stayed >20 ms from target for >5 s. Insertion feeds
+     * silent frames to the sink (the platform accepted them, so they count as
+     * submitted); deletion advances the reader over buffered media without
+     * submitting it. Returns what was actually applied so the caller can
+     * acknowledge exactly that (native counts the concealment on the ack).
+     */
+    internal fun applyDriftIntervention(
+        frames: Int,
+        sink: AudioSink,
+        readPosition: Long,
+        writePosition: Long,
+    ): DriftApplication {
+        val frameBytes = sink.frameBytes
+        if (frames == 0 || frameBytes <= 0) return DriftApplication(readPosition, 0)
+        return if (frames > 0) {
+            val silence = ByteArray(frames * frameBytes)
+            val accepted = sink.write(silence, silence.size).coerceIn(0, silence.size)
+            val acceptedFrames = accepted / frameBytes
+            submittedBytes += acceptedFrames.toLong() * frameBytes
+            DriftApplication(readPosition, acceptedFrames)
+        } else {
+            val wanted = -frames
+            val availableFrames =
+                ((writePosition - readPosition).coerceAtLeast(0) / frameBytes).toInt()
+            val deleted = minOf(wanted, availableFrames)
+            DriftApplication(readPosition + deleted.toLong() * frameBytes, -deleted)
+        }
+    }
+
+    /**
+     * Apply the §8 rate correction and any pending whole-frame adjustment.
+     * Returns the (possibly advanced) reader position. Exposed to the unit
+     * tests: the playback loop calls exactly this once per report interval.
+     */
+    internal fun applyDriftControl(
+        session: Long,
+        sampleRate: Int,
+        sink: AudioSink,
+        readPosition: Long,
+        writePosition: Long,
+    ): Long {
+        sink.setPlaybackRateHz(playbackRateHz(sampleRate, native.driftCorrectionPpm(session)))
+        val adjust = native.takeDriftIntervention(session)
+        if (adjust == 0) return readPosition
+        val applied = applyDriftIntervention(adjust, sink, readPosition, writePosition)
+        if (applied.appliedFrames != 0) {
+            native.recordDriftIntervention(session, applied.appliedFrames)
+        }
+        return applied.readPosition
     }
 
     private fun loop() {
@@ -346,6 +454,16 @@ class MediaPlayer(
                 val now = System.nanoTime()
                 if (now - lastReport >= REPORT_INTERVAL_MS * 1_000_000) {
                     lastReport = now
+                    // §8 drift correction: smooth ±100 ppm rate plus a bounded
+                    // whole-frame last resort. Native owns the measurement and
+                    // the decision; this applies and acknowledges it.
+                    readPosition = applyDriftControl(
+                        session,
+                        sampleRate,
+                        currentSink,
+                        readPosition,
+                        native.ringPosition(session),
+                    )
                     val bufferedFrames = (available / frameBytes).toLong()
                     val bufferMs = ((bufferedFrames * 1_000) / sampleRate.coerceAtLeast(1)).toInt()
                     // §9: report the ACTUAL buffered media only. M4 has no

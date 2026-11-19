@@ -19,6 +19,7 @@
 
 use std::collections::VecDeque;
 
+use crate::drift::{DriftConfig, DriftController, DriftEstimator};
 use crate::jitter::JitterBuffer;
 use crate::media::{MediaHeader, MediaReceiver, ObserveVerdict, HEADER_SIZE};
 use crate::proto::{Configuration, PlaybackDiagnostics};
@@ -179,10 +180,29 @@ pub struct MediaSession {
     /// Late drops (§8): arrivals after their playout deadline. Separate from
     /// network loss (`receiver.cumulative_lost`).
     late_drops: u64,
-    /// Frames/batches trimmed by the Kotlin reader (re-anchor, M5-04 owns the
-    /// concealment accounting). Reported separately here.
+    /// Frames/batches trimmed by the Kotlin reader (re-anchor, §8 hard limit).
+    /// Also counted as `ReAnchor` concealment (M5-04).
     trimmed_frames: u64,
     trim_events: u64,
+    /// Latest capture-clock position seen on the wire (wire `timestamp` +
+    /// frames). The capture side of the §8 drift measurement.
+    capture_position: u64,
+    /// Whether any media datagram has established a capture position.
+    saw_capture: bool,
+    /// §8 10 s rolling drift estimator and its smooth ±100 ppm controller.
+    drift: DriftEstimator,
+    drift_controller: DriftController,
+    drift_ppm: Option<i32>,
+    /// A whole-frame adjustment the playback path still has to apply and
+    /// acknowledge (positive insert, negative delete). Only one is outstanding.
+    pending_drift_frames: i32,
+    /// Position offset separating the platform-accepted bytes from the capture
+    /// clock: re-anchor/deleted frames advance it, inserted silence retreats it.
+    position_adjust_frames: i64,
+    /// Underruns in the previous report; a rise is a playback stall, not drift.
+    last_underruns: u64,
+    /// Monotonic reference for the non-test `record_playback` entry point.
+    clock_start: std::time::Instant,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -214,6 +234,7 @@ impl MediaSession {
             return None;
         }
         let geometry = PcmGeometry::from_configuration(configuration)?;
+        let drift_config = DriftConfig::default();
         Some(Self {
             instance,
             generation,
@@ -237,6 +258,15 @@ impl MediaSession {
             late_drops: 0,
             trimmed_frames: 0,
             trim_events: 0,
+            capture_position: 0,
+            saw_capture: false,
+            drift: DriftEstimator::new(drift_config.window_ms, geometry.sample_rate),
+            drift_controller: DriftController::new(drift_config),
+            drift_ppm: None,
+            pending_drift_frames: 0,
+            position_adjust_frames: 0,
+            last_underruns: 0,
+            clock_start: std::time::Instant::now(),
         })
     }
 
@@ -249,12 +279,17 @@ impl MediaSession {
         ring: Option<MediaRing>,
         jitter_config: JitterConfig,
     ) -> Option<Self> {
-        let mut session = Self::start(instance, generation, initial_timestamp, configuration, ring)?;
+        let mut session =
+            Self::start(instance, generation, initial_timestamp, configuration, ring)?;
         session.jitter = JitterBuffer::new(
             jitter_config,
             session.geometry.sample_rate,
             session.geometry.frame_bytes(),
         );
+        session.drift_controller = DriftController::new(DriftConfig {
+            target_ms: jitter_config.target_ms,
+            ..DriftConfig::default()
+        });
         Some(session)
     }
 
@@ -291,7 +326,18 @@ impl MediaSession {
         if generation > self.generation {
             self.generation = generation;
             if let Some(geometry) = PcmGeometry::from_configuration(configuration) {
-                self.geometry = geometry;
+                if geometry != self.geometry {
+                    self.geometry = geometry;
+                    // The drift window is expressed in frames at the published
+                    // rate: a geometry change invalidates it.
+                    let config = self.drift_controller.config();
+                    self.drift = DriftEstimator::new(config.window_ms, geometry.sample_rate);
+                    self.drift_controller = DriftController::new(config);
+                    self.drift_ppm = None;
+                    self.pending_drift_frames = 0;
+                    self.capture_position = 0;
+                    self.saw_capture = false;
+                }
             }
             if let Some((held_generation, held)) = self.holding.take() {
                 if held_generation == generation {
@@ -335,8 +381,92 @@ impl MediaSession {
     }
 
     /// Record what the platform playback API actually accepted (§9 evidence).
+    /// Uses the session's monotonic clock; host tests drive the deterministic
+    /// [`Self::record_playback_at`] entry point instead.
     pub fn record_playback(&mut self, report: PlaybackReport) {
+        let now_ms = self
+            .clock_start
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        self.record_playback_at(now_ms, report);
+    }
+
+    /// Record the platform playback facts at an injected session instant.
+    ///
+    /// Besides updating the §9 report, this is where the §8 drift machinery
+    /// advances: the paired capture/playback clocks are sampled, the smooth
+    /// ±100 ppm rate decision is taken, and (when a buffer deviation has been
+    /// sustained) a whole-frame intervention is queued for the player. The
+    /// intervention is counted only when the player acknowledges it through
+    /// [`Self::record_drift_intervention`].
+    pub fn record_playback_at(&mut self, now_ms: u64, report: PlaybackReport) {
+        let underrun_increased = report.underruns > self.last_underruns;
+        self.last_underruns = report.underruns;
+        if underrun_increased {
+            // A stalled platform clock is a playback event, not a rate
+            // mismatch: the §8 window must not read the stall as drift.
+            self.drift.reset();
+            self.drift_ppm = None;
+        }
         self.report = report;
+        if self.saw_capture {
+            self.drift
+                .observe(now_ms, self.capture_position, self.submitted_position());
+            self.drift_ppm = self.drift.ppm();
+        }
+        if self.pending_drift_frames == 0 {
+            let decision = self.drift_controller.update(
+                now_ms,
+                self.drift_ppm,
+                report.buffer_current_ms,
+                self.geometry.sample_rate,
+            );
+            if decision.frame_adjust != 0 {
+                // The whole-frame correction is a playback-position
+                // discontinuity; the next window measures the new state.
+                self.drift.reset();
+                self.drift_ppm = None;
+                self.pending_drift_frames = decision.frame_adjust;
+            }
+        }
+    }
+
+    /// The latest §8 drift estimate in ppm, or `None` before a full 10 s
+    /// window (or after a reset). Exposed for L1 tooling: the accepted §9
+    /// `PlaybackDiagnostics` has no drift field, and adding one is a protocol
+    /// change requiring maintainer adjudication.
+    pub fn drift_ppm(&self) -> Option<i32> {
+        self.drift_ppm
+    }
+
+    /// The smooth playback-rate correction currently commanded, in ppm
+    /// (clamped to ±100). The Kotlin player applies it through
+    /// `AudioTrack.setPlaybackRate`.
+    pub const fn drift_correction_ppm(&self) -> i32 {
+        self.drift_controller.applied_ppm()
+    }
+
+    /// Take the whole-frame adjustment the playback path must apply:
+    /// positive = insert that many silent frames, negative = delete.
+    /// Taking it clears the pending value; the count is recorded only on
+    /// [`Self::record_drift_intervention`].
+    pub fn take_drift_intervention(&mut self) -> i32 {
+        std::mem::take(&mut self.pending_drift_frames)
+    }
+
+    /// Acknowledge that the playback path applied `frames` (positive insert,
+    /// negative delete). This is the §8 concealment accounting for drift.
+    pub fn record_drift_intervention(&mut self, frames: i32) {
+        if frames == 0 {
+            return;
+        }
+        self.record_concealment(ConcealmentKind::Drift, i64::from(frames));
+        // Inserted silence is not a capture position; deleted frames advanced
+        // the playout cursor over real capture positions.
+        self.position_adjust_frames -= i64::from(frames);
+        self.drift.reset();
+        self.drift_ppm = None;
     }
 
     /// Whether the unknown configuration exceeded §7.6's 2 s bound.
@@ -379,13 +509,18 @@ impl MediaSession {
     }
 
     /// `anchor + frames actually submitted to the platform API` (§9: a socket
-    /// receive or ring write is never playback evidence).
+    /// receive or ring write is never playback evidence), plus the §8
+    /// position offsets: a hard-limit re-anchor and a drift deletion advance
+    /// the playout position over media that was skipped, and inserted drift
+    /// silence is subtracted because it has no capture position.
     pub fn submitted_position(&self) -> u64 {
         let frame_bytes = self.geometry.frame_bytes() as u64;
         if frame_bytes == 0 {
             return self.anchor;
         }
-        self.anchor + self.report.submitted_bytes / frame_bytes
+        let accepted = (self.report.submitted_bytes / frame_bytes) as i128;
+        let position = self.anchor as i128 + accepted + i128::from(self.position_adjust_frames);
+        position.max(0) as u64
     }
 
     /// Frames written to the ring (native delivery, not playback).
@@ -408,12 +543,21 @@ impl MediaSession {
         self.concealed_frames = self.concealed_frames.saturating_add(frames_delta);
     }
 
-    /// Record frames trimmed from the ring by the Kotlin reader's re-anchor.
-    /// Kept separate from concealment: M5-04 owns re-anchor accounting, and
-    /// reporting it as a concealment here would preempt that ticket.
+    /// Record frames trimmed from the ring by the Kotlin reader's §8 hard-limit
+    /// re-anchor. M5-04 owns this accounting: the deletion is counted as
+    /// `ReAnchor` concealment, and the submitted/playout position jumps
+    /// forward over the deleted media so latency never accumulates.
     pub fn record_trim(&mut self, frames: u64) {
         self.trimmed_frames = self.trimmed_frames.saturating_add(frames);
         self.trim_events += 1;
+        if frames == 0 {
+            return;
+        }
+        self.record_concealment(ConcealmentKind::ReAnchor, -(frames as i64));
+        self.position_adjust_frames = self.position_adjust_frames.saturating_add(frames as i64);
+        // A re-anchor is a position discontinuity, not clock drift.
+        self.drift.reset();
+        self.drift_ppm = None;
     }
 
     /// Total frames trimmed by the reader (re-anchor, M5-04 boundary).
@@ -579,6 +723,20 @@ impl MediaSession {
         }
         for (kind, delta) in result.concealments {
             self.record_concealment(kind, delta);
+        }
+        if !result.late {
+            // The capture side of the §8 drift measurement: the wire timestamp
+            // is the Sender's capture-clock position.
+            self.capture_position = self
+                .capture_position
+                .max(header.timestamp.saturating_add(frames));
+            self.saw_capture = true;
+        }
+        if result.rebased {
+            // M5-05: a contiguous sequence with a jumped timestamp is a
+            // server-side drop. The position step is not clock drift.
+            self.drift.reset();
+            self.drift_ppm = None;
         }
         if result.late {
             self.interval.late_drops += 1;
