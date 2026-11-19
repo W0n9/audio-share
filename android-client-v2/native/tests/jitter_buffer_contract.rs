@@ -42,6 +42,28 @@ fn datagram_filled(sequence: u32, timestamp: u64, byte: u8) -> Vec<u8> {
     out
 }
 
+/// A datagram for an explicit generation and payload size (used by the
+/// configuration-rebuild test, whose geometry differs from the fixture).
+fn datagram_with(
+    generation: u32,
+    sequence: u32,
+    timestamp: u64,
+    payload_len: usize,
+    byte: u8,
+) -> Vec<u8> {
+    let header = MediaHeader {
+        stream_instance_id: 1,
+        config_generation: generation,
+        sequence,
+        timestamp,
+        flags: if sequence == 0 { FLAG_STREAM_START } else { 0 },
+    };
+    let mut out = Vec::new();
+    header.write_be(&mut out);
+    out.extend(std::iter::repeat_n(byte, payload_len));
+    out
+}
+
 fn session_with(backing: &mut Vec<u8>) -> MediaSession {
     let ring = unsafe { MediaRing::attach(backing.as_mut_ptr(), backing.len()) };
     MediaSession::start(1, 1, 0, &config(1), Some(ring)).expect("F32LE stereo")
@@ -502,4 +524,126 @@ fn jitter_bounds_are_exposed_from_the_active_configuration() {
     let active = media.jitter_config();
     assert_eq!(active.target_ms, 40);
     assert_eq!(active.hard_limit_ms, 120);
+}
+
+// Deadline-wedge regression: a late datagram used to return before refreshing
+// the playout anchor, so with a stalled capture clock every later datagram was
+// judged against the stale instant and stayed late forever. The anchor now
+// refreshes on any live arrival; lateness is still judged against the
+// pre-update anchor, so the first post-stall datagram is still a late drop.
+#[test]
+fn a_late_datagram_does_not_wedge_the_deadline_anchor() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let mut media = session_with(&mut backing);
+    assert_eq!(
+        media.on_datagram(0, &datagram_filled(0, 0, 0x7f)),
+        DatagramOutcome::Delivered
+    );
+    assert_eq!(
+        media.on_datagram(5_000, &datagram_filled(1, 64, 0x7f)),
+        DatagramOutcome::LateDropped,
+        "the first arrival after the stall is genuinely late"
+    );
+    // The capture clock is stalled, but the anchor refreshed at 5 s. With the
+    // old behaviour every one of these was LateDropped.
+    for i in 0..46u32 {
+        let sequence = 2 + i;
+        let timestamp = 128 + u64::from(i) * 64;
+        let now_ms = 5_010 + u64::from(i) * 10;
+        assert_eq!(
+            media.on_datagram(now_ms, &datagram_filled(sequence, timestamp, 0x7f)),
+            DatagramOutcome::Delivered,
+            "datagram {sequence} must be accepted after the anchor refresh"
+        );
+    }
+    let d = media.diagnostics(60);
+    assert_eq!(
+        d.cumulative_late_drops, 1,
+        "only the wedged arrival was late"
+    );
+    assert_eq!(
+        d.cumulative_concealments, 1,
+        "the seq-1 hole is filled once"
+    );
+    // seq-0 + 46 live datagrams + one 64-frame silence fill.
+    assert_eq!(media.delivered_frames(), 48 * 64);
+}
+
+// A platform `underruns` count is §9 evidence, not a concealment. Only the
+// player's actual silence fill is an intervention, so reporting the same
+// platform count repeatedly must not inflate `cumulative_concealments`.
+#[test]
+fn reporting_a_platform_underrun_is_not_a_concealment_by_itself() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let mut media = session_with(&mut backing);
+    for _ in 0..3 {
+        media.record_playback_at(
+            0,
+            PlaybackReport {
+                submitted_bytes: 0,
+                underruns: 2,
+                buffer_current_ms: 5,
+            },
+        );
+    }
+    let d = media.diagnostics(60);
+    assert_eq!(d.underruns, 2, "the platform field is reported as reported");
+    assert_eq!(
+        d.cumulative_concealments, 0,
+        "no fill was performed, so no intervention is counted"
+    );
+}
+
+// A decode-affecting configuration change rebuilds the jitter buffer. The
+// target-frame / silence-fill / deadline math must use the NEW sample_rate and
+// frame_bytes; with the previous ones the 60 ms target is wrong (and the
+// silence-fill byte count is wrong by the frame-byte ratio).
+#[test]
+fn a_decode_affecting_config_change_rebuilds_the_jitter_buffer() {
+    let mut backing = vec![0u8; 64 * 1024];
+    let mut media = session_with(&mut backing);
+    assert_eq!(
+        media.on_datagram(0, &datagram_filled(0, 0, 0x7f)),
+        DatagramOutcome::Delivered
+    );
+
+    // Generation 2: 24 kHz mono S16LE → 2 bytes/frame, 60 ms = 1440 frames.
+    let mut next = config(2);
+    {
+        let pcm = next.pcm.as_mut().expect("pcm");
+        pcm.sample_rate = 24_000;
+        pcm.channels = 1;
+        pcm.sample_format = 3; // S16LE
+    }
+    media.apply_configuration(&next);
+    assert_eq!(media.geometry().sample_rate, 24_000);
+    assert_eq!(media.geometry().frame_bytes(), 2);
+    assert_eq!(media.jitter_config().target_ms, 60, "config is preserved");
+
+    // New frontier at seq 1; 128 B = 64 frames at the new geometry.
+    assert_eq!(
+        media.on_datagram(0, &datagram_with(2, 1, 64, 128, 0x22)),
+        DatagramOutcome::Delivered
+    );
+    // Hole at seq 2. 23 later datagrams give a 1536-frame span: above the NEW
+    // 1440-frame target, below the stale 48000 Hz target (2880).
+    for i in 0..23u32 {
+        let sequence = 3 + i;
+        let timestamp = 192 + u64::from(i) * 64;
+        assert_eq!(
+            media.on_datagram(0, &datagram_with(2, sequence, timestamp, 128, 0x22)),
+            DatagramOutcome::Delivered
+        );
+    }
+    let d = media.diagnostics(60);
+    assert_eq!(
+        d.cumulative_concealments, 1,
+        "the gap is filled at the new 24 kHz target"
+    );
+    assert_eq!(d.concealed_frames, 64);
+    // Ring layout: old seq-0 512 B, new seq-1 128 B, then the 64-frame gap.
+    // The fill must be 64 × NEW frame_bytes (2) = 128 B, never 64 × 8.
+    assert_eq!(&backing[512..640], &vec![0x22u8; 128]);
+    assert_eq!(&backing[640..768], &vec![0u8; 128], "silence at 2 B/frame");
+    assert_eq!(&backing[768..896], &vec![0x22u8; 128]);
 }
