@@ -238,11 +238,11 @@ class MediaPlayer(
         /** Report frames dropped by the reader's jitter-buffer re-anchor (§8). */
         fun recordTrim(handle: Long, frames: Long)
         /** §8 smooth ±100 ppm playback-rate correction currently commanded. */
-        fun driftCorrectionPpm(handle: Long): Int
+        fun driftCorrectionPpm(handle: Long): Int = 0
         /** Take the pending whole-frame drift adjustment (+ insert, − delete). */
-        fun takeDriftIntervention(handle: Long): Int
+        fun takeDriftIntervention(handle: Long): Int = 0
         /** Acknowledge the frames actually applied (positive insert, negative delete). */
-        fun recordDriftIntervention(handle: Long, frames: Int)
+        fun recordDriftIntervention(handle: Long, frames: Int) = Unit
     }
 
     companion object {
