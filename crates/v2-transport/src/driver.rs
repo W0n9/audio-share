@@ -105,8 +105,7 @@ impl MediaTask {
             // M5-05: bounded-cadence log of server-side drops so support can
             // distinguish pre-packetize/queue drops from Client-side network
             // loss in `server.log` (session_log event → tracing_bridge).
-            let mut drop_reporter =
-                crate::media_pump::DropReporter::new(Duration::from_secs(5));
+            let mut drop_reporter = crate::media_pump::DropReporter::new(Duration::from_secs(5));
             // §7.4/§10: encoded media goes into a bounded 256-datagram,
             // non-waiting per-Client queue before `send_datagram`. A stalled
             // Client therefore drops the newest media, never blocks capture.
@@ -162,18 +161,15 @@ impl MediaTask {
                     return;
                 };
                 let now = std::time::Instant::now();
-                let datagrams = match pump.take_sendable(
-                    now,
-                    max_datagram_size,
-                    MAX_DATAGRAMS_PER_TICK,
-                ) {
-                    Ok(datagrams) => datagrams,
-                    Err(crate::media_pump::MediaPumpError::DatagramUnsupported) => {
-                        let _ = events.send(DriverEvent::MediaDatagramUnsupported);
-                        return;
-                    }
-                    Err(crate::media_pump::MediaPumpError::MisalignedPcm) => return,
-                };
+                let datagrams =
+                    match pump.take_sendable(now, max_datagram_size, MAX_DATAGRAMS_PER_TICK) {
+                        Ok(datagrams) => datagrams,
+                        Err(crate::media_pump::MediaPumpError::DatagramUnsupported) => {
+                            let _ = events.send(DriverEvent::MediaDatagramUnsupported);
+                            return;
+                        }
+                        Err(crate::media_pump::MediaPumpError::MisalignedPcm) => return,
+                    };
                 queue.enqueue(datagrams);
                 // M5-05: report changed server-side drop counters at the 5 s
                 // diagnostics cadence (tracing → tracing_bridge → server.log).
