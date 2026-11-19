@@ -331,52 +331,7 @@ impl MediaSession {
         if header.config_generation > self.generation {
             return self.hold(now_ms, datagram, header.config_generation);
         }
-        let verdict = self.receiver.observe(&header);
-        let (extended, outcome) = match verdict {
-            ObserveVerdict::Duplicate => {
-                self.interval.duplicates += 1;
-                return DatagramOutcome::Duplicate;
-            }
-            ObserveVerdict::Ok { gap } => {
-                self.interval.received += 1;
-                self.interval.lost += i64::from(gap);
-                (self.receiver.extended_highest, DatagramOutcome::Delivered)
-            }
-            ObserveVerdict::Reordered { distance } => {
-                self.interval.received += 1;
-                self.interval.reordered += 1;
-                (
-                    self.receiver.extended_highest.saturating_sub(u64::from(distance)),
-                    DatagramOutcome::Delivered,
-                )
-            }
-        };
-
-        // §8: RFC 3550 A.8 jitter is measured on every accepted arrival in
-        // arrival order, independent of the playout scheduling below.
-        self.jitter.observe_arrival(now_ms, header.timestamp);
-        let frames = self.geometry.frames(payload.len()).unwrap_or(0);
-        // Collect the frontier's writes first so we do not hold a mutable
-        // borrow of `self.jitter` while mutating the ring / counters.
-        let mut chunks: Vec<Vec<u8>> = Vec::new();
-        let result = {
-            let jitter = &mut self.jitter;
-            jitter.submit(extended, header.timestamp, frames, payload, &mut |bytes| {
-                chunks.push(bytes.to_vec());
-            })
-        };
-        for chunk in &chunks {
-            self.deliver_payload(chunk);
-        }
-        for (kind, delta) in result.concealments {
-            self.record_concealment(kind, delta);
-        }
-        if result.late {
-            self.interval.late_drops += 1;
-            self.late_drops += 1;
-            return DatagramOutcome::LateDropped;
-        }
-        outcome
+        self.accept_observed(now_ms, &header, payload)
     }
 
     /// Record what the platform playback API actually accepted (§9 evidence).
@@ -575,9 +530,61 @@ impl MediaSession {
     fn deliver(&mut self, datagram: &[u8]) {
         if let Ok((header, payload)) = MediaHeader::parse(datagram) {
             if header.config_generation == self.generation {
-                self.receiver.observe(&header);
-                self.deliver_payload(payload);
+                // Held media released by a configuration change must cross the
+                // SAME playout frontier as live media, or the frontier is left
+                // behind and the next live datagram triggers bogus silence.
+                self.accept_observed(0, &header, payload);
             }
         }
+    }
+
+    /// The shared observe → jitter → deliver path for both live datagrams and
+    /// held media released by `apply_configuration`. Keeping one path is what
+    /// keeps the playout frontier in sync across a config change (§7.6/§8).
+    fn accept_observed(&mut self, now_ms: u64, header: &MediaHeader, payload: &[u8]) -> DatagramOutcome {
+        let verdict = self.receiver.observe(header);
+        let (extended, outcome) = match verdict {
+            ObserveVerdict::Duplicate => {
+                self.interval.duplicates += 1;
+                return DatagramOutcome::Duplicate;
+            }
+            ObserveVerdict::Ok { gap } => {
+                self.interval.received += 1;
+                self.interval.lost += i64::from(gap);
+                (self.receiver.extended_highest, DatagramOutcome::Delivered)
+            }
+            ObserveVerdict::Reordered { distance } => {
+                self.interval.received += 1;
+                self.interval.reordered += 1;
+                (
+                    self.receiver.extended_highest.saturating_sub(u64::from(distance)),
+                    DatagramOutcome::Delivered,
+                )
+            }
+        };
+
+        // §8: RFC 3550 A.8 jitter is measured on every accepted arrival in
+        // arrival order, independent of the playout scheduling below.
+        self.jitter.observe_arrival(now_ms, header.timestamp);
+        let frames = self.geometry.frames(payload.len()).unwrap_or(0);
+        let mut chunks: Vec<Vec<u8>> = Vec::new();
+        let result = {
+            let jitter = &mut self.jitter;
+            jitter.submit(extended, header.timestamp, frames, payload, &mut |bytes| {
+                chunks.push(bytes.to_vec());
+            })
+        };
+        for chunk in &chunks {
+            self.deliver_payload(chunk);
+        }
+        for (kind, delta) in result.concealments {
+            self.record_concealment(kind, delta);
+        }
+        if result.late {
+            self.interval.late_drops += 1;
+            self.late_drops += 1;
+            return DatagramOutcome::LateDropped;
+        }
+        outcome
     }
 }
