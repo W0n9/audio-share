@@ -4,6 +4,7 @@ import android.media.AudioFormat
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -106,6 +107,17 @@ class MediaPlaybackTest {
         val sink = FakeSink(frameBytes = 8, acceptAtMost = 12)
         player.offerForPlayback(ByteArray(32), 32, sink)
         assertEquals(8L, player.submittedBytesTotal(), "12 bytes is one whole frame")
+    }
+
+    /**
+     * M5-02: the production playback buffer is the platform minimum, never the
+     * old `sampleRate/10` request that rounded up to a 128 ms AudioTrack buffer.
+     */
+    @Test
+    fun playback_buffer_is_the_platform_minimum() {
+        assertEquals(16_416, AudioSink.playbackBufferBytes(16_416))
+        assertEquals(24_624, AudioSink.playbackBufferBytes(24_624))
+        assertNotEquals(38_400, AudioSink.playbackBufferBytes(16_416), "not the old 100 ms request")
     }
 
     /**
