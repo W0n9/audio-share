@@ -16,6 +16,7 @@
 
 pub mod auth;
 pub mod control;
+pub mod drift;
 #[cfg(test)]
 pub mod fixture;
 pub mod frame;

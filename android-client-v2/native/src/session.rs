@@ -1000,11 +1000,55 @@ impl Session {
         }
     }
 
-    /// Record frames trimmed by the Kotlin reader's §8 re-anchor (diagnostic).
+    /// Record frames trimmed by the Kotlin reader's §8 hard-limit re-anchor.
+    /// M5-04 counts the deletion as `ReAnchor` concealment and advances the
+    /// submitted position over the skipped media.
     pub fn record_trim(&self, frames: u64) {
         if let Some(media) = self.shared.media.lock().unwrap().clone() {
             media.lock().unwrap().record_trim(frames);
         }
+    }
+
+    /// Take the pending whole-frame drift adjustment (+ insert, − delete).
+    /// The player applies it and reports back through
+    /// [`Self::record_drift_intervention`].
+    pub fn take_drift_intervention(&self) -> i32 {
+        self.shared
+            .media
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|media| media.lock().unwrap().take_drift_intervention())
+            .unwrap_or(0)
+    }
+
+    /// Acknowledge what the player actually applied (positive insert,
+    /// negative delete). This is the §8 concealment accounting for drift.
+    pub fn record_drift_intervention(&self, frames: i32) {
+        if let Some(media) = self.shared.media.lock().unwrap().clone() {
+            media.lock().unwrap().record_drift_intervention(frames);
+        }
+    }
+
+    /// §8 drift estimate in ppm, or `None` before a full 10 s window.
+    pub fn drift_ppm(&self) -> Option<i32> {
+        self.shared
+            .media
+            .lock()
+            .unwrap()
+            .clone()
+            .and_then(|media| media.lock().unwrap().drift_ppm())
+    }
+
+    /// Smooth ±100 ppm playback-rate correction currently commanded.
+    pub fn drift_correction_ppm(&self) -> i32 {
+        self.shared
+            .media
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|media| media.lock().unwrap().drift_correction_ppm())
+            .unwrap_or(0)
     }
 
     /// Build and write ONE §9 diagnostics snapshot from the active media
@@ -1018,11 +1062,27 @@ impl Session {
         W: tokio::io::AsyncWriteExt + Unpin,
     {
         let current = self.shared.media.lock().unwrap().clone();
-        let Some(diagnostics) =
-            current.map(|media| media.lock().unwrap().diagnostics(BUFFER_TARGET_MS))
-        else {
+        let Some(media) = current else {
             return false;
         };
+        let (diagnostics, drift_ppm, correction_ppm) = {
+            let mut media = media.lock().unwrap();
+            let diagnostics = media.diagnostics(BUFFER_TARGET_MS);
+            (diagnostics, media.drift_ppm(), media.drift_correction_ppm())
+        };
+        // §9 has NO drift field (and adding one is a protocol change needing
+        // maintainer adjudication), so the §8 estimate reaches L1 tooling
+        // through this log line and the `driftPpm` JNI accessor instead.
+        if let Some(drift_ppm) = drift_ppm {
+            log::info!(
+                "event = {} drift_ppm={} correction_ppm={} buffer_current_ms={} buffer_target_ms={}",
+                "playback.drift",
+                drift_ppm,
+                correction_ppm,
+                diagnostics.buffer_current_ms,
+                diagnostics.buffer_target_ms,
+            );
+        }
         let frame = crate::proto::Frame {
             body: Some(crate::proto::frame::Body::PlaybackDiagnostics(diagnostics)),
         };

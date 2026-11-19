@@ -227,14 +227,16 @@ fn underrun_and_drift_concealments_share_one_counter_api() {
     assert_eq!(d.concealed_frames, 7, "inserted − deleted = 10 − 3");
 }
 
-// Re-anchor trim is reported separately from concealment (M5-04 boundary).
+// M5-04: a hard-limit re-anchor trim is counted as ReAnchor concealment while
+// the trim diagnostics stay separate (frames crossed / events).
 #[test]
-fn ring_trim_is_counted_separately_from_concealment() {
+fn a_hard_limit_re_anchor_trim_is_reanchor_concealment() {
     let mut backing = vec![0u8; 64 * 1024];
     let mut media = session_with(&mut backing);
     media.record_trim(1_000);
     let d = media.diagnostics(60);
-    assert_eq!(d.cumulative_concealments, 0, "a ring trim is not a concealment here");
+    assert_eq!(d.cumulative_concealments, 1, "§8 counts the deletion");
+    assert_eq!(d.concealed_frames, -1_000, "deleted frames are negative");
     assert_eq!(media.trimmed_frames(), 1_000);
     assert_eq!(media.trim_events(), 1);
 }
