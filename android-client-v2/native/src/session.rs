@@ -53,10 +53,9 @@ const KEEP_ALIVE_SECS: u64 = 10;
 /// §7.6 give-up bound). Short enough to react promptly, long enough to stay
 /// off the hot path.
 const MEDIA_POLL: std::time::Duration = std::time::Duration::from_millis(250);
-/// §9 `buffer_target_ms` reported for M4. M5 owns the jitter-buffer target of
-/// 60 ms; reporting that number before the buffer exists would claim an
-/// intervention this ticket does not implement.
-const BUFFER_TARGET_MS: u32 = 0;
+/// §9 `buffer_target_ms` reported for the M5-03 jitter buffer (D12: 60 ms).
+/// Mirrors `JitterConfig::default().target_ms`; the buffer now really exists.
+const BUFFER_TARGET_MS: u32 = 60;
 
 /// Per-request response deadlines (§4.2). Each pending request is armed once,
 /// from the moment it is sent, and is never extended by unrelated reads. A
@@ -998,6 +997,13 @@ impl Session {
                 underruns,
                 buffer_current_ms,
             });
+        }
+    }
+
+    /// Record frames trimmed by the Kotlin reader's §8 re-anchor (diagnostic).
+    pub fn record_trim(&self, frames: u64) {
+        if let Some(media) = self.shared.media.lock().unwrap().clone() {
+            media.lock().unwrap().record_trim(frames);
         }
     }
 

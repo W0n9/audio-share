@@ -44,6 +44,55 @@ class MediaPlaybackTest {
         assertTrue(ring.lapped(100, 0), "writer lapped the reader past capacity")
     }
 
+    /**
+     * M5-03: when the backlog exceeds the jitter target, the reader re-anchors
+     * to `write - target` (frame-aligned) instead of jumping all the way to the
+     * write cursor. This avoids the permanent ~46 ms startup backlog and keeps
+     * the transition smooth (no click from dropping a large contiguous run).
+     */
+    @Test
+    fun ring_trims_backlog_down_to_the_target_frame_aligned() {
+        val ring = MediaRingBuffer(64 * 1024)
+        val target = 8 * 240 // 240 frames = 5 ms @ 48 kHz (test-scale target)
+        val hardLimit = 8 * 960 // 960 frames = 20 ms (test-scale hard limit)
+        // Backlog of 1200 frames exceeds the 960-frame hard limit: trim to the
+        // target, keeping the newest `target` bytes.
+        val trimmed = ring.trimmedReadPosition(
+            writePosition = 8L * 1200,
+            readPosition = 0L,
+            targetBytes = target,
+            hardLimitBytes = hardLimit,
+            frameBytes = 8,
+        )
+        assertEquals((8L * 1200 - target), trimmed, "re-anchor to write minus target")
+        assertEquals(0, (trimmed % 8).toInt(), "frame aligned")
+        // A backlog below the target is left untouched.
+        assertEquals(
+            8L * 100,
+            ring.trimmedReadPosition(
+                writePosition = 8L * 200,
+                readPosition = 8L * 100,
+                targetBytes = target,
+                hardLimitBytes = hardLimit,
+                frameBytes = 8,
+            ),
+        )
+    }
+
+    /** A full lap still snaps to the write cursor (all buffered media is stale). */
+    @Test
+    fun ring_trim_on_lap_snaps_to_live_audio() {
+        val ring = MediaRingBuffer(64)
+        val trimmed = ring.trimmedReadPosition(
+            writePosition = 104,
+            readPosition = 0,
+            targetBytes = 8,
+            hardLimitBytes = 64,
+            frameBytes = 8,
+        )
+        assertEquals(96L, trimmed, "write minus target, frame aligned")
+    }
+
     @Test
     fun ring_reads_whole_frames_and_wraps_at_the_end() {
         val ring = MediaRingBuffer(32)
@@ -137,7 +186,28 @@ class MediaPlaybackTest {
         }
     }
 
+    /** The trim/resync path reports dropped frames to native, separately from concealment. */
+    @Test
+    fun ring_trim_reports_dropped_frames_to_native() {
+        val fake = RecordingNative()
+        val player = MediaPlayer(fake)
+        val trimmed = player.applyReadPosition(
+            writePosition = 8L * 1200,
+            readPosition = 0L,
+            targetBytes = 8 * 240,
+            hardLimitBytes = 8 * 960,
+            frameBytes = 8,
+        )
+        assertEquals(8L * 960, trimmed)
+        assertEquals(
+            (1200 - 240).toLong(),
+            fake.trimmedFramesTotal,
+            "960 frames trimmed are reported, not counted as concealment",
+        )
+    }
+
     private class RecordingNative : MediaPlayer.NativeMedia {
+        var trimmedFramesTotal: Long = 0
         override fun getState(handle: Long): String = "PLAYING"
         override fun attachMediaRing(handle: Long, buffer: java.nio.ByteBuffer): Boolean = true
         override fun ringPosition(handle: Long): Long = 0
@@ -148,6 +218,9 @@ class MediaPlaybackTest {
             underruns: Long,
             bufferCurrentMs: Int,
         ) = Unit
+        override fun recordTrim(handle: Long, frames: Long) {
+            trimmedFramesTotal += frames
+        }
     }
 
     // ENCODING_PCM_FLOAT tracks reject byte[] writes (AudioTrack returns

@@ -530,3 +530,20 @@ pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordPlayback(
         Ok::<(), String>(())
     });
 }
+
+/// recordTrim(handle, frames): frames dropped by the Kotlin reader's §8
+/// jitter-buffer re-anchor. Diagnostic only — not playback evidence and not a
+/// concealment (M5-04 owns re-anchor accounting).
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordTrim(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    frames: jlong,
+) {
+    let _ = guard(|| {
+        let session = get_session(handle)?;
+        session.record_trim(frames.max(0) as u64);
+        Ok::<(), String>(())
+    });
+}

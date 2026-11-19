@@ -19,6 +19,7 @@ pub mod control;
 #[cfg(test)]
 pub mod fixture;
 pub mod frame;
+pub mod jitter;
 pub mod jni;
 pub mod media;
 pub mod media_control;
