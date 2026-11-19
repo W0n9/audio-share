@@ -69,9 +69,12 @@ interface AudioSink {
             val bytesPerSample = TransferFormats.bytesPerSample(encoding)
             val minBuffer = AudioTrack.getMinBufferSize(sampleRate, channelMask, encoding)
             if (minBuffer <= 0) return null
-            // Three platform buffers of headroom: enough for a 100 ms send-ahead
-            // burst without an underrun, small enough to stay low-latency.
-            val bufferBytes = maxOf(minBuffer, sampleRate / 10 * bytesPerSample * channels)
+            // M5-02: use the platform minimum. The old 100 ms request rounded up
+            // to a 128 ms AudioTrack buffer; the 100 ms send-ahead burst is
+            // absorbed by the 256 KiB native ring, not by the platform buffer.
+            // Sub-floor buffers are not viable (audible crackling), so never
+            // shrink below getMinBufferSize. See evidence/m5-02.
+            val bufferBytes = playbackBufferBytes(minBuffer)
             val track = AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
@@ -94,8 +97,16 @@ interface AudioSink {
                 return null
             }
             track.play()
+            Log.i(
+                "AudioSink.open",
+                "minBuffer=$minBuffer bytes=$bufferBytes " +
+                    "frames=${track.bufferSizeInFrames} ms=${track.bufferSizeInFrames * 1000L / sampleRate}",
+            )
             return AudioTrackSink(track, bytesPerSample * channels, encoding == AudioFormat.ENCODING_PCM_FLOAT)
         }
+
+        /** Production buffer is the platform minimum; see evidence/m5-02. */
+        internal fun playbackBufferBytes(minBuffer: Int): Int = minBuffer
     }
 }
 
