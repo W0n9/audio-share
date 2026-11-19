@@ -171,6 +171,23 @@ fn an_underrun_restarts_the_drift_window() {
     );
 }
 
+// A soft target trim advances the playout position over skipped media. That is
+// a position discontinuity like a re-anchor: the 10 s window must restart so
+// the step is never read as a bogus ppm shift.
+#[test]
+fn a_soft_target_trim_restarts_the_drift_window() {
+    let mut media = session();
+    drive(&mut media, 0, 11_000, 100, 0);
+    assert!(media.drift_ppm().is_some(), "the window filled first");
+
+    media.record_soft_trim(240);
+    assert_eq!(
+        media.drift_ppm(),
+        None,
+        "a soft trim is a position discontinuity, not drift"
+    );
+}
+
 #[test]
 fn a_hard_limit_re_anchor_is_concealment_and_jumps_the_position() {
     let mut media = session();

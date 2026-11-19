@@ -62,25 +62,27 @@ class MediaPlaybackTest {
         val hardLimit = 8 * 960 // 960 frames = 20 ms (test-scale hard limit)
         // Backlog of 1200 frames exceeds the 960-frame hard limit: trim to the
         // target, keeping the newest `target` bytes.
-        val trimmed = ring.trimmedReadPosition(
+        val trimmed = ring.trim(
             writePosition = 8L * 1200,
             readPosition = 0L,
             targetBytes = target,
             hardLimitBytes = hardLimit,
+            hysteresisBytes = 8 * 20,
             frameBytes = 8,
-        )
+        ).readPosition
         assertEquals((8L * 1200 - target), trimmed, "re-anchor to write minus target")
         assertEquals(0, (trimmed % 8).toInt(), "frame aligned")
         // A backlog below the target is left untouched.
         assertEquals(
             8L * 100,
-            ring.trimmedReadPosition(
+            ring.trim(
                 writePosition = 8L * 200,
                 readPosition = 8L * 100,
                 targetBytes = target,
                 hardLimitBytes = hardLimit,
+                hysteresisBytes = 8 * 20,
                 frameBytes = 8,
-            ),
+            ).readPosition,
         )
     }
 
@@ -88,13 +90,14 @@ class MediaPlaybackTest {
     @Test
     fun ring_trim_on_lap_snaps_to_live_audio() {
         val ring = MediaRingBuffer(64)
-        val trimmed = ring.trimmedReadPosition(
+        val trimmed = ring.trim(
             writePosition = 104,
             readPosition = 0,
             targetBytes = 8,
             hardLimitBytes = 64,
+            hysteresisBytes = 0,
             frameBytes = 8,
-        )
+        ).readPosition
         assertEquals(96L, trimmed, "write minus target, frame aligned")
     }
 
@@ -205,6 +208,7 @@ class MediaPlaybackTest {
             readPosition = 0L,
             targetBytes = 8 * 240,
             hardLimitBytes = 8 * 960,
+            hysteresisBytes = 8 * 20,
             frameBytes = 8,
         )
         assertEquals(8L * 960, trimmed)
@@ -304,9 +308,9 @@ class MediaPlaybackTest {
     }
 
     /**
-     * M5-03 ticket: backlog above the *target* is trimmed even below the hard
-     * limit, and that soft trim is counted separately from the hard-limit
-     * `ReAnchor` concealment.
+     * M5-03 ticket: backlog above the *target + 20 ms hysteresis* is trimmed
+     * even below the hard limit, and that soft trim is counted separately from
+     * the hard-limit `ReAnchor` concealment.
      */
     @Test
     fun soft_target_trim_is_reported_separately_from_reanchor() {
@@ -317,11 +321,46 @@ class MediaPlaybackTest {
             readPosition = 0L,
             targetBytes = 8 * 240,
             hardLimitBytes = 8 * 2_000,
+            hysteresisBytes = 8 * 20,
             frameBytes = 8,
         )
         assertEquals(8L * 560, trimmed, "drop the oldest frames down to the target")
         assertEquals(560L, fake.softTrimmedFramesTotal, "soft trim is counted")
         assertEquals(0L, fake.trimmedFramesTotal, "not mislabelled ReAnchor")
+    }
+
+    /**
+     * Hysteresis: a backlog inside the target + 20 ms band is ordinary
+     * inter-datagram variation and must not be trimmed. Crossing the band
+     * trims down to the target.
+     */
+    @Test
+    fun soft_trim_waits_for_the_hysteresis_band() {
+        val ring = MediaRingBuffer(64 * 1024)
+        val frameBytes = 8
+        val target = 8 * 240
+        val hysteresis = 8 * 20 // 20 frames at test scale
+        // 260 frames is within the 260-frame band exactly: no trim.
+        val within = ring.trim(
+            writePosition = 8L * 260,
+            readPosition = 0L,
+            targetBytes = target,
+            hardLimitBytes = 8 * 2_000,
+            hysteresisBytes = hysteresis,
+            frameBytes = frameBytes,
+        )
+        assertEquals(0L, within.trimmedFrames, "inside the band is untouched")
+        // 261 frames is one frame past the band: trim to the target.
+        val beyond = ring.trim(
+            writePosition = 8L * 261,
+            readPosition = 0L,
+            targetBytes = target,
+            hardLimitBytes = 8 * 2_000,
+            hysteresisBytes = hysteresis,
+            frameBytes = frameBytes,
+        )
+        assertEquals(21L, beyond.trimmedFrames, "outside the band trims to target")
+        assertFalse(beyond.reanchor, "still buffer steering, not ReAnchor")
     }
 
     @Test
@@ -332,6 +371,7 @@ class MediaPlaybackTest {
             readPosition = 0L,
             targetBytes = 8 * 240,
             hardLimitBytes = 8 * 2_000,
+            hysteresisBytes = 8 * 20,
             frameBytes = 8,
         )
         assertFalse(soft.reanchor)
@@ -342,6 +382,7 @@ class MediaPlaybackTest {
             readPosition = 0L,
             targetBytes = 8 * 240,
             hardLimitBytes = 8 * 960,
+            hysteresisBytes = 8 * 20,
             frameBytes = 8,
         )
         assertTrue(hard.reanchor, "above the hard limit is a ReAnchor")
@@ -356,6 +397,7 @@ class MediaPlaybackTest {
             readPosition = 0L,
             targetBytes = 1_919, // just under 240 frames
             hardLimitBytes = 8 * 2_000,
+            hysteresisBytes = 8 * 20,
             frameBytes = 8,
         )
         assertEquals(0, (result.readPosition % 8).toInt(), "frame aligned")
@@ -377,6 +419,11 @@ class MediaPlaybackTest {
         val bounds = player.resolveJitterBounds(7, 48_000, 8)
         assertEquals(40 * 48 * 8, bounds.targetBytes)
         assertEquals(120 * 48 * 8, bounds.hardLimitBytes)
+        assertEquals(
+            20 * 48 * 8,
+            bounds.hysteresisBytes,
+            "soft-trim hysteresis is 20 ms in bytes",
+        )
 
         val fallback = MediaPlayer(RecordingNative()).resolveJitterBounds(7, 48_000, 8)
         assertEquals(
@@ -414,6 +461,75 @@ class MediaPlaybackTest {
         assertEquals(0, player.fillUnderrun(7, 48_000, sink))
         assertEquals(0L, fake.underrunFramesTotal)
         assertEquals(0L, player.submittedBytesTotal())
+    }
+
+    /**
+     * Regression: an empty application ring between two paced datagrams is
+     * normal backpressure, not an underrun. The fill gate opens only on a new
+     * platform `underrunCount` event, and each event is consumed exactly once.
+     */
+    @Test
+    fun underrun_fill_is_gated_on_a_platform_underrun_delta() {
+        val player = MediaPlayer(RecordingNative())
+        // No platform event → no fill even though the ring is empty.
+        val quiet = player.underrunGate(
+            hasPlayed = true,
+            availableBytes = 0,
+            frameBytes = 8,
+            platformUnderruns = 0,
+            lastPlatformUnderruns = 0,
+        )
+        assertFalse(quiet.fill, "an ordinary empty ring is not an underrun")
+        assertEquals(0L, quiet.lastPlatformUnderruns)
+
+        // A platform event with playback under way and no whole frame → fill.
+        val event = player.underrunGate(true, 0, 8, platformUnderruns = 1, lastPlatformUnderruns = 0)
+        assertTrue(event.fill)
+        assertEquals(1L, event.lastPlatformUnderruns)
+
+        // The same platform event is never counted a second time.
+        val replay = player.underrunGate(
+            true, 0, 8,
+            platformUnderruns = 1,
+            lastPlatformUnderruns = event.lastPlatformUnderruns,
+        )
+        assertFalse(replay.fill, "each platform event counts at most once")
+
+        // Data is available: the event is consumed but no silence is inserted.
+        val fed = player.underrunGate(
+            true, 8, 8,
+            platformUnderruns = 2,
+            lastPlatformUnderruns = event.lastPlatformUnderruns,
+        )
+        assertFalse(fed.fill, "no fill while the ring can feed the sink")
+        assertEquals(2L, fed.lastPlatformUnderruns)
+
+        // Before the first real media, an empty ring is startup, not underrun.
+        val startup = player.underrunGate(
+            hasPlayed = false,
+            availableBytes = 0,
+            frameBytes = 8,
+            platformUnderruns = 3,
+            lastPlatformUnderruns = 2,
+        )
+        assertFalse(startup.fill)
+    }
+
+    /** Playback does not start until the ring holds the jitter target. */
+    @Test
+    fun playback_prebuffers_to_the_jitter_target_before_starting() {
+        val player = MediaPlayer(RecordingNative())
+        assertFalse(
+            player.readyForPlayback(hasPlayed = false, availableBytes = 100, targetBytes = 480),
+            "half a target is not enough to start",
+        )
+        assertTrue(
+            player.readyForPlayback(hasPlayed = false, availableBytes = 480, targetBytes = 480),
+        )
+        assertTrue(
+            player.readyForPlayback(hasPlayed = true, availableBytes = 0, targetBytes = 480),
+            "once playing, the ring may drain",
+        )
     }
 
     private class RecordingNative : MediaPlayer.NativeMedia {
