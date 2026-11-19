@@ -65,6 +65,15 @@ struct PendingFrame {
     payload: Vec<u8>,
 }
 
+/// Arrival facts for one datagram, bundled so the submit path keeps a small,
+/// readable argument list (and stays within clippy's budget).
+struct Arrival {
+    now_ms: u64,
+    extended: u64,
+    timestamp: u64,
+    frames: u64,
+}
+
 /// What one submitted datagram did to the playout frontier.
 #[derive(Debug, Default)]
 pub struct SubmitResult {
@@ -91,12 +100,16 @@ pub struct JitterBuffer {
     frontier: Option<u64>,
     frontier_ts: u64,
     /// Capture-clock → session-clock anchor for the playout deadline: the
-    /// `(session now_ms, wire timestamp)` of the most recently accepted
-    /// datagram. A datagram whose slot is more than `target_ms` behind the
-    /// newest arrival is late even when the frontier never advances (a sender
-    /// that pauses). Refreshing the anchor on every accepted datagram keeps a
-    /// slow-but-steady producer (synthetic test clocks, a capture device under
-    /// load) from being mistaken for lateness.
+    /// `(session now_ms, capture position just past the newest accepted
+    /// frame)` of the most recent *live* arrival. A datagram whose last frame
+    /// is more than `target_ms` behind the newest arrival is late even when the
+    /// frontier never advances (a sender that pauses).
+    ///
+    /// The anchor refreshes on EVERY live arrival, late ones included, and
+    /// never moves its capture position backwards (`max`). That monotonic
+    /// refresh is what stops a stalled capture clock plus one late datagram
+    /// from wedging the deadline forever: the next arrival is judged against
+    /// the refreshed session instant, not the stale one.
     playout_anchor: Option<(u64, u64)>,
     // RFC 3550 A.8 interarrival jitter, in frame units.
     jitter_frames: f64,
@@ -139,10 +152,12 @@ impl JitterBuffer {
     }
 
     /// Forget the A.8 arrival history. Called on a timestamp re-base (a
-    /// server-side drop) and whenever media is replayed without a real
-    /// arrival instant (held datagrams released by a configuration change):
-    /// either would otherwise inject a bogus step into the interarrival
-    /// estimate.
+    /// server-side drop): the position step is not interarrival jitter.
+    ///
+    /// Held datagrams released by a configuration change never reach
+    /// [`Self::observe_arrival`] in the first place, so they need no reset —
+    /// the replay path passes the original arrival instant and is exempt from
+    /// the estimate entirely.
     pub fn reset_arrival(&mut self) {
         self.jitter_frames = 0.0;
         self.last_arrival = None;
@@ -157,21 +172,24 @@ impl JitterBuffer {
         micros.min(u32::MAX as f64) as u32
     }
 
-    /// Whether this datagram arrived after its playout deadline: its freshest
-    /// frame is more than the target delay behind the most recently accepted
-    /// datagram. Measured on the capture-clock → session-clock anchor so a
-    /// stalled sender (no frontier advance) still trips it.
+    /// Whether a datagram whose last frame ends at capture position `end`
+    /// arrived after its playout deadline. Measured on the capture-clock →
+    /// session-clock anchor so a stalled sender (no frontier advance) still
+    /// trips it.
     ///
     /// The last frame (`timestamp + frames`) is the right probe: a datagram is
     /// still useful while any of its frames can be played, and a batched
     /// sender's header timestamp names the *first* frame of the batch.
-    fn past_deadline(&self, now_ms: u64, timestamp: u64, frames: u64) -> bool {
-        let Some((anchor_now, anchor_ts)) = self.playout_anchor else {
+    ///
+    /// This must be called against the PRE-update anchor. The caller then
+    /// refreshes the anchor, so the classification of *this* datagram is never
+    /// softened by its own arrival.
+    fn past_deadline(&self, now_ms: u64, end: u64) -> bool {
+        let Some((anchor_now, anchor_end)) = self.playout_anchor else {
             return false;
         };
-        let end = timestamp.saturating_add(frames);
         let capture_delta_ms =
-            (end as i128 - anchor_ts as i128) * 1_000 / i128::from(self.sample_rate);
+            (end as i128 - anchor_end as i128) * 1_000 / i128::from(self.sample_rate);
         let deadline = anchor_now as i128 + i128::from(self.config.target_ms) + capture_delta_ms;
         i128::from(now_ms) > deadline
     }
@@ -189,7 +207,17 @@ impl JitterBuffer {
         payload: &[u8],
         write: &mut dyn FnMut(&[u8]),
     ) -> SubmitResult {
-        self.submit_inner(now_ms, extended, timestamp, frames, payload, write, true)
+        self.submit_inner(
+            Arrival {
+                now_ms,
+                extended,
+                timestamp,
+                frames,
+            },
+            payload,
+            write,
+            true,
+        )
     }
 
     /// Submit media that is being replayed from the §7.6 hold. `now_ms` is the
@@ -205,21 +233,47 @@ impl JitterBuffer {
         write: &mut dyn FnMut(&[u8]),
     ) -> SubmitResult {
         self.submit_inner(
-            arrival_ms, extended, timestamp, frames, payload, write, false,
+            Arrival {
+                now_ms: arrival_ms,
+                extended,
+                timestamp,
+                frames,
+            },
+            payload,
+            write,
+            false,
         )
     }
 
     fn submit_inner(
         &mut self,
-        now_ms: u64,
-        extended: u64,
-        timestamp: u64,
-        frames: u64,
+        arrival: Arrival,
         payload: &[u8],
         write: &mut dyn FnMut(&[u8]),
         update_anchor: bool,
     ) -> SubmitResult {
-        if self.past_deadline(now_ms, timestamp, frames) {
+        let Arrival {
+            now_ms,
+            extended,
+            timestamp,
+            frames,
+        } = arrival;
+        let end = timestamp.saturating_add(frames);
+        // Judge lateness against the anchor as it stood BEFORE this arrival.
+        let late = self.past_deadline(now_ms, end);
+        if update_anchor {
+            // Any live arrival — accepted, late, or a reordered slot — is the
+            // newest live observation. The capture side never moves backwards
+            // (`max`). Without this refresh, a stalled capture clock plus one
+            // late datagram leaves the anchor parked and every later datagram
+            // is judged late against that stale instant forever.
+            let position = self
+                .playout_anchor
+                .map(|(_, anchor_end)| anchor_end.max(end))
+                .unwrap_or(end);
+            self.playout_anchor = Some((now_ms, position));
+        }
+        if late {
             // Arrived after its playout deadline (§8): late drop, never a
             // network loss and never ring data. This is the pause case where
             // the frontier has not advanced either.
@@ -230,10 +284,10 @@ impl JitterBuffer {
             };
         }
         let Some(frontier) = self.frontier else {
-            // First datagram anchors the frontier and the clock.
+            // First datagram anchors the frontier. The playout clock was
+            // already anchored above on the live path.
             self.frontier = Some(extended + 1);
-            self.frontier_ts = timestamp.saturating_add(frames);
-            self.playout_anchor = Some((now_ms, timestamp));
+            self.frontier_ts = end;
             write(payload);
             return SubmitResult::default();
         };
@@ -245,9 +299,6 @@ impl JitterBuffer {
                 rebased: false,
                 concealments: Vec::new(),
             };
-        }
-        if update_anchor {
-            self.playout_anchor = Some((now_ms, timestamp));
         }
         self.pending.insert(
             extended,
@@ -267,10 +318,7 @@ impl JitterBuffer {
         let mut result = SubmitResult::default();
         let target = self.config.target_frames(self.sample_rate).max(1);
         let hard_limit = self.config.hard_limit_frames(self.sample_rate).max(target);
-        loop {
-            let Some(frontier) = self.frontier else {
-                break;
-            };
+        while let Some(frontier) = self.frontier {
             if let Some(frame) = self.pending.remove(&frontier) {
                 // Re-base on the actual timestamp: a contiguous sequence with
                 // a jumped timestamp is a server-side drop (M5-05), not a gap.
@@ -409,6 +457,60 @@ mod tests {
         });
         assert!(!r.late, "5 s of new capture audio is not a late datagram");
         assert_eq!(written.len(), 2 * 512);
+    }
+
+    /// RED before the anchor-refresh fix: a late datagram returned without
+    /// refreshing `playout_anchor`, so with a stalled capture clock every
+    /// subsequent arrival stayed late forever. The anchor must refresh on any
+    /// live arrival while lateness is still judged against the pre-update one.
+    #[test]
+    fn a_late_datagram_refreshes_the_deadline_anchor() {
+        let mut jb = JitterBuffer::new(JitterConfig::default(), 48_000, 8);
+        let mut written = Vec::new();
+        jb.submit(0, 0, 0, 64, &[0x7f; 512], &mut |b| {
+            written.extend_from_slice(b)
+        });
+        // One datagram arrives 5 s after its slot: late, as it should be.
+        assert!(
+            jb.submit(5_000, 1, 64, 64, &[0x7f; 512], &mut |b| written
+                .extend_from_slice(b))
+                .late,
+            "the first arrival after the stall is a late drop"
+        );
+        // The capture clock is still stalled, but the anchor refreshed to the
+        // late arrival's session instant. A contiguous run is accepted (its
+        // frames queue behind the seq-1 hole; the point is that none is late).
+        let mut gaps = 0i64;
+        for i in 0..45u32 {
+            let sequence = 2 + u64::from(i);
+            let timestamp = 128 + u64::from(i) * 64;
+            let result = jb.submit(
+                5_010 + u64::from(i) * 10,
+                sequence,
+                timestamp,
+                64,
+                &[0x7f; 512],
+                &mut |b| written.extend_from_slice(b),
+            );
+            assert!(
+                !result.late,
+                "datagram {sequence} must be accepted once the anchor refreshed"
+            );
+            gaps += result
+                .concealments
+                .iter()
+                .map(|(_, delta)| *delta)
+                .sum::<i64>();
+        }
+        assert_eq!(
+            gaps, 64,
+            "the seq-1 hole is concealed once, not every frame"
+        );
+        assert_eq!(
+            written.len(),
+            47 * 512,
+            "anchor frame + 45 live datagrams + one silence fill"
+        );
     }
 
     #[test]

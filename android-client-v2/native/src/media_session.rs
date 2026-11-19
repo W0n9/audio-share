@@ -165,6 +165,20 @@ impl ConcealmentCounts {
     }
 }
 
+/// One datagram held under §7.6: the instant it really arrived (so releasing
+/// it cannot manufacture a late drop) and its untouched wire bytes.
+struct HeldDatagram {
+    arrival_ms: u64,
+    bytes: Vec<u8>,
+}
+
+/// The §7.6 hold for one unknown generation. A newer unknown generation
+/// replaces it; overflow drops the oldest datagram.
+struct HeldMedia {
+    generation: u32,
+    datagrams: VecDeque<HeldDatagram>,
+}
+
 /// One Client session's media state (§7.5–§7.9).
 pub struct MediaSession {
     instance: u32,
@@ -178,7 +192,7 @@ pub struct MediaSession {
     /// The session instant at which each datagram actually arrived is kept so
     /// releasing the hold cannot manufacture a late drop (its deadline was
     /// judged when it arrived, not when the configuration caught up).
-    holding: Option<(u32, VecDeque<(u64, Vec<u8>)>)>,
+    holding: Option<HeldMedia>,
     /// Session-clock ms at which the current hold began (§7.6 2 s bound).
     held_since_ms: Option<u64>,
     report: PlaybackReport,
@@ -374,10 +388,21 @@ impl MediaSession {
                     self.saw_capture = false;
                 }
             }
-            if let Some((held_generation, held)) = self.holding.take() {
-                if held_generation == generation {
-                    for (arrival_ms, datagram) in held {
-                        self.deliver(arrival_ms, &datagram);
+            // Rebuild the jitter buffer for the new generation. Its pending
+            // media and frontier belong to the superseded generation, and the
+            // target-frame / silence-fill / deadline math must use the new
+            // sample_rate and frame_bytes, not the previous configuration's.
+            // The configured target/hard limit are preserved.
+            let jitter_config = self.jitter.config();
+            self.jitter = JitterBuffer::new(
+                jitter_config,
+                self.geometry.sample_rate,
+                self.geometry.frame_bytes(),
+            );
+            if let Some(held) = self.holding.take() {
+                if held.generation == generation {
+                    for datagram in held.datagrams {
+                        self.deliver(datagram.arrival_ms, &datagram.bytes);
                     }
                 }
             }
@@ -606,10 +631,12 @@ impl MediaSession {
     }
 
     /// Record frames trimmed from the ring by the reader's *soft* target trim
-    /// (backlog above the 60 ms target but still below the 200 ms hard limit).
-    /// Ticket M5-03: the oldest frames are dropped and counted separately —
-    /// this is normal buffer steering, NOT a §8 concealment intervention, so
-    /// it must not touch `concealments`/`concealed_frames`.
+    /// (backlog above the target + a 20 ms hysteresis band, still below the
+    /// 200 ms hard limit). Ticket M5-03: the oldest frames are dropped and
+    /// counted separately — this is normal buffer steering (the deliberate
+    /// M5-03 deviation from §8's four-intervention list, which governs
+    /// concealment accounting, not buffer management), NOT a concealment
+    /// intervention, so it must not touch `concealments`/`concealed_frames`.
     pub fn record_soft_trim(&mut self, frames: u64) {
         if frames == 0 {
             return;
@@ -619,6 +646,10 @@ impl MediaSession {
         // The skipped media had capture positions, so the playout cursor
         // advanced over them even though it was not a concealment event.
         self.position_adjust_frames = self.position_adjust_frames.saturating_add(frames as i64);
+        // The position step is not clock drift: a window spanning it would
+        // read a bogus ppm step, exactly as a hard re-anchor would.
+        self.drift.reset();
+        self.drift_ppm = None;
     }
 
     /// Total frames dropped by soft target trims.
@@ -679,27 +710,36 @@ impl MediaSession {
     // ---- internals -------------------------------------------------------
 
     fn hold(&mut self, now_ms: u64, datagram: &[u8], generation: u32) -> DatagramOutcome {
+        let arrival = || HeldDatagram {
+            arrival_ms: now_ms,
+            bytes: datagram.to_vec(),
+        };
         // §7.6: bounded hold — ≤ 32 datagrams or ≤ 100 ms of media; overflow
         // drops the oldest held datagram. Never decoded with the old config.
         match &mut self.holding {
-            Some((held_generation, held)) if *held_generation == generation => {
-                held.push_back((now_ms, datagram.to_vec()));
+            Some(held) if held.generation == generation => {
+                held.datagrams.push_back(arrival());
                 self.trim_hold();
             }
-            Some((held_generation, held)) if generation < *held_generation => {
+            Some(held) if generation < held.generation => {
                 // Older than what we are already holding for: superseded.
                 self.receiver.note_stale_generation();
                 self.interval.unknown_config_drops += 1;
-                let _ = held;
                 return DatagramOutcome::StaleGeneration;
             }
             Some(_) => {
                 // A newer unknown generation replaces the hold.
-                self.holding = Some((generation, VecDeque::from([(now_ms, datagram.to_vec())])));
+                self.holding = Some(HeldMedia {
+                    generation,
+                    datagrams: VecDeque::from([arrival()]),
+                });
                 self.held_since_ms = Some(now_ms);
             }
             None => {
-                self.holding = Some((generation, VecDeque::from([(now_ms, datagram.to_vec())])));
+                self.holding = Some(HeldMedia {
+                    generation,
+                    datagrams: VecDeque::from([arrival()]),
+                });
                 self.held_since_ms = Some(now_ms);
             }
         }
@@ -710,18 +750,19 @@ impl MediaSession {
     fn trim_hold(&mut self) {
         let max_hold_frames = u64::from(self.geometry.sample_rate) * UNKNOWN_CONFIG_MAX_MS / 1_000;
         let frame_bytes = self.geometry.frame_bytes().max(1);
-        let Some((_, held)) = self.holding.as_mut() else {
+        let Some(held) = self.holding.as_mut() else {
             return;
         };
         let mut held_frames: u64 = held
+            .datagrams
             .iter()
-            .map(|(_, datagram)| (datagram.len().saturating_sub(HEADER_SIZE) / frame_bytes) as u64)
+            .map(|d| (d.bytes.len().saturating_sub(HEADER_SIZE) / frame_bytes) as u64)
             .sum();
-        while held.len() > UNKNOWN_CONFIG_MAX_DATAGRAMS || held_frames > max_hold_frames {
-            let Some((_, dropped)) = held.pop_front() else {
+        while held.datagrams.len() > UNKNOWN_CONFIG_MAX_DATAGRAMS || held_frames > max_hold_frames {
+            let Some(dropped) = held.datagrams.pop_front() else {
                 break;
             };
-            let frames = (dropped.len().saturating_sub(HEADER_SIZE) / frame_bytes) as u64;
+            let frames = (dropped.bytes.len().saturating_sub(HEADER_SIZE) / frame_bytes) as u64;
             held_frames = held_frames.saturating_sub(frames);
             self.receiver.note_stale_generation();
             self.interval.unknown_config_drops += 1;

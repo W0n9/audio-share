@@ -263,10 +263,26 @@ class MediaPlayer(
         // fails; they are not the authority.
         internal const val FALLBACK_TARGET_MS = 60
         internal const val FALLBACK_HARD_LIMIT_MS = 200
+
+        /**
+         * Soft-trim hysteresis: only trim the application ring when the
+         * backlog exceeds the target by more than this band. This keeps normal
+         * inter-datagram variation from trimming a frame on every loop tick.
+         *
+         * DELIBERATE M5-03 DEVIATION: §8's four-intervention list governs
+         * concealment accounting, not buffer management. A soft trim is
+         * counted separately (`recordSoftTrim` / `playback.trim`) and is never
+         * a concealment; only the hard-limit jump is `ReAnchor`.
+         */
+        internal const val SOFT_TRIM_HYSTERESIS_MS = 20
     }
 
     /** Resolved §8 bounds in bytes for the active geometry. */
-    internal data class JitterBounds(val targetBytes: Int, val hardLimitBytes: Int)
+    internal data class JitterBounds(
+        val targetBytes: Int,
+        val hardLimitBytes: Int,
+        val hysteresisBytes: Int,
+    )
 
     private val running = AtomicBoolean(false)
     @Volatile private var thread: Thread? = null
@@ -316,10 +332,11 @@ class MediaPlayer(
         readPosition: Long,
         targetBytes: Int,
         hardLimitBytes: Int,
+        hysteresisBytes: Int,
         frameBytes: Int,
     ): Long {
         val result = ringBuffer.trim(
-            writePosition, readPosition, targetBytes, hardLimitBytes, frameBytes,
+            writePosition, readPosition, targetBytes, hardLimitBytes, hysteresisBytes, frameBytes,
         )
         if (result.trimmedFrames > 0) {
             if (result.reanchor) {
@@ -347,7 +364,9 @@ class MediaPlayer(
         val usableFrameBytes = frameBytes.coerceAtLeast(0)
         val targetBytes = (targetMs.coerceAtLeast(0) * rate / 1000) * usableFrameBytes
         val hardLimitBytes = (hardLimitMs.coerceAtLeast(0) * rate / 1000) * usableFrameBytes
-        return JitterBounds(targetBytes, hardLimitBytes)
+        val hysteresisBytes =
+            (SOFT_TRIM_HYSTERESIS_MS * rate / 1000) * usableFrameBytes
+        return JitterBounds(targetBytes, hardLimitBytes, hysteresisBytes)
     }
 
     /**
@@ -371,6 +390,53 @@ class MediaPlayer(
         }
         return acceptedFrames
     }
+
+    /** Result of evaluating the §8 underrun gate for one loop iteration. */
+    internal data class UnderrunGate(
+        /** Whether one period of silence should be fed this iteration. */
+        val fill: Boolean,
+        /** The platform underrun count already consumed (never re-counted). */
+        val lastPlatformUnderruns: Long,
+    )
+
+    /**
+     * §8 underrun gating. An empty application ring is NOT evidence of an
+     * underrun: between two paced datagrams the ring is normally empty for a
+     * few milliseconds, and inserting silence for every such gap would inflate
+     * the concealment counters. The gate opens only when the platform's own
+     * `underruns` counter advanced (a real playback stall) AND the reader is
+     * actually out of whole frames.
+     *
+     * The platform count is consumed even when no fill is performed, so each
+     * platform event is counted at most once even if several loop iterations
+     * see it. `recordPlayback` still reports the platform counter as the §9
+     * `underruns` field, so the two never double-count the same event.
+     */
+    internal fun underrunGate(
+        hasPlayed: Boolean,
+        availableBytes: Int,
+        frameBytes: Int,
+        platformUnderruns: Long,
+        lastPlatformUnderruns: Long,
+    ): UnderrunGate {
+        if (platformUnderruns <= lastPlatformUnderruns) {
+            return UnderrunGate(false, lastPlatformUnderruns)
+        }
+        val fill = hasPlayed && frameBytes > 0 && availableBytes < frameBytes
+        return UnderrunGate(fill, platformUnderruns)
+    }
+
+    /**
+     * Prebuffer gate: do not start playback until the ring holds the jitter
+     * target. Starting on the first datagram would leave the platform starved
+     * for the rest of the target interval and manufacture underruns that are
+     * not concealment. Once playing, the ring is allowed to drain.
+     */
+    internal fun readyForPlayback(
+        hasPlayed: Boolean,
+        availableBytes: Int,
+        targetBytes: Int,
+    ): Boolean = hasPlayed || targetBytes <= 0 || availableBytes >= targetBytes
 
     /** Result of applying one §8 drift frame adjustment. */
     internal data class DriftApplication(val readPosition: Long, val appliedFrames: Int)
@@ -439,6 +505,9 @@ class MediaPlayer(
         // §8 underrun fill is only counted after real media has played once:
         // an empty ring before the first data is startup, not an underrun.
         var hasPlayed = false
+        // Last platform underrun count consumed by the §8 gate. Each platform
+        // event opens the gate at most once.
+        var lastPlatformUnderruns = 0L
         // Native's JitterConfig is fixed for a geometry; cache it per sink.
         var jitterBounds: JitterBounds? = null
         try {
@@ -460,6 +529,7 @@ class MediaPlayer(
                     readPosition = 0
                     submittedBytes = 0
                     hasPlayed = false
+                    lastPlatformUnderruns = 0
                     jitterBounds = null
                     Thread.sleep(LOOP_SLEEP_MS)
                     continue
@@ -479,6 +549,7 @@ class MediaPlayer(
                     readPosition = 0
                     submittedBytes = 0
                     hasPlayed = false
+                    lastPlatformUnderruns = 0
                     if (sink == null) {
                         // Unsupported platform mapping is a 403-class condition;
                         // nothing to play, so stop consuming rather than spin.
@@ -509,10 +580,25 @@ class MediaPlayer(
                     readPosition,
                     bounds.targetBytes,
                     bounds.hardLimitBytes,
+                    bounds.hysteresisBytes,
                     frameBytes,
                 )
                 val available = ringBuffer.available(writePosition, readPosition)
-                if (available >= frameBytes) {
+                // Consume any platform underrun event once per loop iteration,
+                // whether or not it results in a fill.
+                val gate = underrunGate(
+                    hasPlayed,
+                    available,
+                    frameBytes,
+                    currentSink.underruns(),
+                    lastPlatformUnderruns,
+                )
+                lastPlatformUnderruns = gate.lastPlatformUnderruns
+                // Prebuffer to the jitter target before the first write: an
+                // empty ring at startup is not an underrun.
+                if (readyForPlayback(hasPlayed, available, bounds.targetBytes) &&
+                    available >= frameBytes
+                ) {
                     val toRead = minOf(available, scratch.size)
                     val copied = ringBuffer.read(readPosition, toRead, frameBytes, scratch)
                     if (copied > 0) {
@@ -521,9 +607,10 @@ class MediaPlayer(
                         readPosition += accepted
                         if (accepted > 0) hasPlayed = true
                     }
-                } else if (hasPlayed) {
-                    // §8 underrun fill: nothing was ready for this playback
-                    // period while playing, so feed one period of silence.
+                } else if (gate.fill) {
+                    // §8 underrun fill is gated on a real platform underrun
+                    // signal. An empty app ring between paced datagrams is
+                    // normal backpressure, not a concealment event.
                     fillUnderrun(session, sampleRate, currentSink)
                 }
 

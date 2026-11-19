@@ -389,7 +389,7 @@ fn fuzz_control_frames_and_client_machine_are_deterministic() {
         let mut signatures = Vec::new();
         let mut machine = ClientMachine::new();
         let corpus = control_corpus();
-        for case in 0..CASES {
+        for _case in 0..CASES {
             // A terminal machine absorbs everything; start fresh so the
             // corpus keeps exercising the full state table.
             if machine.state.is_closed() {

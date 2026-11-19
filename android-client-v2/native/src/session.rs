@@ -1102,7 +1102,16 @@ impl Session {
         let Some(media) = current else {
             return false;
         };
-        let (diagnostics, drift_ppm, correction_ppm, concealments) = {
+        let (
+            diagnostics,
+            drift_ppm,
+            correction_ppm,
+            concealments,
+            soft_trimmed_frames,
+            soft_trim_events,
+            reanchor_frames,
+            reanchor_events,
+        ) = {
             let mut media = media.lock().unwrap();
             let target_ms = media.jitter_config().target_ms;
             let diagnostics = media.diagnostics(target_ms);
@@ -1111,6 +1120,10 @@ impl Session {
                 media.drift_ppm(),
                 media.drift_correction_ppm(),
                 media.concealment_counts(),
+                media.soft_trimmed_frames(),
+                media.soft_trim_events(),
+                media.trimmed_frames(),
+                media.trim_events(),
             )
         };
         // §9 has NO drift or per-kind concealment field (adding one is a
@@ -1124,6 +1137,19 @@ impl Session {
                 concealments.drift,
                 concealments.reanchor,
                 concealments.total(),
+            );
+        }
+        // Buffer-management accounting, deliberately NOT concealment (M5-03):
+        // soft trims steer the application ring toward the target; hard trims
+        // are the §8 ReAnchor (already in `playback.concealments`). The log
+        // line is the L1 view of the otherwise JNI-only counters.
+        if soft_trimmed_frames > 0 || reanchor_frames > 0 {
+            log::info!(
+                "event = playback.trim soft_frames={} soft_events={} reanchor_frames={} reanchor_events={}",
+                soft_trimmed_frames,
+                soft_trim_events,
+                reanchor_frames,
+                reanchor_events,
             );
         }
         if let Some(drift_ppm) = drift_ppm {
