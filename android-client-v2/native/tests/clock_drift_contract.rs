@@ -183,11 +183,45 @@ fn a_sustained_high_buffer_deletes_whole_frames_after_five_seconds() {
 #[test]
 fn a_sustained_low_buffer_inserts_whole_frames_after_five_seconds() {
     let mut c = DriftController::new(DriftConfig::default());
-    assert_eq!(c.update(0, Some(0), 38, RATE).frame_adjust, 0);
-    let decision = c.update(5_100, Some(0), 38, RATE);
+    // The buffer must first settle inside the deadband: a never-settling
+    // startup fill is not drift (see the guard tests below).
+    assert_eq!(c.update(0, Some(0), 60, RATE).frame_adjust, 0);
+    assert_eq!(c.update(100, Some(0), 38, RATE).frame_adjust, 0);
+    let decision = c.update(5_201, Some(0), 38, RATE);
     assert_eq!(
         decision.frame_adjust, 96,
         "22 ms - 20 ms threshold = 2 ms = 96 frames inserted"
+    );
+}
+
+#[test]
+fn a_permanently_shallow_buffer_never_inserts_silence() {
+    // The application ring can legitimately sit well below the 60 ms target
+    // while the AudioTrack's own buffer holds the rest. Inserting silence every
+    // 5 s would be an audible dropout cadence, so insertion requires a prior
+    // deadband pass; this buffer never has one.
+    let mut c = DriftController::new(DriftConfig::default());
+    let mut now = 0u64;
+    while now <= 20_000 {
+        assert_eq!(
+            c.update(now, Some(0), 10, RATE).frame_adjust,
+            0,
+            "no insert at {now} ms"
+        );
+        now += 100;
+    }
+}
+
+#[test]
+fn insertions_require_a_drift_estimate() {
+    let mut c = DriftController::new(DriftConfig::default());
+    // A deadband pass alone is not enough: the §8 measurement must exist.
+    assert_eq!(c.update(0, Some(0), 60, RATE).frame_adjust, 0);
+    assert_eq!(c.update(100, None, 38, RATE).frame_adjust, 0);
+    assert_eq!(
+        c.update(5_201, None, 38, RATE).frame_adjust,
+        0,
+        "no silence insertion before the 10 s window fills"
     );
 }
 

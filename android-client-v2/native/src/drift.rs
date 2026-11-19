@@ -198,6 +198,9 @@ pub struct DriftController {
     applied_ppm: i32,
     /// `now_ms` at which the current out-of-deadband run began.
     deviation_since_ms: Option<u64>,
+    /// Whether the buffer has been inside the deadband since the last reset.
+    /// Gates silence insertion (see `update`).
+    seen_deadband: bool,
 }
 
 impl DriftController {
@@ -206,6 +209,7 @@ impl DriftController {
             config,
             applied_ppm: 0,
             deviation_since_ms: None,
+            seen_deadband: false,
         }
     }
 
@@ -224,6 +228,7 @@ impl DriftController {
     pub fn reset(&mut self) {
         self.applied_ppm = 0;
         self.deviation_since_ms = None;
+        self.seen_deadband = false;
     }
 
     /// Advance the controller. `estimate` is the estimator output (None before
@@ -247,20 +252,27 @@ impl DriftController {
         self.applied_ppm += delta;
 
         // (2) Sustained buffer deviation → whole-frame insert/delete.
+        //
+        // Insertion adds silence at the playout point and can be audible, so it
+        // is only allowed once the buffer has actually settled inside the
+        // deadband (a startup fill or a permanently shallow application ring is
+        // not drift) AND a real drift measurement exists. Deletion only reduces
+        // latency and is safe whenever the buffer is genuinely too deep.
         let error_ms = buffer_current_ms as i32 - self.config.target_ms as i32;
         let mut frame_adjust = 0i32;
         if error_ms.abs() <= self.config.deviation_threshold_ms {
+            self.seen_deadband = true;
             self.deviation_since_ms = None;
-        } else {
-            match self.deviation_since_ms {
-                None => self.deviation_since_ms = Some(now_ms),
-                Some(since) if now_ms.saturating_sub(since) > self.config.sustained_ms => {
-                    frame_adjust = Self::frames_for(error_ms, sample_rate, self.config);
-                    // Re-arm: the correction needs another full 5 s run.
-                    self.deviation_since_ms = None;
-                }
-                Some(_) => {}
+        } else if self.deviation_since_ms.is_none() {
+            self.deviation_since_ms = Some(now_ms);
+        } else if now_ms.saturating_sub(self.deviation_since_ms.unwrap()) > self.config.sustained_ms
+        {
+            let insert_allowed = self.seen_deadband && estimate.is_some();
+            if error_ms > 0 || insert_allowed {
+                frame_adjust = Self::frames_for(error_ms, sample_rate, self.config);
             }
+            // Re-arm: the correction needs another full 5 s run.
+            self.deviation_since_ms = None;
         }
 
         DriftDecision {
