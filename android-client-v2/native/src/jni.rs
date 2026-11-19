@@ -532,8 +532,8 @@ pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordPlayback(
 }
 
 /// recordTrim(handle, frames): frames dropped by the Kotlin reader's §8
-/// jitter-buffer re-anchor. Diagnostic only — not playback evidence and not a
-/// concealment (M5-04 owns re-anchor accounting).
+/// hard-limit re-anchor. M5-04 counts the deletion as `ReAnchor` concealment
+/// and advances the submitted/playout position over the skipped media.
 #[no_mangle]
 pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordTrim(
     _env: JNIEnv,
@@ -544,6 +544,71 @@ pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordTrim(
     let _ = guard(|| {
         let session = get_session(handle)?;
         session.record_trim(frames.max(0) as u64);
+        Ok::<(), String>(())
+    });
+}
+
+/// driftPpm(handle): the §8 capture-vs-playback drift estimate in ppm, or 0
+/// until a full 10 s window exists. The accepted §9 `PlaybackDiagnostics` has
+/// no drift field; this accessor plus the `playback.drift` log line is the
+/// non-protocol L1 channel.
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_driftPpm(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    guard(|| {
+        let session = get_session(handle)?;
+        Ok(session.drift_ppm().unwrap_or(0))
+    })
+    .unwrap_or(0)
+}
+
+/// driftCorrectionPpm(handle): the smooth, ±100 ppm-clamped playback-rate
+/// correction the player should apply with `AudioTrack.setPlaybackRate`.
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_driftCorrectionPpm(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    guard(|| {
+        let session = get_session(handle)?;
+        Ok(session.drift_correction_ppm())
+    })
+    .unwrap_or(0)
+}
+
+/// takeDriftIntervention(handle): whole-frame adjustment the player must apply
+/// now (+ insert silence, − delete frames). Taking it clears the pending value;
+/// the §8 concealment is counted only when the player acknowledges it.
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_takeDriftIntervention(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    guard(|| {
+        let session = get_session(handle)?;
+        Ok(session.take_drift_intervention())
+    })
+    .unwrap_or(0)
+}
+
+/// recordDriftIntervention(handle, frames): the player applied the adjustment
+/// (+ inserted, − deleted). Counts one §8 drift concealment with the signed
+/// frame delta.
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordDriftIntervention(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    frames: jint,
+) {
+    let _ = guard(|| {
+        let session = get_session(handle)?;
+        session.record_drift_intervention(frames);
         Ok::<(), String>(())
     });
 }
