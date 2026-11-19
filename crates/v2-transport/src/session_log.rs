@@ -90,3 +90,26 @@ pub fn identity_reset(fingerprint: &str) {
         "v2 identity reset"
     );
 }
+
+/// Server-side media drops at the bounded cadence (ticket M5-05). Distinguishes
+/// pre-packetize capture drops (`MediaPump.dropped_chunks`) and encoded-datagram
+/// queue drops (`MediaSendQueue.dropped_newest`) from network loss, which is a
+/// Client-side §9 counter and never appears here. Public counters only — no key
+/// material or audio.
+pub fn media_drops(
+    session_id: u64,
+    stream_instance_id: u32,
+    pump_dropped_chunks: u64,
+    queue_dropped_newest: u64,
+    pending_frames: u64,
+) {
+    tracing::info!(
+        event = %"media.drops",
+        session_id = session_id,
+        instance = stream_instance_id,
+        pump_dropped_chunks = pump_dropped_chunks,
+        queue_dropped_newest = queue_dropped_newest,
+        pending_frames = pending_frames,
+        "v2 server-side media drops"
+    );
+}
