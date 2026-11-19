@@ -96,10 +96,17 @@ impl MediaTask {
         mut chunks: tokio::sync::mpsc::Receiver<crate::media_source::MediaChunk>,
         stream: crate::media_source::StreamState,
         events: mpsc::UnboundedSender<DriverEvent>,
+        session_id: u64,
+        stream_instance_id: u32,
     ) -> Self {
         let (generation, generation_rx) = tokio::sync::watch::channel(stream.config_generation);
         let handle = tokio::spawn(async move {
             let mut pump = crate::media_pump::MediaPump::new(stream);
+            // M5-05: bounded-cadence log of server-side drops so support can
+            // distinguish pre-packetize/queue drops from Client-side network
+            // loss in `server.log` (session_log event → tracing_bridge).
+            let mut drop_reporter =
+                crate::media_pump::DropReporter::new(Duration::from_secs(5));
             // §7.4/§10: encoded media goes into a bounded 256-datagram,
             // non-waiting per-Client queue before `send_datagram`. A stalled
             // Client therefore drops the newest media, never blocks capture.
@@ -154,8 +161,9 @@ impl MediaTask {
                     let _ = events.send(DriverEvent::MediaDatagramUnsupported);
                     return;
                 };
+                let now = std::time::Instant::now();
                 let datagrams = match pump.take_sendable(
-                    std::time::Instant::now(),
+                    now,
                     max_datagram_size,
                     MAX_DATAGRAMS_PER_TICK,
                 ) {
@@ -167,6 +175,22 @@ impl MediaTask {
                     Err(crate::media_pump::MediaPumpError::MisalignedPcm) => return,
                 };
                 queue.enqueue(datagrams);
+                // M5-05: report changed server-side drop counters at the 5 s
+                // diagnostics cadence (tracing → tracing_bridge → server.log).
+                if let Some(report) = drop_reporter.poll(
+                    now,
+                    pump.dropped_chunks(),
+                    queue.dropped_newest(),
+                    pump.pending_frames(),
+                ) {
+                    crate::session_log::media_drops(
+                        session_id,
+                        stream_instance_id,
+                        report.pump_dropped_chunks,
+                        report.queue_dropped_newest,
+                        report.pending_frames,
+                    );
+                }
                 // Non-waiting drain: one pop per send, no await, no blocking.
                 // quinn consumes the Bytes on every outcome and does not return
                 // it on error, so keep the Vec to requeue a TooLarge refusal.
@@ -558,11 +582,14 @@ impl SessionServer {
                             media = None;
                         } else if media.is_none() {
                             if let crate::media_source::MediaStatus::Active(stream) = status {
+                                let instance = stream.stream_instance_id;
                                 media = Some(MediaTask::spawn(
                                     connection.clone(),
                                     source.subscribe(),
                                     stream,
                                     event_tx.clone(),
+                                    machine.session_id().unwrap_or(0),
+                                    instance,
                                 ));
                             }
                         } else if let (Some(task), Some(stream)) = (

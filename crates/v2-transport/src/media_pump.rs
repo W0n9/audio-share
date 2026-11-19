@@ -34,6 +34,10 @@ pub enum MediaPumpError {
 #[derive(Debug)]
 struct PendingChunk {
     pcm: Vec<u8>,
+    /// Capture-clock position of the first frame still in `pcm`. Advanced as
+    /// the chunk is drained so the packetizer can re-anchor even after a
+    /// pre-packetize drop (§7.2).
+    start_frame: u64,
 }
 
 /// Frames of capture audio a stalled Client may accumulate before the newest
@@ -137,7 +141,10 @@ impl MediaPump {
             self.dropped_chunks += 1;
             return Ok(());
         }
-        self.pending.push_back(PendingChunk { pcm: chunk.pcm });
+        self.pending.push_back(PendingChunk {
+            pcm: chunk.pcm,
+            start_frame: chunk.start_frame,
+        });
         Ok(())
     }
 
@@ -194,10 +201,22 @@ impl MediaPump {
             if self.pacer.try_consume(now, frames).is_err() {
                 break;
             }
+            // §7.2: the header timestamp is the capture-clock position of the
+            // first payload frame. Re-anchor before packetizing so a chunk
+            // dropped pre-packetize (pending bound) leaves an honest timestamp
+            // gap on the wire — sequence stays +1 per datagram sent.
+            let chunk_start = front.start_frame;
             let pcm: Vec<u8> = front.pcm.drain(..take_bytes).collect();
+            front.start_frame = front.start_frame.saturating_add(frames);
             if front.pcm.is_empty() {
                 self.pending.pop_front();
             }
+            // The capture clock never moves backwards; a chunk arriving out of
+            // order would be a contract violation (MediaTap positions chunks).
+            debug_assert!(chunk_start >= self.packetizer.next_timestamp());
+            self.packetizer
+                .seek(self.packetizer.next_sequence(), chunk_start)
+                .map_err(map_packet_error)?;
             let datagrams = self
                 .packetizer
                 .packetize(&pcm, max_datagram_size)
@@ -215,6 +234,73 @@ impl MediaPump {
     /// Release buffered media on teardown (§5.4 invariant 6).
     pub fn clear(&mut self) {
         self.pending.clear();
+    }
+}
+
+/// A snapshot of the two server-side drop counters, for the diagnostics log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DropReport {
+    /// Capture buffers dropped at the pending bound (`MediaPump`).
+    pub pump_dropped_chunks: u64,
+    /// Encoded datagrams dropped at the queue bound (`MediaSendQueue`).
+    pub queue_dropped_newest: u64,
+    /// Buffered capture audio at report time, in sample frames.
+    pub pending_frames: u64,
+}
+
+/// Bounded-cadence reporter for server-side drops. Emits only when the
+/// diagnostics interval elapsed *and* a counter changed since the last report,
+/// so `server.log` distinguishes pre-packetize/server drops from network loss
+/// without flooding the log. Pure: the clock is injected, never read here.
+#[derive(Debug)]
+pub struct DropReporter {
+    cadence: std::time::Duration,
+    last_report: Option<Instant>,
+    last_pump: u64,
+    last_queue: u64,
+}
+
+impl DropReporter {
+    /// A reporter that logs at most once per `cadence`.
+    pub fn new(cadence: std::time::Duration) -> Self {
+        Self {
+            cadence,
+            last_report: None,
+            last_pump: 0,
+            last_queue: 0,
+        }
+    }
+
+    /// Return a report when `now` is at least one cadence past the last report
+    /// and either drop counter changed. The first poll establishes the baseline
+    /// (no report) so a zero-valued startup line is never emitted.
+    pub fn poll(
+        &mut self,
+        now: Instant,
+        pump_dropped_chunks: u64,
+        queue_dropped_newest: u64,
+        pending_frames: u64,
+    ) -> Option<DropReport> {
+        let due = match self.last_report {
+            None => {
+                self.last_report = Some(now);
+                false
+            }
+            Some(last) => now.saturating_duration_since(last) >= self.cadence,
+        };
+        let changed = pump_dropped_chunks != self.last_pump
+            || queue_dropped_newest != self.last_queue;
+        if !due || !changed {
+            return None;
+        }
+        self.last_report = Some(now);
+        self.last_pump = pump_dropped_chunks;
+        self.last_queue = queue_dropped_newest;
+        Some(DropReport {
+            pump_dropped_chunks,
+            queue_dropped_newest,
+            pending_frames,
+        })
     }
 }
 
@@ -251,6 +337,24 @@ mod tests {
             stream_instance_id: instance,
             config_generation: generation,
         }
+    }
+
+    /// Drain every pending frame through the pacer, advancing the injected
+    /// clock 10 ms per tick so a full 100 ms window is always available.
+    fn drain_all(pump: &mut MediaPump, now: &mut Instant) -> Vec<Vec<u8>> {
+        let mut all = Vec::new();
+        for _ in 0..512 {
+            let datagrams = pump.take_sendable(*now, 1_192, 64).expect("send");
+            *now += std::time::Duration::from_millis(10);
+            if datagrams.is_empty() {
+                if pump.idle() {
+                    break;
+                }
+                continue;
+            }
+            all.extend(datagrams);
+        }
+        all
     }
 
     /// Captured audio becomes golden-vector-shaped datagrams sized from the
@@ -366,6 +470,104 @@ mod tests {
             first.sequence, 0,
             "the instance's sequence space starts here"
         );
+    }
+
+    #[test]
+    fn drop_reporter_fires_only_on_change_at_the_diagnostics_cadence() {
+        use std::time::Duration;
+        let mut reporter = super::DropReporter::new(Duration::from_secs(5));
+        let t0 = Instant::now();
+        // Initial poll at t0 with zero counters logs nothing (nothing changed).
+        assert!(reporter.poll(t0, 0, 0, 0).is_none());
+        // A drop happens but no diagnostics tick has elapsed.
+        assert!(reporter.poll(t0 + Duration::from_secs(1), 3, 0, 0).is_none());
+        // At the 5 s tick the changed counters are reported once.
+        let report = reporter
+            .poll(t0 + Duration::from_secs(5), 3, 2, 100)
+            .expect("report at tick");
+        assert_eq!(report.pump_dropped_chunks, 3);
+        assert_eq!(report.queue_dropped_newest, 2);
+        assert_eq!(report.pending_frames, 100);
+        // Same counters at the next tick: nothing changed, no repeat log.
+        assert!(reporter
+            .poll(t0 + Duration::from_secs(10), 3, 2, 100)
+            .is_none());
+        // A fresh drop at the next tick is reported.
+        assert!(reporter
+            .poll(t0 + Duration::from_secs(15), 4, 2, 100)
+            .is_some());
+    }
+
+    /// §7.4 guard (characterization): when a whole capture callback's worth
+    /// of media is offered at once, the pacer releases at most one 100 ms
+    /// window up front and then no more than 100 ms of media per 100 ms of
+    /// wall time — never an unbounded whole-callback burst. Thresholds are
+    /// literals from the spec (48 kHz × 100 ms = 4800 frames; 10 ms = 480).
+    #[test]
+    fn send_ahead_never_exceeds_window_plus_rate_times_elapsed() {
+        let mut pump = MediaPump::new(stream(1, 1));
+        let t0 = Instant::now();
+        // Offer one full 500 ms pending bound at once: 24000 frames at 48 kHz.
+        // An unbounded sender would dump all 24000 in the first tick.
+        pump.accept(chunk(1, 1, 0, 24_000 * 8)).expect("accept");
+        let mut sent_frames = 0u64;
+        for k in 0..100u64 {
+            let now = t0 + std::time::Duration::from_millis(10 * k);
+            let datagrams = pump.take_sendable(now, 1_192, 10_000).expect("send");
+            sent_frames += datagrams
+                .iter()
+                .map(|d| ((d.len() - crate::media::HEADER_SIZE) / 8) as u64)
+                .sum::<u64>();
+            // By tick k (k×10 ms elapsed) the pacer may have sent at most one
+            // 4800-frame window up front plus 480 frames per 10 ms elapsed.
+            assert!(
+                sent_frames <= 4_800 + 480 * k,
+                "tick {k}: sent {sent_frames} exceeds the §7.4 window"
+            );
+        }
+        // Not vacuous: the whole 500 ms burst eventually drains at the paced
+        // rate (24000 frames ÷ 480/tick = 50 ticks, well within 100).
+        assert_eq!(sent_frames, 24_000, "the full burst must drain, paced");
+    }
+
+    /// §7.2: a chunk dropped pre-packetize leaves a wire timestamp gap equal
+    /// to its frame count, while sequence stays contiguous per datagram sent.
+    #[test]
+    fn a_dropped_chunk_jumps_the_wire_timestamp_not_the_sequence() {
+        let mut pump = MediaPump::new(stream(1, 1));
+        let mut now = Instant::now();
+        // Fill the 500 ms pending bound: 24 chunks × 1024 frames = 24576 > 24000.
+        // The last chunk that crosses the bound is dropped and counted.
+        for i in 0..24u64 {
+            pump.accept(chunk(1, 1, i * 1_024, 1_024 * 8)).expect("accept");
+        }
+        assert!(pump.dropped_chunks() > 0, "a chunk must have been dropped");
+        let dropped_before = pump.dropped_chunks();
+
+        // Drain everything accepted so far, then accept the next contiguous
+        // chunk with start_frame = 24 * 1024 (the true capture position).
+        let first_batch = drain_all(&mut pump, &mut now);
+        assert!(!first_batch.is_empty());
+        pump.accept(chunk(1, 1, 24 * 1_024, 1_024 * 8)).expect("accept");
+        assert_eq!(pump.dropped_chunks(), dropped_before, "no new drop");
+        let second_batch = drain_all(&mut pump, &mut now);
+        assert!(!second_batch.is_empty());
+
+        // The first datagram after the drop must carry the real capture-frame
+        // position of its first payload frame, not a clock that skipped drops.
+        let first_after = MediaHeader::parse(&second_batch[0]).expect("header").0;
+        assert_eq!(
+            first_after.timestamp,
+            24 * 1_024,
+            "timestamp must re-anchor to the first payload frame's capture position"
+        );
+
+        // Sequence remains +1 per datagram across the whole stream.
+        let all: Vec<&Vec<u8>> = first_batch.iter().chain(second_batch.iter()).collect();
+        for (index, datagram) in all.iter().enumerate() {
+            let header = MediaHeader::parse(datagram).expect("header").0;
+            assert_eq!(header.sequence, index as u32, "sequence +1 per datagram");
+        }
     }
 
     /// Teardown releases buffered media.
