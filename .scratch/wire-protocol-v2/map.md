@@ -46,7 +46,7 @@
 | 6 | [33 — Server 日志补 v2 会话事件](issues/33-server-log-session-events.md) | `ready-for-human` | — | 在 Windows 用重建产物复跑 GUI 701 路径 | 人工（代码已合入 `de83686`） |
 
 M5-03…M5-06 已在本轮实现并逐个合入 `integration/m5`（tip `800c40c`），四张工单状态均为
-`ready-for-human`；M5-07（60 min soak + **p95/p99 预算**）依赖已解除，仍为人工门
+`ready-for-human`；M5-07（60 min soak + **p95/p99 预算**）仍为人工门，按维护者新裁决，等用例 B 真机 PASS 再排
 （需真机值守 + 人为注入抖动/重连，agent 只备工装）。M5-02 已
 `resolved`（生产提交 `d03865b` 已合入集成分支；听测 PASS；埋点复测 NOT RUN）。
 34 已 `resolved`；24 已发布（`v0.5.0-beta` pre-release）。
