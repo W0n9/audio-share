@@ -78,7 +78,7 @@ aflinger-B.txt / client-B.log / server-B.log
 aflinger-C.txt / client-C-extended.log / server-C-extended.log
 client-all.log（10:48 起的完整 logcat，最终 7,854,582 字节）
 client-all.err（空）
-phone-pairing.png / phone-playing.png（手机端界面截图）
+phone-pairing-redacted.png / phone-playing-redacted.png（手机端界面截图；原件仅留本地）
 
 ============================================================
 备注
