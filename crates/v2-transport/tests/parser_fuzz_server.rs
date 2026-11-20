@@ -392,7 +392,7 @@ fn fuzz_server_media_header_never_panics_and_is_deterministic() {
 // ---------------------------------------------------------------------------
 
 fn request_corpus() -> Vec<Vec<u8>> {
-    let frames = vec![
+    let frames = [
         frame(frame::Body::AuthInit(AuthInit {
             request_id: 1,
             client_public_key: unhex(CLIENT_PUB),

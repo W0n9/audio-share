@@ -107,7 +107,13 @@ pub struct MediaPacer {
     window_frames: u64,
     available: u64,
     last_refill: Option<Instant>,
+    /// Sub-frame refill carried between calls, in units of
+    /// `nanoseconds × sample_rate`. Truncating this at every call would make
+    /// the bucket deliver less than `sample_rate` whenever the call cadence is
+    /// not an exact whole-frame multiple (M5-08).
+    refill_remainder: u128,
     consumed_frames: u64,
+    calls: u64,
 }
 
 impl MediaPacer {
@@ -120,7 +126,9 @@ impl MediaPacer {
             window_frames,
             available: window_frames,
             last_refill: None,
+            refill_remainder: 0,
             consumed_frames: 0,
+            calls: 0,
         }
     }
 
@@ -134,21 +142,43 @@ impl MediaPacer {
         self.consumed_frames
     }
 
+    /// `try_consume` invocations. The M5-08 periodic log reports the call rate
+    /// so the token-bucket cadence (and the pre-fix rate deficit) is
+    /// measurable in `server.log`.
+    pub const fn calls(&self) -> u64 {
+        self.calls
+    }
+
     /// Refill at the media rate up to one window, then consume `frames`.
     /// Refill is capped at the window so idle time can never be banked into a
     /// later burst (§7.4: never an unbounded whole-callback burst).
     pub fn try_consume(&mut self, now: Instant, frames: u64) -> Result<(), PacingViolation> {
+        self.calls = self.calls.saturating_add(1);
         match self.last_refill {
             None => self.last_refill = Some(now),
             Some(last) => {
                 if now > last {
                     let elapsed = now.saturating_duration_since(last);
-                    let accrued = elapsed.as_nanos() * u128::from(self.sample_rate) / 1_000_000_000;
+                    // Carry the sub-frame remainder: `remainder` is the
+                    // numerator modulo one second, so the fraction of a frame
+                    // accrued by this call is repaid by a later one. Dropping
+                    // it (the pre-M5-08 behaviour) lost up to half a frame per
+                    // call and made the bucket deliver ~0.2 % under the
+                    // published rate at a jittered ~200 calls/s.
+                    let numerator = elapsed
+                        .as_nanos()
+                        .saturating_mul(u128::from(self.sample_rate))
+                        .saturating_add(self.refill_remainder);
+                    let accrued = numerator / 1_000_000_000;
+                    self.refill_remainder = numerator % 1_000_000_000;
                     let accrued = u64::try_from(accrued).unwrap_or(u64::MAX);
-                    self.available = self
-                        .available
-                        .saturating_add(accrued)
-                        .min(self.window_frames);
+                    let unclamped = self.available.saturating_add(accrued);
+                    self.available = unclamped.min(self.window_frames);
+                    // Idle time is never banked past the window: discard any
+                    // remainder that the cap just threw away.
+                    if unclamped > self.window_frames {
+                        self.refill_remainder = 0;
+                    }
                     self.last_refill = Some(now);
                 }
             }

@@ -36,6 +36,12 @@ use std::collections::VecDeque;
 
 /// §8 measurement window.
 pub const DRIFT_WINDOW_MS: u64 = 10_000;
+/// A full window with only a couple of samples is still a short/quantised
+/// baseline: a single ~10 ms playout step at a window edge can swing the slope
+/// by hundreds of ppm. Publish only when at least this many paired reports
+/// span the window (1 Hz reporting would take 10 s; the normal 10 Hz cadence
+/// needs ~1 s of the window's tail, so this never delays a genuine estimate).
+pub const MIN_WINDOW_SAMPLES: usize = 10;
 /// §8 rate-correction bound.
 pub const MAX_CORRECTION_PPM: i32 = 100;
 /// §8 sustained-deviation threshold.
@@ -119,12 +125,16 @@ impl DriftEstimator {
     }
 
     /// The measured drift in ppm, or `None` until a full `window_ms` of paired
-    /// observations exists. Positive means the capture clock is ahead of the
-    /// playback clock (the buffer is growing; playback must speed up).
+    /// observations with at least [`MIN_WINDOW_SAMPLES`] samples exists.
+    /// Positive means the capture clock is ahead of the playback clock (the
+    /// buffer is growing; playback must speed up).
     pub fn ppm(&self) -> Option<i32> {
         let first = self.samples.front()?;
         let last = self.samples.back()?;
         if last.now_ms.saturating_sub(first.now_ms) < self.window_ms {
+            return None;
+        }
+        if self.samples.len() < MIN_WINDOW_SAMPLES {
             return None;
         }
         // Without playback progress the "slope" is just the capture rate, not
@@ -159,6 +169,17 @@ impl DriftEstimator {
             return None;
         }
         Some(ppm.round().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
+    }
+
+    /// The retained window's span in ms and its sample count. Logged with every
+    /// `playback.drift` line so a short/quantised estimate is recognisable
+    /// (M5-08).
+    pub fn window_stats(&self) -> (u64, usize) {
+        let span_ms = match (self.samples.front(), self.samples.back()) {
+            (Some(first), Some(last)) => last.now_ms.saturating_sub(first.now_ms),
+            _ => 0,
+        };
+        (span_ms, self.samples.len())
     }
 }
 
@@ -354,5 +375,27 @@ mod tests {
             (95..=105).contains(&ppm),
             "a +100 ppm synthetic capture clock must measure ~100 ppm, got {ppm}"
         );
+    }
+
+    /// A ten-second span with only a handful of samples is still a
+    /// short-window estimate: one quantised playout step near an edge swings
+    /// the slope by hundreds of ppm. It must not publish.
+    #[test]
+    fn estimator_needs_a_minimum_sample_count() {
+        let mut estimator = DriftEstimator::new(DRIFT_WINDOW_MS, 48_000);
+        // Two paired clocks 10 s apart, both otherwise matched.
+        estimator.observe(0, 0, 0);
+        estimator.observe(DRIFT_WINDOW_MS, DRIFT_WINDOW_MS * 48, DRIFT_WINDOW_MS * 48);
+        assert_eq!(estimator.ppm(), None, "two samples are not a window");
+        // The normal 10 Hz report cadence reaches the minimum quickly.
+        let mut now = 10_100u64;
+        while now <= DRIFT_WINDOW_MS + 1_000 {
+            estimator.observe(now, now * 48, now * 48);
+            now += 100;
+        }
+        assert_eq!(estimator.ppm(), Some(0), "enough samples spans the window");
+        let (span_ms, samples) = estimator.window_stats();
+        assert!(span_ms >= DRIFT_WINDOW_MS, "span {span_ms}");
+        assert!(samples >= MIN_WINDOW_SAMPLES, "samples {samples}");
     }
 }
