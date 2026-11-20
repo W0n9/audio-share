@@ -32,7 +32,10 @@
 
 - [M5 复测 2026-11-20（431997b）](evidence/m5-windows-evidence-2026-11-20/evidence-2/RESULT2.txt)：用例 A **PASS**（用户主观连续；underrun 5576→+125；`concealed_frames` 可测；服务端 pending=0、零丢弃）；用例 B **FAIL（open，Linux 侧裁决）**（drift ppm 极端离群 −38k/+336k，与 reanchor 1→8 突跳同刻；buffer 有界、零丢弃）。第 1/2/5 项有效；§7.4 以 `media.stats` 为守卫关闭；第 3/4 项转 [M5-09](issues/m5-09-drift-step-and-burst-trim.md)（`needs-triage`，用户决定暂不改）；第 7 项待裁决。`integration/m5` 保持 `431997b`，**不 FF beta**（B 未过）。
 
-- **M5-09（`ready-for-human`）**：合成等时钟输入在真实 native 播放路径产生 +185,488 ppm；只禁用 trim 仍有离群，不是现场回放或已确认的真机根因。采样断续修复和两轴审查修复合入 `cb28095`，同步短停不再反复清窗，`playback.drift_interval` 保留诊断覆盖与极值。Native 默认/`test-support` 各 240 **PASS**，Clippy、fmt **PASS**（[host 证据](evidence/m5-09/host-drift.md)）。[最终 APK 与 Windows 复测清单](evidence/m5-09/windows-retest.md) 就绪；新构建用例 B **NOT RUN**。re-anchor 突跳单列 [M5-10](issues/m5-10-reanchor-burst-investigation.md)（`needs-triage`），本轮不改 200 ms 保护。B 未过不合 beta；M5-01 可并行，M5-07 继续等待 B。
+- **M5-09 真机 B 复测（2026-11-21，`cb28095`）：FAIL**（[RESULT-B3](evidence/m5-09/RESULT-B3.md)）。稳态原始估计 −645…+532 ppm，67/67 区间至少一端越出 ±100；覆盖与 re-anchor 两项 PASS（3,277/3,277、gap ≤113 ms、re-anchor 0 次，历史 +7 未复现），Server pending 0、drops 0。无灾难性离群，但逐窗精度不达标。`correction_ppm` 35/67 顶在 ±100，应用 ring 0–26 ms（目标 60，按设计不触发插帧）。
+- **代码事实（非根因）**：`submitted_position()` 取 `AudioTrack.write` 接受字节数，不是硬件播放头；10 s 窗口下单个 2052 帧块约 4,275 ppm，与噪声量级一致。修复方向待裁决。
+- **M5-09 状态改 `needs-triage`**：选择改进播放侧时钟源后重测（判据不变），或由维护者修订判据。B 未过，不合 beta；M5-01 可并行，M5-07 继续等待 B。
+- 前序：合成等时钟输入在真实 native 播放路径产生 +185,488 ppm；只禁用 trim 仍有离群，不是现场回放或已确认的真机根因。采样断续修复和两轴审查修复合入 `cb28095`，同步短停不再反复清窗，`playback.drift_interval` 保留诊断覆盖与极值。Native 默认/`test-support` 各 240 **PASS**，Clippy、fmt **PASS**（[host 证据](evidence/m5-09/host-drift.md)）。
 
 ## Fog
 
