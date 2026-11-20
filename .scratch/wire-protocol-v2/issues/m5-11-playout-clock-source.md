@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-agent
+**Status:** ready-for-human（实现与两轴审查修复合入 `71e0155`；剩余真机 B 复测）
 
 **Type:** task
 
@@ -17,12 +17,12 @@
 
 ## Requirements
 
-- [ ] **先 RED**：host 上用双 48 kHz、按 2052 帧（另加更细/更粗一档）批量接受、100 ms 报告、注入已知漂移，复现「逐窗残差超 ±100、长期均值正确」；新时钟输入的同场景必须转绿。不能复现就停在报告，不盲改。
-- [ ] 播放侧时钟改取真实硬件进度：Kotlin 端读 `AudioTrack.getPlaybackHeadPosition()`（32 位无符号帧计数，会回绕）或 `getTimestamp()`（framePosition + nanoTime）。
-- [ ] JNI/报告契约扩展要向后兼容、单位明确（帧 vs 字节）、失败时退回现路径并记录诊断；不得静默把「读不到」当成 0。
-- [ ] 位置记账要一致：已接受的 trim/re-anchor 删除、插入的静音、应用 ring 的软修剪，都会让硬件进度与接受量分离；`drift_playback_step` / `anchor` 语义必须一并考虑，不能只换取值而留下双重补偿。
-- [ ] 不改协议、60/200 ms、±100 ppm 上限；不钳位原始 `drift_ppm`；不改变 re-anchor 触发条件与计数；§7.4 不动。
-- [ ] **修正饱和纳入本票**：修复后验证稳态 `correction_ppm` 不再被噪声长期顶在 ±100。若需调平滑步长/死区，用不同噪声水平的 host 测试证明稳定性，不能靠放宽判据。
+- [x] **先 RED**：host 上用双 48 kHz、按 2052 帧（另加更细/更粗一档）批量接受、100 ms 报告、注入已知漂移，复现「逐窗残差超 ±100、长期均值正确」；新时钟输入的同场景必须转绿。不能复现就停在报告，不盲改。
+- [x] 播放侧时钟改取真实硬件进度：Kotlin 端读 `AudioTrack.getPlaybackHeadPosition()`（32 位无符号帧计数，会回绕）或 `getTimestamp()`（framePosition + nanoTime）。
+- [x] JNI/报告契约扩展要向后兼容、单位明确（帧 vs 字节）、失败时退回现路径并记录诊断；不得静默把「读不到」当成 0。
+- [x] 位置记账要一致：已接受的 trim/re-anchor 删除、插入的静音、应用 ring 的软修剪，都会让硬件进度与接受量分离；`drift_playback_step` / `anchor` 语义必须一并考虑，不能只换取值而留下双重补偿。
+- [x] 不改协议、60/200 ms、±100 ppm 上限；不钳位原始 `drift_ppm`；不改变 re-anchor 触发条件与计数；§7.4 不动。
+- [x] **修正饱和纳入本票**：修复后验证稳态 `correction_ppm` 不再被噪声长期顶在 ±100。若需调平滑步长/死区，用不同噪声水平的 host 测试证明稳定性，不能靠放宽判据。
 - [ ] 真机 B 复测用同一判据（原始估计 ±100、诊断覆盖、re-anchor、缓冲/服务端）。没有真机 PASS 不写 `resolved`，不合 beta。
 
 ## Notes

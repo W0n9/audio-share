@@ -1,6 +1,6 @@
 # M5-09：Windows + Android 真机用例 B
 
-状态：**NOT RUN**。这是工装说明，不是复测结果。历史 `431997b` 的结论仍为 [FAIL](../m5-windows-evidence-2026-11-20/evidence-2/RESULT2.txt)。请使用下方包含 `playback.drift_interval` 的 `cb28095` APK；首版候选 `4d23f89` 不适用于本次验收。
+状态：**NOT RUN**。这是工装说明，不是复测结果。历史 `431997b` 的结论仍为 [FAIL](../m5-windows-evidence-2026-11-20/evidence-2/RESULT2.txt)。请使用下方 `71e0155` APK（M5-11 硬件播放时钟）；`cb28095` 与 `4d23f89` 均不适用于本次验收。
 
 ## 产物与环境
 
@@ -9,15 +9,15 @@
    | 产物 | 构建提交与版本 | 本地路径 | SHA-256 |
    |---|---|---|---|
    | Windows GUI Server（复用，本轮未改 Server） | `431997b` / `0.5.0-beta` | `.build-artifacts/m5-windows-gui-431997b/AudioShareServer.exe` | `ee7a35a4bccad6bc09344fd7672c703e6e5466f60859ffb4ff6911fb69bd94d8` |
-   | Android arm64 debug APK | `cb28095` / `0.2.0-beta`（code 2） | `.build-artifacts/m5-09-cb28095/app-debug-arm64.apk` | `a6838e3b1ec21203a3f975c29d4229195681b3c2edeecbcc4bd5d3b95c7c194c` |
+   | Android arm64 debug APK | `71e0155`（M5-11 合入后）/ `0.2.0-beta`（code 2） | `.build-artifacts/m5-11-71e0155/app-debug-arm64.apk` | `123e04fbd8c5e9ea15556bdfd38357a3ad4c8e93f0fc7275e615537a29d223e7` |
 
-   APK 构建 **PASS**：`assembleDebug -PandroidAbis=arm64-v8a`（JDK 21、`--offline`）重新编译了 native 库，`apksigner verify` 及 `aapt dump badging` 确认签名和 ABI，APK 中 native 库含 `playback.drift_interval` 日志标记。不是安装/真机 `PASS`。
+   APK 构建 **PASS**：`assembleDebug -PandroidAbis=arm64-v8a`（JDK 21、`--offline`）重新编译了 native 库，`apksigner verify` 确认签名，native 库含 `playback.drift_interval` 与 `playback.drift_clock` 标记。不是安装/真机 `PASS`。`cb28095` 的 APK 已被取代，不再使用。
 2. 使用 Windows GUI Server、单台 Android 真机、与历史 B 可比的正常 LAN、屏幕常亮。本轮不注入网络损伤或时钟偏移。记录 OS、Android API、设备型号（不记录序列号）、ABI、构建模式和采样率。
 3. 开始记录日志后进入一个新播放会话，连续播放至少 5 分钟。以该会话的 Server 与客户端日志对齐窗口；重连或误触导致的废弃段不拼入窗口。
 
 ## 采集与判定
 
-- 客户端收集 `playback.drift_interval`、`playback.drift`、`playback.drift_window`、`playback.trim` 和缓冲/损失快照；Server 收集 `media.stats` / `media.drops`。按同一会话和 stream `instance` 核对区间连续性，记录 `start_ms/end_ms`、`reports/valid_estimates`、`min_ppm/max_ppm` 和 `max_report_gap_ms`。`discontinuous_intervals` 计被拒绝的相邻采样区间，不计独立停滞或 re-anchor 事件。
+- 客户端收集 `playback.drift_clock`、`playback.drift_interval`、`playback.drift`、`playback.drift_window`、`playback.trim` 和缓冲/损失快照；Server 收集 `media.stats` / `media.drops`。**必须记录 `source=`**：`hardware` 才代表本次测的是硬件播放时钟；若为 `accepted`（`head_give_up_events > 0` 或启动回退），说明 `getTimestamp`/播放头在该设备不可用，本轮**不能**用来证明漂移精度，按该原因记 `NOT RUN`/`FAIL` 并保留诊断，不能当通过。按同一会话和 stream `instance` 核对区间连续性，记录 `start_ms/end_ms`、`reports/valid_estimates`、`min_ppm/max_ppm` 和 `max_report_gap_ms`。`discontinuous_intervals` 计被拒绝的相邻采样区间，不计独立停滞或 re-anchor 事件。
 - 区分首次 10 s 窗口预热和后续测量缺口。检查从首次有效估计到窗口结束的诊断覆盖：除了明确记载的暖机/重建区间，`reports` 应非零、`valid_estimates` 应等于 `reports`，且不得有缺失区间或未解释的异常 `max_report_gap_ms`。明确记录所有重建与时长，不把 0 个估计、`none` 或缺日志当作 0 ppm；没有足够稳态覆盖或重建导致无法完成有效验收，不判 PASS。
 - 用**所有区间内产生的有效估计**的 `min_ppm/max_ppm` 判定 ±100 ppm，包括部分有效的重建区间；不能只看每 5 s `playback.drift` 的末值。记录样本数和极值；若只从 `playback.drift` 快照算中位数，明确标为快照中位数，仅作诊断。±100 ppm 是**本次基线试验**的原始估计判据，不是协议对物理时钟差的限幅。另验实际 `correction_ppm` 始终在 ±100 ppm 内。
 - 用同一会话的相邻 5 s 快照求 `reanchor_events` 与 `reanchor_frames` 增量，记录最大值及对应原始估计和缓冲数据。不得出现类似历史单周期 `+7` 次的突跳；发现超差或缺样，保留上下文，不事后剔除来判为通过。
