@@ -201,6 +201,25 @@ fn a_hard_re_anchor_does_not_produce_a_bogus_ppm() {
     assert!((95..=105).contains(&ppm), "got {ppm} ppm");
 }
 
+/// M5-08: an accepted underrun fill hands the platform one period of silence
+/// (accepted bytes rise; `position_adjust_frames` falls). The platform clock
+/// still advanced over that silence, so the fill must not leave a position
+/// step that reads as a large ppm in the rate estimate.
+#[test]
+fn an_accepted_underrun_fill_does_not_produce_a_bogus_ppm() {
+    let mut media = session();
+    drive(&mut media, 0, 11_000, 100, 0);
+    media.record_underrun(480);
+    drive(&mut media, 11_100, 14_000, 100, 0);
+    let ppm = media
+        .drift_ppm()
+        .expect("an accepted fill must not starve the window");
+    assert!(
+        (95..=105).contains(&ppm),
+        "a 480-frame underrun fill must not read as a large ppm, got {ppm}"
+    );
+}
+
 #[test]
 fn a_hard_limit_re_anchor_is_concealment_and_jumps_the_position() {
     let mut media = session();
