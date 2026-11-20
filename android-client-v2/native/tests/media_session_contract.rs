@@ -284,3 +284,18 @@ fn the_playback_position_is_anchor_relative() {
     assert_eq!(diagnostics.underruns, 1);
     assert_eq!(diagnostics.stream_instance_id, 3);
 }
+
+/// M5-08: an underrun fill counts only the silence the platform actually
+/// accepted, into both the signed §9 `concealed_frames` and the isolated
+/// `underrun_frames` used to report mean accepted frames per fill.
+#[test]
+fn an_underrun_fill_counts_its_accepted_frames() {
+    let mut media = MediaSession::start(1, 1, 0, &config(1, 48_000, 2), None).expect("geometry");
+    media.record_underrun(480);
+    media.record_underrun(120); // a partially accepted fill
+    let diagnostics = media.diagnostics(60);
+    assert_eq!(diagnostics.cumulative_concealments, 2);
+    assert_eq!(diagnostics.concealed_frames, 600);
+    assert_eq!(media.underrun_frames(), 600);
+    assert_eq!(media.concealment_counts().underrun, 2);
+}

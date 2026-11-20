@@ -113,3 +113,27 @@ pub fn media_drops(
         "v2 server-side media drops"
     );
 }
+
+/// Periodic (5 s) media-pump snapshot (M5-08). Unlike `media.drops` this is
+/// emitted whether or not a drop occurred, so `pending_frames` is an unbiased
+/// sample and the pacer's delivered-frame rate and call rate are measurable.
+/// Public counters only — no key material or audio.
+pub fn media_stats(
+    session_id: u64,
+    stream_instance_id: u32,
+    pending_frames: u64,
+    consumed_frames: u64,
+    pacer_calls: u64,
+    pacer_calls_per_sec: u64,
+) {
+    tracing::info!(
+        event = %"media.stats",
+        session_id = session_id,
+        instance = stream_instance_id,
+        pending_frames = pending_frames,
+        consumed_frames = consumed_frames,
+        pacer_calls = pacer_calls,
+        pacer_calls_per_sec = pacer_calls_per_sec,
+        "v2 server-side media pump stats"
+    );
+}

@@ -124,67 +124,99 @@ fn the_correction_never_exceeds_plus_or_minus_one_hundred_ppm() {
 }
 
 #[test]
-fn a_timestamp_rebase_restarts_the_drift_window() {
+fn a_timestamp_rebase_does_not_produce_a_bogus_ppm() {
     let mut media = session();
     drive(&mut media, 0, 11_000, 100, 0);
-    assert!(media.drift_ppm().is_some(), "window filled before the jump");
+    let before = media.drift_ppm().expect("window filled before the jump");
+    assert!((99..=101).contains(&before), "got {before}");
 
     // Server-side drop (M5-05): contiguous sequence, timestamp permanently
-    // jumped. The jitter buffer re-bases; the drift window must not treat the
-    // one-time position offset as 10 s of drift.
-    let previous = capture_at(11_000, 100);
-    let jumped = previous + 4_800;
-    media.on_datagram(11_100, &datagram(111, jumped, 64));
+    // jumped by 4800 frames. M5-08 folds the known position step out instead
+    // of clearing the 10 s window, so the estimate stays a real rate.
+    let jumped = capture_at(11_000, 100) + 4_800;
+    media.on_datagram(11_000, &datagram(111, jumped, 64));
     media.record_playback_at(
-        11_100,
+        11_000,
         PlaybackReport {
-            submitted_bytes: playback_at(11_100) * FRAME_BYTES,
+            // Playback also advanced by the 64 frames the datagram carried.
+            submitted_bytes: (playback_at(11_000) + 64) * FRAME_BYTES,
             underruns: 0,
             buffer_current_ms: TARGET_MS,
         },
     );
-    assert_eq!(
-        media.drift_ppm(),
-        None,
-        "a re-base discards the contaminated window"
+    let after = media
+        .drift_ppm()
+        .expect("a re-base no longer starves the window");
+    assert!(
+        (95..=105).contains(&after),
+        "a re-base is a position step, not drift; got {after} ppm"
     );
 }
 
 #[test]
-fn an_underrun_restarts_the_drift_window() {
+fn an_underrun_does_not_restart_the_drift_window() {
     let mut media = session();
     drive(&mut media, 0, 10_000, 100, 0);
     assert!(media.drift_ppm().is_some());
 
-    media.record_playback_at(
-        10_100,
-        PlaybackReport {
-            submitted_bytes: playback_at(10_100) * FRAME_BYTES,
-            underruns: 1,
-            buffer_current_ms: 5,
-        },
-    );
-    assert_eq!(
-        media.drift_ppm(),
-        None,
-        "an underrun stalls playback: it is not clock drift"
-    );
+    // The platform underrun counter rises (a playback stall). It is a §9
+    // diagnostic, not a reason to discard the measurement window.
+    drive(&mut media, 10_100, 13_000, 100, 1);
+    let ppm = media
+        .drift_ppm()
+        .expect("an underrun counter bump must not starve the window");
+    assert!((95..=105).contains(&ppm), "got {ppm} ppm");
 }
 
 // A soft target trim advances the playout position over skipped media. That is
-// a position discontinuity like a re-anchor: the 10 s window must restart so
-// the step is never read as a bogus ppm shift.
+// a position discontinuity: M5-08 subtracts it from the estimate's playback
+// side instead of restarting the 10 s window, so it never reads as a rate step.
 #[test]
-fn a_soft_target_trim_restarts_the_drift_window() {
+fn a_soft_target_trim_does_not_produce_a_bogus_ppm() {
     let mut media = session();
     drive(&mut media, 0, 11_000, 100, 0);
     assert!(media.drift_ppm().is_some(), "the window filled first");
 
     media.record_soft_trim(240);
-    assert_eq!(
-        media.drift_ppm(),
-        None,
-        "a soft trim is a position discontinuity, not drift"
+    drive(&mut media, 11_100, 14_000, 100, 0);
+    let ppm = media
+        .drift_ppm()
+        .expect("a trim must not starve the window");
+    assert!(
+        (95..=105).contains(&ppm),
+        "a 240-frame trim must not read as a large ppm, got {ppm}"
+    );
+}
+
+/// A hard-limit re-anchor is the same kind of position step as a soft trim.
+#[test]
+fn a_hard_re_anchor_does_not_produce_a_bogus_ppm() {
+    let mut media = session();
+    drive(&mut media, 0, 11_000, 100, 0);
+    media.record_trim(4_800);
+    drive(&mut media, 11_100, 14_000, 100, 0);
+    let ppm = media
+        .drift_ppm()
+        .expect("a re-anchor must not starve the window");
+    assert!((95..=105).contains(&ppm), "got {ppm} ppm");
+}
+
+/// M5-08: an accepted underrun fill hands the platform one period of silence
+/// (accepted bytes rise; `position_adjust_frames` falls). The platform clock
+/// still advanced over that silence, so the fill must not leave a position
+/// step that reads as a large ppm in the rate estimate.
+#[test]
+fn an_accepted_underrun_fill_does_not_produce_a_bogus_ppm() {
+    let mut media = session();
+    drive(&mut media, 0, 11_000, 100, 0);
+    media.record_underrun(480);
+    drive(&mut media, 11_100, 14_000, 100, 0);
+    let ppm = media
+        .drift_ppm()
+        .expect("an accepted fill must not starve the window");
+    assert!(
+        (95..=105).contains(&ppm),
+        "a 480-frame underrun fill must not read as a large ppm, got {ppm}"
     );
 }
 

@@ -106,6 +106,11 @@ impl MediaTask {
             // distinguish pre-packetize/queue drops from Client-side network
             // loss in `server.log` (session_log event → tracing_bridge).
             let mut drop_reporter = crate::media_pump::DropReporter::new(Duration::from_secs(5));
+            // M5-08: a second, unbiased 5 s snapshot emitted even with zero
+            // drops, so pending/pacer state is not only sampled at drop
+            // instants.
+            let mut stats_reporter =
+                crate::media_pump::MediaStatsReporter::new(Duration::from_secs(5));
             // §7.4/§10: encoded media goes into a bounded 256-datagram,
             // non-waiting per-Client queue before `send_datagram`. A stalled
             // Client therefore drops the newest media, never blocks capture.
@@ -185,6 +190,24 @@ impl MediaTask {
                         report.pump_dropped_chunks,
                         report.queue_dropped_newest,
                         report.pending_frames,
+                    );
+                }
+                // M5-08: emit the periodic pump snapshot every 5 s even when
+                // nothing was dropped. Reports pending frames, pacer-consumed
+                // frames and the pacer call rate.
+                if let Some(stats) = stats_reporter.poll(
+                    now,
+                    pump.pending_frames(),
+                    pump.pacer_consumed_frames(),
+                    pump.pacer_calls(),
+                ) {
+                    crate::session_log::media_stats(
+                        session_id,
+                        stream_instance_id,
+                        stats.pending_frames,
+                        stats.consumed_frames,
+                        stats.pacer_calls,
+                        stats.pacer_calls_per_sec,
                     );
                 }
                 // Non-waiting drain: one pop per send, no await, no blocking.
