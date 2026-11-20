@@ -32,7 +32,7 @@
 
 - [M5 复测 2026-11-20（431997b）](evidence/m5-windows-evidence-2026-11-20/evidence-2/RESULT2.txt)：用例 A **PASS**（用户主观连续；underrun 5576→+125；`concealed_frames` 可测；服务端 pending=0、零丢弃）；用例 B **FAIL（open，Linux 侧裁决）**（drift ppm 极端离群 −38k/+336k，与 reanchor 1→8 突跳同刻；buffer 有界、零丢弃）。第 1/2/5 项有效；§7.4 以 `media.stats` 为守卫关闭；第 3/4 项转 [M5-09](issues/m5-09-drift-step-and-burst-trim.md)（`needs-triage`，用户决定暂不改）；第 7 项待裁决。`integration/m5` 保持 `431997b`，**不 FF beta**（B 未过）。
 
-- **M5-09 进展**：合成等时钟输入在真实 native 播放路径产生 +185,488 ppm；只禁用 trim 仍有离群。采样断续的估计器修复已合入 `4d23f89`，后续测试 `b801fe1`；这不是现场回放或已确认的真机根因。两轴审查发现的反复清窗及 5 s 快照覆盖问题正在处理，见 [host 证据](evidence/m5-09/host-drift.md)。re-anchor 突跳单列 [M5-10](issues/m5-10-reanchor-burst-investigation.md)（`needs-triage`），本轮不改 200 ms 保护。新构建用例 B **NOT RUN**，beta 不动。
+- **M5-09（`ready-for-human`）**：合成等时钟输入在真实 native 播放路径产生 +185,488 ppm；只禁用 trim 仍有离群，不是现场回放或已确认的真机根因。采样断续修复和两轴审查修复合入 `cb28095`，同步短停不再反复清窗，`playback.drift_interval` 保留诊断覆盖与极值。Native 默认/`test-support` 各 240 **PASS**，Clippy、fmt **PASS**（[host 证据](evidence/m5-09/host-drift.md)）。[最终 APK 与 Windows 复测清单](evidence/m5-09/windows-retest.md) 就绪；新构建用例 B **NOT RUN**。re-anchor 突跳单列 [M5-10](issues/m5-10-reanchor-burst-investigation.md)（`needs-triage`），本轮不改 200 ms 保护。B 未过不合 beta；M5-01 可并行，M5-07 继续等待 B。
 
 ## Fog
 
