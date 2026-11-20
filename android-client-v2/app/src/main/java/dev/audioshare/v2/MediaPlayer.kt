@@ -275,6 +275,21 @@ class MediaPlayer(
          * a concealment; only the hard-limit jump is `ReAnchor`.
          */
         internal const val SOFT_TRIM_HYSTERESIS_MS = 20
+
+        /**
+         * M5-08: consecutive loop iterations with fewer than one whole frame
+         * available while playback is under way before the reader treats the
+         * starvation as a real §8 underrun. The loop sleeps [LOOP_SLEEP_MS]
+         * (10 ms) when starved, so 3 iterations ≈ 30 ms — longer than one
+         * paced-datagram period, so ordinary inter-datagram backpressure never
+         * opens the gate.
+         *
+         * The platform `AudioTrack.underrunCount` is deliberately NOT a
+         * trigger: MIUI reports millions of bogus per-track events while the
+         * mixer reports no underruns (M5-08 evidence). It stays a §9
+         * diagnostic field only.
+         */
+        internal const val UNDERRUN_EMPTY_ITERATIONS = 3
     }
 
     /** Resolved §8 bounds in bytes for the active geometry. */
@@ -395,22 +410,24 @@ class MediaPlayer(
     internal data class UnderrunGate(
         /** Whether one period of silence should be fed this iteration. */
         val fill: Boolean,
-        /** The platform underrun count already consumed (never re-counted). */
+        /** The platform underrun count seen (a §9 diagnostic, never a trigger). */
         val lastPlatformUnderruns: Long,
+        /** Consecutive starving iterations accumulated so far. */
+        val consecutiveEmpty: Int,
     )
 
     /**
-     * §8 underrun gating. An empty application ring is NOT evidence of an
-     * underrun: between two paced datagrams the ring is normally empty for a
-     * few milliseconds, and inserting silence for every such gap would inflate
-     * the concealment counters. The gate opens only when the platform's own
-     * `underruns` counter advanced (a real playback stall) AND the reader is
-     * actually out of whole frames.
+     * §8 underrun gating (M5-08). An empty application ring is NOT evidence of
+     * an underrun: between two paced datagrams the ring is normally empty for
+     * a few milliseconds, and inserting silence for every such gap would
+     * inflate the concealment counters.
      *
-     * The platform count is consumed even when no fill is performed, so each
-     * platform event is counted at most once even if several loop iterations
-     * see it. `recordPlayback` still reports the platform counter as the §9
-     * `underruns` field, so the two never double-count the same event.
+     * The gate opens only after [UNDERRUN_EMPTY_ITERATIONS] consecutive
+     * iterations with fewer than one whole frame available while playback is
+     * under way (~30 ms at the 10 ms starved-loop sleep) — a vendor-independent
+     * measure of sustained starvation. The platform's `underrunCount` is
+     * consumed for the §9 diagnostic but never triggers a fill; on MIUI it
+     * counts bogus per-track events (M5-08).
      */
     internal fun underrunGate(
         hasPlayed: Boolean,
@@ -418,12 +435,18 @@ class MediaPlayer(
         frameBytes: Int,
         platformUnderruns: Long,
         lastPlatformUnderruns: Long,
+        consecutiveEmpty: Int,
     ): UnderrunGate {
-        if (platformUnderruns <= lastPlatformUnderruns) {
-            return UnderrunGate(false, lastPlatformUnderruns)
-        }
-        val fill = hasPlayed && frameBytes > 0 && availableBytes < frameBytes
-        return UnderrunGate(fill, platformUnderruns)
+        val emptyNow = hasPlayed && frameBytes > 0 && availableBytes < frameBytes
+        val sustainedEmpty = if (emptyNow) consecutiveEmpty + 1 else 0
+        val fill = sustainedEmpty >= UNDERRUN_EMPTY_ITERATIONS
+        return UnderrunGate(
+            fill = fill,
+            lastPlatformUnderruns = platformUnderruns,
+            // A fill has been charged for this stall; start a fresh window so
+            // a continuous stall is not counted on every iteration.
+            consecutiveEmpty = if (fill) 0 else sustainedEmpty,
+        )
     }
 
     /**
@@ -505,9 +528,10 @@ class MediaPlayer(
         // §8 underrun fill is only counted after real media has played once:
         // an empty ring before the first data is startup, not an underrun.
         var hasPlayed = false
-        // Last platform underrun count consumed by the §8 gate. Each platform
-        // event opens the gate at most once.
+        // Last platform underrun count seen (§9 diagnostic, never a trigger).
         var lastPlatformUnderruns = 0L
+        // M5-08: consecutive starving iterations while playing.
+        var consecutiveEmpty = 0
         // Native's JitterConfig is fixed for a geometry; cache it per sink.
         var jitterBounds: JitterBounds? = null
         try {
@@ -530,6 +554,7 @@ class MediaPlayer(
                     submittedBytes = 0
                     hasPlayed = false
                     lastPlatformUnderruns = 0
+                    consecutiveEmpty = 0
                     jitterBounds = null
                     Thread.sleep(LOOP_SLEEP_MS)
                     continue
@@ -550,6 +575,7 @@ class MediaPlayer(
                     submittedBytes = 0
                     hasPlayed = false
                     lastPlatformUnderruns = 0
+                    consecutiveEmpty = 0
                     if (sink == null) {
                         // Unsupported platform mapping is a 403-class condition;
                         // nothing to play, so stop consuming rather than spin.
@@ -584,16 +610,18 @@ class MediaPlayer(
                     frameBytes,
                 )
                 val available = ringBuffer.available(writePosition, readPosition)
-                // Consume any platform underrun event once per loop iteration,
-                // whether or not it results in a fill.
+                // Consume any platform underrun event for §9 (it is never a
+                // fill trigger), and require sustained ring emptiness.
                 val gate = underrunGate(
                     hasPlayed,
                     available,
                     frameBytes,
                     currentSink.underruns(),
                     lastPlatformUnderruns,
+                    consecutiveEmpty,
                 )
                 lastPlatformUnderruns = gate.lastPlatformUnderruns
+                consecutiveEmpty = gate.consecutiveEmpty
                 // Prebuffer to the jitter target before the first write: an
                 // empty ring at startup is not an underrun.
                 if (readyForPlayback(hasPlayed, available, bounds.targetBytes) &&
@@ -608,9 +636,10 @@ class MediaPlayer(
                         if (accepted > 0) hasPlayed = true
                     }
                 } else if (gate.fill) {
-                    // §8 underrun fill is gated on a real platform underrun
-                    // signal. An empty app ring between paced datagrams is
-                    // normal backpressure, not a concealment event.
+                    // §8 underrun fill is gated on sustained ring emptiness
+                    // (~30 ms while playing), not the unreliable platform
+                    // underrun counter. A brief empty ring between paced
+                    // datagrams is normal backpressure, not concealment.
                     fillUnderrun(session, sampleRate, currentSink)
                 }
 

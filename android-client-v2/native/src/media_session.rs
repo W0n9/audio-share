@@ -211,6 +211,12 @@ pub struct MediaSession {
     /// is inserted − deleted, signed (proto sint64).
     concealments: u64,
     concealed_frames: i64,
+    /// Frames of silence accepted by the platform specifically for underrun
+    /// fills (M5-08). `concealed_frames` also includes gap/drift/re-anchor, so
+    /// this isolates the underrun contribution for the `playback.concealments`
+    /// log line: `underrun_frames / underrun` is the mean accepted frames per
+    /// fill.
+    underrun_frames: u64,
     /// Late drops (§8): arrivals after their playout deadline. Separate from
     /// network loss (`receiver.cumulative_lost`).
     late_drops: u64,
@@ -233,14 +239,20 @@ pub struct MediaSession {
     drift: DriftEstimator,
     drift_controller: DriftController,
     drift_ppm: Option<i32>,
+    /// Cumulative artificial playback-position jumps (soft trim, hard
+    /// re-anchor, drift deletion) removed from the estimate's playback side
+    /// (M5-08). A discontinuity is a position step, not a rate: subtracting it
+    /// keeps the 10 s window continuous instead of starving it on every trim.
+    drift_playback_step: i64,
+    /// Cumulative server re-base jumps removed from the estimate's capture
+    /// side (M5-08).
+    drift_capture_step: u64,
     /// A whole-frame adjustment the playback path still has to apply and
     /// acknowledge (positive insert, negative delete). Only one is outstanding.
     pending_drift_frames: i32,
     /// Position offset separating the platform-accepted bytes from the capture
     /// clock: re-anchor/deleted frames advance it, inserted silence retreats it.
     position_adjust_frames: i64,
-    /// Underruns in the previous report; a rise is a playback stall, not drift.
-    last_underruns: u64,
     /// Monotonic reference for the non-test `record_playback` entry point.
     clock_start: std::time::Instant,
 }
@@ -295,6 +307,7 @@ impl MediaSession {
             ),
             concealments: 0,
             concealed_frames: 0,
+            underrun_frames: 0,
             late_drops: 0,
             trimmed_frames: 0,
             trim_events: 0,
@@ -306,9 +319,10 @@ impl MediaSession {
             drift: DriftEstimator::new(drift_config.window_ms, geometry.sample_rate),
             drift_controller: DriftController::new(drift_config),
             drift_ppm: None,
+            drift_playback_step: 0,
+            drift_capture_step: 0,
             pending_drift_frames: 0,
             position_adjust_frames: 0,
-            last_underruns: 0,
             clock_start: std::time::Instant::now(),
         })
     }
@@ -383,6 +397,10 @@ impl MediaSession {
                     self.drift = DriftEstimator::new(config.window_ms, geometry.sample_rate);
                     self.drift_controller = DriftController::new(config);
                     self.drift_ppm = None;
+                    // The new estimator starts from a fresh origin; the old
+                    // position steps belong to the previous frame base.
+                    self.drift_playback_step = 0;
+                    self.drift_capture_step = 0;
                     self.pending_drift_frames = 0;
                     self.capture_position = 0;
                     self.saw_capture = false;
@@ -461,18 +479,19 @@ impl MediaSession {
     /// intervention is counted only when the player acknowledges it through
     /// [`Self::record_drift_intervention`].
     pub fn record_playback_at(&mut self, now_ms: u64, report: PlaybackReport) {
-        let underrun_increased = report.underruns > self.last_underruns;
-        self.last_underruns = report.underruns;
-        if underrun_increased {
-            // A stalled platform clock is a playback event, not a rate
-            // mismatch: the §8 window must not read the stall as drift.
-            self.drift.reset();
-            self.drift_ppm = None;
-        }
         self.report = report;
         if self.saw_capture {
-            self.drift
-                .observe(now_ms, self.capture_position, self.submitted_position());
+            // M5-08: do not clear the whole 10 s window on a trim/re-anchor/
+            // re-base. Subtract the known position offsets instead, so the
+            // sample series stays continuous and only the true rate remains.
+            let playback = (i128::from(self.submitted_position())
+                - i128::from(self.drift_playback_step))
+            .max(0);
+            let playback = u64::try_from(playback).unwrap_or(u64::MAX);
+            let capture = self
+                .capture_position
+                .saturating_sub(self.drift_capture_step);
+            self.drift.observe(now_ms, capture, playback);
             self.drift_ppm = self.drift.ppm();
         }
         if self.pending_drift_frames == 0 {
@@ -483,10 +502,9 @@ impl MediaSession {
                 self.geometry.sample_rate,
             );
             if decision.frame_adjust != 0 {
-                // The whole-frame correction is a playback-position
-                // discontinuity; the next window measures the new state.
-                self.drift.reset();
-                self.drift_ppm = None;
+                // The intervention is queued for the player; the position
+                // offset it causes is folded out when it is acknowledged, not
+                // by resetting the window.
                 self.pending_drift_frames = decision.frame_adjust;
             }
         }
@@ -498,6 +516,13 @@ impl MediaSession {
     /// change requiring maintainer adjudication.
     pub fn drift_ppm(&self) -> Option<i32> {
         self.drift_ppm
+    }
+
+    /// The retained drift window's span and sample count, logged alongside
+    /// every `playback.drift` so short/quantised estimates are recognisable
+    /// (M5-08).
+    pub fn drift_window(&self) -> (u64, usize) {
+        self.drift.window_stats()
     }
 
     /// The smooth playback-rate correction currently commanded, in ppm
@@ -525,8 +550,13 @@ impl MediaSession {
         // Inserted silence is not a capture position; deleted frames advanced
         // the playout cursor over real capture positions.
         self.position_adjust_frames -= i64::from(frames);
-        self.drift.reset();
-        self.drift_ppm = None;
+        if frames < 0 {
+            // A deletion jumps the reported playout position forward over
+            // skipped media. Fold that step out of the drift series instead of
+            // discarding the window (M5-08). Insertion nets to zero in the
+            // reported series (accepted bytes rise, the position offset falls).
+            self.drift_playback_step = self.drift_playback_step.saturating_add(i64::from(-frames));
+        }
     }
 
     /// Whether the unknown configuration exceeded §7.6's 2 s bound.
@@ -612,6 +642,19 @@ impl MediaSession {
         self.concealment_counts
     }
 
+    /// Signed frames inserted (+) minus deleted (−) for this instance (§9
+    /// field 19). Exposed so the local `playback.concealments` log can print
+    /// the number that turns an event count into seconds of silence.
+    pub const fn concealed_frames(&self) -> i64 {
+        self.concealed_frames
+    }
+
+    /// Frames of silence accepted by the platform for underrun fills only
+    /// (M5-08). Divide by `concealment_counts().underrun` for per-fill frames.
+    pub const fn underrun_frames(&self) -> u64 {
+        self.underrun_frames
+    }
+
     /// A playback-loop underrun: the reader had no data for one playback
     /// period while playing, so it fed `inserted_frames` of silence. This is
     /// the §8 "underrun fill" intervention — distinct from the platform's
@@ -625,6 +668,7 @@ impl MediaSession {
             return;
         }
         self.record_concealment(ConcealmentKind::Underrun, inserted_frames as i64);
+        self.underrun_frames = self.underrun_frames.saturating_add(inserted_frames);
         self.position_adjust_frames = self
             .position_adjust_frames
             .saturating_sub(inserted_frames as i64);
@@ -646,10 +690,9 @@ impl MediaSession {
         // The skipped media had capture positions, so the playout cursor
         // advanced over them even though it was not a concealment event.
         self.position_adjust_frames = self.position_adjust_frames.saturating_add(frames as i64);
-        // The position step is not clock drift: a window spanning it would
-        // read a bogus ppm step, exactly as a hard re-anchor would.
-        self.drift.reset();
-        self.drift_ppm = None;
+        // Fold the position step out of the drift series rather than clearing
+        // the whole 10 s window (M5-08): a trim is not clock drift.
+        self.drift_playback_step = self.drift_playback_step.saturating_add(frames as i64);
     }
 
     /// Total frames dropped by soft target trims.
@@ -674,9 +717,10 @@ impl MediaSession {
         }
         self.record_concealment(ConcealmentKind::ReAnchor, -(frames as i64));
         self.position_adjust_frames = self.position_adjust_frames.saturating_add(frames as i64);
-        // A re-anchor is a position discontinuity, not clock drift.
-        self.drift.reset();
-        self.drift_ppm = None;
+        // A re-anchor is a position discontinuity, not clock drift: fold the
+        // step out of the drift series instead of discarding the window
+        // (M5-08).
+        self.drift_playback_step = self.drift_playback_step.saturating_add(frames as i64);
     }
 
     /// Total frames trimmed by the reader (re-anchor, M5-04 boundary).
@@ -893,19 +937,24 @@ impl MediaSession {
             self.record_concealment(kind, delta);
         }
         if !result.late {
+            let new_capture = header.timestamp.saturating_add(frames);
+            if result.rebased {
+                // M5-05/M5-08: a contiguous sequence with a jumped timestamp
+                // is a server-side drop. The playout cursor never advances
+                // over the lost media, so the capture−playback difference
+                // takes a one-time step. Fold that step out of the capture
+                // series instead of clearing the 10 s window; the jitter
+                // arrival window still restarts (this is not interarrival
+                // jitter).
+                let gap = header.timestamp.saturating_sub(self.capture_position);
+                self.drift_capture_step = self.drift_capture_step.saturating_add(gap);
+            }
             // The capture side of the §8 drift measurement: the wire timestamp
             // is the Sender's capture-clock position.
-            self.capture_position = self
-                .capture_position
-                .max(header.timestamp.saturating_add(frames));
+            self.capture_position = self.capture_position.max(new_capture);
             self.saw_capture = true;
         }
         if result.rebased {
-            // M5-05: a contiguous sequence with a jumped timestamp is a
-            // server-side drop. The position step is not clock drift, and it
-            // is not interarrival jitter either: reset both windows.
-            self.drift.reset();
-            self.drift_ppm = None;
             self.jitter.reset_arrival();
         }
         if result.late {

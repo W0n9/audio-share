@@ -111,6 +111,48 @@ fn idle_time_does_not_accumulate_beyond_one_window() {
     );
 }
 
+/// Regression (M5-08): each `try_consume` used to truncate the fractional
+/// frame accrual and advance `last_refill`, so a jittered call cadence
+/// permanently lost up to half a frame per call (~2 000 ppm at ~200 calls/s).
+/// Over 10 s the bucket must deliver exactly `sample_rate` frames regardless
+/// of call cadence.
+///
+/// Exact 1/3/7 ms cadences accrue whole frames (48/144/336) and would not
+/// expose the truncation, so the cadence carries sub-millisecond jitter. The
+/// expected 480 000 frames comes from §8's rate-match budget (10 s × 48 kHz),
+/// not from replaying the pacer's own arithmetic.
+#[test]
+fn fractional_refill_carries_across_a_jittered_call_cadence() {
+    let mut pacer = MediaPacer::new(48_000);
+    let t0 = Instant::now();
+    // Drain the initial 100 ms window so the measurement covers only refills.
+    while pacer.try_consume(t0, 1).is_ok() {}
+    assert_eq!(pacer.consumed_frames(), 4_800);
+
+    let cadence = [
+        Duration::from_nanos(1_100_000),
+        Duration::from_nanos(3_100_000),
+        Duration::from_nanos(7_100_000),
+    ];
+    let mut elapsed = Duration::ZERO;
+    let mut index = 0usize;
+    while elapsed < Duration::from_secs(10) {
+        let now = t0 + elapsed;
+        while pacer.try_consume(now, 1).is_ok() {}
+        elapsed += cadence[index % cadence.len()];
+        index += 1;
+    }
+    // Settle exactly at the 10 s measurement boundary and consume the tail.
+    let end = t0 + Duration::from_secs(10);
+    while pacer.try_consume(end, 1).is_ok() {}
+
+    let delivered = pacer.consumed_frames() - 4_800;
+    assert!(
+        delivered.abs_diff(480_000) <= 1,
+        "10 s at 48 kHz must deliver 480000 ± 1 frames under a jittered cadence, got {delivered}"
+    );
+}
+
 /// §7.2: the timestamp carried by the first payload frame is the capture
 /// clock position; it advances by the frames actually chunked, so the media
 /// timeline the pacer enforces is the same one the receiver sees.

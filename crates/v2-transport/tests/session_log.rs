@@ -576,3 +576,23 @@ fn server_side_media_drops_are_logged_with_public_counters_only() {
         "raw audio reached the log:\n{text}"
     );
 }
+
+/// M5-08: the periodic pump snapshot is logged at a fixed cadence even with
+/// zero drops, and carries the pacer call count/rate and pending frames.
+#[test]
+fn periodic_media_stats_are_logged_with_zero_drops() {
+    let (logs, _guard) = capture_logs();
+    v2_transport::session_log::media_stats(42, 7, 480, 24_000, 500, 100);
+    let text = logs.text();
+    assert_logged(&text, "event=media.stats");
+    assert_logged(&text, "session_id=42");
+    assert_logged(&text, "instance=7");
+    assert_logged(&text, "pending_frames=480");
+    assert_logged(&text, "consumed_frames=24000");
+    assert_logged(&text, "pacer_calls=500");
+    assert_logged(&text, "pacer_calls_per_sec=100");
+    assert!(
+        !text.contains("audio"),
+        "raw audio reached the log:\n{text}"
+    );
+}
