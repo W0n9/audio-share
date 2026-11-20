@@ -667,3 +667,447 @@ fn an_applied_drift_insertion_offsets_the_position_back() {
     });
     assert_eq!(media.submitted_position(), 0);
 }
+
+// ---------------------------------------------------------------------------
+// M5-11: the playout clock source.
+//
+// B3 measured per-window residuals of −645…+532 ppm with a correct long-run
+// mean while `submitted_position()` was built from bytes `AudioTrack.write`
+// had *accepted*. The reader hands the platform a 2052-frame block at a time,
+// so the accepted clock is a staircase against continuous hardware playout.
+// These tests model that staircase and the hardware head at the real
+// `MediaSession` report seam.
+// ---------------------------------------------------------------------------
+
+/// One synthetic media packet period. Keep the capture clock fine so the
+/// accepted-bytes staircase is the only coarse input under test.
+const PACKET_MS: u64 = 1;
+/// The platform buffer AudioTrack adds in front of the hardware clock. It is
+/// a constant delay, so it must not change a 10 s slope.
+const PLATFORM_DELAY_MS: u64 = 42;
+
+struct BatchTrace {
+    estimates: Vec<i32>,
+    corrections: Vec<i32>,
+}
+
+fn mean(values: &[i32]) -> f64 {
+    values.iter().map(|v| f64::from(*v)).sum::<f64>() / values.len() as f64
+}
+
+/// Deterministic 100 ms ± 20 ms report cadence, independent of the estimator.
+fn report_cadence(seed: &mut u32) -> u64 {
+    *seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    80 + u64::from((*seed >> 16) % 41)
+}
+
+/// Drive a dual-48 kHz session where the capture device runs `ppm` fast.
+///
+/// Media is paced in 1 ms packets, and the reader reports every 100 ± 20 ms.
+/// `submitted_bytes` is the accepted media quantised down to whole
+/// `batch_frames` blocks (the platform acceptance staircase). When `hardware`
+/// is `Some(n)` the same report also carries the true played frame position at
+/// the report instant, rounded down to `n` frames and delayed by the platform
+/// buffer.
+fn drive_batched_playback(
+    ppm: i32,
+    batch_frames: u64,
+    hardware: Option<u64>,
+    until_ms: u64,
+) -> BatchTrace {
+    let mut media = session();
+    let mut seed = 0x6d5a_56da_u32;
+    let mut now = 0u64;
+    let mut packet_end = PACKET_MS;
+    let mut next_report = 0u64;
+    let mut estimates = Vec::new();
+    let mut corrections = Vec::new();
+    while now < until_ms {
+        while packet_end <= now {
+            let start = capture_at(packet_end - PACKET_MS, ppm);
+            let end = capture_at(packet_end, ppm);
+            assert_eq!(
+                media.on_datagram(
+                    packet_end,
+                    &datagram((packet_end / PACKET_MS - 1) as u32, start, end - start,),
+                ),
+                DatagramOutcome::Delivered,
+            );
+            packet_end += PACKET_MS;
+        }
+        if now >= next_report {
+            let ideal = playback_at(now.saturating_sub(u64::from(TARGET_MS)));
+            let accepted = ideal / batch_frames * batch_frames;
+            let head = hardware.map(|mixer_frames| {
+                let played = playback_at(now.saturating_sub(PLATFORM_DELAY_MS));
+                played / mixer_frames * mixer_frames
+            });
+            media.record_playback_with_head_at(
+                now,
+                PlaybackReport {
+                    submitted_bytes: accepted * FRAME_BYTES,
+                    underruns: 0,
+                    buffer_current_ms: TARGET_MS,
+                },
+                head,
+            );
+            if let Some(estimate) = media.drift_ppm() {
+                estimates.push(estimate);
+                corrections.push(media.drift_correction_ppm());
+            }
+            next_report = now + report_cadence(&mut seed);
+        }
+        now += 1;
+    }
+    BatchTrace {
+        estimates,
+        corrections,
+    }
+}
+
+/// RED evidence for M5-11: the accepted-bytes clock produces hundreds-of-ppm
+/// per-window residuals while its long-run mean is still correct. Finer and
+/// coarser acceptance blocks are included; a block coarser than the 60 ms
+/// continuity budget additionally starves the window, which is recorded
+/// rather than asserted away.
+#[test]
+fn accepted_bytes_quantised_acceptance_exceeds_the_b_drift_bound() {
+    // Same fixture with exact accepted progress isolates the quantisation.
+    let control = mean(&drive_batched_playback(75, 1, None, 120_000).estimates);
+    for &batch in &[1_026u64, 2_052] {
+        let trace = drive_batched_playback(75, batch, None, 120_000);
+        assert!(
+            !trace.estimates.is_empty(),
+            "batch {batch}: a full 10 s window must still publish"
+        );
+        let exceeds = trace
+            .estimates
+            .iter()
+            .filter(|ppm| ppm.unsigned_abs() > 100)
+            .count();
+        let average = mean(&trace.estimates);
+        eprintln!(
+            "accepted batch={batch} estimates={} exceeds_b={exceeds} mean={average:.2} control={control:.2} min={} max={}",
+            trace.estimates.len(),
+            trace.estimates.iter().min().unwrap(),
+            trace.estimates.iter().max().unwrap(),
+        );
+        assert!(
+            exceeds * 2 > trace.estimates.len(),
+            "batch {batch}: most windows must exceed ±100 ppm, got {exceeds}/{}",
+            trace.estimates.len()
+        );
+        assert!(
+            (average - control).abs() < 10.0,
+            "batch {batch}: the long-run mean must stay correct ({average:.2} vs exact-acceptance {control:.2})"
+        );
+    }
+
+    // A block coarser than the 60 ms observation tolerance is a different
+    // symptom of the same accepted-bytes clock: the window never survives.
+    // Record it instead of pretending it produced a residual.
+    let coarse = drive_batched_playback(75, 4_104, None, 120_000);
+    let coarse_exceeds = coarse
+        .estimates
+        .iter()
+        .filter(|ppm| ppm.unsigned_abs() > 100)
+        .count();
+    eprintln!(
+        "accepted batch=4104 estimates={} exceeds_b={coarse_exceeds}",
+        coarse.estimates.len()
+    );
+    assert!(
+        coarse.estimates.is_empty() || coarse_exceeds * 2 > coarse.estimates.len(),
+        "a 4104-frame accepted clock must fail B (starve the window or exceed ±100 ppm), \
+         got {coarse_exceeds}/{} out of bound",
+        coarse.estimates.len()
+    );
+}
+
+/// The same staircase, now with the hardware playout position as the clock
+/// source. Every full window must satisfy B's ±100 ppm bound and the smooth
+/// correction must not sit on the ±100 rail.
+///
+/// The head is the played frame position at the report instant. That is what
+/// `AudioTrack.getTimestamp()`'s `(framePosition, nanoTime)` pair provides
+/// after interpolation, and it is integer-frame accurate. A raw
+/// `getPlaybackHeadPosition()` value sampled at a *jittered* 100 ms cadence
+/// carries the mixer-period quantisation; with a 240-frame (5 ms) block the
+/// same fixture leaves ~43/491 windows just outside ±100 ppm. That is why the
+/// production reader interpolates the frame+time pair (see MediaPlayer.kt)
+/// rather than reporting a stale mixer block. `48` frames below is a 1 ms
+/// quantisation robustness check.
+#[test]
+fn hardware_playback_head_keeps_every_batched_window_within_the_b_bound() {
+    for &(batch, head_frames_at_report) in &[(480u64, 1u64), (2_052, 1), (4_104, 1), (2_052, 48)] {
+        let mixer = head_frames_at_report;
+        for &ppm in &[0, 75, -75] {
+            let trace = drive_batched_playback(ppm, batch, Some(mixer), 60_000);
+            assert!(
+                trace.estimates.len() > 400,
+                "batch {batch} mixer {mixer} drift {ppm}: only {} windows",
+                trace.estimates.len()
+            );
+            let bad: Vec<i32> = trace
+                .estimates
+                .iter()
+                .copied()
+                .filter(|estimate| estimate.unsigned_abs() > 100)
+                .collect();
+            assert!(
+                bad.is_empty(),
+                "batch {batch} mixer {mixer} drift {ppm}: {} windows outside ±100 ppm: {:?}",
+                bad.len(),
+                bad.iter().take(8).collect::<Vec<_>>()
+            );
+            let average = mean(&trace.estimates);
+            assert!(
+                (average - f64::from(ppm)).abs() < 3.0,
+                "batch {batch} mixer {mixer}: long-run mean {average:.2} != {ppm}"
+            );
+            assert!(
+                trace
+                    .corrections
+                    .iter()
+                    .all(|correction| correction.abs() < 100),
+                "batch {batch} mixer {mixer} drift {ppm}: correction pinned at ±100"
+            );
+            let settled = *trace.corrections.last().expect("a published estimate");
+            assert!(
+                (settled - ppm).abs() <= 10,
+                "batch {batch} mixer {mixer}: correction settled at {settled} ppm, not {ppm}"
+            );
+        }
+    }
+}
+
+/// Feed the session for `from_ms..=to_ms`: 1 ms capture packets and 100 ± 20 ms
+/// reports. `head_at` supplies the hardware head for each report (or `None` for
+/// the accepted-bytes fallback). Returns every published estimate.
+fn drive_with_head<F>(
+    media: &mut MediaSession,
+    from_ms: u64,
+    to_ms: u64,
+    ppm: i32,
+    mut head_at: F,
+) -> Vec<i32>
+where
+    F: FnMut(u64) -> Option<u64>,
+{
+    let mut seed = 0x1234_5678u32;
+    let mut now = from_ms;
+    let mut packet_end = from_ms + PACKET_MS;
+    let mut next_report = from_ms;
+    let mut estimates = Vec::new();
+    while now <= to_ms {
+        while packet_end <= now {
+            let start = capture_at(packet_end - PACKET_MS, ppm);
+            let end = capture_at(packet_end, ppm);
+            media.on_datagram(
+                packet_end,
+                &datagram((packet_end / PACKET_MS - 1) as u32, start, end - start),
+            );
+            packet_end += PACKET_MS;
+        }
+        if now >= next_report {
+            let accepted = playback_at(now.saturating_sub(u64::from(TARGET_MS)));
+            media.record_playback_with_head_at(
+                now,
+                PlaybackReport {
+                    submitted_bytes: accepted * FRAME_BYTES,
+                    underruns: 0,
+                    buffer_current_ms: TARGET_MS,
+                },
+                head_at(now),
+            );
+            if let Some(estimate) = media.drift_ppm() {
+                estimates.push(estimate);
+            }
+            next_report = now + report_cadence(&mut seed);
+        }
+        now += 1;
+    }
+    estimates
+}
+
+/// The M5-11 accounting rule: `position_adjust_frames` and
+/// `drift_playback_step` exist for the accepted-bytes clock and the §9
+/// `submitted_position`. The hardware head already reflects trims and inserted
+/// silence, so applying those offsets to it too would double-compensate.
+#[test]
+fn hardware_clock_is_not_double_compensated_by_position_offsets() {
+    let ideal_head = |now: u64| Some(playback_at(now.saturating_sub(PLATFORM_DELAY_MS)));
+    let mut media = session();
+    let warmup = drive_with_head(&mut media, 0, 11_000, 0, ideal_head);
+    assert_eq!(media.drift_clock_source(), "hardware");
+    assert_eq!(media.drift_ppm(), Some(0));
+    assert!(warmup.iter().all(|estimate| estimate.abs() <= 1));
+
+    // A hard re-anchor moves the §9 accepted position forward over skipped
+    // media. The hardware clock must not see that as a rate.
+    let submitted_before = media.submitted_position();
+    media.record_trim(4_800);
+    assert_eq!(
+        media.submitted_position(),
+        submitted_before + 4_800,
+        "§9 submitted_position keeps its accepted-bytes semantics"
+    );
+    let after_trim = drive_with_head(&mut media, 11_000, 14_000, 0, ideal_head);
+    assert_eq!(
+        media.drift_ppm(),
+        Some(0),
+        "a trim reset or biased the hardware window"
+    );
+    assert!(after_trim.iter().all(|estimate| estimate.abs() <= 1));
+
+    // Soft trim, an accepted underrun fill and a drift insertion/deletion each
+    // move the same offsets. None may appear on the hardware clock.
+    media.record_soft_trim(240);
+    media.record_underrun(480);
+    media.record_drift_intervention(96);
+    let after_offsets = drive_with_head(&mut media, 14_000, 17_000, 0, ideal_head);
+    assert_eq!(media.drift_ppm(), Some(0));
+    assert!(after_offsets.iter().all(|estimate| estimate.abs() <= 1));
+}
+
+/// A report without a hardware head is a counted fallback, never frame 0.
+#[test]
+fn missing_hardware_head_falls_back_without_treating_it_as_zero() {
+    let mut media = session();
+    drive_with_head(&mut media, 0, 11_000, 0, |now| {
+        Some(playback_at(now.saturating_sub(PLATFORM_DELAY_MS)))
+    });
+    assert_eq!(media.drift_clock_source(), "hardware");
+    assert!(media.drift_ppm().is_some());
+
+    media.record_playback_at(
+        11_100,
+        PlaybackReport {
+            submitted_bytes: playback_at(11_000) * FRAME_BYTES,
+            underruns: 0,
+            buffer_current_ms: TARGET_MS,
+        },
+    );
+    assert_eq!(media.drift_clock_source(), "accepted");
+    assert_eq!(media.playback_head_frames(), None);
+    assert_eq!(
+        media.playback_clock_stats().accepted_fallback_reports,
+        1,
+        "an unreadable head is counted, not ignored"
+    );
+    assert_eq!(
+        media.drift_ppm(),
+        None,
+        "switching clocks must start a fresh window, not mix sources"
+    );
+
+    // The accepted path still measures after a full window: the missing head
+    // did not blank the playout position to 0.
+    drive_with_head(&mut media, 11_100, 22_000, 0, |_| None);
+    assert_eq!(media.drift_ppm(), Some(0));
+    assert_eq!(media.drift_clock_source(), "accepted");
+    assert!(media.playback_clock_stats().accepted_fallback_reports > 1);
+}
+
+/// An AudioTrack rebuild restarts `getPlaybackHeadPosition()` at 0. Native must
+/// re-anchor the base (never move backwards or read the 0 as a real position)
+/// and start a fresh window, then recover the true rate.
+#[test]
+fn a_rebuilt_audio_track_reanchors_the_head_and_recovers() {
+    let mut media = session();
+    drive_with_head(&mut media, 0, 11_000, 0, |now| {
+        Some(playback_at(now.saturating_sub(PLATFORM_DELAY_MS)))
+    });
+    let before = media.playback_head_frames().expect("a hardware head");
+    assert!(before > 500_000);
+
+    const REBUILD_MS: u64 = 11_100;
+    media.record_playback_with_head_at(
+        REBUILD_MS,
+        PlaybackReport {
+            submitted_bytes: playback_at(REBUILD_MS - 60) * FRAME_BYTES,
+            underruns: 0,
+            buffer_current_ms: TARGET_MS,
+        },
+        Some(0),
+    );
+    assert_eq!(
+        media.playback_clock_stats().head_reanchor_events,
+        1,
+        "a head restart is a re-anchor event"
+    );
+    assert_eq!(media.drift_clock_source(), "hardware");
+    assert_eq!(
+        media.drift_ppm(),
+        None,
+        "a rebuild starts a fresh window instead of publishing a step"
+    );
+    let after = media.playback_head_frames().expect("a hardware head");
+    assert!(after >= before, "the effective head must stay monotonic");
+    assert!(
+        after - before <= playback_at(200),
+        "a rebuild must not invent played frames"
+    );
+
+    // The new track's head grows from 0; the re-anchored base keeps it
+    // monotonic. A fresh window must recover the real (zero) drift.
+    let estimates = drive_with_head(&mut media, REBUILD_MS + 100, 23_000, 0, |now| {
+        Some(playback_at(now - REBUILD_MS))
+    });
+    assert_eq!(media.drift_ppm(), Some(0));
+    assert!(estimates.iter().all(|estimate| estimate.abs() <= 1));
+    assert_eq!(media.playback_clock_stats().head_reanchor_events, 1);
+}
+
+/// `getPlaybackHeadPosition()` is a 32-bit unsigned frame counter. An
+/// unextended raw counter that wraps must be extended, not mistaken for a new
+/// track (which would discard the window) or for real progress (which would
+/// publish a huge ppm spike).
+#[test]
+fn a_thirty_two_bit_head_wrap_is_extended_without_a_reanchor() {
+    // Start one second before the wrap so the wrap happens inside the run.
+    const WRAP_START: u64 = (1u64 << 32) - 48_000;
+    let mut media = MediaSession::start(1, 1, WRAP_START, &config(), None).expect("F32LE stereo");
+    let mut seed = 0x0bad_f00du32;
+    let mut now = 0u64;
+    let mut packet_end = PACKET_MS;
+    let mut next_report = 0u64;
+    let mut estimates = Vec::new();
+    while now <= 12_000 {
+        while packet_end <= now {
+            let start = WRAP_START + capture_at(packet_end - PACKET_MS, 0);
+            let end = WRAP_START + capture_at(packet_end, 0);
+            media.on_datagram(
+                packet_end,
+                &datagram((packet_end / PACKET_MS - 1) as u32, start, end - start),
+            );
+            packet_end += PACKET_MS;
+        }
+        if now >= next_report {
+            let played = WRAP_START + playback_at(now.saturating_sub(PLATFORM_DELAY_MS));
+            media.record_playback_with_head_at(
+                now,
+                PlaybackReport {
+                    submitted_bytes: (WRAP_START
+                        + playback_at(now.saturating_sub(u64::from(TARGET_MS))))
+                        * FRAME_BYTES,
+                    underruns: 0,
+                    buffer_current_ms: TARGET_MS,
+                },
+                Some(played & 0xFFFF_FFFF),
+            );
+            if let Some(estimate) = media.drift_ppm() {
+                estimates.push(estimate);
+            }
+            next_report = now + report_cadence(&mut seed);
+        }
+        now += 1;
+    }
+    assert_eq!(
+        media.playback_clock_stats().head_reanchor_events,
+        0,
+        "a 32-bit wrap is not a rebuild"
+    );
+    assert_eq!(media.drift_ppm(), Some(0));
+    assert!(estimates.iter().all(|estimate| estimate.abs() <= 1));
+}
