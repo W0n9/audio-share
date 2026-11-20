@@ -148,6 +148,32 @@ pub struct PlaybackReport {
     pub buffer_current_ms: u32,
 }
 
+/// Which platform clock feeds the §8 drift measurement.
+///
+/// M5-11: `AudioTrack.write` acceptance is a staircase (the reader hands the
+/// platform whole blocks), so it can swing a 10 s window by hundreds of ppm
+/// even when its long-run mean is exact. The hardware playout head is the
+/// real clock. Never mix the two in one measurement window: they differ by a
+/// platform-buffer latency and by different position-offset accounting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlaybackClockSource {
+    /// Bytes the platform API accepted (`submitted_position`; pre-M5-11).
+    AcceptedBytes,
+    /// Frames the platform has actually played (`anchor + head`).
+    HardwareHead,
+}
+
+/// Local diagnostics for the drift clock source (M5-11). `accepted_fallbacks`
+/// counts reports whose hardware head could not be read — they are never
+/// silently treated as position 0. `head_reanchors` counts a head that
+/// restarted at 0 (sink rebuild/flush) and forced a fresh window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlaybackClockStats {
+    pub hardware_reports: u64,
+    pub accepted_fallback_reports: u64,
+    pub head_reanchor_events: u64,
+}
+
 /// Local-only summary of all playback reports since the last snapshot.
 /// An unavailable estimate is still a report; missing reports instead widen
 /// `max_report_gap_ms`. Bounds and gaps use the playback report clock.
@@ -268,6 +294,19 @@ pub struct MediaSession {
     /// Position offset separating the platform-accepted bytes from the capture
     /// clock: re-anchor/deleted frames advance it, inserted silence retreats it.
     position_adjust_frames: i64,
+    /// Base added to a raw hardware head that regressed (32-bit wrap inside a
+    /// track, or a sink rebuild whose head restarted at 0).
+    playback_head_base: u64,
+    /// Last raw hardware head seen, for wrap/rebuild detection.
+    last_raw_head: Option<u64>,
+    /// Effective monotonic hardware-played frame position (frames, not bytes)
+    /// from the latest report, or `None` when that report had no head.
+    playback_head_frames: Option<u64>,
+    /// Clock the current drift window is built from. `None` until the first
+    /// report; a change starts a fresh window.
+    drift_clock_source: Option<PlaybackClockSource>,
+    /// Local L1 diagnostics for the clock source (M5-11).
+    playback_clock_stats: PlaybackClockStats,
     /// Monotonic reference for the non-test `record_playback` entry point.
     clock_start: std::time::Instant,
 }
@@ -340,6 +379,11 @@ impl MediaSession {
             drift_capture_step: 0,
             pending_drift_frames: 0,
             position_adjust_frames: 0,
+            playback_head_base: 0,
+            last_raw_head: None,
+            playback_head_frames: None,
+            drift_clock_source: None,
+            playback_clock_stats: PlaybackClockStats::default(),
             clock_start: std::time::Instant::now(),
         })
     }
@@ -414,6 +458,8 @@ impl MediaSession {
                     self.drift = DriftEstimator::new(config.window_ms, geometry.sample_rate);
                     self.drift_controller = DriftController::new(config);
                     self.drift_ppm = None;
+                    self.drift_clock_source = None;
+                    self.playback_head_frames = None;
                     // The new estimator starts from a fresh origin; the old
                     // position steps belong to the previous frame base.
                     self.drift_playback_step = 0;
@@ -482,6 +528,17 @@ impl MediaSession {
         self.record_playback_at(self.playback_clock_ms(), report);
     }
 
+    /// Record accepted playback facts plus the hardware playout head on the
+    /// live session clock. `playback_head_frames` is in frames and `None`
+    /// falls back to the accepted-bytes clock (M5-11).
+    pub fn record_playback_with_head(
+        &mut self,
+        report: PlaybackReport,
+        playback_head_frames: Option<u64>,
+    ) {
+        self.record_playback_with_head_at(self.playback_clock_ms(), report, playback_head_frames);
+    }
+
     fn playback_clock_ms(&self) -> u64 {
         self.clock_start
             .elapsed()
@@ -497,21 +554,48 @@ impl MediaSession {
     /// sustained) a whole-frame intervention is queued for the player. The
     /// intervention is counted only when the player acknowledges it through
     /// [`Self::record_drift_intervention`].
+    ///
+    /// This entry point carries no hardware playout position, so it keeps the
+    /// accepted-bytes playback clock used before M5-11. It remains the
+    /// backward-compatible path for platforms that cannot report a head.
     pub fn record_playback_at(&mut self, now_ms: u64, report: PlaybackReport) {
+        self.record_playback_with_head_at(now_ms, report, None);
+    }
+
+    /// Record the platform playback facts plus the hardware playout position
+    /// at an injected session instant.
+    ///
+    /// `playback_head_frames` is the number of audio frames the platform has
+    /// actually **played** since the sink opened, in frames (never bytes),
+    /// already extended across the 32-bit `getPlaybackHeadPosition()` wrap.
+    /// `None` means the platform could not report it; the accepted-bytes
+    /// fallback is used and the miss is counted, never treated as position 0.
+    ///
+    /// Unlike the accepted-bytes clock, the head already excludes frames the
+    /// reader skipped (trim/re-anchor/soft trim) and includes silence it
+    /// inserted, so `position_adjust_frames` / `drift_playback_step` must NOT
+    /// also be applied to it — that would double-compensate.
+    pub fn record_playback_with_head_at(
+        &mut self,
+        now_ms: u64,
+        report: PlaybackReport,
+        playback_head_frames: Option<u64>,
+    ) {
         self.report = report;
+        let source = self.update_playback_clock(playback_head_frames);
         if self.saw_capture {
-            // M5-08: do not clear the whole 10 s window on a trim/re-anchor/
-            // re-base. Subtract the known position offsets instead, so the
-            // sample series stays continuous and only the true rate remains.
-            let playback = (i128::from(self.submitted_position())
-                - i128::from(self.drift_playback_step))
-            .max(0);
-            let playback = u64::try_from(playback).unwrap_or(u64::MAX);
-            let capture = self
-                .capture_position
-                .saturating_sub(self.drift_capture_step);
-            self.drift.observe(now_ms, capture, playback);
-            self.drift_ppm = self.drift.ppm();
+            // The hardware head already reflects what the platform played:
+            // skipped frames are absent and inserted silence is present. The
+            // accepted-bytes path keeps today's M5-08 position-step folding.
+            // Applying `position_adjust_frames` to the head as well would
+            // double-compensate (M5-11).
+            if let Some(playback) = self.drift_playback_position(source) {
+                let capture = self
+                    .capture_position
+                    .saturating_sub(self.drift_capture_step);
+                self.drift.observe(now_ms, capture, playback);
+                self.drift_ppm = self.drift.ppm();
+            }
         }
         let interval = &mut self.drift_interval;
         interval.reports = interval.reports.saturating_add(1);
@@ -539,6 +623,120 @@ impl MediaSession {
                 // by resetting the window.
                 self.pending_drift_frames = decision.frame_adjust;
             }
+        }
+    }
+
+    /// Select the playback clock from this report and fold in a raw head.
+    ///
+    /// Returns the clock this report used. A source change or a head re-anchor
+    /// clears the measurement window: the two sources are separated by the
+    /// platform buffer latency and by different position-offset accounting, so
+    /// samples from both must never share one slope.
+    fn update_playback_clock(&mut self, playback_head_frames: Option<u64>) -> PlaybackClockSource {
+        let source = match playback_head_frames {
+            Some(raw) => {
+                self.playback_clock_stats.hardware_reports =
+                    self.playback_clock_stats.hardware_reports.saturating_add(1);
+                let (effective, reanchored) = self.extend_playback_head(raw);
+                if reanchored {
+                    self.drift.reset();
+                    self.drift_ppm = None;
+                }
+                self.playback_head_frames = Some(effective);
+                PlaybackClockSource::HardwareHead
+            }
+            None => {
+                self.playback_clock_stats.accepted_fallback_reports = self
+                    .playback_clock_stats
+                    .accepted_fallback_reports
+                    .saturating_add(1);
+                // Do not keep a stale head: `None` means this report has no
+                // hardware evidence, not a zero position.
+                self.playback_head_frames = None;
+                PlaybackClockSource::AcceptedBytes
+            }
+        };
+        if self.drift_clock_source != Some(source) {
+            self.drift.reset();
+            self.drift_ppm = None;
+            self.drift_clock_source = Some(source);
+        }
+        source
+    }
+
+    /// Extend a raw hardware head across a 32-bit counter wrap or a sink
+    /// rebuild. Returns the effective monotonic frame position and whether the
+    /// correspondence with the current window broke (rebuild/flush).
+    fn extend_playback_head(&mut self, raw: u64) -> (u64, bool) {
+        let mut reanchored = false;
+        if let Some(last) = self.last_raw_head {
+            if raw < last {
+                // A 32-bit wrap goes from the top of the counter (~4.29e9) to
+                // the bottom. Requiring both ends keeps a sink rebuild well
+                // below 2^32 — which restarts at 0 — from being mistaken for a
+                // wrap (the two are otherwise ambiguous for a counter that
+                // has been running for more than half its range).
+                let wrapped = last > 0xF000_0000 && raw < 0x1000_0000;
+                if wrapped {
+                    // `AudioTrack.getPlaybackHeadPosition()` is a 32-bit
+                    // unsigned frame counter; the sender may hand it over
+                    // unextended.
+                    self.playback_head_base = self.playback_head_base.saturating_add(1u64 << 32);
+                } else {
+                    // A new/flushed sink restarts its head at 0. Continue from
+                    // the last effective position and start a fresh window:
+                    // audio may have been dropped across the rebuild.
+                    self.playback_head_base = self.playback_head_base.saturating_add(last);
+                    self.playback_clock_stats.head_reanchor_events = self
+                        .playback_clock_stats
+                        .head_reanchor_events
+                        .saturating_add(1);
+                    reanchored = true;
+                }
+            }
+        }
+        self.last_raw_head = Some(raw);
+        (self.playback_head_base.saturating_add(raw), reanchored)
+    }
+
+    /// The playback side of the drift observation for `source`, or `None` when
+    /// a hardware source somehow has no head. Callers skip the observation
+    /// rather than substituting frame 0.
+    fn drift_playback_position(&self, source: PlaybackClockSource) -> Option<u64> {
+        match source {
+            PlaybackClockSource::HardwareHead => self
+                .playback_head_frames
+                .map(|head| self.anchor.saturating_add(head)),
+            PlaybackClockSource::AcceptedBytes => {
+                // M5-08: fold the known position offsets out of the accepted
+                // series so a trim/re-anchor/re-base does not reset the window.
+                let playback = (i128::from(self.submitted_position())
+                    - i128::from(self.drift_playback_step))
+                .max(0);
+                Some(u64::try_from(playback).unwrap_or(u64::MAX))
+            }
+        }
+    }
+
+    /// Local clock-source diagnostics (M5-11): hardware reports, accepted-byte
+    /// fallbacks and head re-anchors.
+    pub const fn playback_clock_stats(&self) -> PlaybackClockStats {
+        self.playback_clock_stats
+    }
+
+    /// Effective hardware-played frame position from the latest report, or
+    /// `None` when that report had no head.
+    pub const fn playback_head_frames(&self) -> Option<u64> {
+        self.playback_head_frames
+    }
+
+    /// The clock the current drift window uses: `"hardware"`, `"accepted"`, or
+    /// `"none"` before the first report.
+    pub fn drift_clock_source(&self) -> &'static str {
+        match self.drift_clock_source {
+            Some(PlaybackClockSource::HardwareHead) => "hardware",
+            Some(PlaybackClockSource::AcceptedBytes) => "accepted",
+            None => "none",
         }
     }
 

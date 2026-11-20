@@ -31,3 +31,26 @@
 - 首次报告前播放头为 0；AudioTrack 重建/换轨后需要重新锚定；跨 32 位回绕要显式处理。
 - 硬件播放头含平台自身 42 ms 缓冲，这是可接受的延迟，不影响 10 s 斜率；但**不要**因此去改 `buffer_current_ms` 的口径。
 - 若 host RED 证明噪声另有来源（例如采集侧时间戳量化），在同一票内改记证据并重新评估，不要套用本票的修法。
+
+## Comments
+
+### 2026-11-21：host 实现与 RED/GREEN
+
+- 基线 `integration/m5 @ 99263a8`；`git merge integration/m5` 为「已经是最新的」，
+  fork 远端无该分支。
+- Host RED 复现 accepted 字节时钟：2052 帧批量接受、120 s、+75 ppm 时
+  901/1090 窗越出 ±100，长程均值 73.33（精确 accepted 对照 75.00）；4104 帧
+  批量接受直接饿死窗口。硬件头同 fixture 逐窗 ≤ ±100，`correction_ppm` 不再
+  顶在 ±100。详见
+  [`../evidence/m5-11/host-clock-source.md`](../evidence/m5-11/host-clock-source.md)。
+- Native 默认/test-support 各 247 项通过（本次新增 7；历史 host-drift 证据记录基线 240）；Clippy/ fmt 通过。
+  JVM debug/release 各 276 项通过；`-PtestSupport=true` 编译通过。
+- 实现采用 `anchor + head`，`position_adjust_frames` / `drift_playback_step`
+  只保留在 accepted 路径与 §9 `submitted_position`，避免双重补偿；时钟源切换、
+  sink 重建、32 位回绕分别显式处理。
+- 保留风险：5 ms 混音周期量化的裸 head 在抖动报告时刻下仍可能越界（240 帧量化
+  host 实测 43/491），因此生产实现优先 `getTimestamp()` 的 frame+time 插值，
+  裸 32 位计数器仅作启动回退；`getTimestamp()` 短暂失效会退回 accepted 并重置
+  10 s 窗口，需真机确认覆盖率。
+- **真机用例 B：NOT RUN**。状态保持 `ready-for-agent`，不写 `resolved`，不合 beta。
+- 另：未验证 arm64/APK 构建与 MIUI 路由上的时间戳行为。

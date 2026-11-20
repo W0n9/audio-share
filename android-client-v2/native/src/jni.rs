@@ -531,6 +531,35 @@ pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordPlayback(
     });
 }
 
+/// recordPlaybackWithHead(handle, submittedBytes, playbackHeadFrames,
+/// underruns, bufferCurrentMs): the same §9 evidence plus the hardware playout
+/// position in **frames** (not bytes) at this report instant, monotonic since
+/// the sink opened (32-bit wrap already extended by Kotlin). A negative value
+/// means "unavailable": native falls back to the accepted-bytes clock, counts
+/// the fallback, and never treats it as frame 0 (M5-11).
+#[no_mangle]
+pub extern "system" fn Java_dev_audioshare_v2_ClientNative_recordPlaybackWithHead(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    submitted_bytes: jlong,
+    playback_head_frames: jlong,
+    underruns: jlong,
+    buffer_current_ms: jint,
+) {
+    let _ = guard(|| {
+        let session = get_session(handle)?;
+        let head = (playback_head_frames >= 0).then_some(playback_head_frames as u64);
+        session.record_playback_with_head(
+            submitted_bytes.max(0) as u64,
+            head,
+            underruns.max(0) as u64,
+            buffer_current_ms.max(0) as u32,
+        );
+        Ok::<(), String>(())
+    });
+}
+
 /// recordTrim(handle, frames): frames dropped by the Kotlin reader's §8
 /// hard-limit re-anchor. M5-04 counts the deletion as `ReAnchor` concealment
 /// and advances the submitted/playout position over the skipped media.

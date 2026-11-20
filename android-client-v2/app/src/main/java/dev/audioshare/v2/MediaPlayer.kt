@@ -2,6 +2,7 @@ package dev.audioshare.v2
 
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.util.Log
 import org.json.JSONObject
@@ -25,6 +26,68 @@ internal fun playbackRateHz(sampleRate: Int, ppm: Int): Int {
     val clamped = ppm.coerceIn(-100, 100)
     val delta = (clamped.toLong() * sampleRate / 1_000_000.0).roundToInt()
     return (sampleRate + delta).coerceIn(1, sampleRate * 2)
+}
+
+/**
+ * M5-11: extend `AudioTrack.getPlaybackHeadPosition()`'s 32-bit unsigned frame
+ * counter into a monotonic `Long`. It wraps roughly every 24.9 hours at
+ * 48 kHz: a drop from the top of the counter to the bottom is that wrap. A
+ * larger drop from an ordinary position is a flushed/restarted track, so the
+ * base restarts at 0 and native can re-anchor the drift window instead of
+ * reading a bogus step. Sub-millisecond rewinds are timestamp jitter and hold
+ * the last value.
+ *
+ * The counter is per sink. A rebuilt AudioTrack starts at 0 and native treats
+ * that regression as a re-anchor.
+ */
+internal class PlaybackHeadExtender {
+    private var base = 0L
+    private var last = 0L
+    private var seen = false
+
+    fun update(rawFrames: Long): Long {
+        if (seen && rawFrames < last) {
+            // A wrap runs from the top of the counter to the bottom; a rebuild
+            // restarts at 0 from anywhere. Requiring both ends avoids
+            // misreading a long-running track's rebuild as a wrap.
+            val wrapped = last > 0xF000_0000L && rawFrames < 0x1000_0000L
+            when {
+                wrapped -> base += 0x1_0000_0000L
+                last - rawFrames <= HEAD_REWIND_TOLERANCE_FRAMES -> {
+                    // Timestamp/interpolation jitter: do not report a rewind.
+                    return base + last
+                }
+                else -> base = 0L
+            }
+        }
+        last = rawFrames
+        seen = true
+        return base + rawFrames
+    }
+}
+
+/** Rewinds at or below this many frames (5 ms at 48 kHz) are jitter, not a
+ * track restart. */
+internal const val HEAD_REWIND_TOLERANCE_FRAMES = 240L
+
+/** Oldest `getTimestamp()` presentation age treated as current (paused/stale
+ * timestamps are not playback progress). */
+internal const val MAX_HEAD_AGE_NANOS = 200_000_000L
+
+/**
+ * M5-11: the played frame position at a query instant, derived from an
+ * `AudioTrack.getTimestamp()` `(framePosition, nanoTime)` pair. The pair is
+ * consistent at presentation time, so interpolating by the sink's applied rate
+ * removes the mixer-period staircase that a raw head sampled at a jittered
+ * 100 ms report instant would otherwise add to the 10 s slope.
+ */
+internal fun interpolatedHeadFrames(
+    framePosition: Long,
+    ageNanos: Long,
+    rateHz: Int,
+): Long {
+    if (rateHz <= 0) return framePosition
+    return framePosition + ageNanos.coerceAtLeast(0L) * rateHz / 1_000_000_000L
 }
 
 /**
@@ -68,6 +131,13 @@ interface AudioSink {
 
     /** Total underruns reported by the platform since this sink was opened. */
     fun underruns(): Long
+
+    /**
+     * M5-11: hardware-played frame position (frames, not bytes) at this call,
+     * monotonic since the sink opened, or `null` when the platform cannot
+     * report it. `null` is a fallback signal — never a zero position.
+     */
+    fun playbackHeadFrames(): Long? = null
 
     /**
      * Apply a §8 playback-rate correction (integer Hz).
@@ -186,6 +256,51 @@ class AudioTrackSink(
 
     override fun underruns(): Long = track.underrunCount.toLong()
 
+    private val headExtender = PlaybackHeadExtender()
+    private val audioTimestamp = AudioTimestamp()
+    private var sawTimestamp = false
+    private var loggedHeadClock = false
+
+    /**
+     * M5-11: the hardware playout clock. Prefer `getTimestamp()`, whose
+     * `(framePosition, nanoTime)` pair is consistent at presentation time;
+     * interpolating to the query instant removes the mixer-period
+     * quantisation. Fall back to the extended 32-bit
+     * `getPlaybackHeadPosition()` only until a timestamp is available. Once a
+     * timestamp has worked, a later failure reports `null` (native falls back
+     * to accepted bytes) rather than mixing two clocks with different bases.
+     */
+    override fun playbackHeadFrames(): Long? {
+        if (track.state != AudioTrack.STATE_INITIALIZED) return null
+        val queryNanos = System.nanoTime()
+        if (track.getTimestamp(audioTimestamp)) {
+            val ageNanos = queryNanos - audioTimestamp.nanoTime
+            // A platform may report a presentation time slightly in the future;
+            // interpolatedHeadFrames clamps that age to zero. Only a genuinely
+            // stale timestamp is not playback progress.
+            if (ageNanos <= MAX_HEAD_AGE_NANOS) {
+                sawTimestamp = true
+                if (!loggedHeadClock) {
+                    loggedHeadClock = true
+                    Log.i("AudioTrackSink", "drift clock: AudioTrack.getTimestamp frame+time")
+                }
+                return headExtender.update(
+                    interpolatedHeadFrames(
+                        audioTimestamp.framePosition,
+                        ageNanos,
+                        appliedRateHz,
+                    ),
+                )
+            }
+        }
+        if (sawTimestamp) return null
+        if (!loggedHeadClock) {
+            loggedHeadClock = true
+            Log.w("AudioTrackSink", "drift clock: raw playbackHeadPosition (no timestamp)")
+        }
+        return headExtender.update(track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL)
+    }
+
     /**
      * M5-04 §8 drift correction path: `AudioTrack.setPlaybackRate` resamples
      * the stream, so the correction is a rate, not a per-frame edit. One Hz at
@@ -235,6 +350,19 @@ class MediaPlayer(
         fun ringPosition(handle: Long): Long
         fun mediaFormatJson(handle: Long): String?
         fun recordPlayback(handle: Long, submittedBytes: Long, underruns: Long, bufferCurrentMs: Int)
+        /**
+         * M5-11: the same §9 evidence plus the hardware-played frame position
+         * at this report instant. [playbackHeadFrames] is in frames; `-1`
+         * means unavailable. Defaults to the pre-M5-11 accepted-bytes path so
+         * test fakes keep compiling.
+         */
+        fun recordPlaybackWithHead(
+            handle: Long,
+            submittedBytes: Long,
+            playbackHeadFrames: Long,
+            underruns: Long,
+            bufferCurrentMs: Int,
+        ) = recordPlayback(handle, submittedBytes, underruns, bufferCurrentMs)
         /** Report frames dropped by the reader's jitter-buffer re-anchor (§8). */
         fun recordTrim(handle: Long, frames: Long)
         /** Report frames dropped by the soft target trim (not concealment). */
@@ -335,6 +463,27 @@ class MediaPlayer(
 
     /** Bytes the sink accepted so far (never ring writes or received media). */
     internal fun submittedBytesTotal(): Long = submittedBytes
+
+    /**
+     * M5-11: report accepted bytes plus the hardware-played frame position.
+     * `headFrames = null` is sent to native as `-1` (unavailable), which counts
+     * a fallback and keeps the accepted-bytes clock; it is never frame 0.
+     */
+    internal fun reportPlaybackToNative(
+        session: Long,
+        submittedBytes: Long,
+        headFrames: Long?,
+        underruns: Long,
+        bufferMs: Int,
+    ) {
+        native.recordPlaybackWithHead(
+            session,
+            submittedBytes,
+            headFrames ?: -1L,
+            underruns,
+            bufferMs,
+        )
+    }
 
     /**
      * M5-03: apply the jitter-buffer steering policy at the reader cursor.
@@ -534,6 +683,11 @@ class MediaPlayer(
         var consecutiveEmpty = 0
         // Native's JitterConfig is fixed for a geometry; cache it per sink.
         var jitterBounds: JitterBounds? = null
+        // M5-11: keep the final best-effort report on the same clock source as
+        // the last periodic report, so closing does not reset the window and
+        // leave the closing interval with an invalid estimate.
+        var usingHardwareHead = false
+        var lastHeadFrames: Long? = null
         try {
             while (running.get()) {
                 val session = handle
@@ -550,6 +704,8 @@ class MediaPlayer(
                         sink = null
                         sinkKey = null
                     }
+                    usingHardwareHead = false
+                    lastHeadFrames = null
                     readPosition = 0
                     submittedBytes = 0
                     hasPlayed = false
@@ -571,6 +727,8 @@ class MediaPlayer(
                     sink?.release()
                     sink = AudioSink.open(sampleRate, channels, sampleFormat)
                     sinkKey = key
+                    usingHardwareHead = false
+                    lastHeadFrames = null
                     readPosition = 0
                     submittedBytes = 0
                     hasPlayed = false
@@ -661,9 +819,13 @@ class MediaPlayer(
                     // §9: report the ACTUAL buffered media only. M4 has no
                     // target-buffer algorithm; inventing a 40 ms floor would
                     // be a fabricated diagnostic value.
-                    native.recordPlayback(
+                    val headFrames = currentSink.playbackHeadFrames()
+                    usingHardwareHead = headFrames != null
+                    if (headFrames != null) lastHeadFrames = headFrames
+                    reportPlaybackToNative(
                         session,
                         submittedBytes,
+                        headFrames,
                         currentSink.underruns(),
                         bufferMs,
                     )
@@ -680,7 +842,15 @@ class MediaPlayer(
             // Best-effort final report so the Server's last snapshot is honest.
             if (handle != 0L) {
                 try {
-                    native.recordPlayback(handle, submittedBytes, sink?.underruns() ?: 0, 0)
+                    // The sink is released, so reuse the last sampled head to
+                    // keep the closing report on the same clock source.
+                    reportPlaybackToNative(
+                        handle,
+                        submittedBytes,
+                        if (usingHardwareHead) lastHeadFrames else null,
+                        sink?.underruns() ?: 0,
+                        0,
+                    )
                 } catch (_: Throwable) {
                 }
             }

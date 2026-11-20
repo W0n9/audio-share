@@ -158,6 +158,20 @@ object ClientNative {
     )
 
     /**
+     * M5-11: [recordPlayback] plus the hardware-played frame position at this
+     * report instant. [playbackHeadFrames] is in frames (not bytes) and is
+     * monotonic since the sink opened; `-1` means unavailable, which keeps the
+     * accepted-bytes clock and is counted as a fallback (never frame 0).
+     */
+    external fun recordPlaybackWithHead(
+        handle: Long,
+        submittedBytes: Long,
+        playbackHeadFrames: Long,
+        underruns: Long,
+        bufferCurrentMs: Int,
+    )
+
+    /**
      * Report frames dropped by the reader's §8 hard-limit re-anchor. M5-04
      * counts the deletion as `ReAnchor` concealment and advances the
      * submitted position over the skipped media.
