@@ -297,6 +297,94 @@ fn short_delivery_batches_do_not_starve_the_drift_window() {
 }
 
 #[test]
+fn batched_platform_writes_keep_the_window_and_reveal_long_run_drift() {
+    // 2052 frames is a platform buffer capacity, NOT a measured write size.
+    // Stress the estimator by quantizing all accepted progress to that batch.
+    const BATCH_FRAMES: u64 = 2052;
+    const CAPTURE_PPM: i32 = 75;
+    const PACKET_MS: u64 = 2;
+    let mut media = session();
+    let mut seed = 0x6d5a56dau32;
+    let mut now = 0;
+    let mut packet_end = PACKET_MS;
+    let mut previous = None;
+    let mut max_deficit = 0;
+    let mut max_backlog_step = 0;
+    let mut estimates = Vec::new();
+    let mut calibration = audio_share_client_v2_native::drift::DriftEstimator::new(10_000, RATE);
+    let mut ideal_estimates = Vec::new();
+    while now < 120_000 {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        now += 80 + u64::from((seed >> 16) % 41); // 100 ms ±20 ms cadence
+        while packet_end <= now {
+            let start = capture_at(packet_end - PACKET_MS, CAPTURE_PPM);
+            let end = capture_at(packet_end, CAPTURE_PPM);
+            assert_eq!(
+                media.on_datagram(
+                    packet_end,
+                    &datagram((packet_end / PACKET_MS - 1) as u32, start, end - start),
+                ),
+                DatagramOutcome::Delivered,
+            );
+            packet_end += PACKET_MS;
+        }
+        let ideal = playback_at(now.saturating_sub(u64::from(TARGET_MS)));
+        let accepted = ideal / BATCH_FRAMES * BATCH_FRAMES;
+        let delivered = media.delivered_frames();
+        if let Some((previous_ms, previous_accepted, previous_delivered)) = previous {
+            let nominal = playback_at(now - previous_ms);
+            let playback_delta = accepted - previous_accepted;
+            let capture_delta = delivered - previous_delivered;
+            max_deficit = max_deficit.max(nominal.saturating_sub(playback_delta));
+            max_backlog_step = max_backlog_step.max(u64::abs_diff(capture_delta, playback_delta));
+        }
+        previous = Some((now, accepted, delivered));
+        media.record_playback_at(
+            now,
+            PlaybackReport {
+                submitted_bytes: accepted * FRAME_BYTES,
+                underruns: 0,
+                buffer_current_ms: ((delivered - accepted) * 1_000 / u64::from(RATE)) as u32,
+            },
+        );
+        calibration.observe(now, delivered, ideal);
+        if now >= 11_000 {
+            assert!(
+                media.drift_window().0 >= 10_000,
+                "window starved at {now} ms"
+            );
+            estimates.push(media.drift_ppm().expect("full window after startup"));
+            ideal_estimates.push(
+                calibration
+                    .ppm()
+                    .expect("full unquantized reference window"),
+            );
+        }
+    }
+
+    // The aligned unquantized control keeps the same packet and report times.
+    // Its mean differs from the quantized mean by ~2 ppm for this pattern.
+    // Don't turn that fixture-specific result into a per-window tolerance.
+    let mean = |values: &[i32]| f64::from(values.iter().sum::<i32>()) / values.len() as f64;
+    let average = mean(&estimates);
+    let bias = average - mean(&ideal_estimates);
+    estimates.sort_unstable();
+    let min = estimates.first().unwrap();
+    let median = estimates[estimates.len() / 2];
+    let max = estimates.last().unwrap();
+    let exceeds_b = estimates
+        .iter()
+        .filter(|ppm| ppm.unsigned_abs() > 100)
+        .count();
+    eprintln!("samples={} mean={average:.2} ppm min={min} median={median} max={max} exceeds_b={exceeds_b} calibration_bias={bias:.2} max_deficit_frames={max_deficit} max_backlog_step_frames={max_backlog_step}", estimates.len());
+    assert_eq!(
+        average.round() as i32,
+        77,
+        "expected long-run drift for this fixed sampling pattern"
+    );
+}
+
+#[test]
 fn a_synthetic_one_hundred_ppm_capture_clock_is_measured_and_clamped() {
     let mut media = session();
     drive(&mut media, 0, 12_000, 100, 0);
