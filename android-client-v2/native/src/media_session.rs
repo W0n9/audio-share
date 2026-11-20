@@ -38,6 +38,15 @@ pub const UNKNOWN_CONFIG_MAX_MS: u64 = 100;
 /// (§7.6 step 3: 2 s → Error(403)+Close(403)).
 pub const UNKNOWN_CONFIG_GIVE_UP_MS: u64 = 2_000;
 
+/// M5-11: a hardware playout head missing for this long is a sustained
+/// outage, not a transient report failure. 500 ms is five report intervals at
+/// the normal 100 ms cadence and more than eight times the 60 ms
+/// window-continuity budget: shorter gaps keep the hardware window and skip
+/// only that observation, while this bound is long enough that a continuous
+/// slope can no longer be trusted. At/after it the clock source switches to
+/// accepted bytes and the window restarts.
+pub const HARDWARE_HEAD_GIVE_UP_MS: u64 = 500;
+
 /// §4.4 `SampleFormat` values (numbers mirror v1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SampleFormat {
@@ -163,15 +172,24 @@ enum PlaybackClockSource {
     HardwareHead,
 }
 
-/// Local diagnostics for the drift clock source (M5-11). `accepted_fallbacks`
-/// counts reports whose hardware head could not be read — they are never
-/// silently treated as position 0. `head_reanchors` counts a head that
-/// restarted at 0 (sink rebuild/flush) and forced a fresh window.
+/// Local diagnostics for the drift clock source (M5-11).
+///
+/// - `hardware_reports`: reports carrying an already-extended hardware head.
+/// - `hardware_missing_reports`: reports with no head while the hardware clock
+///   was active. A transient miss is skipped, not treated as position 0.
+/// - `accepted_fallback_reports`: reports actually observed on the accepted
+///   clock (the legacy path, or after a sustained hardware outage).
+/// - `head_reanchor_events`: a head regression (sink rebuild/flush) that
+///   re-anchored the base and restarted the window.
+/// - `head_give_up_events`: a sustained missing-head run that switched from the
+///   hardware clock to accepted bytes and restarted the window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PlaybackClockStats {
     pub hardware_reports: u64,
+    pub hardware_missing_reports: u64,
     pub accepted_fallback_reports: u64,
     pub head_reanchor_events: u64,
+    pub head_give_up_events: u64,
 }
 
 /// Local-only summary of all playback reports since the last snapshot.
@@ -305,6 +323,9 @@ pub struct MediaSession {
     /// Clock the current drift window is built from. `None` until the first
     /// report; a change starts a fresh window.
     drift_clock_source: Option<PlaybackClockSource>,
+    /// Playback-clock instant of the last report that carried a hardware head,
+    /// used to distinguish a transient miss from a sustained outage.
+    last_hardware_report_ms: Option<u64>,
     /// Local L1 diagnostics for the clock source (M5-11).
     playback_clock_stats: PlaybackClockStats,
     /// Monotonic reference for the non-test `record_playback` entry point.
@@ -383,6 +404,7 @@ impl MediaSession {
             last_raw_head: None,
             playback_head_frames: None,
             drift_clock_source: None,
+            last_hardware_report_ms: None,
             playback_clock_stats: PlaybackClockStats::default(),
             clock_start: std::time::Instant::now(),
         })
@@ -566,10 +588,13 @@ impl MediaSession {
     /// at an injected session instant.
     ///
     /// `playback_head_frames` is the number of audio frames the platform has
-    /// actually **played** since the sink opened, in frames (never bytes),
-    /// already extended across the 32-bit `getPlaybackHeadPosition()` wrap.
-    /// `None` means the platform could not report it; the accepted-bytes
-    /// fallback is used and the miss is counted, never treated as position 0.
+    /// actually **played** since the sink opened, in frames (never bytes). The
+    /// sender owns the 32-bit `getPlaybackHeadPosition()` wrap and always
+    /// reports an already-extended, monotonic value; native treats any
+    /// regression as a sink rebuild and re-anchors. `None` means this report
+    /// could not report a head: a transient miss keeps the hardware window and
+    /// skips only the observation; after [`HARDWARE_HEAD_GIVE_UP_MS`] the
+    /// accepted-bytes clock is used. A miss is never position 0.
     ///
     /// Unlike the accepted-bytes clock, the head already excludes frames the
     /// reader skipped (trim/re-anchor/soft trim) and includes silence it
@@ -582,19 +607,29 @@ impl MediaSession {
         playback_head_frames: Option<u64>,
     ) {
         self.report = report;
-        let source = self.update_playback_clock(playback_head_frames);
+        let observation = self.update_playback_clock(now_ms, playback_head_frames);
         if self.saw_capture {
-            // The hardware head already reflects what the platform played:
-            // skipped frames are absent and inserted silence is present. The
-            // accepted-bytes path keeps today's M5-08 position-step folding.
-            // Applying `position_adjust_frames` to the head as well would
-            // double-compensate (M5-11).
-            if let Some(playback) = self.drift_playback_position(source) {
-                let capture = self
-                    .capture_position
-                    .saturating_sub(self.drift_capture_step);
-                self.drift.observe(now_ms, capture, playback);
-                self.drift_ppm = self.drift.ppm();
+            match observation {
+                Some(source) => {
+                    // The hardware head already reflects what the platform
+                    // played: skipped frames are absent and inserted silence is
+                    // present. The accepted-bytes path keeps today's M5-08
+                    // position-step folding. Applying `position_adjust_frames`
+                    // to the head as well would double-compensate (M5-11).
+                    if let Some(playback) = self.drift_playback_position(source) {
+                        let capture = self
+                            .capture_position
+                            .saturating_sub(self.drift_capture_step);
+                        self.drift.observe(now_ms, capture, playback);
+                        self.drift_ppm = self.drift.ppm();
+                    }
+                }
+                None => {
+                    // Hardware source active but this report had no head:
+                    // keep the window and skip only this observation. Do not
+                    // publish the previous estimate, which is now stale.
+                    self.drift_ppm = None;
+                }
             }
         }
         let interval = &mut self.drift_interval;
@@ -626,73 +661,98 @@ impl MediaSession {
         }
     }
 
-    /// Select the playback clock from this report and fold in a raw head.
+    /// Select the playback clock for this report and fold in an extended head.
     ///
-    /// Returns the clock this report used. A source change or a head re-anchor
-    /// clears the measurement window: the two sources are separated by the
-    /// platform buffer latency and by different position-offset accounting, so
-    /// samples from both must never share one slope.
-    fn update_playback_clock(&mut self, playback_head_frames: Option<u64>) -> PlaybackClockSource {
-        let source = match playback_head_frames {
+    /// Returns the clock to observe, or `None` when the hardware source is
+    /// active but this report has no head: the window is kept and only this
+    /// observation is skipped. A source change or a head re-anchor clears the
+    /// window: the two sources are separated by the platform buffer latency
+    /// and by different position-offset accounting, so samples from both must
+    /// never share one slope.
+    ///
+    /// A single missing head is a transient report failure (the reader may not
+    /// have a timestamp for one report). Only a run of misses lasting at least
+    /// [`HARDWARE_HEAD_GIVE_UP_MS`] switches to the accepted-bytes clock.
+    fn update_playback_clock(
+        &mut self,
+        now_ms: u64,
+        playback_head_frames: Option<u64>,
+    ) -> Option<PlaybackClockSource> {
+        match playback_head_frames {
             Some(raw) => {
                 self.playback_clock_stats.hardware_reports =
                     self.playback_clock_stats.hardware_reports.saturating_add(1);
+                self.last_hardware_report_ms = Some(now_ms);
                 let (effective, reanchored) = self.extend_playback_head(raw);
                 if reanchored {
                     self.drift.reset();
                     self.drift_ppm = None;
                 }
                 self.playback_head_frames = Some(effective);
-                PlaybackClockSource::HardwareHead
+                self.use_drift_clock(PlaybackClockSource::HardwareHead);
+                Some(PlaybackClockSource::HardwareHead)
             }
             None => {
+                // Do not keep a stale head: `None` means this report has no
+                // hardware evidence, not a zero position.
+                self.playback_head_frames = None;
+                if self.drift_clock_source == Some(PlaybackClockSource::HardwareHead) {
+                    self.playback_clock_stats.hardware_missing_reports = self
+                        .playback_clock_stats
+                        .hardware_missing_reports
+                        .saturating_add(1);
+                    let missing_ms = self
+                        .last_hardware_report_ms
+                        .map_or(u64::MAX, |last| now_ms.saturating_sub(last));
+                    if missing_ms < HARDWARE_HEAD_GIVE_UP_MS {
+                        // Transient miss: keep the hardware window, skip this
+                        // observation, publish no stale estimate.
+                        return None;
+                    }
+                    self.playback_clock_stats.head_give_up_events = self
+                        .playback_clock_stats
+                        .head_give_up_events
+                        .saturating_add(1);
+                }
                 self.playback_clock_stats.accepted_fallback_reports = self
                     .playback_clock_stats
                     .accepted_fallback_reports
                     .saturating_add(1);
-                // Do not keep a stale head: `None` means this report has no
-                // hardware evidence, not a zero position.
-                self.playback_head_frames = None;
-                PlaybackClockSource::AcceptedBytes
+                self.use_drift_clock(PlaybackClockSource::AcceptedBytes);
+                Some(PlaybackClockSource::AcceptedBytes)
             }
-        };
+        }
+    }
+
+    /// Switch the measurement window's clock, discarding samples from the
+    /// previous source (they are separated by latency and offset accounting).
+    fn use_drift_clock(&mut self, source: PlaybackClockSource) {
         if self.drift_clock_source != Some(source) {
             self.drift.reset();
             self.drift_ppm = None;
             self.drift_clock_source = Some(source);
         }
-        source
     }
 
-    /// Extend a raw hardware head across a 32-bit counter wrap or a sink
-    /// rebuild. Returns the effective monotonic frame position and whether the
-    /// correspondence with the current window broke (rebuild/flush).
+    /// Continue an **already-extended** hardware head across a sink rebuild.
+    ///
+    /// Kotlin owns the 32-bit `getPlaybackHeadPosition()` wrap and always
+    /// reports a monotonic frame count; the native side must not extend it a
+    /// second time (that would misread a long-run rebuild as a wrap and add
+    /// 2^32). A regression here can therefore only mean a rebuilt/flushed
+    /// sink whose head restarted at 0: continue from the last effective
+    /// position and start a fresh window. Returns the effective monotonic
+    /// position and whether the window broke.
     fn extend_playback_head(&mut self, raw: u64) -> (u64, bool) {
         let mut reanchored = false;
         if let Some(last) = self.last_raw_head {
             if raw < last {
-                // A 32-bit wrap goes from the top of the counter (~4.29e9) to
-                // the bottom. Requiring both ends keeps a sink rebuild well
-                // below 2^32 — which restarts at 0 — from being mistaken for a
-                // wrap (the two are otherwise ambiguous for a counter that
-                // has been running for more than half its range).
-                let wrapped = last > 0xF000_0000 && raw < 0x1000_0000;
-                if wrapped {
-                    // `AudioTrack.getPlaybackHeadPosition()` is a 32-bit
-                    // unsigned frame counter; the sender may hand it over
-                    // unextended.
-                    self.playback_head_base = self.playback_head_base.saturating_add(1u64 << 32);
-                } else {
-                    // A new/flushed sink restarts its head at 0. Continue from
-                    // the last effective position and start a fresh window:
-                    // audio may have been dropped across the rebuild.
-                    self.playback_head_base = self.playback_head_base.saturating_add(last);
-                    self.playback_clock_stats.head_reanchor_events = self
-                        .playback_clock_stats
-                        .head_reanchor_events
-                        .saturating_add(1);
-                    reanchored = true;
-                }
+                self.playback_head_base = self.playback_head_base.saturating_add(last);
+                self.playback_clock_stats.head_reanchor_events = self
+                    .playback_clock_stats
+                    .head_reanchor_events
+                    .saturating_add(1);
+                reanchored = true;
             }
         }
         self.last_raw_head = Some(raw);

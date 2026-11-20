@@ -970,43 +970,87 @@ fn hardware_clock_is_not_double_compensated_by_position_offsets() {
     assert!(after_offsets.iter().all(|estimate| estimate.abs() <= 1));
 }
 
-/// A report without a hardware head is a counted fallback, never frame 0.
+/// One missing head is a transient report failure, not a reason to abandon
+/// the hardware clock. Every 5 s (every ~50th 100 ms report) the window must
+/// keep advancing; only a sustained outage may switch sources.
 #[test]
-fn missing_hardware_head_falls_back_without_treating_it_as_zero() {
+fn periodic_single_missing_heads_keep_the_hardware_window() {
+    let mut media = session();
+    let mut reports = 0u64;
+    let estimates = drive_with_head(&mut media, 0, 36_000, 0, |now| {
+        reports += 1;
+        if reports.is_multiple_of(50) {
+            None
+        } else {
+            Some(playback_at(now.saturating_sub(PLATFORM_DELAY_MS)))
+        }
+    });
+    // Finish on a report that has a head, so the final estimate is current.
+    drive_with_head(&mut media, 36_000, 36_100, 0, |now| {
+        Some(playback_at(now.saturating_sub(PLATFORM_DELAY_MS)))
+    });
+    assert_eq!(
+        media.drift_clock_source(),
+        "hardware",
+        "a single miss must not switch sources"
+    );
+    assert!(
+        media.playback_clock_stats().hardware_missing_reports >= 6,
+        "every miss is counted: {:?}",
+        media.playback_clock_stats()
+    );
+    assert_eq!(media.playback_clock_stats().accepted_fallback_reports, 0);
+    assert_eq!(media.drift_ppm(), Some(0));
+    assert!(
+        media.drift_window().0 >= 10_000,
+        "the window must keep advancing across misses: {:?}",
+        media.drift_window()
+    );
+    assert!(estimates.iter().all(|estimate| estimate.abs() <= 1));
+}
+
+/// A sustained hardware-head outage must eventually fall back to accepted
+/// bytes and start a fresh window; a short miss must not.
+#[test]
+fn a_sustained_hardware_head_outage_switches_to_accepted() {
     let mut media = session();
     drive_with_head(&mut media, 0, 11_000, 0, |now| {
         Some(playback_at(now.saturating_sub(PLATFORM_DELAY_MS)))
     });
-    assert_eq!(media.drift_clock_source(), "hardware");
-    assert!(media.drift_ppm().is_some());
+    assert_eq!(media.drift_ppm(), Some(0));
 
-    media.record_playback_at(
-        11_100,
-        PlaybackReport {
-            submitted_bytes: playback_at(11_000) * FRAME_BYTES,
-            underruns: 0,
-            buffer_current_ms: TARGET_MS,
-        },
-    );
+    // Seven consecutive misses at the 100 ms cadence: enough for the last one
+    // to be >= 500 ms after the final head report.
+    for now in (11_000..=11_600).step_by(100) {
+        media.record_playback_with_head_at(
+            now,
+            PlaybackReport {
+                submitted_bytes: playback_at(now.saturating_sub(u64::from(TARGET_MS)))
+                    * FRAME_BYTES,
+                underruns: 0,
+                buffer_current_ms: TARGET_MS,
+            },
+            None,
+        );
+    }
     assert_eq!(media.drift_clock_source(), "accepted");
-    assert_eq!(media.playback_head_frames(), None);
     assert_eq!(
-        media.playback_clock_stats().accepted_fallback_reports,
+        media.playback_clock_stats().head_give_up_events,
         1,
-        "an unreadable head is counted, not ignored"
+        "exactly one sustained-outage switch"
     );
     assert_eq!(
         media.drift_ppm(),
         None,
-        "switching clocks must start a fresh window, not mix sources"
+        "the source switch starts a fresh window"
     );
 
-    // The accepted path still measures after a full window: the missing head
-    // did not blank the playout position to 0.
-    drive_with_head(&mut media, 11_100, 22_000, 0, |_| None);
+    // The accepted path measures the same (zero) drift after a full window.
+    let estimates = drive_with_head(&mut media, 11_700, 23_000, 0, |_| None);
     assert_eq!(media.drift_ppm(), Some(0));
     assert_eq!(media.drift_clock_source(), "accepted");
-    assert!(media.playback_clock_stats().accepted_fallback_reports > 1);
+    assert_eq!(media.playback_clock_stats().head_give_up_events, 1);
+    assert!(estimates.iter().all(|estimate| estimate.abs() <= 1));
 }
 
 /// An AudioTrack rebuild restarts `getPlaybackHeadPosition()` at 0. Native must
@@ -1059,55 +1103,60 @@ fn a_rebuilt_audio_track_reanchors_the_head_and_recovers() {
     assert_eq!(media.playback_clock_stats().head_reanchor_events, 1);
 }
 
-/// `getPlaybackHeadPosition()` is a 32-bit unsigned frame counter. An
-/// unextended raw counter that wraps must be extended, not mistaken for a new
-/// track (which would discard the window) or for real progress (which would
-/// publish a huge ppm spike).
+/// The JNI contract says the head is **already extended** to a monotonic
+/// frame count (Kotlin owns the 32-bit wrap). Native must therefore read *any*
+/// regression as a sink rebuild — including one after the extended value has
+/// passed the old 32-bit heuristics. A regression at a long-run position must
+/// still re-anchor and start a fresh window, not add 2^32.
 #[test]
-fn a_thirty_two_bit_head_wrap_is_extended_without_a_reanchor() {
-    // Start one second before the wrap so the wrap happens inside the run.
-    const WRAP_START: u64 = (1u64 << 32) - 48_000;
-    let mut media = MediaSession::start(1, 1, WRAP_START, &config(), None).expect("F32LE stereo");
-    let mut seed = 0x0bad_f00du32;
-    let mut now = 0u64;
-    let mut packet_end = PACKET_MS;
-    let mut next_report = 0u64;
-    let mut estimates = Vec::new();
-    while now <= 12_000 {
-        while packet_end <= now {
-            let start = WRAP_START + capture_at(packet_end - PACKET_MS, 0);
-            let end = WRAP_START + capture_at(packet_end, 0);
-            media.on_datagram(
-                packet_end,
-                &datagram((packet_end / PACKET_MS - 1) as u32, start, end - start),
-            );
-            packet_end += PACKET_MS;
-        }
-        if now >= next_report {
-            let played = WRAP_START + playback_at(now.saturating_sub(PLATFORM_DELAY_MS));
-            media.record_playback_with_head_at(
-                now,
-                PlaybackReport {
-                    submitted_bytes: (WRAP_START
-                        + playback_at(now.saturating_sub(u64::from(TARGET_MS))))
-                        * FRAME_BYTES,
-                    underruns: 0,
-                    buffer_current_ms: TARGET_MS,
-                },
-                Some(played & 0xFFFF_FFFF),
-            );
-            if let Some(estimate) = media.drift_ppm() {
-                estimates.push(estimate);
-            }
-            next_report = now + report_cadence(&mut seed);
-        }
-        now += 1;
-    }
+fn an_extended_long_run_head_then_rebuild_reanchors() {
+    // ~4.16e9 frames, above the old `0xF000_0000` heuristic: a rebuild here
+    // used to be mistaken for a 32-bit wrap.
+    const LONG_RUN_START: u64 = 0xF800_0000;
+    let mut media = session();
+    let first = drive_with_head(&mut media, 0, 11_000, 0, |now| {
+        Some(LONG_RUN_START + playback_at(now.saturating_sub(PLATFORM_DELAY_MS)))
+    });
+    assert_eq!(media.drift_clock_source(), "hardware");
+    assert_eq!(media.drift_ppm(), Some(0));
+    assert!(first.iter().all(|estimate| estimate.abs() <= 1));
+    let before = media.playback_head_frames().expect("a hardware head");
+    assert!(before > LONG_RUN_START);
+
+    const REBUILD_MS: u64 = 11_100;
+    media.record_playback_with_head_at(
+        REBUILD_MS,
+        PlaybackReport {
+            submitted_bytes: playback_at(REBUILD_MS - 60) * FRAME_BYTES,
+            underruns: 0,
+            buffer_current_ms: TARGET_MS,
+        },
+        Some(0),
+    );
     assert_eq!(
         media.playback_clock_stats().head_reanchor_events,
-        0,
-        "a 32-bit wrap is not a rebuild"
+        1,
+        "an already-extended regression is a rebuild, not a 2^32 wrap"
     );
+    assert_eq!(
+        media.drift_ppm(),
+        None,
+        "a rebuild starts a fresh window instead of publishing a step"
+    );
+    let after = media.playback_head_frames().expect("a hardware head");
+    assert!(after >= before, "the effective head must stay monotonic");
+    assert!(
+        after - before <= playback_at(200),
+        "a rebuild must not add 2^32 frames (jumped by {})",
+        after - before
+    );
+
+    // The new track's head grows from 0; the re-anchored base keeps it
+    // monotonic and a fresh window recovers the real (zero) drift.
+    let recovered = drive_with_head(&mut media, REBUILD_MS + 100, 23_000, 0, |now| {
+        Some(playback_at(now - REBUILD_MS))
+    });
     assert_eq!(media.drift_ppm(), Some(0));
-    assert!(estimates.iter().all(|estimate| estimate.abs() <= 1));
+    assert!(recovered.iter().all(|estimate| estimate.abs() <= 1));
+    assert_eq!(media.playback_clock_stats().head_reanchor_events, 1);
 }

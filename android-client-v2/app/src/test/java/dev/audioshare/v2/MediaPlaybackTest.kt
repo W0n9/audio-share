@@ -558,28 +558,54 @@ class MediaPlaybackTest {
      */
     @Test
     fun playback_head_extender_crosses_the_32_bit_wrap() {
-        val extender = PlaybackHeadExtender()
+        val extender = PlaybackHeadExtender(48_000)
         assertEquals(0xFFFF_FF00L, extender.update(0xFFFF_FF00L))
         assertEquals(0x1_0000_0100L, extender.update(0x100L), "a wrap adds 2^32")
         assertEquals(0x1_0000_0A80L, extender.update(0xA80L), "stays extended")
     }
 
-    /** A rebuilt or flushed track restarts at 0 so native can re-anchor it. */
+    /**
+     * A rebuilt track restarts at 0. One over-tolerance rewind is held (it can
+     * be an interpolation-age rewind); only a second consecutive one is a
+     * restart, so native re-anchors exactly once.
+     */
     @Test
     fun playback_head_extender_restarts_after_a_track_rebuild() {
-        val extender = PlaybackHeadExtender()
+        val extender = PlaybackHeadExtender(48_000)
         assertEquals(500_000L, extender.update(500_000L))
-        assertEquals(0L, extender.update(0L), "a small drop is a restart, not a wrap")
-        assertEquals(4_800L, extender.update(4_800L))
+        assertEquals(500_000L, extender.update(0L), "the first rewind is held")
+        assertEquals(4_800L, extender.update(4_800L), "the second consecutive rewind restarts")
+    }
+
+    /** A single large interpolation-age rewind must not look like a restart. */
+    @Test
+    fun playback_head_extender_tolerates_a_single_age_rewind() {
+        val extender = PlaybackHeadExtender(48_000)
+        assertEquals(500_000L, extender.update(500_000L))
+        assertEquals(500_000L, extender.update(497_000L), "one >5 ms rewind is held")
+        assertEquals(500_500L, extender.update(500_500L), "a recovery is not a restart")
     }
 
     /** Sub-millisecond timestamp jitter must not look like a track restart. */
     @Test
     fun playback_head_extender_holds_through_timestamp_jitter() {
-        val extender = PlaybackHeadExtender()
+        val extender = PlaybackHeadExtender(48_000)
         assertEquals(10_000L, extender.update(10_000L))
         assertEquals(10_000L, extender.update(9_999L), "a 1-frame rewind is jitter")
         assertEquals(10_500L, extender.update(10_500L))
+    }
+
+    /** The rewind tolerance is 5 ms at the sink's own sample rate. */
+    @Test
+    fun head_rewind_tolerance_is_five_ms_at_the_sink_rate() {
+        assertEquals(240L, rewindToleranceFrames(48_000))
+        assertEquals(40L, rewindToleranceFrames(8_000))
+        assertEquals(1L, rewindToleranceFrames(0))
+        val extender = PlaybackHeadExtender(8_000)
+        assertEquals(10_000L, extender.update(10_000L))
+        assertEquals(10_000L, extender.update(9_960L), "40 frames is exactly 5 ms")
+        assertEquals(10_000L, extender.update(9_959L), "41 frames is the first strike")
+        assertEquals(9_958L, extender.update(9_958L), "the second strike restarts")
     }
 
     /**
