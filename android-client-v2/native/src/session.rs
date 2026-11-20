@@ -1106,6 +1106,7 @@ impl Session {
             diagnostics,
             drift_ppm,
             drift_window,
+            discontinuous_intervals,
             correction_ppm,
             concealments,
             concealed_frames,
@@ -1122,6 +1123,7 @@ impl Session {
                 diagnostics,
                 media.drift_ppm(),
                 media.drift_window(),
+                media.drift_discontinuous_intervals(),
                 media.drift_correction_ppm(),
                 media.concealment_counts(),
                 media.concealed_frames(),
@@ -1160,17 +1162,25 @@ impl Session {
                 reanchor_events,
             );
         }
+        let (span_ms, sample_count) = drift_window;
         if let Some(drift_ppm) = drift_ppm {
-            let (span_ms, sample_count) = drift_window;
             log::info!(
-                "event = {} drift_ppm={} span_ms={} sample_count={} correction_ppm={} buffer_current_ms={} buffer_target_ms={}",
-                "playback.drift",
+                "event = playback.drift drift_ppm={} span_ms={} sample_count={} correction_ppm={} buffer_current_ms={} buffer_target_ms={} discontinuous_intervals={}",
                 drift_ppm,
                 span_ms,
                 sample_count,
                 correction_ppm,
                 diagnostics.buffer_current_ms,
                 diagnostics.buffer_target_ms,
+                discontinuous_intervals,
+            );
+        } else if discontinuous_intervals > 0 {
+            log::info!(
+                "event = playback.drift_window status=rebuilding span_ms={} sample_count={} correction_ppm={} discontinuous_intervals={}",
+                span_ms,
+                sample_count,
+                correction_ppm,
+                discontinuous_intervals,
             );
         }
         let frame = crate::proto::Frame {
