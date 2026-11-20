@@ -29,46 +29,73 @@ internal fun playbackRateHz(sampleRate: Int, ppm: Int): Int {
 }
 
 /**
- * M5-11: extend `AudioTrack.getPlaybackHeadPosition()`'s 32-bit unsigned frame
- * counter into a monotonic `Long`. It wraps roughly every 24.9 hours at
- * 48 kHz: a drop from the top of the counter to the bottom is that wrap. A
- * larger drop from an ordinary position is a flushed/restarted track, so the
- * base restarts at 0 and native can re-anchor the drift window instead of
- * reading a bogus step. Sub-millisecond rewinds are timestamp jitter and hold
- * the last value.
+ * M5-11: extend `AudioTrack`'s playback frame counter into a monotonic `Long`.
+ * It wraps roughly every 24.9 hours at 48 kHz: a drop from the top of the
+ * 32-bit counter to the bottom is that wrap. Rewinds within 5 ms (converted
+ * from the sink's sample rate) are timestamp jitter and hold the last value.
+ * A larger rewind is held for one report too — the `getTimestamp` interpolation
+ * age can jump — and only two consecutive over-tolerance rewinds restart the
+ * base at 0 for native to re-anchor. This is the single owner of the 32-bit
+ * wrap; native receives an already-extended value.
  *
  * The counter is per sink. A rebuilt AudioTrack starts at 0 and native treats
  * that regression as a re-anchor.
  */
-internal class PlaybackHeadExtender {
+internal class PlaybackHeadExtender(private val sampleRate: Int) {
     private var base = 0L
     private var last = 0L
     private var seen = false
+    /// Consecutive over-tolerance rewinds. One can be an interpolation-age
+    /// jump; two in a row are a rebuilt/flushed track.
+    private var consecutiveRewinds = 0
 
     fun update(rawFrames: Long): Long {
-        if (seen && rawFrames < last) {
+        if (!seen) {
+            seen = true
+            last = rawFrames
+            return rawFrames
+        }
+        if (rawFrames < last) {
             // A wrap runs from the top of the counter to the bottom; a rebuild
             // restarts at 0 from anywhere. Requiring both ends avoids
             // misreading a long-running track's rebuild as a wrap.
             val wrapped = last > 0xF000_0000L && rawFrames < 0x1000_0000L
             when {
-                wrapped -> base += 0x1_0000_0000L
-                last - rawFrames <= HEAD_REWIND_TOLERANCE_FRAMES -> {
+                wrapped -> {
+                    base += 0x1_0000_0000L
+                    consecutiveRewinds = 0
+                }
+                last - rawFrames <= rewindToleranceFrames(sampleRate) -> {
                     // Timestamp/interpolation jitter: do not report a rewind.
+                    consecutiveRewinds = 0
                     return base + last
                 }
-                else -> base = 0L
+                else -> {
+                    consecutiveRewinds += 1
+                    if (consecutiveRewinds < 2) {
+                        // A single large rewind can be a drop in the
+                        // getTimestamp interpolation age; hold the last value
+                        // and see whether the sequence recovers.
+                        return base + last
+                    }
+                    // Two consecutive large rewinds: the track was rebuilt or
+                    // flushed. Restart at 0 so native re-anchors the window.
+                    base = 0L
+                    consecutiveRewinds = 0
+                }
             }
+        } else {
+            consecutiveRewinds = 0
         }
         last = rawFrames
-        seen = true
         return base + rawFrames
     }
 }
 
-/** Rewinds at or below this many frames (5 ms at 48 kHz) are jitter, not a
- * track restart. */
-internal const val HEAD_REWIND_TOLERANCE_FRAMES = 240L
+/** Rewinds at or below 5 ms (measured at [sampleRate]) are jitter, not a track
+ * restart. */
+internal fun rewindToleranceFrames(sampleRate: Int): Long =
+    (sampleRate.toLong() * 5 / 1_000).coerceAtLeast(1L)
 
 /** Oldest `getTimestamp()` presentation age treated as current (paused/stale
  * timestamps are not playback progress). */
@@ -256,7 +283,7 @@ class AudioTrackSink(
 
     override fun underruns(): Long = track.underrunCount.toLong()
 
-    private val headExtender = PlaybackHeadExtender()
+    private val headExtender = PlaybackHeadExtender(track.sampleRate)
     private val audioTimestamp = AudioTimestamp()
     private var sawTimestamp = false
     private var loggedHeadClock = false
