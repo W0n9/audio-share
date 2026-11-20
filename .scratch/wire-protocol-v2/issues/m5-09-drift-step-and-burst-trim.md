@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-human
+**Status:** needs-triage（实施已合入 `cb28095`；真机 B 实测 FAIL，待维护者裁决：改进播放侧时钟源，还是修订判据）
 
 **Type:** task
 
@@ -39,3 +39,5 @@
 
 - `cb28095` 已合入初版修复及两轴审查修复。[Host 证据](../evidence/m5-09/host-drift.md)：native 默认和 `test-support` 各 240 项 **PASS**，Clippy、fmt **PASS**。合成复现已解，不表示现场根因已确认；诊断会保留整个区间的估计极值和缺样信息。
 - [Windows + Android 真机用例 B](../evidence/m5-09/windows-retest.md) **NOT RUN**，最终 arm64 调试 APK 已构建并核验。没有真机证据不写 `resolved`，不动 beta。
+- **用例 B 复测（`cb28095` APK + `431997b` Server）：FAIL**。见 [RESULT-B3](../evidence/m5-09/RESULT-B3.md)。稳态原始估计全区间极值 −645…+532 ppm，67/67 区间至少一端越界；覆盖 PASS（3,277/3,277、gap ≤113 ms、`discontinuous_intervals=0`）；re-anchor **0 次**，历史 +7 未复现；Server pending 0、drops 0。`correction_ppm` 有 35/67 快照顶在 ±100。应用 ring 全程 0–26 ms（目标 60），不计入漂移插帧（`seen_deadband` 未建立，符合现有设计）。
+- **待核查的代码事实**（不是已确认根因）：`submitted_position()` 用 `AudioTrack.write` 已接受字节数（`media_session.rs:663`），不是硬件播放头；10 s 窗口下单个 2052 帧块约合 4,275 ppm，与观测噪声量级一致。形态与 host 批提交压力模型相似，仍需 RED 后再改。
