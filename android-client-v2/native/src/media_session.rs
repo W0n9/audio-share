@@ -550,13 +550,11 @@ impl MediaSession {
         // Inserted silence is not a capture position; deleted frames advanced
         // the playout cursor over real capture positions.
         self.position_adjust_frames -= i64::from(frames);
-        if frames < 0 {
-            // A deletion jumps the reported playout position forward over
-            // skipped media. Fold that step out of the drift series instead of
-            // discarding the window (M5-08). Insertion nets to zero in the
-            // reported series (accepted bytes rise, the position offset falls).
-            self.drift_playback_step = self.drift_playback_step.saturating_add(i64::from(-frames));
-        }
+        // Mirror the position-offset change so the rate series stays
+        // continuous: inserted silence advances the platform clock
+        // (accepted bytes rise, the position offset falls); deleted frames skip
+        // media. Either way a full reset is not needed (M5-08).
+        self.drift_playback_step = self.drift_playback_step.saturating_sub(i64::from(frames));
     }
 
     /// Whether the unknown configuration exceeded §7.6's 2 s bound.
@@ -671,6 +669,13 @@ impl MediaSession {
         self.underrun_frames = self.underrun_frames.saturating_add(inserted_frames);
         self.position_adjust_frames = self
             .position_adjust_frames
+            .saturating_sub(inserted_frames as i64);
+        // The platform clock advanced over the inserted silence, so credit it
+        // in the rate series too. Mirroring the position-offset change keeps
+        // `submitted_position - drift_playback_step` continuous (M5-08): without
+        // this, every accepted fill leaves a step that reads as a bogus ppm.
+        self.drift_playback_step = self
+            .drift_playback_step
             .saturating_sub(inserted_frames as i64);
     }
 
