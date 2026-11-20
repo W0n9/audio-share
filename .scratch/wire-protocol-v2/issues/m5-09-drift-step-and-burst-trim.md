@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** claimed
+**Status:** ready-for-human
 
 **Type:** task
 
@@ -24,9 +24,9 @@
 
 ## Requirements
 
-- [ ] 从 `client-B2.log` 中截取离群附近约 60 s 的观测。仅在有实际输入时做原样回放；若只有汇总，明确标记用观测参数生成的合成输入。在真实 native 路径做稳定的 RED→GREEN；若不能复现同类症状，不盲改。
-- [ ] 只修有实验支持的离群根因；不钳位原始 `drift_ppm`，不改协议或 60/200 ms。若突发 trim/re-anchor 频率是独立问题，另立工单，不顺手改。§7.4 继续用 `media.stats` 作守卫，不改 Server pacing/catch-up。
-- [ ] 检查修正量依然满足规范 §8 的 ±100 ppm；这个限值约束施加的修正，不是物理时钟差上限，也不是对原始估计的限幅。
+- [x] 从 `client-B2.log` 中截取离群附近约 60 s 的观测。仅在有实际输入时做原样回放；若只有汇总，明确标记用观测参数生成的合成输入。在真实 native 路径做稳定的 RED→GREEN；若不能复现同类症状，不盲改。
+- [x] 只修实验支持的合成离群原因；不钳位原始 `drift_ppm`，不改协议或 60/200 ms。突发 re-anchor 频率另列 [M5-10](m5-10-reanchor-burst-investigation.md)，不顺手改。§7.4 继续用 `media.stats` 作守卫，不改 Server pacing/catch-up。
+- [x] Host 回归确认修正量依然满足规范 §8 的 ±100 ppm；这个限值约束施加的修正，不是物理时钟差上限，也不是对原始估计的限幅。
 - [ ] 新产物用 Windows GUI Server + 单台 Android 真机重跑用例 B（有效播放 ≥5 min，不加网络损伤）。现场裁决要求：满窗后稳态原始 `drift_ppm` 在 ±100 ppm 内；若 re-anchor 使窗口失效，记录事件及重建窗口期间的样本，不把异常尖峰静默排除；没有类似单个 5 s 记录周期 +7 次 re-anchor 的突跳。记稳态中位数（仅诊断）、样本数、极值、最大每 5 s re-anchor 增量、Server pending/drops。没有新真机证据不关闭工单、不合入 beta；±100 ppm 注入矩阵仍是独立验收。
 
 ## Notes
@@ -34,3 +34,8 @@
 - 相关代码：`android-client-v2/native/src/{drift.rs,media_session.rs}`、
   `android-client-v2/app/src/main/java/dev/audioshare/v2/{MediaPlayer.kt,MediaRingBuffer.kt}`。
 - 第 7 项（jitter hole-hold）仍单独待裁决。
+
+## Comments
+
+- `cb28095` 已合入初版修复及两轴审查修复。[Host 证据](../evidence/m5-09/host-drift.md)：native 默认和 `test-support` 各 240 项 **PASS**，Clippy、fmt **PASS**。合成复现已解，不表示现场根因已确认；诊断会保留整个区间的估计极值和缺样信息。
+- [Windows + Android 真机用例 B](../evidence/m5-09/windows-retest.md) **NOT RUN**，最终 arm64 调试 APK 已构建并核验。没有真机证据不写 `resolved`，不动 beta。

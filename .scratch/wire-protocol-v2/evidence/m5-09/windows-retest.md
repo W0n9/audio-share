@@ -1,6 +1,6 @@
 # M5-09：Windows + Android 真机用例 B
 
-状态：**NOT RUN**。这是工装说明，不是复测结果。历史 `431997b` 的结论仍为 [FAIL](../m5-windows-evidence-2026-11-20/evidence-2/RESULT2.txt)。下方 `4d23f89` APK 是首版候选，不含 `playback.drift_interval`，**不能用于下方的最终验收**，等待审查修复合入后重建。
+状态：**NOT RUN**。这是工装说明，不是复测结果。历史 `431997b` 的结论仍为 [FAIL](../m5-windows-evidence-2026-11-20/evidence-2/RESULT2.txt)。请使用下方包含 `playback.drift_interval` 的 `cb28095` APK；首版候选 `4d23f89` 不适用于本次验收。
 
 ## 产物与环境
 
@@ -9,9 +9,9 @@
    | 产物 | 构建提交与版本 | 本地路径 | SHA-256 |
    |---|---|---|---|
    | Windows GUI Server（复用，本轮未改 Server） | `431997b` / `0.5.0-beta` | `.build-artifacts/m5-windows-gui-431997b/AudioShareServer.exe` | `ee7a35a4bccad6bc09344fd7672c703e6e5466f60859ffb4ff6911fb69bd94d8` |
-   | Android arm64 debug APK | `4d23f89` / `0.2.0-beta`（code 2） | `.build-artifacts/m5-09-4d23f89/app-debug-arm64.apk` | `1a61d62bc71560d9c6b3f06ca48f96f0e32b9bfc7a3ac00f07a3b14e0efa8926` |
+   | Android arm64 debug APK | `cb28095` / `0.2.0-beta`（code 2） | `.build-artifacts/m5-09-cb28095/app-debug-arm64.apk` | `a6838e3b1ec21203a3f975c29d4229195681b3c2edeecbcc4bd5d3b95c7c194c` |
 
-   APK 构建 **PASS**：`assembleDebug -PandroidAbis=arm64-v8a`（JDK 21、`--offline`）重新编译了 native 库，`apksigner verify` 及 `aapt dump badging` 确认签名和 ABI。不是安装/真机 `PASS`。
+   APK 构建 **PASS**：`assembleDebug -PandroidAbis=arm64-v8a`（JDK 21、`--offline`）重新编译了 native 库，`apksigner verify` 及 `aapt dump badging` 确认签名和 ABI，APK 中 native 库含 `playback.drift_interval` 日志标记。不是安装/真机 `PASS`。
 2. 使用 Windows GUI Server、单台 Android 真机、与历史 B 可比的正常 LAN、屏幕常亮。本轮不注入网络损伤或时钟偏移。记录 OS、Android API、设备型号（不记录序列号）、ABI、构建模式和采样率。
 3. 开始记录日志后进入一个新播放会话，连续播放至少 5 分钟。以该会话的 Server 与客户端日志对齐窗口；重连或误触导致的废弃段不拼入窗口。
 
