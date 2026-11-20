@@ -68,7 +68,7 @@ M5-07 为人工门，不进 implement-spec。Q1（60/200 ms）未裁决，M5-03 
 
 1. **`v0.5.0-beta` tag**：已由 [35](issues/35-beta-tag-placement-decision.md) 裁决为 B；tag 已推送至 fork，Release 已发布（pre-release）。
 2. **M5 提案三问**（L1 阶段 1 后更新）：Q1「60/200 ms 是否改」——**仍待 M5-01 可听基线**，本阶段只测提交前链路；Q2「AudioTrack 128 ms 归属」——已于 2026-11-19 裁决为**改**，生产提交 `d03865b` 已合入集成分支；Q3「MIUI `underruns` 可信否」——**不可信**（teardown 瞬间数千次、听感连续时计数暴涨）。见 [m5-proposal.md](m5-proposal.md)、[l1-results](l1-handoff/l1-results.md)。
-3. ~~**M5–M7 编号冲突**~~：M5 已改用 `M5-NN` 规避；M6/M7 的 18–21 与 Beta 19–32 仍撞号，开票前须重排或改用 `M6-NN`/`M7-NN`。
+3. ~~**M5–M7 编号冲突**~~：M5 已使用 `M5-NN`。M6/M7 已裁决使用 `M6-NN` / `M7-NN`，见 [roadmap](roadmap.md) 占位表；尚未开票。
 4. **L1 阶段 1 埋点归属**：已由维护者裁决「保留在实验分支，不转正」。代码提交于
    `experiment/m5-audiotrack-buffer` @ `f073e07`（7 个文件，含 `Cargo.lock`；未 push、
    未合入集成分支）。M5-01、M5-05 可引用；若需改这些埋点，应从 `main` 另开分支或先协调，
