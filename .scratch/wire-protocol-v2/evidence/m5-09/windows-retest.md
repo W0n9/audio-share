@@ -10,7 +10,7 @@
 
 ## 采集与判定
 
-- 客户端收集 `playback.drift`、`playback.trim` 和缓冲/损失快照；Server 收集 `media.stats` / `media.drops`。`playback.drift` 的空白期不当作 0 ppm。
+- 客户端收集 `playback.drift`、`playback.drift_window`、`playback.trim` 和缓冲/损失快照；Server 收集 `media.stats` / `media.drops`。`playback.drift_window status=rebuilding` 提供跨度、样本数和实际命令的 ppm，不提供原始 ppm；空白期不当作 0 ppm。`discontinuous_intervals` 是当前测量序列被拒绝的相邻采样区间累计数，不是独立停滞次数，也不是 re-anchor 次数。
 - 记录稳态原始 `drift_ppm` 的样本数、极值、中位数，以及所有窗失效/重建区间；中位数只用于诊断。满窗后的稳态原始估计应在 ±100 ppm 内，这是**本次基线试验**的判据，不是协议对物理时钟差的限幅。另验实际 `correction_ppm` 始终在 ±100 ppm 内。
 - 用同一会话的相邻 5 s 快照求 `reanchor_events` 与 `reanchor_frames` 增量，记录最大值及对应原始估计和缓冲数据。不得出现类似历史单周期 `+7` 次的突跳；发现超差或缺样，保留上下文，不事后剔除来判为通过。
 - 记录缓冲、Server pending 和丢弃。有异常就保留原始时间窗；不要据单个累计计数推断实际播放或单向延迟。

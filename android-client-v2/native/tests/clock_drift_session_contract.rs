@@ -6,7 +6,7 @@
 //! hard-limit re-anchor.
 
 use audio_share_client_v2_native::media::{MediaHeader, FLAG_STREAM_START};
-use audio_share_client_v2_native::media_session::{MediaSession, PlaybackReport};
+use audio_share_client_v2_native::media_session::{DatagramOutcome, MediaSession, PlaybackReport};
 use audio_share_client_v2_native::proto::{Configuration, PcmParameters};
 
 const RATE: u32 = 48_000;
@@ -88,6 +88,214 @@ fn drive(session: &mut MediaSession, from_ms: u64, to_ms: u64, ppm: i32, underru
     }
 }
 
+/// Fixed, identical 48 kHz source/sink clocks. The receiver normally sees one
+/// PCM packet per ms. Only its delivery is held in `holds`; at each release,
+/// the queued packets arrive before the next reader iteration. The reader
+/// advances over the oldest frames using the Kotlin player's 60/80/200 ms
+/// thresholds and submits only available frames (or accepted underrun silence
+/// when enabled as the control). It does not inject estimator positions.
+struct DeliverySample {
+    now_ms: u64,
+    raw_ppm: Option<i32>,
+    correction_ppm: i32,
+    window: (u64, usize),
+}
+
+struct DeliveryTrace {
+    samples: Vec<DeliverySample>,
+    trim_events: u64,
+    trimmed_frames: u64,
+}
+
+fn delivery_trace(
+    holds: &[(u64, u64)],
+    until_ms: u64,
+    capture_ppm: i32,
+    keep_sink_fed: bool,
+) -> DeliveryTrace {
+    let mut media = session();
+    let mut next_packet = 1;
+    let mut read = 0;
+    let mut accepted = 0;
+    let mut next_report = 1;
+    let mut samples = Vec::new();
+    for now in 1..=until_ms {
+        let holding = holds
+            .iter()
+            .any(|&(start, end)| (start..end).contains(&now));
+        if !holding {
+            while next_packet <= now {
+                let start = capture_at(next_packet - 1, capture_ppm);
+                let frames = capture_at(next_packet, capture_ppm) - start;
+                let outcome =
+                    media.on_datagram(now, &datagram((next_packet - 1) as u32, start, frames));
+                assert!(matches!(
+                    outcome,
+                    DatagramOutcome::Delivered | DatagramOutcome::LateDropped
+                ));
+                next_packet += 1;
+            }
+        }
+        let mut available = media.delivered_frames() - read;
+        if available > playback_at(80) {
+            let trimmed = available - playback_at(60);
+            if available > playback_at(200) {
+                media.record_trim(trimmed);
+            } else {
+                media.record_soft_trim(trimmed);
+            }
+            read += trimmed;
+            available -= trimmed;
+        }
+        if now > 60 {
+            let frames = available.min(48);
+            accepted += frames;
+            read += frames;
+            available -= frames;
+            if keep_sink_fed && frames < 48 {
+                accepted += 48 - frames;
+                media.record_underrun(48 - frames);
+            }
+        }
+        if now == next_report * 101 + next_report * 79 / 99 {
+            media.record_playback_at(
+                now,
+                PlaybackReport {
+                    submitted_bytes: accepted * FRAME_BYTES,
+                    underruns: 0,
+                    buffer_current_ms: (available / 48) as u32,
+                },
+            );
+            next_report += 1;
+            samples.push(DeliverySample {
+                now_ms: now,
+                raw_ppm: media.drift_ppm(),
+                correction_ppm: media.drift_correction_ppm(),
+                window: media.drift_window(),
+            });
+        }
+    }
+    DeliveryTrace {
+        samples,
+        trim_events: media.trim_events(),
+        trimmed_frames: media.trimmed_frames(),
+    }
+}
+
+#[test]
+fn paced_delivery_measures_equal_clocks_without_trimming() {
+    let trace = delivery_trace(&[], 17_000, 0, false);
+    assert_eq!(trace.samples.last().unwrap().raw_ppm, Some(0));
+    assert!(trace
+        .samples
+        .iter()
+        .filter_map(|sample| sample.raw_ppm)
+        .all(|ppm| ppm == 0));
+    assert_eq!(trace.trim_events, 0);
+}
+
+#[test]
+fn catch_up_delivery_does_not_publish_a_playback_clock_outlier() {
+    // Synthetic B2-scale input, NOT a device replay. The observed 5 s bucket
+    // had seven hard trims totalling 64,672 frames. These timings use ~250 ms
+    // holds and batch-release whole 48-frame packets (64,656 trimmed frames).
+    let holds = [
+        (11_000, 11_251),
+        (11_650, 11_901),
+        (12_300, 12_551),
+        (12_950, 13_201),
+        (13_600, 13_851),
+        (14_250, 14_501),
+        (14_900, 15_154),
+    ];
+    let trace = delivery_trace(&holds, 27_000, 0, false);
+    assert_eq!(trace.trim_events, 7);
+    assert_eq!(trace.trimmed_frames, 64_656);
+    let worst = trace
+        .samples
+        .iter()
+        .max_by_key(|sample| sample.raw_ppm.unwrap_or(0).unsigned_abs())
+        .unwrap();
+    assert!(
+        worst.raw_ppm.is_none_or(|ppm| ppm.abs() <= 100),
+        "equal clocks produced {:?} ppm at {} ms (window: {:?})",
+        worst.raw_ppm,
+        worst.now_ms,
+        worst.window
+    );
+    assert_eq!(
+        trace.samples.last().unwrap().raw_ppm,
+        Some(0),
+        "must recover when a clean window fills"
+    );
+}
+
+#[test]
+fn one_stalled_delivery_invalidates_old_drift_and_recovers_real_nonzero_drift() {
+    let trace = delivery_trace(&[(11_500, 11_751)], 24_000, 75, false);
+    assert_eq!(trace.trim_events, 1);
+    let before = trace
+        .samples
+        .iter()
+        .rfind(|sample| sample.now_ms < 11_500)
+        .unwrap();
+    assert!((74..=76).contains(&before.raw_ppm.unwrap()));
+    assert!((74..=76).contains(&before.correction_ppm));
+    let rebuilding: Vec<_> = trace
+        .samples
+        .iter()
+        .filter(|sample| (11_600..21_750).contains(&sample.now_ms))
+        .collect();
+    for sample in &rebuilding {
+        assert_eq!(
+            sample.raw_ppm, None,
+            "stale estimate at {} ms",
+            sample.now_ms
+        );
+        assert!(sample.window.0 < 10_000);
+    }
+    assert_eq!(rebuilding.last().unwrap().correction_ppm, 0);
+    assert!(trace
+        .samples
+        .windows(2)
+        .all(|pair| (pair[1].correction_ppm - pair[0].correction_ppm).abs() <= 10));
+    let recovered = trace.samples.last().unwrap();
+    assert!((74..=76).contains(&recovered.raw_ppm.unwrap()));
+    assert!((74..=76).contains(&recovered.correction_ppm));
+}
+
+#[test]
+fn accepted_silence_does_not_turn_a_capture_stall_into_clock_drift() {
+    let trace = delivery_trace(&[(11_000, 11_251)], 23_000, 0, true);
+    let during_stall = trace
+        .samples
+        .iter()
+        .find(|sample| sample.now_ms == 11_095)
+        .unwrap();
+    assert_eq!(during_stall.raw_ppm, None);
+    assert!(trace
+        .samples
+        .iter()
+        .filter_map(|sample| sample.raw_ppm)
+        .all(|ppm| ppm == 0));
+    assert_eq!(trace.samples.last().unwrap().raw_ppm, Some(0));
+}
+
+#[test]
+fn short_delivery_batches_do_not_starve_the_drift_window() {
+    let holds: Vec<_> = (5..12_000)
+        .step_by(25)
+        .map(|start| (start, start + 20))
+        .collect();
+    let trace = delivery_trace(&holds, 12_000, 0, false);
+    assert_eq!(trace.trim_events, 0);
+    assert!(trace
+        .samples
+        .iter()
+        .filter(|sample| sample.now_ms >= 10_200)
+        .all(|sample| sample.raw_ppm.is_some()));
+}
+
 #[test]
 fn a_synthetic_one_hundred_ppm_capture_clock_is_measured_and_clamped() {
     let mut media = session();
@@ -116,10 +324,12 @@ fn the_correction_never_exceeds_plus_or_minus_one_hundred_ppm() {
     // A 1% capture clock is far outside §8's capability: the clamp is the
     // whole contract, and a wild estimate must not command a wild rate.
     drive(&mut media, 0, 12_000, 10_000, 0);
+    assert_eq!(media.drift_ppm(), Some(10_000));
     assert_eq!(media.drift_correction_ppm(), 100);
 
     let mut media = session();
     drive(&mut media, 0, 12_000, -10_000, 0);
+    assert_eq!(media.drift_ppm(), Some(-10_000));
     assert_eq!(media.drift_correction_ppm(), -100);
 }
 

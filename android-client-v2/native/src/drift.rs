@@ -25,12 +25,11 @@
 //! are capture-clock positions, so their difference is the buffered production
 //! backlog; its slope over the window is the rate mismatch in ppm.
 //!
-//! M5-05 TIMESTAMP TRAP: the server packetizer advances `timestamp` only by the
-//! frames it actually sent, so a server-side drop leaves a one-time permanent
-//! offset. A step is a position offset, not a rate; `MediaSession` resets this
-//! estimator whenever the jitter buffer reports such a re-base, and whenever
-//! playback reports an underrun or the reader re-anchors — so our own
-//! corrections never feed back into the estimate.
+//! `MediaSession` removes known frame-position steps before observing the
+//! clocks, so a trim or timestamp re-base alone does not break the window.
+//! Even after that accounting, a stall/catch-up can jump the measured backlog:
+//! arrival and platform acceptance measure progress, not the hardware clocks
+//! directly. Do not fit a single rate across such a discontinuity.
 
 use std::collections::VecDeque;
 
@@ -42,6 +41,13 @@ pub const DRIFT_WINDOW_MS: u64 = 10_000;
 /// span the window (1 Hz reporting would take 10 s; the normal 10 Hz cadence
 /// needs ~1 s of the window's tail, so this never delays a genuine estimate).
 pub const MIN_WINDOW_SAMPLES: usize = 10;
+/// Allow a playout target's worth of short-term batching when comparing clock
+/// progress between reports. A deficit on either side or a step in their
+/// difference beyond 60 ms is not reliable clock progress. This is a window
+/// continuity budget after known position jumps are removed, not a ppm limit
+/// or the reader's trim policy. Even 10,000 ppm moves the clocks apart by
+/// just 1 ms per typical 100 ms report.
+const OBSERVATION_TOLERANCE_MS: u64 = 60;
 /// §8 rate-correction bound.
 pub const MAX_CORRECTION_PPM: i32 = 100;
 /// §8 sustained-deviation threshold.
@@ -78,6 +84,8 @@ pub struct DriftEstimator {
     window_ms: u64,
     sample_rate: u32,
     samples: VecDeque<DriftSample>,
+    /// Number of rejected clock intervals, not number of stall episodes.
+    discontinuous_intervals: u64,
 }
 
 impl DriftEstimator {
@@ -86,18 +94,26 @@ impl DriftEstimator {
             window_ms: window_ms.max(1),
             sample_rate: sample_rate.max(1),
             samples: VecDeque::new(),
+            discontinuous_intervals: 0,
         }
     }
 
-    /// Discard the window. Called on every discontinuity (re-anchor, drift
-    /// frame intervention, underrun, timestamp re-base) so the event is not
-    /// mistaken for clock drift.
+    /// Discard the observation window.
     pub fn reset(&mut self) {
         self.samples.clear();
     }
 
     /// Fold one (session time, capture position, playback position) sample.
+    /// A stalled observation or backlog discontinuity discards the old window.
     pub fn observe(&mut self, now_ms: u64, capture_frames: u64, playback_frames: u64) {
+        if self
+            .samples
+            .back()
+            .is_some_and(|last| self.discontinuous(last, now_ms, capture_frames, playback_frames))
+        {
+            self.reset();
+            self.discontinuous_intervals = self.discontinuous_intervals.saturating_add(1);
+        }
         let sample = DriftSample {
             now_ms,
             capture_frames,
@@ -122,6 +138,30 @@ impl DriftEstimator {
         while self.samples.len() > 1 && self.samples[1].now_ms <= cutoff {
             self.samples.pop_front();
         }
+    }
+
+    fn discontinuous(
+        &self,
+        last: &DriftSample,
+        now_ms: u64,
+        capture_frames: u64,
+        playback_frames: u64,
+    ) -> bool {
+        let capture = (i128::from(capture_frames) - i128::from(last.capture_frames)) * 1_000;
+        let playback = (i128::from(playback_frames) - i128::from(last.playback_frames)) * 1_000;
+        let rate = i128::from(self.sample_rate);
+        let nominal = i128::from(now_ms.saturating_sub(last.now_ms)) * rate;
+        let tolerance = rate * i128::from(OBSERVATION_TOLERANCE_MS);
+        // Two nearly equal advances are not enough: both sides can starve.
+        nominal - capture > tolerance
+            || nominal - playback > tolerance
+            || (capture - playback).abs() > tolerance
+    }
+
+    /// Rejected adjacent observation intervals for this measurement series.
+    /// A sustained stall can reject multiple consecutive intervals.
+    pub(crate) const fn discontinuous_intervals(&self) -> u64 {
+        self.discontinuous_intervals
     }
 
     /// The measured drift in ppm, or `None` until a full `window_ms` of paired
