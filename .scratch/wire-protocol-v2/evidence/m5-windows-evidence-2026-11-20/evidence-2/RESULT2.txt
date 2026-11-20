@@ -1,0 +1,154 @@
+M5 Windows 复测结果（handoff-to-windows-acceptance.md / 基线 431997b）
+
+本仓库收录脱敏摘要；原始日志和桌面截图仅保留在本地。
+生成时间：2026-11-20 15:25（本地 UTC+8）
+执行者：Claude（技术步骤与数据分析）+ 用户（手机连接、A 主观听测、B 裁决：交 Linux 侧）
+
+============================================================
+环境 / 产物校验
+============================================================
+手机：Xiaomi M2007J22C（cannon），Android 12；adb 设备 ID <REDACTED>
+Windows：11 企业版 10.0.26300
+工作目录：C:\AudioShareBeta（沿用，防火墙规则按此程序路径匹配）
+
+产物（SHA-256 均与 handoff 一致）：
+  AudioShareServer.exe       ee7a35a4bccad6bc09344fd7672c703e6e5466f60859ffb4ff6911fb69bd94d8
+  app-debug-arm64.apk        146e9ed29ff54de685591972dfa88100b310dfe08cb6b7556f041d2695ee8fad
+  audio-share-server-cmd-windows.zip 15bdec49e28df4913216bd224479191d36222256c65e9eb1d9013712b63cd89e（仅校验，未运行）
+
+服务端：0.5.0-beta。旧 server.log 已改名 server.800c40c.log；新日志自 06:47:35 UTC 起。
+        14:47:35 local 启动 GUI，手动点「启动服务器」后于 06:49:42 UTC 监听：
+        v2 [::]:65531（fingerprint <REDACTED>），v1 <REDACTED>:65530。
+客户端：dev.audioshare.v2 0.2.0-beta（versionCode 2）。adb install -r 成功（未卸载），
+        lastUpdateTime 14:47:28；versionCode 未变，不作为判据。
+        配对沿用旧 pairing/clients.json（client_id <REDACTED>），无需重新配对。
+冒烟：session.accepted 后每 5 s 出现 media.stats、consumed_frames 增速 ≈48000/s，确认新二进制生效。
+
+日志：adb logcat -G 16M + -c 后后台持续抓取 client-all-2.log（4.07 MB）。
+      首条真实日志时间 14:50:04 local，早于 session 1 accepted（14:50:35），未溢出。
+      屏幕常亮 svc power stayon true（收尾已恢复 false）。
+
+============================================================
+用例 A — M5-03 听测
+============================================================
+窗口：14:51:04 – 14:56:29 local（06:51:04 – 06:56:29 UTC），5 分 25 秒
+
+用户主观判定（原话）：「PASS — 连续无新增异常」
+  （连续，无新增咔哒/爆音/断续）
+
+客户端（窗口内增量，按精确时间戳切窗）：
+  underrun 事件 6 → 131（+125）；对比上一轮：会话起累计 5576，本轮 A 结束时会话起累计约 131
+  concealed_frames 3053 → 60161；underrun_frames 2880 → 62880（窗口内新增约 60.0k 帧 ≈1.25 s）
+  gap 1→42；drift concealment 0→2；reanchor 0→1
+  soft_frames 4188 → 91129
+  underrun 事件为累计计数；concealed_frames/underrun_frames 为每次 fill 的实际帧数（新埋点生效）
+drift：63 个采样点，span_ms 10000–10082、sample_count 99–101，均满足发布门槛
+  ppm 范围 -1865…28252；±100 内 4 点；|ppm|>10000 有 6 点（见「分析」节）
+  buffer_current_ms 0–56（target 60），1 点近 0
+服务端（窗口内）：
+  media.stats 65 条，consumed_frames 1440960→16809600（≈48000/s）
+  pending_frames 全程 0；pacer_calls_per_sec 299–300
+  media.drops 0 条（上一轮 5 min 时已开始持续 +1）
+
+判定：PASS（用户主观听感 + underrun 大幅下降 + 服务端零丢帧）
+
+============================================================
+用例 B — M5-04 漂移基线
+============================================================
+第一次尝试作废：14:59:13 开始，14:59:19（仅 6 秒）客户端主动停止，
+  logcat「session stopped (701 CLIENT_STOPPING) / ControlSessionService: stopped (User)」，
+  服务端 session.closed code=701。用户确认误触后重新连接，此段不计入 B。
+
+有效窗口：15:02:57 – 15:08:18 local（07:02:57 – 07:08:18 UTC），5 分 21 秒
+  session_id=2，07:02:33 UTC accepted，全程未中断
+
+用户裁决（原话）：「先不下结论，交 Linux 侧」
+  说明：用户未在 B 期间做主观听测判定，明确要求本轮 B 不写 PASS/FAIL，由 Linux 侧裁决。
+  下列为原始观测数据，不含本会话的结论。
+
+客户端（窗口内增量，按精确时间戳切窗）：
+  underrun 事件 6 → 184（+178）
+  concealed_frames 3399 → 33755；underrun_frames 2880 → 88239
+  gap 3→40；drift concealment 0→2（15:04:27、15:07:27，相隔约 3 分钟）
+  reanchor 0→8；soft_frames 2400 → 145616
+  drift/reanchor 计数突变时刻：
+    15:03:40 reanchor 0→1
+    15:04:27 drift 0→1
+    15:07:27 drift 1→2
+    15:07:53 reanchor 1→8（与极端 ppm 同刻）
+drift：62 个采样点，span_ms 最小 10000、sample_count 最小 98，均满足发布门槛
+  ppm 范围 -38082 … 336157；±100 内 12 点；|ppm|>10000 有 4 点：
+    15:03:20 ppm=47153（buffer=24）
+    15:03:45 ppm=10407（buffer=31）
+    15:07:53 ppm=-38082（buffer=53）
+    15:07:58 ppm=336157（buffer=39）
+  末 10 个采样回到 -261/-228/-84/95/911（短时收敛，但窗口内有极端离群）
+  buffer_current_ms 0–62（target 60），4 点近 0，无 >70
+服务端（窗口内）：
+  media.stats 64 条；consumed_frames 1200480→16326586，按首末样本所在 5 s 刻度估算
+    ≈48000/s（≈实时，精确计算区间见 server-B2.log）
+  pending_frames 0–3187，平均 2924（≈61 ms）；pacer_calls_per_sec 299–500
+    说明：A 窗口 pending 恒为 0、pacer 300/s；B 窗口全程处于 catch-up 状态。
+  media.drops 全程 0
+
+B 判定：未裁决 — 按用户要求交 Linux 侧。以上为供裁决的原始观测。
+±100 ppm 注入：NOT RUN（服务端无速率偏移开关）
+
+============================================================
+扩展观察（非验收窗口，留证）
+============================================================
+窗口：15:09:39 – 15:14:53 local（07:09:39 – 07:14:53 UTC），约 5 分 14 秒
+  客户端：underrun 195→270（+75）；gap 43→57；drift concealment 4→5；reanchor 8→12
+          soft_frames 151108→185811；drift ppm -16911…83216（|ppm|>10000 有 3 点）
+  服务端：15:09–15:11 catch-up 突发（pending 2880–3187、pacer 496–500/s），
+          media.drops 仍 0；15:12:43 起 pending 回落至 0、pacer 回到 299–300/s，
+          至窗口末保持 0、零丢帧。
+结论供参考：第 6 项 §7.4 catch-up 在本轮出现但自愈，未触发 pump 丢弃；
+  与上一轮「10 分钟后 pending 钉在 ~480 ms 且持续丢帧」不同，交 Linux 侧对比裁决。
+
+============================================================
+分析 / 给 Linux 侧的直接裁决数据
+============================================================
+1. underrun 门控修复（第 2 项）看起来有效：A 窗口 +125 事件，对比上一轮会话起累计 5576，
+   本轮 A 结束时会话起累计约 131，下降约 97.6%。
+2. pacer 小数帧修复（第 1 项）看起来有效：consumed ≈48000/s，A 窗口 pending 恒为 0、
+   pacer 300/s、零 pump 丢弃。但 B 窗口模式不同：pending 平均 2924 帧、pacer 最高 500/s，
+   全程 catch-up——这与 A 的差异请 Linux 侧重点复核，可能是 drift 离群的污染源。
+3. drift 发布门槛（第 3 项）部分有效：span≥10s、sample≥10 在 A/B 全部满足，
+   但极端 ppm 离群未被消除（A 最大 28252，B 最大 336157），且 B 的极端值与
+   reanchor 1→8 突跳同刻（15:07:53）。建议复核「扣除已知位置偏移」的算术，
+   或 catch-up 突发对 drift 估计器的污染。本会话按 §7 未改任何代码。
+4. trim 阈值（第 4 项）：A soft_frames 4188→91129（+72941）；B 2400→145616（+143216）；
+   reanchor_frames A 0→10906、B 0→71565。偏高，仅记录，未改代码。
+5. §7.4 catch-up（第 6 项）：B 窗口自愈式 pending 突发（~3000 帧 / 500 calls/s），
+   扩展窗口亦复现并自愈，均未触发丢弃，作为裁决数据提交。
+
+============================================================
+NOT RUN（不要写成 PASS）
+============================================================
+- 用例 C / M5-06 真实网络损伤全部行（Windows 无 tc netem）
+- M5-04 ±100 ppm 注入（服务端无速率偏移开关）
+- 双真机并发、60 分钟 soak、M5-05 L1 分项、M5-01 p50/p95/p99
+- 本机空闲对照实验（未做）
+- B 期间主观听测判定（用户要求交 Linux 侧，未做）
+（首次 B 尝试误触停止已作废，说明见「用例 B」节，非 NOT RUN 项。）
+
+============================================================
+证据文件（本目录）
+============================================================
+aflinger-A2.txt / client-A2.log / server-A2.log
+aflinger-B2.txt / client-B2.log / server-B2.log
+client-extended2.log / server-all2.log
+client-all-2.log（完整 logcat）/ client-all-2.err（空）
+desktop-before-start.png / desktop-after-click.png（GUI 启动前后）
+RESULT2.txt（本文件）
+
+============================================================
+收尾状态
+============================================================
+- logcat 后台抓取已停止；屏幕常亮已恢复（svc power stayon false）
+- Server 与手机播放未由本会话停止，由用户决定是否关闭
+- 旧 evidence/ 目录未改动；旧 server.log 保存为 server.800c40c.log
+- 如实说明：部署新 exe 时误将旧 800c40c 二进制覆盖，未留可回滚副本；
+  当前运行的是 431997b 新二进制（哈希已校验）。如需回滚请从 Linux 侧重新构建。
+- 未 push、未改任何代码。

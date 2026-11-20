@@ -1,0 +1,14 @@
+Forbidden test-support strings in all dex files:
+  TestSupportHarness     absent
+  pinnedSpki             absent
+  serverKey              absent
+  smoke-client           absent
+  config missing         absent
+  87fb33cd               absent
+
+APK entries matching testSupport/deviceTests/androidTest:
+  none
+
+Native libraries:
+  2512280  1981-01-01 01:01   lib/arm64-v8a/libaudio_share_client_v2_native.so
+  2858504  1981-01-01 01:01   lib/x86_64/libaudio_share_client_v2_native.so

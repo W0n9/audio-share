@@ -1,0 +1,7 @@
+Windows portable Server: NOT RUN
+
+Reason: the build host is Linux x86_64; no Windows host, no `cargo-xwin`, and
+no Wine are available. The Linux deb/AppImage and as-cmd tarball were not
+renamed or presented as Windows artifacts. Windows packaging remains an
+explicit NOT RUN for this local acceptance pass; the CI workflow still builds
+the Windows portable Server and as-cmd on windows-latest.

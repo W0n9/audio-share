@@ -1,0 +1,17 @@
+dev.audioshare.v2.AppStateReducerTest: 13 tests, 0 failures, 0 errors
+dev.audioshare.v2.AudioShareAppTest: 7 tests, 0 failures, 0 errors
+dev.audioshare.v2.ControlFixtureReplayTest: 9 tests, 0 failures, 0 errors
+dev.audioshare.v2.CredentialStoreTest: 4 tests, 0 failures, 0 errors
+dev.audioshare.v2.DerSignatureTest: 5 tests, 0 failures, 0 errors
+dev.audioshare.v2.ErrorGuidanceTest: 5 tests, 0 failures, 0 errors
+dev.audioshare.v2.ForegroundServiceContractTest: 8 tests, 0 failures, 0 errors
+dev.audioshare.v2.MediaFixtureReplayTest: 9 tests, 0 failures, 0 errors
+dev.audioshare.v2.MediaPlaybackTest: 9 tests, 0 failures, 0 errors
+dev.audioshare.v2.PairingPayloadTest: 10 tests, 0 failures, 0 errors
+dev.audioshare.v2.PairingStateRelayTest: 2 tests, 0 failures, 0 errors
+dev.audioshare.v2.QrPayloadDecoderTest: 2 tests, 0 failures, 0 errors
+dev.audioshare.v2.ReconnectPolicyTest: 7 tests, 0 failures, 0 errors
+dev.audioshare.v2.SessionCommandExecutorTest: 4 tests, 0 failures, 0 errors
+dev.audioshare.v2.SessionStartupPolicyTest: 3 tests, 0 failures, 0 errors
+dev.audioshare.v2.SessionStateRelayTest: 10 tests, 0 failures, 0 errors
+TOTAL: 107 tests, 0 failures, 0 errors
