@@ -525,6 +525,12 @@ impl MediaSession {
         self.drift.window_stats()
     }
 
+    /// The number of rejected adjacent clock observations in this measurement
+    /// series. This counts intervals, not stalls, trims or re-anchors.
+    pub(crate) const fn drift_discontinuous_intervals(&self) -> u64 {
+        self.drift.discontinuous_intervals()
+    }
+
     /// The smooth playback-rate correction currently commanded, in ppm
     /// (clamped to ±100). The Kotlin player applies it through
     /// `AudioTrack.setPlaybackRate`.
