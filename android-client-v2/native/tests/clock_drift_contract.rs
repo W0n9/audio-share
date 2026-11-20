@@ -43,6 +43,43 @@ fn no_estimate_until_the_ten_second_window_is_full() {
 }
 
 #[test]
+fn repeated_shared_stalls_do_not_starve_a_real_drift_estimate() {
+    let mut e = estimator();
+    for now in (0..=35_000u64).step_by(100) {
+        // A common 61 ms pause every 5 s; capture remains +75 ppm faster
+        // than playback over the observed media progress.
+        let active_ms = now - now / 5_000 * 61;
+        let playback = active_ms * 48;
+        let capture = playback * 1_000_075 / 1_000_000;
+        e.observe(now, capture, playback);
+        if now >= WINDOW_MS {
+            let ppm = e
+                .ppm()
+                .unwrap_or_else(|| panic!("periodic shared pauses starved the window at {now} ms"));
+            assert!(
+                (73..=76).contains(&ppm),
+                "expected roughly +75 ppm at {now} ms, got {ppm}"
+            );
+        }
+    }
+}
+
+#[test]
+fn unequal_progress_during_a_shared_stall_invalidates_the_drift_window() {
+    let mut e = estimator();
+    feed(&mut e, 75);
+    assert_eq!(e.ppm(), Some(75));
+    let playback = (WINDOW_MS + 19) * 48; // 81 ms short
+    let capture = (WINDOW_MS + 39) * 48 * 1_000_075 / 1_000_000; // 61 ms short
+    e.observe(WINDOW_MS + 100, capture, playback);
+    assert_eq!(
+        e.ppm(),
+        None,
+        "a 20 ms relative jump during a stall is not drift"
+    );
+}
+
+#[test]
 fn a_capture_clock_running_fast_is_a_positive_ppm() {
     let mut e = estimator();
     feed(&mut e, 100);
