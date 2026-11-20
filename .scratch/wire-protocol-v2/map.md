@@ -24,6 +24,13 @@
 - Android 现代化（`.scratch/android-modernization/`）：map `complete`，13–27 全 `resolved`；2026-11-18 15:31 以 `--no-ff` 合入 beta 集成分支 `89f84b0`（JVM 250 tests/variant PASS，`VERSION`/versionName/versionCode 未变，未 push）。该合入位于原 `v0.5.0-beta` tag（`8858c91`）之后 41 个提交。
 - [35 — Beta tag 位置裁决](issues/35-beta-tag-placement-decision.md#answer)：`resolved`。维护者 2026-11-18 选 **B**（发布含现代化的构建）；tag 目标取当前 tip `362d023`（含 33），本地删除并重建 annotated `v0.5.0-beta`，不新增 `.2`。产物重建与证据重跑见工单 24。
 - [24 — Beta 发布](issues/24-beta-release-packaging-signing.md)：`resolved`。产物从 `362d023` 重建，JVM 250/250；最终产物真机/Windows/EMULATOR 复验按代码等价性 `WAIVED`（不是 `PASS`）。2026-11-18 已发布 pre-release：`https://github.com/W0n9/audio-share/releases/tag/v0.5.0-beta`（7 资产，digest 全匹配）。
+- [M5-03/04/05/06 实现与两轴 review](issues/m5-03-bounded-jitter-buffer.md#answer)：2026-11-19 在 `integration/m5`（从 `8c35411` 另拉）完成四张 agent 工单并逐个 `--no-ff` 合入，tip `800c40c`。M5-03 有界 jitter buffer（60/200 可配置）+ deadline late drop + gap/underrun silence concealment + ring target 软修剪；M5-04 10 s 漂移估计 + ≤±100 ppm 平滑 + >20 ms/>5 s 整帧修正 + >200 ms re-anchor；M5-05 packetizer 按 `chunk.start_frame` 重锚 timestamp + `media.drops` 服务端丢弃埋点；M5-06 host 侧 §11.2 矩阵逐行 + 70k seeded parser fuzz。两轴 code-review 发现的漂移窗口、deadline late-drop、A.8 污染、target 修剪、underrun 计数、Kotlin 常量重复、行 6 仿真未发送等问题已在 `f799599` 修复。host 测试：v2-transport 289、audio-share-core 118、native 227×2、JVM 268，全 PASS；真机听测/损伤矩阵/60 min soak 与真实网络行一律 **NOT RUN**（四张工单状态 `ready-for-human`，未写 resolved）。未 push、无 Co-Authored-By。第二轮 review（针对 `f799599`）又修复：deadline 卡死回归、underrun 误报（改为平台计数门控 + 预缓冲）、软修剪滞回（维护者裁决保留，独立计数/日志、不计 concealment）、软修剪污染漂移窗口、config 变更重建 jitter 几何、native clippy；合入 `800c40c`。
+
+- [M5 Windows 真机验收 2026-11-20](evidence/m5-windows-evidence-2026-11-20/README.md)：用例 A（M5-03）**主观 PASS**，但 underrun 5576/5min、soft trim 63263 帧/28 次、reanchor 3 次，计数异常；用例 B（M5-04）**FAIL（用户裁决）**，`drift_ppm` 499 单次离群、服务端 `pump_dropped_chunks` 持续（pending≈483 ms、`queue_dropped_newest=0`）。开 [M5-08 根因诊断](issues/m5-08-pump-drop-trim-underrun-investigation.md)（`ready-for-agent`）。网络行、±100 ppm、双机/60 min、M5-05 L1、M5-01 均 NOT RUN。
+
+- M5-08 修复 1+2+3+5 已合入 `431997b`（pacer 小数帧进位、underrun 门控、漂移窗口、`media.stats`）；host 测试 292/118/231×2/271 + clippy 干净，Windows/APK 已重建。真机复测 NOT RUN。第 4/6/7 项待复测数据裁决。
+
+- [M5 复测 2026-11-20（431997b）](evidence/m5-windows-evidence-2026-11-20/evidence-2/RESULT2.txt)：用例 A **PASS**（用户主观连续；underrun 5576→+125；`concealed_frames` 可测；服务端 pending=0、零丢弃）；用例 B **FAIL（open，Linux 侧裁决）**（drift ppm 极端离群 −38k/+336k，与 reanchor 1→8 突跳同刻；buffer 有界、零丢弃）。第 1/2/5 项有效；§7.4 以 `media.stats` 为守卫关闭；第 3/4 项转 [M5-09](issues/m5-09-drift-step-and-burst-trim.md)（`needs-triage`，用户决定暂不改）；第 7 项待裁决。`integration/m5` 保持 `431997b`，**不 FF beta**（B 未过）。
 
 ## Fog
 
@@ -31,20 +38,31 @@
 
 | 顺序 | 工单 | Status | Blocked by | 下一步 | 执行者 |
 |---|---|---|---|---|---|
-| 1 | [M5-03 有界 jitter buffer](issues/m5-03-bounded-jitter-buffer.md) | `ready-for-agent` | — | M5-02 已 resolved，依赖解除；实现 jitter buffer + ring 修剪 + late drop + concealment | agent |
-| 2 | [M5-05 上游 pacing 调优](issues/m5-05-upstream-pacing-tuning.md) | `ready-for-agent` | — | 用阶段 1 埋点拆采集 / pending / pacer | agent |
-| 3 | [M5-01 端到端可听延迟基线](issues/m5-01-end-to-end-latency-baseline.md) | `ready-for-human` | — | 声学回环工装 + 外部录音，产出可听延迟 p50/p95/p99 | 人工（需录音设备） |
-| 4 | [33 — Server 日志补 v2 会话事件](issues/33-server-log-session-events.md) | `ready-for-human` | — | 在 Windows 用重建产物复跑 GUI 701 路径 | 人工（代码已合入 `de83686`） |
+| 1 | [M5-03 有界 jitter buffer](issues/m5-03-bounded-jitter-buffer.md) | `ready-for-human` | — | 代码已合入 `800c40c`；待真机听测「无新增可听咔哒」 | 人工（真机） |
+| 2 | [M5-05 上游 pacing 调优](issues/m5-05-upstream-pacing-tuning.md) | `ready-for-human` | — | timestamp 重锚 + 丢弃埋点已合入；L1 分项与调优 NOT RUN（实验分支不转正） | 人工（需真机/L1） |
+| 3 | [M5-04 时钟漂移修正](issues/m5-04-clock-drift-correction.md) | `ready-for-human` | — | 代码已合入；待真机 ±100 ppm 注入验证 | 人工（真机） |
+| 4 | [M5-06 损伤矩阵 + fuzz](issues/m5-06-impairment-matrix-fuzz.md) | `ready-for-human` | — | host 矩阵/fuzz 已合入；真实网络/设备行 NOT RUN | 人工（真机矩阵） |
+| 5 | [M5-01 端到端可听延迟基线](issues/m5-01-end-to-end-latency-baseline.md) | `ready-for-human` | — | 声学回环工装 + 外部录音，产出可听延迟 p50/p95/p99 | 人工（需录音设备） |
+| 6 | [33 — Server 日志补 v2 会话事件](issues/33-server-log-session-events.md) | `ready-for-human` | — | 在 Windows 用重建产物复跑 GUI 701 路径 | 人工（代码已合入 `de83686`） |
 
-M5 其余工单被依赖阻塞：M5-04（漂移）← M5-03；M5-06（损伤矩阵 + fuzz）← M5-03,04；
-M5-07（60 min soak + **p95/p99 预算**）← M5-06。M5-02 已 `resolved`（生产提交 `d03865b`
-已合入集成分支；听测 PASS；埋点复测 NOT RUN）。34 已 `resolved`；24 已发布
-（`v0.5.0-beta` pre-release）。
+M5-03…M5-06 已在本轮实现并逐个合入 `integration/m5`（tip `800c40c`），四张工单状态均为
+`ready-for-human`；M5-07（60 min soak + **p95/p99 预算**）依赖已解除，仍为人工门
+（需真机值守 + 人为注入抖动/重连，agent 只备工装）。M5-02 已
+`resolved`（生产提交 `d03865b` 已合入集成分支；听测 PASS；埋点复测 NOT RUN）。
+34 已 `resolved`；24 已发布（`v0.5.0-beta` pre-release）。
+
+**M5 集成分支（2026-11-19）**：从 `integration/wire-protocol-v2-beta @ 8c35411`
+另拉 `integration/m5`，专门承载 M5 工单，不改 beta 发布线。实施范围按 frontier
+取 M5-03 + M5-05（互不依赖），后续 M5-04、M5-06 host 侧随依赖推进；M5-01 与
+M5-07 为人工门，不进 implement-spec。Q1（60/200 ms）未裁决，M5-03 先按规范值
+实现、数值做成可配置。
 
 **M5 开票（2026-11-19）**：基于 L1 阶段 1 实测开 7 张工单 `m5-01`…`m5-07`，用 `M5-NN`
 编号避开 16–21 冲突。L1 阶段 1 结果见 [l1-handoff/l1-results.md](l1-handoff/l1-results.md)：
 采集→提交 p50 96.8 ms（ring ~46 + 上游 ~55），AudioTrack 128→42 ms 真机听测连续、
 21 ms 爆音，端到端可听延迟推算 ≈225 ms（未实测出声）。
+
+**2026-11-20 维护者收口裁决**：M5-09 是用例 B 及 M5 合入 beta 的必做项；先取得能失败的 host 复现，再只修证据支持的原因。不拆出 M5-03 单独发布，不打 tag。M5-01 可并行安排，M5-07 等 B 通过再排；其余新 M5 人工验收暂缓。本轮按维护者要求入库脱敏证据摘要；全量系统日志、有隐私内容的原始截图及构建产物保留在本地，不进提交。
 
 **待裁决（尚未开票）**
 
