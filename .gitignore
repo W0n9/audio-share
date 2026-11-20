@@ -17,3 +17,9 @@ __pycache__/
 keystore.properties
 *.jks
 *.keystore
+
+# Local build artifacts and handoff binaries (reproducible from commit + hashes in evidence)
+/.build-artifacts/
+.scratch/**/*.apk
+.scratch/**/*.exe
+.scratch/**/*.zip
