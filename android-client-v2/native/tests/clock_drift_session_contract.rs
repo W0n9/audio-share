@@ -88,12 +88,6 @@ fn drive(session: &mut MediaSession, from_ms: u64, to_ms: u64, ppm: i32, underru
     }
 }
 
-/// Fixed, identical 48 kHz source/sink clocks. The receiver normally sees one
-/// PCM packet per ms. Only its delivery is held in `holds`; at each release,
-/// the queued packets arrive before the next reader iteration. The reader
-/// advances over the oldest frames using the Kotlin player's 60/80/200 ms
-/// thresholds and submits only available frames (or accepted underrun silence
-/// when enabled as the control). It does not inject estimator positions.
 struct DeliverySample {
     now_ms: u64,
     raw_ppm: Option<i32>,
@@ -107,7 +101,10 @@ struct DeliveryTrace {
     trimmed_frames: u64,
 }
 
-fn delivery_trace(
+/// Host-only reader/sink model, not the Kotlin loop or AudioTrack. It submits
+/// delivered frames (or accepted silence in the control) and acknowledges only
+/// the hard trims needed for the burst scenario through the real native seam.
+fn model_delivery_to_media_session(
     holds: &[(u64, u64)],
     until_ms: u64,
     capture_ppm: i32,
@@ -137,17 +134,13 @@ fn delivery_trace(
             }
         }
         let mut available = media.delivered_frames() - read;
-        if available > playback_at(80) {
-            let trimmed = available - playback_at(60);
-            if available > playback_at(200) {
-                media.record_trim(trimmed);
-            } else {
-                media.record_soft_trim(trimmed);
-            }
+        if available > playback_at(media.jitter_config().hard_limit_ms.into()) {
+            let trimmed = available - playback_at(TARGET_MS.into());
+            media.record_trim(trimmed);
             read += trimmed;
             available -= trimmed;
         }
-        if now > 60 {
+        if now > u64::from(TARGET_MS) {
             let frames = available.min(48);
             accepted += frames;
             read += frames;
@@ -184,7 +177,7 @@ fn delivery_trace(
 
 #[test]
 fn paced_delivery_measures_equal_clocks_without_trimming() {
-    let trace = delivery_trace(&[], 17_000, 0, false);
+    let trace = model_delivery_to_media_session(&[], 17_000, 0, false);
     assert_eq!(trace.samples.last().unwrap().raw_ppm, Some(0));
     assert!(trace
         .samples
@@ -208,7 +201,7 @@ fn catch_up_delivery_does_not_publish_a_playback_clock_outlier() {
         (14_250, 14_501),
         (14_900, 15_154),
     ];
-    let trace = delivery_trace(&holds, 27_000, 0, false);
+    let trace = model_delivery_to_media_session(&holds, 27_000, 0, false);
     assert_eq!(trace.trim_events, 7);
     assert_eq!(trace.trimmed_frames, 64_656);
     let worst = trace
@@ -232,7 +225,7 @@ fn catch_up_delivery_does_not_publish_a_playback_clock_outlier() {
 
 #[test]
 fn one_stalled_delivery_invalidates_old_drift_and_recovers_real_nonzero_drift() {
-    let trace = delivery_trace(&[(11_500, 11_751)], 24_000, 75, false);
+    let trace = model_delivery_to_media_session(&[(11_500, 11_751)], 24_000, 75, false);
     assert_eq!(trace.trim_events, 1);
     let before = trace
         .samples
@@ -266,7 +259,7 @@ fn one_stalled_delivery_invalidates_old_drift_and_recovers_real_nonzero_drift() 
 
 #[test]
 fn accepted_silence_does_not_turn_a_capture_stall_into_clock_drift() {
-    let trace = delivery_trace(&[(11_000, 11_251)], 23_000, 0, true);
+    let trace = model_delivery_to_media_session(&[(11_000, 11_251)], 23_000, 0, true);
     let during_stall = trace
         .samples
         .iter()
@@ -287,13 +280,66 @@ fn short_delivery_batches_do_not_starve_the_drift_window() {
         .step_by(25)
         .map(|start| (start, start + 20))
         .collect();
-    let trace = delivery_trace(&holds, 12_000, 0, false);
+    let trace = model_delivery_to_media_session(&holds, 12_000, 0, false);
     assert_eq!(trace.trim_events, 0);
     assert!(trace
         .samples
         .iter()
         .filter(|sample| sample.now_ms >= 10_200)
         .all(|sample| sample.raw_ppm.is_some()));
+}
+
+#[test]
+fn diagnostic_interval_preserves_a_recovered_outlier_and_reports_missing_coverage() {
+    let mut media = session();
+    drive(&mut media, 0, 9_900, 0, 0);
+    let warmup = media.take_drift_interval_at(9_900);
+    assert_eq!(
+        (warmup.reports, warmup.valid_estimates, warmup.extrema_ppm),
+        (100, 0, None)
+    );
+    assert_eq!(warmup.max_report_gap_ms, 100);
+
+    let mut captured = playback_at(9_900);
+    for now in (10_000..=15_000).step_by(100) {
+        let end = playback_at(now) - if now == 10_000 { playback_at(30) } else { 0 };
+        media.on_datagram(now, &datagram((now / 100) as u32, captured, end - captured));
+        captured = end;
+        media.record_playback_at(
+            now,
+            PlaybackReport {
+                submitted_bytes: playback_at(now) * FRAME_BYTES,
+                underruns: 0,
+                buffer_current_ms: TARGET_MS,
+            },
+        );
+    }
+    assert_eq!(
+        media.drift_ppm(),
+        Some(0),
+        "last-report-only logging would miss the outlier"
+    );
+    let interval = media.take_drift_interval_at(15_000);
+    assert_eq!((interval.start_ms, interval.end_ms), (9_900, 15_000));
+    assert_eq!((interval.reports, interval.valid_estimates), (51, 51));
+    assert_eq!(interval.extrema_ppm, Some((-175, 0)));
+    assert_eq!(interval.max_report_gap_ms, 100);
+
+    let empty = media.take_drift_interval_at(20_000);
+    assert_eq!((empty.start_ms, empty.end_ms), (15_000, 20_000));
+    assert_eq!(
+        (empty.reports, empty.valid_estimates, empty.extrema_ppm),
+        (0, 0, None)
+    );
+    assert_eq!(empty.max_report_gap_ms, 5_000);
+
+    drive(&mut media, 20_100, 20_100, 0, 0);
+    let resumed = media.take_drift_interval_at(20_100);
+    assert_eq!(resumed.reports, 1);
+    assert_eq!(
+        resumed.max_report_gap_ms, 5_100,
+        "a gap must carry across the export boundary"
+    );
 }
 
 #[test]
