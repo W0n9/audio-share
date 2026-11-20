@@ -42,7 +42,7 @@ pub const DRIFT_WINDOW_MS: u64 = 10_000;
 /// needs ~1 s of the window's tail, so this never delays a genuine estimate).
 pub const MIN_WINDOW_SAMPLES: usize = 10;
 /// Allow a playout target's worth of short-term batching when comparing clock
-/// progress between reports. A deficit on either side or a step in their
+/// progress between reports. A large unmatched deficit or a step in the
 /// difference beyond 60 ms is not reliable clock progress. This is a window
 /// continuity budget after known position jumps are removed, not a ppm limit
 /// or the reader's trim policy. Even 10,000 ppm moves the clocks apart by
@@ -106,19 +106,19 @@ impl DriftEstimator {
     /// Fold one (session time, capture position, playback position) sample.
     /// A stalled observation or backlog discontinuity discards the old window.
     pub fn observe(&mut self, now_ms: u64, capture_frames: u64, playback_frames: u64) {
-        if self
-            .samples
-            .back()
-            .is_some_and(|last| self.discontinuous(last, now_ms, capture_frames, playback_frames))
-        {
-            self.reset();
-            self.discontinuous_intervals = self.discontinuous_intervals.saturating_add(1);
-        }
         let sample = DriftSample {
             now_ms,
             capture_frames,
             playback_frames,
         };
+        if self
+            .samples
+            .back()
+            .is_some_and(|last| self.discontinuous(*last, sample))
+        {
+            self.reset();
+            self.discontinuous_intervals = self.discontinuous_intervals.saturating_add(1);
+        }
         match self.samples.back() {
             // Ignore a non-advancing duplicate instant; keep the newest value.
             Some(last) if now_ms <= last.now_ms => {
@@ -140,22 +140,19 @@ impl DriftEstimator {
         }
     }
 
-    fn discontinuous(
-        &self,
-        last: &DriftSample,
-        now_ms: u64,
-        capture_frames: u64,
-        playback_frames: u64,
-    ) -> bool {
-        let capture = (i128::from(capture_frames) - i128::from(last.capture_frames)) * 1_000;
-        let playback = (i128::from(playback_frames) - i128::from(last.playback_frames)) * 1_000;
+    fn discontinuous(&self, last: DriftSample, sample: DriftSample) -> bool {
+        let capture = (i128::from(sample.capture_frames) - i128::from(last.capture_frames)) * 1_000;
+        let playback =
+            (i128::from(sample.playback_frames) - i128::from(last.playback_frames)) * 1_000;
         let rate = i128::from(self.sample_rate);
-        let nominal = i128::from(now_ms.saturating_sub(last.now_ms)) * rate;
+        let nominal = i128::from(sample.now_ms.saturating_sub(last.now_ms)) * rate;
         let tolerance = rate * i128::from(OBSERVATION_TOLERANCE_MS);
-        // Two nearly equal advances are not enough: both sides can starve.
-        nominal - capture > tolerance
-            || nominal - playback > tolerance
-            || (capture - playback).abs() > tolerance
+        let relative_step = (capture - playback).abs();
+        // A shared pause need not invalidate the relative clock observation.
+        // When either side is stalled, tolerate only one nominal millisecond
+        // of skew (the observation clock is sampled in whole milliseconds).
+        relative_step > tolerance
+            || (nominal - capture.min(playback) > tolerance && relative_step > rate)
     }
 
     /// Rejected adjacent observation intervals for this measurement series.

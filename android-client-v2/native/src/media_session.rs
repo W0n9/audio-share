@@ -148,6 +148,19 @@ pub struct PlaybackReport {
     pub buffer_current_ms: u32,
 }
 
+/// Local-only summary of all playback reports since the last snapshot.
+/// An unavailable estimate is still a report; missing reports instead widen
+/// `max_report_gap_ms`. Bounds and gaps use the playback report clock.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DriftInterval {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub reports: u64,
+    pub valid_estimates: u64,
+    pub extrema_ppm: Option<(i32, i32)>,
+    pub max_report_gap_ms: u64,
+}
+
 /// The four §8 intervention kinds, kept as a breakdown. `cumulative_concealments`
 /// remains the single §9 field; the breakdown is for the local L1 log line so
 /// the kind recorded by [`MediaSession::record_concealment`] is not lost.
@@ -239,6 +252,8 @@ pub struct MediaSession {
     drift: DriftEstimator,
     drift_controller: DriftController,
     drift_ppm: Option<i32>,
+    drift_interval: DriftInterval,
+    last_playback_report_ms: u64,
     /// Cumulative artificial playback-position jumps (soft trim, hard
     /// re-anchor, drift deletion) removed from the estimate's playback side
     /// (M5-08). A discontinuity is a position step, not a rate: subtracting it
@@ -319,6 +334,8 @@ impl MediaSession {
             drift: DriftEstimator::new(drift_config.window_ms, geometry.sample_rate),
             drift_controller: DriftController::new(drift_config),
             drift_ppm: None,
+            drift_interval: DriftInterval::default(),
+            last_playback_report_ms: 0,
             drift_playback_step: 0,
             drift_capture_step: 0,
             pending_drift_frames: 0,
@@ -462,12 +479,14 @@ impl MediaSession {
     /// Uses the session's monotonic clock; host tests drive the deterministic
     /// [`Self::record_playback_at`] entry point instead.
     pub fn record_playback(&mut self, report: PlaybackReport) {
-        let now_ms = self
-            .clock_start
+        self.record_playback_at(self.playback_clock_ms(), report);
+    }
+
+    fn playback_clock_ms(&self) -> u64 {
+        self.clock_start
             .elapsed()
             .as_millis()
-            .min(u128::from(u64::MAX)) as u64;
-        self.record_playback_at(now_ms, report);
+            .min(u128::from(u64::MAX)) as u64
     }
 
     /// Record the platform playback facts at an injected session instant.
@@ -493,6 +512,19 @@ impl MediaSession {
                 .saturating_sub(self.drift_capture_step);
             self.drift.observe(now_ms, capture, playback);
             self.drift_ppm = self.drift.ppm();
+        }
+        let interval = &mut self.drift_interval;
+        interval.reports = interval.reports.saturating_add(1);
+        interval.max_report_gap_ms = interval
+            .max_report_gap_ms
+            .max(now_ms.saturating_sub(self.last_playback_report_ms));
+        self.last_playback_report_ms = now_ms;
+        if let Some(ppm) = self.drift_ppm {
+            interval.valid_estimates = interval.valid_estimates.saturating_add(1);
+            interval.extrema_ppm = Some(match interval.extrema_ppm {
+                Some((min, max)) => (min.min(ppm), max.max(ppm)),
+                None => (ppm, ppm),
+            });
         }
         if self.pending_drift_frames == 0 {
             let decision = self.drift_controller.update(
@@ -523,6 +555,27 @@ impl MediaSession {
     /// (M5-08).
     pub fn drift_window(&self) -> (u64, usize) {
         self.drift.window_stats()
+    }
+
+    /// Drain one local diagnostic interval on the live playback clock.
+    pub(crate) fn take_drift_interval(&mut self) -> DriftInterval {
+        self.take_drift_interval_at(self.playback_clock_ms())
+    }
+
+    /// Drain one local diagnostic interval at an injected playback-clock instant.
+    pub fn take_drift_interval_at(&mut self, now_ms: u64) -> DriftInterval {
+        let mut interval = std::mem::replace(
+            &mut self.drift_interval,
+            DriftInterval {
+                start_ms: now_ms,
+                ..DriftInterval::default()
+            },
+        );
+        interval.end_ms = now_ms;
+        interval.max_report_gap_ms = interval
+            .max_report_gap_ms
+            .max(now_ms.saturating_sub(self.last_playback_report_ms));
+        interval
     }
 
     /// The number of rejected adjacent clock observations in this measurement

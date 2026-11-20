@@ -1106,6 +1106,7 @@ impl Session {
             diagnostics,
             drift_ppm,
             drift_window,
+            drift_interval,
             discontinuous_intervals,
             correction_ppm,
             concealments,
@@ -1123,6 +1124,7 @@ impl Session {
                 diagnostics,
                 media.drift_ppm(),
                 media.drift_window(),
+                media.take_drift_interval(),
                 media.drift_discontinuous_intervals(),
                 media.drift_correction_ppm(),
                 media.concealment_counts(),
@@ -1162,6 +1164,21 @@ impl Session {
                 reanchor_events,
             );
         }
+        let (min_ppm, max_ppm) = drift_interval.extrema_ppm.map_or_else(
+            || ("none".to_owned(), "none".to_owned()),
+            |(min, max)| (min.to_string(), max.to_string()),
+        );
+        log::info!(
+            "event = playback.drift_interval instance={} start_ms={} end_ms={} reports={} valid_estimates={} min_ppm={} max_ppm={} max_report_gap_ms={}",
+            diagnostics.stream_instance_id,
+            drift_interval.start_ms,
+            drift_interval.end_ms,
+            drift_interval.reports,
+            drift_interval.valid_estimates,
+            min_ppm,
+            max_ppm,
+            drift_interval.max_report_gap_ms,
+        );
         let (span_ms, sample_count) = drift_window;
         if let Some(drift_ppm) = drift_ppm {
             log::info!(
