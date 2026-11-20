@@ -1,6 +1,6 @@
 # M5-09：Windows + Android 真机用例 B
 
-状态：**NOT RUN**。这是工装说明，不是复测结果。历史 `431997b` 的结论仍为 [FAIL](../m5-windows-evidence-2026-11-20/evidence-2/RESULT2.txt)。
+状态：**NOT RUN**。这是工装说明，不是复测结果。历史 `431997b` 的结论仍为 [FAIL](../m5-windows-evidence-2026-11-20/evidence-2/RESULT2.txt)。下方 `4d23f89` APK 是首版候选，不含 `playback.drift_interval`，**不能用于下方的最终验收**，等待审查修复合入后重建。
 
 ## 产物与环境
 
@@ -17,8 +17,9 @@
 
 ## 采集与判定
 
-- 客户端收集 `playback.drift`、`playback.drift_window`、`playback.trim` 和缓冲/损失快照；Server 收集 `media.stats` / `media.drops`。`playback.drift_window status=rebuilding` 提供跨度、样本数和实际命令的 ppm，不提供原始 ppm；空白期不当作 0 ppm。`discontinuous_intervals` 是当前测量序列被拒绝的相邻采样区间累计数，不是独立停滞次数，也不是 re-anchor 次数。
-- 记录稳态原始 `drift_ppm` 的样本数、极值、中位数，以及所有窗失效/重建区间；中位数只用于诊断。满窗后的稳态原始估计应在 ±100 ppm 内，这是**本次基线试验**的判据，不是协议对物理时钟差的限幅。另验实际 `correction_ppm` 始终在 ±100 ppm 内。
+- 客户端收集 `playback.drift_interval`、`playback.drift`、`playback.drift_window`、`playback.trim` 和缓冲/损失快照；Server 收集 `media.stats` / `media.drops`。按同一会话和 stream `instance` 核对区间连续性，记录 `start_ms/end_ms`、`reports/valid_estimates`、`min_ppm/max_ppm` 和 `max_report_gap_ms`。`discontinuous_intervals` 计被拒绝的相邻采样区间，不计独立停滞或 re-anchor 事件。
+- 区分首次 10 s 窗口预热和后续测量缺口。检查从首次有效估计到窗口结束的诊断覆盖：除了明确记载的暖机/重建区间，`reports` 应非零、`valid_estimates` 应等于 `reports`，且不得有缺失区间或未解释的异常 `max_report_gap_ms`。明确记录所有重建与时长，不把 0 个估计、`none` 或缺日志当作 0 ppm；没有足够稳态覆盖或重建导致无法完成有效验收，不判 PASS。
+- 用**所有区间内产生的有效估计**的 `min_ppm/max_ppm` 判定 ±100 ppm，包括部分有效的重建区间；不能只看每 5 s `playback.drift` 的末值。记录样本数和极值；若只从 `playback.drift` 快照算中位数，明确标为快照中位数，仅作诊断。±100 ppm 是**本次基线试验**的原始估计判据，不是协议对物理时钟差的限幅。另验实际 `correction_ppm` 始终在 ±100 ppm 内。
 - 用同一会话的相邻 5 s 快照求 `reanchor_events` 与 `reanchor_frames` 增量，记录最大值及对应原始估计和缓冲数据。不得出现类似历史单周期 `+7` 次的突跳；发现超差或缺样，保留上下文，不事后剔除来判为通过。
 - 记录缓冲、Server pending 和丢弃。有异常就保留原始时间窗；不要据单个累计计数推断实际播放或单向延迟。
 - 记录结论 `PASS` / `FAIL` / `NOT RUN` 及原因；如果没有有效窗口，不能记作通过。原始日志仅留本地，回传时先移除地址、设备/身份标识和配对内容。
