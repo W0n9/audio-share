@@ -4,7 +4,14 @@
 
 ## 产物与环境
 
-1. 写下 `integration/m5` 的构建提交、Windows GUI Server 和 arm64 APK 的版本及 SHA-256。不要把 `431997b` 的 APK 当成修复版。若仅 Android 端变更且复用原 Server，应单独写 Server 的真实构建提交与哈希。
+1. 候选产物如下。下载或转移后核验 SHA-256，不要把 `431997b` 的 APK 当成修复版。以下文件仅在本地 `.build-artifacts/`，未发布。若候选代码再改，更新对应构建与哈希。
+
+   | 产物 | 构建提交与版本 | 本地路径 | SHA-256 |
+   |---|---|---|---|
+   | Windows GUI Server（复用，本轮未改 Server） | `431997b` / `0.5.0-beta` | `.build-artifacts/m5-windows-gui-431997b/AudioShareServer.exe` | `ee7a35a4bccad6bc09344fd7672c703e6e5466f60859ffb4ff6911fb69bd94d8` |
+   | Android arm64 debug APK | `4d23f89` / `0.2.0-beta`（code 2） | `.build-artifacts/m5-09-4d23f89/app-debug-arm64.apk` | `1a61d62bc71560d9c6b3f06ca48f96f0e32b9bfc7a3ac00f07a3b14e0efa8926` |
+
+   APK 构建 **PASS**：`assembleDebug -PandroidAbis=arm64-v8a`（JDK 21、`--offline`）重新编译了 native 库，`apksigner verify` 及 `aapt dump badging` 确认签名和 ABI。不是安装/真机 `PASS`。
 2. 使用 Windows GUI Server、单台 Android 真机、与历史 B 可比的正常 LAN、屏幕常亮。本轮不注入网络损伤或时钟偏移。记录 OS、Android API、设备型号（不记录序列号）、ABI、构建模式和采样率。
 3. 开始记录日志后进入一个新播放会话，连续播放至少 5 分钟。以该会话的 Server 与客户端日志对齐窗口；重连或误触导致的废弃段不拼入窗口。
 
