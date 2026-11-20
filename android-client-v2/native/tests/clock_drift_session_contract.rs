@@ -313,6 +313,8 @@ fn batched_platform_writes_keep_the_window_and_reveal_long_run_drift() {
     let mut estimates = Vec::new();
     let mut calibration = audio_share_client_v2_native::drift::DriftEstimator::new(10_000, RATE);
     let mut ideal_estimates = Vec::new();
+    let mut quantization_errors = Vec::new();
+    let mut predicted_bias_sum = 0.0;
     while now < 120_000 {
         seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         now += 80 + u64::from((seed >> 16) % 41); // 100 ms ±20 ms cadence
@@ -348,17 +350,28 @@ fn batched_platform_writes_keep_the_window_and_reveal_long_run_drift() {
             },
         );
         calibration.observe(now, delivered, ideal);
+        quantization_errors.push((now, ideal - accepted));
         if now >= 11_000 {
-            assert!(
-                media.drift_window().0 >= 10_000,
-                "window starved at {now} ms"
-            );
+            let (span, count) = media.drift_window();
+            assert!(span >= 10_000, "window starved at {now} ms");
             estimates.push(media.drift_ppm().expect("full window after startup"));
             ideal_estimates.push(
                 calibration
                     .ppm()
                     .expect("full unquantized reference window"),
             );
+
+            // Linear regression is linear in its measured positions. Compute
+            // only the extra slope contributed by the known rounding errors,
+            // independently of the actual capture/playback observations.
+            let window = &quantization_errors[quantization_errors.len() - count..];
+            let mean_ms = window.iter().map(|&(ms, _)| ms as f64).sum::<f64>() / count as f64;
+            let (covariance, variance) =
+                window.iter().fold((0.0, 0.0), |(cov, var), &(ms, lost)| {
+                    let dt = ms as f64 - mean_ms;
+                    (cov + dt * lost as f64, var + dt * dt)
+                });
+            predicted_bias_sum += covariance / variance * (1_000_000_000.0 / f64::from(RATE));
         }
     }
 
@@ -367,7 +380,9 @@ fn batched_platform_writes_keep_the_window_and_reveal_long_run_drift() {
     // Don't turn that fixture-specific result into a per-window tolerance.
     let mean = |values: &[i32]| f64::from(values.iter().sum::<i32>()) / values.len() as f64;
     let average = mean(&estimates);
-    let bias = average - mean(&ideal_estimates);
+    let reference = mean(&ideal_estimates);
+    let bias = average - reference;
+    let predicted_bias = predicted_bias_sum / estimates.len() as f64;
     estimates.sort_unstable();
     let min = estimates.first().unwrap();
     let median = estimates[estimates.len() / 2];
@@ -377,10 +392,12 @@ fn batched_platform_writes_keep_the_window_and_reveal_long_run_drift() {
         .filter(|ppm| ppm.unsigned_abs() > 100)
         .count();
     eprintln!("samples={} mean={average:.2} ppm min={min} median={median} max={max} exceeds_b={exceeds_b} calibration_bias={bias:.2} max_deficit_frames={max_deficit} max_backlog_step_frames={max_backlog_step}", estimates.len());
-    assert_eq!(
-        average.round() as i32,
-        77,
-        "expected long-run drift for this fixed sampling pattern"
+    assert_eq!(reference.round() as i32, CAPTURE_PPM);
+    // The two independently rounded integer ppm outputs can differ from the
+    // analytical bias by at most 0.5 + 0.5 ppm per window, also after averaging.
+    assert!(
+        (bias - predicted_bias).abs() <= 1.0,
+        "measured long-run bias {bias}, derived quantization bias {predicted_bias}"
     );
 }
 
