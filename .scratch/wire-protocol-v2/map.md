@@ -34,7 +34,7 @@
 
 - **M5-09 真机 B 复测（2026-11-21，`cb28095`）：FAIL**（[RESULT-B3](evidence/m5-09/RESULT-B3.md)）。稳态原始估计 −645…+532 ppm，67/67 区间至少一端越出 ±100；覆盖与 re-anchor 两项 PASS（3,277/3,277、gap ≤113 ms、re-anchor 0 次，历史 +7 未复现），Server pending 0、drops 0。无灾难性离群，但逐窗精度不达标。`correction_ppm` 35/67 顶在 ±100，应用 ring 0–26 ms（目标 60，按设计不触发插帧）。
 - **代码事实（非根因）**：`submitted_position()` 取 `AudioTrack.write` 接受字节数，不是硬件播放头；10 s 窗口下单个 2052 帧块约 4,275 ppm，与噪声量级一致。修复方向待裁决。
-- **M5-09 状态改 `needs-triage`**：选择改进播放侧时钟源后重测（判据不变），或由维护者修订判据。B 未过，不合 beta；M5-01 可并行，M5-07 继续等待 B。
+- **裁决（2026-11-21）**：走 [M5-11](issues/m5-11-playout-clock-source.md)（`ready-for-agent`）——先 host RED，再改用硬件播放位置作为播放侧时钟；修正饱和纳入同一票。判据不变，M5-09 改为 `Blocked by: M5-11`。B 未过，不合 beta；M5-01 可并行，M5-07 继续等待 B。
 - 前序：合成等时钟输入在真实 native 播放路径产生 +185,488 ppm；只禁用 trim 仍有离群，不是现场回放或已确认的真机根因。采样断续修复和两轴审查修复合入 `cb28095`，同步短停不再反复清窗，`playback.drift_interval` 保留诊断覆盖与极值。Native 默认/`test-support` 各 240 **PASS**，Clippy、fmt **PASS**（[host 证据](evidence/m5-09/host-drift.md)）。
 
 ## Fog

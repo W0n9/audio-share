@@ -2,9 +2,9 @@
 
 **What to build:** 先在 Rust host 上复现用例 B 的 `drift_ppm` 离群，然后只修能通过证据归因的代码问题。re-anchor 突跳是关联信号，不预先认定为因果。
 
-**Blocked by:** —
+**Blocked by:** M5-11（播放侧时钟源修复后重跑真机 B）
 
-**Status:** needs-triage（实施已合入 `cb28095`；真机 B 实测 FAIL，待维护者裁决：改进播放侧时钟源，还是修订判据）
+**Status:** ready-for-human（实施已合入 `cb28095`；B3 实测 FAIL 于漂移精度，裁决走 [M5-11](m5-11-playout-clock-source.md)）
 
 **Type:** task
 
