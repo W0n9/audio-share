@@ -988,13 +988,44 @@ impl Session {
 
     /// Record the platform playback facts (§9: the only playback evidence).
     pub fn record_playback(&self, submitted_bytes: u64, underruns: u64, buffer_current_ms: u32) {
+        self.record_playback_with_head(submitted_bytes, None, underruns, buffer_current_ms);
+    }
+
+    /// Record the platform playback facts plus the hardware playout position.
+    ///
+    /// `playback_head_frames` is the monotonic played frame count (frames, not
+    /// bytes) at this report instant; `None` means the platform could not
+    /// provide it and the accepted-bytes clock is used, counted as a fallback
+    /// and never treated as position 0 (M5-11). The older four-argument entry
+    /// point keeps working unchanged.
+    pub fn record_playback_with_head(
+        &self,
+        submitted_bytes: u64,
+        playback_head_frames: Option<u64>,
+        underruns: u64,
+        buffer_current_ms: u32,
+    ) {
         if let Some(media) = self.shared.media.lock().unwrap().clone() {
-            media.lock().unwrap().record_playback(PlaybackReport {
-                submitted_bytes,
-                underruns,
-                buffer_current_ms,
-            });
+            media.lock().unwrap().record_playback_with_head(
+                PlaybackReport {
+                    submitted_bytes,
+                    underruns,
+                    buffer_current_ms,
+                },
+                playback_head_frames,
+            );
         }
+    }
+
+    /// Local clock-source diagnostics for the active media session (M5-11).
+    pub fn playback_clock_stats(&self) -> crate::media_session::PlaybackClockStats {
+        self.shared
+            .media
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|media| media.lock().unwrap().playback_clock_stats())
+            .unwrap_or_default()
     }
 
     /// Record frames trimmed by the Kotlin reader's §8 hard-limit re-anchor.
@@ -1116,6 +1147,8 @@ impl Session {
             soft_trim_events,
             reanchor_frames,
             reanchor_events,
+            clock_source,
+            clock_stats,
         ) = {
             let mut media = media.lock().unwrap();
             let target_ms = media.jitter_config().target_ms;
@@ -1134,8 +1167,27 @@ impl Session {
                 media.soft_trim_events(),
                 media.trimmed_frames(),
                 media.trim_events(),
+                media.drift_clock_source(),
+                media.playback_clock_stats(),
             )
         };
+        // M5-11 L1 diagnostics: which clock fed the drift window and how often
+        // the hardware head was unavailable, restarted or given up. Keys match
+        // the PlaybackClockStats field names. Never on the wire.
+        if clock_stats.hardware_reports > 0
+            || clock_stats.hardware_missing_reports > 0
+            || clock_stats.accepted_fallback_reports > 0
+        {
+            log::info!(
+                "event = playback.drift_clock source={} hardware_reports={} hardware_missing_reports={} accepted_fallback_reports={} head_reanchor_events={} head_give_up_events={}",
+                clock_source,
+                clock_stats.hardware_reports,
+                clock_stats.hardware_missing_reports,
+                clock_stats.accepted_fallback_reports,
+                clock_stats.head_reanchor_events,
+                clock_stats.head_give_up_events,
+            );
+        }
         // §9 has NO drift or per-kind concealment field (adding one is a
         // protocol change needing maintainer adjudication), so the breakdown
         // reaches L1 tooling through these log lines and the JNI accessors.
@@ -1771,6 +1823,53 @@ mod tests {
         assert_eq!(diagnostics.underruns, 2);
         assert_eq!(diagnostics.buffer_current_ms, 40);
         assert_eq!(diagnostics.submitted_position, 96_064);
+    }
+
+    /// M5-11: the JNI/session layer carries the hardware head (frames) without
+    /// changing the §9 accepted-bytes `submitted_position`, counts a missing
+    /// head, and names the clock the drift window uses.
+    #[test]
+    fn playback_head_reports_reach_the_media_session() {
+        let session = playing_session();
+        session.record_playback_with_head(8 * 64, Some(1_234), 2, 40);
+        let stats = session.playback_clock_stats();
+        assert_eq!(stats.hardware_reports, 1);
+        assert_eq!(stats.accepted_fallback_reports, 0);
+        {
+            let media = session.shared.media.lock().unwrap().clone().expect("media");
+            let media = media.lock().unwrap();
+            assert_eq!(media.playback_head_frames(), Some(1_234));
+            assert_eq!(media.drift_clock_source(), "hardware");
+            assert_eq!(
+                media.submitted_position(),
+                96_064,
+                "§9 keeps the accepted-bytes definition"
+            );
+        }
+
+        // A single missing head is skipped, not treated as frame 0 and not a
+        // source switch.
+        session.record_playback(8 * 64, 1, 25);
+        let stats = session.playback_clock_stats();
+        assert_eq!(stats.hardware_reports, 1);
+        assert_eq!(stats.hardware_missing_reports, 1);
+        assert_eq!(stats.accepted_fallback_reports, 0);
+        let media = session.shared.media.lock().unwrap().clone().expect("media");
+        let media = media.lock().unwrap();
+        assert_eq!(media.playback_head_frames(), None);
+        assert_eq!(media.drift_clock_source(), "hardware");
+        drop(media);
+
+        // The legacy four-argument path (a session that never had a head)
+        // still measures on accepted bytes.
+        let legacy = playing_session();
+        legacy.record_playback(8 * 64, 1, 25);
+        let stats = legacy.playback_clock_stats();
+        assert_eq!(stats.hardware_reports, 0);
+        assert_eq!(stats.hardware_missing_reports, 0);
+        assert_eq!(stats.accepted_fallback_reports, 1);
+        let media = legacy.shared.media.lock().unwrap().clone().expect("media");
+        assert_eq!(media.lock().unwrap().drift_clock_source(), "accepted");
     }
 
     /// Attaching the ring is a one-time operation (media never crosses JNI per

@@ -30,6 +30,19 @@ internal object NativeMediaBridge : MediaPlayer.NativeMedia {
     override fun mediaFormatJson(handle: Long): String? = ClientNative.mediaFormatJson(handle)
     override fun recordPlayback(handle: Long, submittedBytes: Long, underruns: Long, bufferCurrentMs: Int) =
         ClientNative.recordPlayback(handle, submittedBytes, underruns, bufferCurrentMs)
+    override fun recordPlaybackWithHead(
+        handle: Long,
+        submittedBytes: Long,
+        playbackHeadFrames: Long,
+        underruns: Long,
+        bufferCurrentMs: Int,
+    ) = ClientNative.recordPlaybackWithHead(
+        handle,
+        submittedBytes,
+        playbackHeadFrames,
+        underruns,
+        bufferCurrentMs,
+    )
     override fun recordTrim(handle: Long, frames: Long) =
         ClientNative.recordTrim(handle, frames)
     override fun recordSoftTrim(handle: Long, frames: Long) =

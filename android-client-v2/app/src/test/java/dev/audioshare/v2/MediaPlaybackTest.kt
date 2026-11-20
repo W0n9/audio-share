@@ -552,6 +552,97 @@ class MediaPlaybackTest {
         )
     }
 
+    /**
+     * M5-11: `getPlaybackHeadPosition()` is a 32-bit unsigned counter that
+     * wraps roughly every 24.9 hours at 48 kHz. Extend it, do not re-anchor.
+     */
+    @Test
+    fun playback_head_extender_crosses_the_32_bit_wrap() {
+        val extender = PlaybackHeadExtender(48_000)
+        assertEquals(0xFFFF_FF00L, extender.update(0xFFFF_FF00L))
+        assertEquals(0x1_0000_0100L, extender.update(0x100L), "a wrap adds 2^32")
+        assertEquals(0x1_0000_0A80L, extender.update(0xA80L), "stays extended")
+    }
+
+    /**
+     * A rebuilt track restarts at 0. One over-tolerance rewind is held (it can
+     * be an interpolation-age rewind); only a second consecutive one is a
+     * restart, so native re-anchors exactly once.
+     */
+    @Test
+    fun playback_head_extender_restarts_after_a_track_rebuild() {
+        val extender = PlaybackHeadExtender(48_000)
+        assertEquals(500_000L, extender.update(500_000L))
+        assertEquals(500_000L, extender.update(0L), "the first rewind is held")
+        assertEquals(4_800L, extender.update(4_800L), "the second consecutive rewind restarts")
+    }
+
+    /** A single large interpolation-age rewind must not look like a restart. */
+    @Test
+    fun playback_head_extender_tolerates_a_single_age_rewind() {
+        val extender = PlaybackHeadExtender(48_000)
+        assertEquals(500_000L, extender.update(500_000L))
+        assertEquals(500_000L, extender.update(497_000L), "one >5 ms rewind is held")
+        assertEquals(500_500L, extender.update(500_500L), "a recovery is not a restart")
+    }
+
+    /** Sub-millisecond timestamp jitter must not look like a track restart. */
+    @Test
+    fun playback_head_extender_holds_through_timestamp_jitter() {
+        val extender = PlaybackHeadExtender(48_000)
+        assertEquals(10_000L, extender.update(10_000L))
+        assertEquals(10_000L, extender.update(9_999L), "a 1-frame rewind is jitter")
+        assertEquals(10_500L, extender.update(10_500L))
+    }
+
+    /** The rewind tolerance is 5 ms at the sink's own sample rate. */
+    @Test
+    fun head_rewind_tolerance_is_five_ms_at_the_sink_rate() {
+        assertEquals(240L, rewindToleranceFrames(48_000))
+        assertEquals(40L, rewindToleranceFrames(8_000))
+        assertEquals(1L, rewindToleranceFrames(0))
+        val extender = PlaybackHeadExtender(8_000)
+        assertEquals(10_000L, extender.update(10_000L))
+        assertEquals(10_000L, extender.update(9_960L), "40 frames is exactly 5 ms")
+        assertEquals(10_000L, extender.update(9_959L), "41 frames is the first strike")
+        assertEquals(9_958L, extender.update(9_958L), "the second strike restarts")
+    }
+
+    /**
+     * `getTimestamp()` reports a frame position and the nanoTime at which it
+     * was presented; interpolating to the query instant removes the mixer
+     * period staircase from the drift clock.
+     */
+    @Test
+    fun timestamped_head_is_interpolated_to_the_query_instant() {
+        assertEquals(48_480L, interpolatedHeadFrames(48_000L, 10_000_000L, 48_000))
+        assertEquals(
+            48_000L,
+            interpolatedHeadFrames(48_000L, -5_000_000L, 48_000),
+            "a future timestamp must not move the head backwards",
+        )
+        assertEquals(
+            1_000L,
+            interpolatedHeadFrames(1_000L, 10_000_000L, 0),
+            "no rate means no interpolation",
+        )
+    }
+
+    /** The report carries frames, and unavailable is -1, never frame 0. */
+    @Test
+    fun playback_report_carries_the_hardware_head_or_minus_one() {
+        val fake = RecordingNative()
+        val player = MediaPlayer(fake)
+        player.reportPlaybackToNative(7, 1_234, 56_789, 2, 25)
+        assertEquals(1_234L, fake.lastSubmittedBytes)
+        assertEquals(56_789L, fake.lastHeadFrames, "the head is frames, passed through")
+        assertEquals(2L, fake.lastUnderruns)
+        assertEquals(25, fake.lastBufferMs)
+
+        player.reportPlaybackToNative(7, 1_236, null, 3, 26)
+        assertEquals(-1L, fake.lastHeadFrames, "unavailable is a sentinel, never 0")
+    }
+
     private class RecordingNative : MediaPlayer.NativeMedia {
         var trimmedFramesTotal: Long = 0
         var softTrimmedFramesTotal: Long = 0
@@ -561,6 +652,10 @@ class MediaPlaybackTest {
         var driftRatePpm: Int = 0
         var pendingAdjust: Int = 0
         var driftFramesTotal: Int = 0
+        var lastSubmittedBytes: Long = -1
+        var lastHeadFrames: Long = Long.MIN_VALUE
+        var lastUnderruns: Long = -1
+        var lastBufferMs: Int = -1
         override fun getState(handle: Long): String = "PLAYING"
         override fun attachMediaRing(handle: Long, buffer: java.nio.ByteBuffer): Boolean = true
         override fun ringPosition(handle: Long): Long = 0
@@ -571,6 +666,18 @@ class MediaPlaybackTest {
             underruns: Long,
             bufferCurrentMs: Int,
         ) = Unit
+        override fun recordPlaybackWithHead(
+            handle: Long,
+            submittedBytes: Long,
+            playbackHeadFrames: Long,
+            underruns: Long,
+            bufferCurrentMs: Int,
+        ) {
+            lastSubmittedBytes = submittedBytes
+            lastHeadFrames = playbackHeadFrames
+            lastUnderruns = underruns
+            lastBufferMs = bufferCurrentMs
+        }
         override fun recordTrim(handle: Long, frames: Long) {
             trimmedFramesTotal += frames
         }
