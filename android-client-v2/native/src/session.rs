@@ -1105,8 +1105,11 @@ impl Session {
         let (
             diagnostics,
             drift_ppm,
+            drift_window,
             correction_ppm,
             concealments,
+            concealed_frames,
+            underrun_frames,
             soft_trimmed_frames,
             soft_trim_events,
             reanchor_frames,
@@ -1118,8 +1121,11 @@ impl Session {
             (
                 diagnostics,
                 media.drift_ppm(),
+                media.drift_window(),
                 media.drift_correction_ppm(),
                 media.concealment_counts(),
+                media.concealed_frames(),
+                media.underrun_frames(),
                 media.soft_trimmed_frames(),
                 media.soft_trim_events(),
                 media.trimmed_frames(),
@@ -1131,12 +1137,14 @@ impl Session {
         // reaches L1 tooling through these log lines and the JNI accessors.
         if concealments.total() > 0 {
             log::info!(
-                "event = playback.concealments gap={} underrun={} drift={} reanchor={} total={}",
+                "event = playback.concealments gap={} underrun={} drift={} reanchor={} total={} concealed_frames={} underrun_frames={}",
                 concealments.gap,
                 concealments.underrun,
                 concealments.drift,
                 concealments.reanchor,
                 concealments.total(),
+                concealed_frames,
+                underrun_frames,
             );
         }
         // Buffer-management accounting, deliberately NOT concealment (M5-03):
@@ -1153,10 +1161,13 @@ impl Session {
             );
         }
         if let Some(drift_ppm) = drift_ppm {
+            let (span_ms, sample_count) = drift_window;
             log::info!(
-                "event = {} drift_ppm={} correction_ppm={} buffer_current_ms={} buffer_target_ms={}",
+                "event = {} drift_ppm={} span_ms={} sample_count={} correction_ppm={} buffer_current_ms={} buffer_target_ms={}",
                 "playback.drift",
                 drift_ppm,
+                span_ms,
+                sample_count,
                 correction_ppm,
                 diagnostics.buffer_current_ms,
                 diagnostics.buffer_target_ms,

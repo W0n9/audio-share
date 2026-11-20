@@ -464,55 +464,75 @@ class MediaPlaybackTest {
     }
 
     /**
-     * Regression: an empty application ring between two paced datagrams is
-     * normal backpressure, not an underrun. The fill gate opens only on a new
-     * platform `underrunCount` event, and each event is consumed exactly once.
+     * M5-08 (a): MIUI's `AudioTrack.underrunCount` advances with bogus
+     * per-track events (millions over a track lifetime) while AudioFlinger
+     * reports no mixer underruns. A platform-counter bump must never open the
+     * fill gate; the counter stays a §9 diagnostic.
      */
     @Test
-    fun underrun_fill_is_gated_on_a_platform_underrun_delta() {
+    fun a_platform_underrun_bump_alone_does_not_fill() {
         val player = MediaPlayer(RecordingNative())
-        // No platform event → no fill even though the ring is empty.
-        val quiet = player.underrunGate(
+        val gate = player.underrunGate(
             hasPlayed = true,
             availableBytes = 0,
             frameBytes = 8,
-            platformUnderruns = 0,
+            platformUnderruns = 3_508_242,
             lastPlatformUnderruns = 0,
+            consecutiveEmpty = 0,
         )
-        assertFalse(quiet.fill, "an ordinary empty ring is not an underrun")
-        assertEquals(0L, quiet.lastPlatformUnderruns)
+        assertFalse(gate.fill, "the platform counter is not a fill trigger")
+        assertEquals(3_508_242L, gate.lastPlatformUnderruns, "consumed for §9 only")
+        assertEquals(1, gate.consecutiveEmpty)
+    }
 
-        // A platform event with playback under way and no whole frame → fill.
-        val event = player.underrunGate(true, 0, 8, platformUnderruns = 1, lastPlatformUnderruns = 0)
-        assertTrue(event.fill)
-        assertEquals(1L, event.lastPlatformUnderruns)
+    /**
+     * M5-08 (b): ~20–30 ms of sustained ring emptiness while playing is a real
+     * stall and must fill. The loop sleeps 10 ms when starved, so
+     * [MediaPlayer.UNDERRUN_EMPTY_ITERATIONS] iterations is 30 ms.
+     */
+    @Test
+    fun sustained_emptiness_for_twenty_to_thirty_ms_fills() {
+        val player = MediaPlayer(RecordingNative())
+        var empty = 0
+        repeat(MediaPlayer.UNDERRUN_EMPTY_ITERATIONS - 1) {
+            val gate = player.underrunGate(true, 0, 8, 0, 0, empty)
+            assertFalse(gate.fill, "a few ms between paced datagrams is backpressure")
+            empty = gate.consecutiveEmpty
+        }
+        val gate = player.underrunGate(true, 0, 8, 0, 0, empty)
+        assertTrue(gate.fill, "30 ms of sustained emptiness is an underrun")
+        assertEquals(0, gate.consecutiveEmpty, "a fill starts a fresh window")
+    }
 
-        // The same platform event is never counted a second time.
-        val replay = player.underrunGate(
-            true, 0, 8,
-            platformUnderruns = 1,
-            lastPlatformUnderruns = event.lastPlatformUnderruns,
+    /** M5-08 (c): one sustained stall fills once, not on every iteration. */
+    @Test
+    fun one_sustained_stall_is_counted_once() {
+        val player = MediaPlayer(RecordingNative())
+        val first = player.underrunGate(
+            true, 0, 8, 0, 0, MediaPlayer.UNDERRUN_EMPTY_ITERATIONS - 1,
         )
-        assertFalse(replay.fill, "each platform event counts at most once")
+        assertTrue(first.fill)
+        // The very next starved iteration belongs to the same stall.
+        val second = player.underrunGate(true, 0, 8, 0, 0, first.consecutiveEmpty)
+        assertFalse(second.fill, "the same gap must not be charged twice")
+        val third = player.underrunGate(true, 0, 8, 0, 0, second.consecutiveEmpty)
+        assertFalse(third.fill)
+        // A fresh full window of emptiness opens the gate again.
+        val fourth = player.underrunGate(true, 0, 8, 0, 0, third.consecutiveEmpty)
+        assertTrue(fourth.fill)
+    }
 
-        // Data is available: the event is consumed but no silence is inserted.
-        val fed = player.underrunGate(
-            true, 8, 8,
-            platformUnderruns = 2,
-            lastPlatformUnderruns = event.lastPlatformUnderruns,
-        )
-        assertFalse(fed.fill, "no fill while the ring can feed the sink")
-        assertEquals(2L, fed.lastPlatformUnderruns)
-
-        // Before the first real media, an empty ring is startup, not underrun.
-        val startup = player.underrunGate(
-            hasPlayed = false,
-            availableBytes = 0,
-            frameBytes = 8,
-            platformUnderruns = 3,
-            lastPlatformUnderruns = 2,
-        )
+    @Test
+    fun data_or_startup_does_not_open_the_fill_gate() {
+        val player = MediaPlayer(RecordingNative())
+        // Data is available: normal feed, no silence.
+        val fed = player.underrunGate(true, 8, 8, 0, 0, 0)
+        assertFalse(fed.fill)
+        assertEquals(0, fed.consecutiveEmpty)
+        // Before the first real media an empty ring is startup, not underrun.
+        val startup = player.underrunGate(false, 0, 8, 0, 0, 0)
         assertFalse(startup.fill)
+        assertEquals(0, startup.consecutiveEmpty)
     }
 
     /** Playback does not start until the ring holds the jitter target. */

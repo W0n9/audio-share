@@ -98,6 +98,16 @@ impl MediaPump {
         self.dropped_chunks
     }
 
+    /// Frames the §7.4 pacer has released (M5-08 periodic instrumentation).
+    pub const fn pacer_consumed_frames(&self) -> u64 {
+        self.pacer.consumed_frames()
+    }
+
+    /// `try_consume` invocations so far (M5-08 periodic instrumentation).
+    pub const fn pacer_calls(&self) -> u64 {
+        self.pacer.calls()
+    }
+
     /// Buffered capture audio in sample frames.
     pub fn pending_frames(&self) -> u64 {
         let frame_bytes = self.format.frame_bytes();
@@ -304,6 +314,78 @@ impl DropReporter {
     }
 }
 
+/// A periodic snapshot of the media pump, emitted even when nothing was
+/// dropped (M5-08). `DropReport` only fires at drop instants, so its
+/// `pending_frames` is a drop-time-biased sample; this reporter samples every
+/// cadence so support can see whether backlog saw-tooths or is pinned, and can
+/// measure the pacer call rate and delivered-frame rate directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MediaStats {
+    /// Buffered capture audio at report time, in sample frames.
+    pub pending_frames: u64,
+    /// Frames released by the §7.4 pacer since the session started.
+    pub consumed_frames: u64,
+    /// `MediaPacer::try_consume` invocations since the session started.
+    pub pacer_calls: u64,
+    /// `try_consume` invocations per second over the reporting interval.
+    pub pacer_calls_per_sec: u64,
+}
+
+/// Fixed-cadence sampler for [`MediaStats`]. The first poll establishes the
+/// baseline (no line) so a startup zero is never emitted; every later poll at
+/// or past the cadence emits, whether or not counters changed.
+#[derive(Debug)]
+pub struct MediaStatsReporter {
+    cadence: std::time::Duration,
+    last_report: Option<Instant>,
+    last_calls: u64,
+}
+
+impl MediaStatsReporter {
+    /// A reporter that logs at most once per `cadence`.
+    pub fn new(cadence: std::time::Duration) -> Self {
+        Self {
+            cadence,
+            last_report: None,
+            last_calls: 0,
+        }
+    }
+
+    /// Return a snapshot when `now` is at least one cadence past the last
+    /// report. The first poll establishes the baseline and returns `None`.
+    pub fn poll(
+        &mut self,
+        now: Instant,
+        pending_frames: u64,
+        consumed_frames: u64,
+        pacer_calls: u64,
+    ) -> Option<MediaStats> {
+        let last = match self.last_report {
+            None => {
+                self.last_report = Some(now);
+                self.last_calls = pacer_calls;
+                return None;
+            }
+            Some(last) => last,
+        };
+        let elapsed = now.saturating_duration_since(last);
+        if elapsed < self.cadence {
+            return None;
+        }
+        let elapsed_ms = elapsed.as_millis().max(1);
+        let calls_delta = u128::from(pacer_calls.saturating_sub(self.last_calls));
+        let per_sec = u64::try_from(calls_delta * 1_000 / elapsed_ms).unwrap_or(u64::MAX);
+        self.last_report = Some(now);
+        self.last_calls = pacer_calls;
+        Some(MediaStats {
+            pending_frames,
+            consumed_frames,
+            pacer_calls,
+            pacer_calls_per_sec: per_sec,
+        })
+    }
+}
+
 fn map_packet_error(error: PacketError) -> MediaPumpError {
     match error {
         PacketError::DatagramTooSmall { .. } => MediaPumpError::DatagramUnsupported,
@@ -497,6 +579,29 @@ mod tests {
         // A fresh drop at the next tick is reported.
         assert!(reporter
             .poll(t0 + Duration::from_secs(15), 4, 2, 100)
+            .is_some());
+    }
+
+    /// M5-08: the periodic line must appear at the 5 s cadence even when no
+    /// drop occurred, so support never sees a drop-time-biased sample.
+    #[test]
+    fn periodic_stats_are_emitted_even_with_zero_drops() {
+        use std::time::Duration;
+        let mut reporter = super::MediaStatsReporter::new(Duration::from_secs(5));
+        let t0 = Instant::now();
+        // Baseline: no startup zero line.
+        assert!(reporter.poll(t0, 0, 0, 0).is_none());
+        // No drop counters exist on this reporter; it still emits at 5 s.
+        let stats = reporter
+            .poll(t0 + Duration::from_secs(5), 480, 24_000, 500)
+            .expect("periodic line at the cadence");
+        assert_eq!(stats.pending_frames, 480);
+        assert_eq!(stats.consumed_frames, 24_000);
+        assert_eq!(stats.pacer_calls, 500);
+        assert_eq!(stats.pacer_calls_per_sec, 100, "500 calls over 5 s");
+        // A zero-activity interval (idle session) still emits.
+        assert!(reporter
+            .poll(t0 + Duration::from_secs(10), 0, 24_000, 500)
             .is_some());
     }
 
