@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-human（实现与两轴审查修复合入 `71e0155`；剩余真机 B 复测）
+**Status:** ready-for-human（实现与两轴审查修复合入 `71e0155`；真机 B 复测 FAIL，待裁决重跑条件或判据）
 
 **Type:** task
 
@@ -78,3 +78,16 @@
    时间戳新鲜度的依据。
 
 真机 B 仍为 **NOT RUN**，状态不变。
+
+### 2026-11-21：真机 B 复测（`71e0155`）— FAIL
+
+- 见 [RESULT-WINDOWS-M5-11](./../evidence/m5-11/RESULT-WINDOWS-M5-11.md)。
+  `playback.drift_clock source=hardware` 全程有效（missing/fallback/give_up 均 0），
+  说明该机 `getTimestamp()` 可用；但逐窗极值 **−1,390…+1,529 ppm**，71/71 区间越界，
+  比 B3 的 accepted 路径（−645…+532）更大。覆盖、re-anchor、Server pending/drops 均通过；
+  `correction_ppm` 50/72 顶在 ±100。
+- **可比性注记**：本轮 `consumed_frames` 折算约 191,944.7 帧计数/s、pacer 约 1,200/s，
+  约为 B3 的 4 倍；`server.log` 未记采集格式，无法区分 192 kHz 与 4×48 kHz。
+  该差异未经控制，本轮与 B3 不是严格同条件。
+- 真机结论维持 **FAIL**；不写 `resolved`、不合 beta。下一步待维护者选择：
+  48 kHz 同条件重跑、裁决判据口径，或继续改估计器。
