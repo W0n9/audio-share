@@ -13,6 +13,7 @@
 
    APK 构建 **PASS**：`assembleDebug -PandroidAbis=arm64-v8a`（JDK 21、`--offline`）重新编译了 native 库，`apksigner verify` 确认签名，native 库含 `playback.drift_interval` 与 `playback.drift_clock` 标记。不是安装/真机 `PASS`。`cb28095` 的 APK 已被取代，不再使用。
 2. 使用 Windows GUI Server、单台 Android 真机、与历史 B 可比的正常 LAN、屏幕常亮。本轮不注入网络损伤或时钟偏移。记录 OS、Android API、设备型号（不记录序列号）、ABI、构建模式和采样率。
+   **采集格式必须先固定为 48 kHz / 2 声道**：Windows「声音设置 → 更多声音设置 → 播放 → 默认设备 → 属性 → 高级 → 默认格式」。开测前记录该设置（截图或文字），并在窗口内核对 `consumed_frames` 折算率约 48,000 计数/s、`pacer_calls_per_sec` 约 300/s。若仍出现约 4 倍（≈192,000/s、pacer≈1,200/s），说明格式未生效，本轮按 `NOT RUN` 处理，不与历史 B 比较。
 3. 开始记录日志后进入一个新播放会话，连续播放至少 5 分钟。以该会话的 Server 与客户端日志对齐窗口；重连或误触导致的废弃段不拼入窗口。
 
 ## 采集与判定
