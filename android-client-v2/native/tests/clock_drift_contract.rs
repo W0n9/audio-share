@@ -295,3 +295,332 @@ fn frame_interventions_are_bounded_and_rearm_the_timer() {
     assert_eq!(c.update(10_100, Some(0), 400, RATE).frame_adjust, 0);
     assert_eq!(c.update(10_201, Some(0), 400, RATE).frame_adjust, -480);
 }
+
+// ---------------------------------------------------------------------------
+// M5-12: noise-driven rate-correction saturation (host noise model).
+//
+// Device evidence (M5-11 / B3 / 48 kHz) shows per-window estimates swinging by
+// roughly ±1,000-1,800 ppm while the long-term drift is ~0, and the rate
+// correction pinned at ±100 ppm for 63-79 % of snapshots. The noise is the
+// 10-20 ms playout-position staircase, not white noise: the reported position
+// holds an offset for ~1-2 s and then steps by one quantum. A step near a 10 s
+// window edge swings the least-squares slope by hundreds to ~1,800 ppm.
+//
+// The fixtures are CLOSED LOOP: the playback clock advances at the rate the
+// controller applied (`AudioTrack.setPlaybackRate`), so the estimator observes
+// the residual drift `d - c`, exactly like the hardware head path. An
+// open-loop fixture cannot see either the saturation or the half-correction
+// error.
+// ---------------------------------------------------------------------------
+
+const TARGET_MS: u32 = 60;
+/// Measure only after the 180 s control window has filled and settled. The
+/// same window is used by the RED (10 s only) and GREEN variants so the
+/// thresholds are independent literal expectations, not implementation
+/// formulas.
+const MEASURE_FROM_MS: u64 = 240_000;
+const MEASURE_UNTIL_MS: u64 = 300_000;
+const RAIL_FRACTION_MAX: f64 = 0.10;
+const STEADY_ERROR_MAX_PPM: f64 = 25.0;
+const NOISELESS_MAX_PPM: i32 = 5;
+
+/// Integer-Hz playback-rate executor, mirroring `playbackRateHz` in
+/// `MediaPlayer.kt`: round the ppm correction to the nearest whole Hz, then
+/// clamp the Hz delta so the applied rate can never exceed the §8 ±100 ppm
+/// bound (`AudioTrack.setPlaybackRate` accepts whole Hz only). At 48 kHz the
+/// reachable range is ±4 Hz = ±83.3 ppm — a 20.8 ppm actuator step. The
+/// device diagnostic `correction_ppm` is the pre-quantisation command; the
+/// clock advances at the actual rate this returns.
+fn actuator_ppm(commanded_ppm: i32) -> i32 {
+    let max_delta_hz = (MAX_CORRECTION_PPM as i64 * i64::from(RATE) / 1_000_000) as i32;
+    let delta_hz = (f64::from(commanded_ppm) * f64::from(RATE) / 1_000_000.0).round() as i32;
+    let delta_hz = delta_hz.clamp(-max_delta_hz, max_delta_hz);
+    (f64::from(delta_hz) * 1_000_000.0 / f64::from(RATE)).round() as i32
+}
+
+/// Deterministic 32-bit LCG, the same generator the existing host fixtures use.
+struct NoiseRng(u32);
+
+impl NoiseRng {
+    fn next(&mut self) -> u32 {
+        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        self.0
+    }
+
+    /// Uniform integer in `[-bound, bound]`.
+    fn centred(&mut self, bound: i64) -> i64 {
+        if bound == 0 {
+            return 0;
+        }
+        let span = 2 * bound + 1;
+        i64::from(self.next() >> 16) % span - bound
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NoiseCase {
+    drift_ppm: i32,
+    /// Position-measurement quantum in ms (`0` = no noise).
+    quantum_ms: i32,
+    /// How long one quantisation offset is held before it steps.
+    hold_ms: u64,
+    seed: u32,
+}
+
+#[derive(Clone, Copy)]
+struct NoiseMetrics {
+    rail_fraction: f64,
+    mean_applied: f64,
+    max_abs_applied: i32,
+    raw_min: i32,
+    raw_max: i32,
+    samples: usize,
+}
+
+/// One control cycle is one playback report: observe the reported head, run the
+/// controller, then advance both clocks by the report interval with the new
+/// playback rate in effect.
+struct ClosedLoop {
+    estimator: DriftEstimator,
+    controller: DriftController,
+    drift_ppm: i32,
+    quantum_frames: i64,
+    hold_ms: u64,
+    next_offset_ms: u64,
+    offset_frames: i64,
+    rng: NoiseRng,
+    capture_frames: f64,
+    playback_frames: f64,
+    now_ms: u64,
+    applied_ppm: i32,
+    ticks: usize,
+}
+
+impl ClosedLoop {
+    fn new(case: NoiseCase) -> Self {
+        Self {
+            estimator: DriftEstimator::new(WINDOW_MS, RATE),
+            controller: DriftController::new(DriftConfig::default()),
+            drift_ppm: case.drift_ppm,
+            quantum_frames: i64::from(case.quantum_ms) * i64::from(RATE) / 1_000,
+            hold_ms: case.hold_ms,
+            next_offset_ms: 0,
+            offset_frames: 0,
+            rng: NoiseRng(case.seed),
+            capture_frames: 0.0,
+            playback_frames: 0.0,
+            now_ms: 0,
+            applied_ppm: 0,
+            ticks: 0,
+        }
+    }
+
+    fn step(&mut self) {
+        if self.now_ms >= self.next_offset_ms {
+            self.offset_frames = self.rng.centred(self.quantum_frames / 2);
+            self.next_offset_ms = self.now_ms + self.hold_ms;
+        }
+        let capture = self.capture_frames.round() as u64;
+        let playback = (self.playback_frames + self.offset_frames as f64).round() as u64;
+        self.estimator.observe(self.now_ms, capture, playback);
+        let estimate = self.estimator.ppm();
+        let decision = self
+            .controller
+            .update(self.now_ms, estimate, TARGET_MS, RATE);
+        self.applied_ppm = decision.rate_ppm;
+
+        // 100 ms ± 3 ms report cadence. The jitter is what turns the
+        // quantisation phase into a staircase rather than a fixed sawtooth.
+        const CADENCE_MS: [u64; 8] = [100, 103, 99, 101, 100, 102, 98, 100];
+        let dt = CADENCE_MS[self.ticks % CADENCE_MS.len()];
+        let actual_ppm = actuator_ppm(self.applied_ppm);
+        self.capture_frames +=
+            dt as f64 * f64::from(RATE) * (1.0 + f64::from(self.drift_ppm) / 1_000_000.0) / 1_000.0;
+        self.playback_frames +=
+            dt as f64 * f64::from(RATE) * (1.0 + f64::from(actual_ppm) / 1_000_000.0) / 1_000.0;
+        self.now_ms += dt;
+        self.ticks += 1;
+    }
+}
+
+fn run_noise_case(case: NoiseCase) -> NoiseMetrics {
+    let mut plant = ClosedLoop::new(case);
+    let mut applied = Vec::new();
+    let mut raw = Vec::new();
+    while plant.now_ms <= MEASURE_UNTIL_MS {
+        plant.step();
+        if plant.now_ms >= MEASURE_FROM_MS {
+            applied.push(plant.applied_ppm);
+            if let Some(ppm) = plant.estimator.ppm() {
+                raw.push(ppm);
+            }
+        }
+    }
+    let samples = applied.len();
+    let rails = applied
+        .iter()
+        .filter(|ppm| ppm.unsigned_abs() >= MAX_CORRECTION_PPM.unsigned_abs())
+        .count();
+    NoiseMetrics {
+        rail_fraction: rails as f64 / samples.max(1) as f64,
+        mean_applied: applied.iter().map(|&ppm| f64::from(ppm)).sum::<f64>()
+            / samples.max(1) as f64,
+        max_abs_applied: applied.iter().map(|ppm| ppm.abs()).max().unwrap_or(0),
+        raw_min: raw.iter().copied().min().unwrap_or(0),
+        raw_max: raw.iter().copied().max().unwrap_or(0),
+        samples,
+    }
+}
+
+/// Quantum amplitudes and dwell times chosen to put the raw 10 s estimate in
+/// the device's ±1,000-1,800 ppm band (a 10-20 ms step near a window edge).
+const NOISE_MATRIX: [(i32, u64); 6] = [
+    (10, 1_000),
+    (15, 1_000),
+    (20, 1_000),
+    (10, 2_000),
+    (15, 2_000),
+    (20, 2_000),
+];
+const NOISE_SEEDS: [u32; 2] = [0x6d5a_56da, 0x1234_5678];
+
+#[test]
+fn quantised_position_noise_must_not_saturate_the_rate_correction() {
+    let mut failures = Vec::new();
+    for &seed in &NOISE_SEEDS {
+        for &(quantum_ms, hold_ms) in &NOISE_MATRIX {
+            let case = NoiseCase {
+                drift_ppm: 0,
+                quantum_ms,
+                hold_ms,
+                seed,
+            };
+            let m = run_noise_case(case);
+            eprintln!(
+                "M5-12 drift=0 q={quantum_ms}ms hold={hold_ms}ms seed={seed:#x}: \
+                 rail={:.1}% mean_applied={:+.1} max|applied|={} raw=[{},{}] samples={}",
+                m.rail_fraction * 100.0,
+                m.mean_applied,
+                m.max_abs_applied,
+                m.raw_min,
+                m.raw_max,
+                m.samples,
+            );
+            if m.rail_fraction >= RAIL_FRACTION_MAX {
+                failures.push(format!(
+                    "noise alone pinned the correction at the ±100 ppm rail \
+                     (q={quantum_ms}ms hold={hold_ms}ms seed={seed:#x}: {:.1}%)",
+                    m.rail_fraction * 100.0
+                ));
+            }
+            if m.mean_applied.abs() > STEADY_ERROR_MAX_PPM {
+                failures.push(format!(
+                    "zero true drift commanded a sustained correction \
+                     (q={quantum_ms}ms hold={hold_ms}ms seed={seed:#x}: {:.1} ppm)",
+                    m.mean_applied
+                ));
+            }
+            if m.max_abs_applied > MAX_CORRECTION_PPM {
+                failures.push(format!(
+                    "the §8 ±100 ppm bound was exceeded (q={quantum_ms}ms hold={hold_ms}ms \
+                     seed={seed:#x}: {})",
+                    m.max_abs_applied
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "M5-12 noise-only control failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn a_real_seventy_five_ppm_drift_is_tracked_without_long_term_saturation() {
+    let mut failures = Vec::new();
+    for &seed in &NOISE_SEEDS {
+        for &drift_ppm in &[75, -75] {
+            for &(quantum_ms, hold_ms) in &NOISE_MATRIX {
+                let case = NoiseCase {
+                    drift_ppm,
+                    quantum_ms,
+                    hold_ms,
+                    seed,
+                };
+                let m = run_noise_case(case);
+                eprintln!(
+                    "M5-12 drift={drift_ppm:+} q={quantum_ms}ms hold={hold_ms}ms seed={seed:#x}: \
+                     rail={:.1}% mean_applied={:+.1} err={:+.1} raw=[{},{}]",
+                    m.rail_fraction * 100.0,
+                    m.mean_applied,
+                    m.mean_applied - f64::from(drift_ppm),
+                    m.raw_min,
+                    m.raw_max,
+                );
+                if m.rail_fraction >= RAIL_FRACTION_MAX {
+                    failures.push(format!(
+                        "a real {drift_ppm:+} ppm drift sat on the rail \
+                         (q={quantum_ms}ms hold={hold_ms}ms seed={seed:#x}: {:.1}%)",
+                        m.rail_fraction * 100.0
+                    ));
+                }
+                if (m.mean_applied - f64::from(drift_ppm)).abs() > STEADY_ERROR_MAX_PPM {
+                    failures.push(format!(
+                        "the correction did not track a real {drift_ppm:+} ppm drift \
+                         (q={quantum_ms}ms hold={hold_ms}ms seed={seed:#x}: settled {:.1} ppm)",
+                        m.mean_applied
+                    ));
+                }
+                if m.max_abs_applied > MAX_CORRECTION_PPM {
+                    failures.push(format!(
+                        "the §8 ±100 ppm bound was exceeded (q={quantum_ms}ms \
+                         hold={hold_ms}ms seed={seed:#x}: {})",
+                        m.max_abs_applied
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "M5-12 real-drift control failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn a_noiseless_zero_drift_loop_settles_near_zero() {
+    let m = run_noise_case(NoiseCase {
+        drift_ppm: 0,
+        quantum_ms: 0,
+        hold_ms: 1_000,
+        seed: 0x6d5a_56da,
+    });
+    eprintln!(
+        "M5-12 noiseless drift=0: mean_applied={:+.1} max|applied|={}",
+        m.mean_applied, m.max_abs_applied
+    );
+    assert!(
+        m.mean_applied.abs() <= f64::from(NOISELESS_MAX_PPM),
+        "without measurement noise the correction must stay near zero, got {:.1} ppm",
+        m.mean_applied
+    );
+}
+
+#[test]
+fn the_integer_hz_executor_cannot_command_more_than_the_ppm_bound() {
+    // 48 kHz: a whole-Hz actuator reaches 4 Hz (83.3 ppm), not 5 Hz
+    // (104.2 ppm). Rounding must never push || over the §8 bound.
+    assert_eq!(actuator_ppm(0), 0);
+    assert_eq!(actuator_ppm(100), 83, "4 Hz, not 104.2 ppm");
+    assert_eq!(actuator_ppm(-100), -83);
+    assert_eq!(actuator_ppm(75), 83, "3.6 Hz rounds to 4 Hz");
+    for commanded in [-10_000, -100, -75, -1, 0, 1, 75, 100, 10_000] {
+        let actual = actuator_ppm(commanded);
+        assert!(
+            actual.abs() <= MAX_CORRECTION_PPM,
+            "commanded {commanded} ppm landed at {actual} ppm, beyond §8"
+        );
+    }
+}
