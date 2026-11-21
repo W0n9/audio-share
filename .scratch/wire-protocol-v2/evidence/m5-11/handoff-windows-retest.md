@@ -4,15 +4,17 @@
 
 ## 起点
 
-- Linux 仓库 `/home/w0n9/workspaces/audio-share`，分支 `integration/m5` @ `54dc037`，工作区干净。
+- Linux 仓库 `/home/w0n9/workspaces/audio-share`，分支 `integration/m5` @ `c7dd28a` 起，工作区干净。
 - 未 push。beta 分支 `integration/wire-protocol-v2-beta` @ `8c35411`、标签 `v0.5.0-beta` @ `362d023` 均未动，**本轮不得动**。
 - 工单：M5-[11](/home/w0n9/workspaces/audio-share/.scratch/wire-protocol-v2/issues/m5-11-playout-clock-source.md) `ready-for-human`（只剩真机门）、M5-[09](/home/w0n9/workspaces/audio-share/.scratch/wire-protocol-v2/issues/m5-09-drift-step-and-burst-trim.md) `Blocked by: M5-11`、M5-[10](/home/w0n9/workspaces/audio-share/.scratch/wire-protocol-v2/issues/m5-10-reanchor-burst-investigation.md) `needs-triage`（本轮不实施）。
 
 ## 目标
 
-在 Windows GUI Server + 单台 Android 真机上重跑**用例 B**，有效播放 ≥5 分钟，正常 LAN、屏幕常亮、不注入网络损伤或时钟偏移。步骤与判据只写在 [Windows 复测清单](/home/w0n9/workspaces/audio-share/.scratch/wire-protocol-v2/evidence/m5-09/windows-retest.md)：**按清单执行，不另行发挥。**
+在 Windows GUI Server + 单台 Android 真机上重跑**用例 B**，有效播放 ≥5 分钟，正常 LAN、屏幕常亮、不注入网络损伤或时钟偏移。**开测前把 Windows 默认播放设备格式固定为 48 kHz / 2 声道并记录**（见清单第 2 步）；窗口内若仍为约 4 倍帧计数率，本轮记 `NOT RUN`，不与历史 B 比较。步骤与判据只写在 [Windows 复测清单](/home/w0n9/workspaces/audio-share/.scratch/wire-protocol-v2/evidence/m5-09/windows-retest.md)：**按清单执行，不另行发挥。**
 
-上一轮（`cb28095`）的原始结果在 [RESULT-B3](/home/w0n9/workspaces/audio-share/.scratch/wire-protocol-v2/evidence/m5-09/RESULT-B3.md)：漂移精度 FAIL（−645…+532 ppm，67/67 区间越界），覆盖与 re-anchor 通过。本轮要看的正是漂移精度是否随播放侧时钟修复而达标。
+两轮历史结果：[RESULT-WINDOWS-M5-11](/home/w0n9/workspaces/audio-share/.scratch/wire-protocol-v2/evidence/m5-11/RESULT-WINDOWS-M5-11.md)（`71e0155`，硬件时钟，FAIL）与 [RESULT-B3](/home/w0n9/workspaces/audio-share/.scratch/wire-protocol-v2/evidence/m5-09/RESULT-B3.md)：漂移精度 FAIL（−645…+532 ppm，67/67 区间越界），覆盖与 re-anchor 通过。
+
+本轮（2026-11-21 决定）**只做 48 kHz 同条件重跑**，排除上一轮采集帧计数率约为 B3 4 倍的不可比因素；判据、代码和产物均不变。
 
 ## 本轮新增的硬性检查：时钟源
 
@@ -33,7 +35,7 @@
 
 ## Windows 侧
 
-- 仓库不必在 Windows 上；需带过去的是本文件、上面的复测清单、M5-09/10/11 三张工单（都已在 `54dc037`）。
+- 仓库不必在 Windows 上；需带过去的是本文件、上面的复测清单、M5-09/10/11 三张工单（都已在 `c7dd28a`）。
 - 采集：客户端 `playback.drift_clock` / `drift_interval` / `drift` / `trim` / 缓冲快照；`dumpsys media.audio_flinger`；Server `media.stats` / `media.drops`。
 - 证据政策见 [evidence-policy](/home/w0n9/workspaces/audio-share/docs/agents/evidence-policy.md)：只按实际跑过的平台写 `PASS`；原始日志与截图留本地，回传前去掉地址、设备/身份标识和配对内容。
 
@@ -54,6 +56,6 @@
 ## 建议调用的 skills
 
 - `diagnosing-bugs`：复测出现新的漂移/时钟异常时，先建失败复现。
-- `code-review`：若需改生产代码，两轴审查固定点用 `54dc037`。
+- `code-review`：若需改生产代码，两轴审查固定点用 `c7dd28a`。
 - `implement-spec`：仅当后续按工单图继续推进时使用；本轮是人工验收，不需要。
 - 视觉 MCP（`magpie-vision`，非 skill）：需要从截图读状态时使用，入库前先脱敏。

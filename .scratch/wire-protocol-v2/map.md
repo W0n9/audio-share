@@ -37,7 +37,7 @@
 - **裁决（2026-11-21）**：走 [M5-11](issues/m5-11-playout-clock-source.md)——先 host RED，再改用硬件播放位置作为播放侧时钟；修正饱和纳入同一票。判据不变，M5-09 改为 `Blocked by: M5-11`。
 - **M5-11 实现与两轴审查修复合入 `71e0155`**（`ready-for-human`）。host：accepted 时钟 2052 帧批量 901/1090 窗越界 → 硬件头矩阵逐窗 0 越界、均值 ±3 ppm、修正不顶轨；native 默认/`test-support` 各 248 PASS，Clippy/fmt PASS；JVM debug/release 各 278 PASS。审查修复：扩绕单一所有者、单次缺失不再乒乓切源（500 ms 让位阈值）、年龄回跳连续两次才判重建、诊断键与字段一致。最新 arm64 APK `71e0155`（sha256 `123e04fb…`）已构建并含 `playback.drift_clock`。
 - **真机 B 复测（`71e0155`，2026-11-21）：FAIL**（[RESULT-WINDOWS-M5-11](evidence/m5-11/RESULT-WINDOWS-M5-11.md)）。`source=hardware` 全程有效、无回退，但逐窗极值 **−1,390…+1,529 ppm**，71/71 区间越界，比 B3 更差；覆盖、re-anchor、Server pending/drops 通过，`correction_ppm` 50/72 顶轨。**可比性注记**：本轮帧计数率约 191,945/s、pacer 约 1,200/s，约为 B3 的 4 倍（采集格式未记录），与 B3 不是严格同条件。
-- 待维护者裁决：48 kHz 同条件重跑、修订 B 判据口径，或继续改估计器。B 未过不合 beta；M5-01 可并行，M5-07 继续等待 B。
+- **裁决（2026-11-21）**：先做 **48 kHz / 2 声道同条件重跑**，排除 4× 帧计数率的不可比因素；判据、代码、产物不变。清单第 2 步与 [Windows 交接](evidence/m5-11/handoff-windows-retest.md) 已更新。B 未过不合 beta；M5-01 可并行，M5-07 继续等待 B。
 - 前序：合成等时钟输入在真实 native 播放路径产生 +185,488 ppm；只禁用 trim 仍有离群，不是现场回放或已确认的真机根因。采样断续修复和两轴审查修复合入 `cb28095`，同步短停不再反复清窗，`playback.drift_interval` 保留诊断覆盖与极值。Native 默认/`test-support` 各 240 **PASS**，Clippy、fmt **PASS**（[host 证据](evidence/m5-09/host-drift.md)）。
 
 ## Fog
