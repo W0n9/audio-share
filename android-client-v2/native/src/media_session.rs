@@ -646,9 +646,15 @@ impl MediaSession {
             });
         }
         if self.pending_drift_frames == 0 {
-            let decision = self.drift_controller.update(
+            // M5-12: the hardware playout head already reflects the applied
+            // rate, so the 10 s estimate is the residual `d - applied`. Drive
+            // the controller from the long-baseline residual and keep the 10 s
+            // value for the §8 sustained-deviation gate and diagnostics.
+            let control = self.drift.control_ppm();
+            let decision = self.drift_controller.update_with_control(
                 now_ms,
                 self.drift_ppm,
+                control,
                 report.buffer_current_ms,
                 self.geometry.sample_rate,
             );
@@ -806,6 +812,14 @@ impl MediaSession {
     /// change requiring maintainer adjudication.
     pub fn drift_ppm(&self) -> Option<i32> {
         self.drift_ppm
+    }
+
+    /// M5-12: the long-baseline residual drift in ppm that drives the rate
+    /// controller, or `None` until the control window fills (or after a
+    /// reset). Diagnostic/control only — [`Self::drift_ppm`] keeps its §8
+    /// 10 s semantics.
+    pub fn drift_control_ppm(&self) -> Option<i32> {
+        self.drift.control_ppm()
     }
 
     /// The retained drift window's span and sample count, logged alongside
