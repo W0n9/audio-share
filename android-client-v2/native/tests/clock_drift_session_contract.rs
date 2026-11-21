@@ -5,6 +5,9 @@
 //! decision, sustained frame insert/delete (counted only when applied), and the
 //! hard-limit re-anchor.
 
+mod common;
+
+use audio_share_client_v2_native::drift::MAX_CORRECTION_PPM;
 use audio_share_client_v2_native::media::{MediaHeader, FLAG_STREAM_START};
 use audio_share_client_v2_native::media_session::{DatagramOutcome, MediaSession, PlaybackReport};
 use audio_share_client_v2_native::proto::{Configuration, PcmParameters};
@@ -12,6 +15,8 @@ use audio_share_client_v2_native::proto::{Configuration, PcmParameters};
 const RATE: u32 = 48_000;
 const FRAME_BYTES: u64 = 8; // stereo F32LE
 const TARGET_MS: u32 = 60;
+/// 48 kHz integer-Hz executor at the default §8 100 ppm ceiling: 4 Hz = 83 ppm.
+const RATE_48K_ACTUATOR_LIMIT_PPM: i32 = 83;
 
 fn config() -> Configuration {
     Configuration {
@@ -233,7 +238,17 @@ fn one_stalled_delivery_invalidates_old_drift_and_recovers_real_nonzero_drift() 
         .rfind(|sample| sample.now_ms < 11_500)
         .unwrap();
     assert!((74..=76).contains(&before.raw_ppm.unwrap()));
-    assert!((74..=76).contains(&before.correction_ppm));
+    // This fixture's accepted-bytes clock is open-loop (the model's read loop
+    // ignores `drift_correction_ppm`). Under M5-12's residual reconstruction
+    // the open-loop drift is `residual + applied`, so the command correctly
+    // rises toward the 48 kHz actuator cap (83 ppm) instead of stopping at 75.
+    // On the real closed-loop hardware path this reconstruction yields `d`,
+    // not `2d`. The stall-invalidation behaviour below is what this test pins.
+    assert!(
+        (74..=RATE_48K_ACTUATOR_LIMIT_PPM).contains(&before.correction_ppm),
+        "before the stall: correction {}",
+        before.correction_ppm
+    );
     let rebuilding: Vec<_> = trace
         .samples
         .iter()
@@ -254,7 +269,11 @@ fn one_stalled_delivery_invalidates_old_drift_and_recovers_real_nonzero_drift() 
         .all(|pair| (pair[1].correction_ppm - pair[0].correction_ppm).abs() <= 10));
     let recovered = trace.samples.last().unwrap();
     assert!((74..=76).contains(&recovered.raw_ppm.unwrap()));
-    assert!((74..=76).contains(&recovered.correction_ppm));
+    assert!(
+        (74..=RATE_48K_ACTUATOR_LIMIT_PPM).contains(&recovered.correction_ppm),
+        "after recovery: correction {}",
+        recovered.correction_ppm
+    );
 }
 
 #[test]
@@ -459,9 +478,11 @@ fn a_synthetic_one_hundred_ppm_capture_clock_is_measured_and_clamped() {
     );
     assert_eq!(
         media.drift_correction_ppm(),
-        100,
-        "the smooth controller converges on the ±100 ppm ceiling"
+        83,
+        "the smooth controller converges on the reachable 48 kHz ceiling \
+         (4 Hz = 83 ppm); §8's 100 ppm remains the upper bound"
     );
+    assert!(media.drift_correction_ppm().abs() <= 100);
     assert_eq!(
         media.take_drift_intervention(),
         0,
@@ -476,12 +497,13 @@ fn the_correction_never_exceeds_plus_or_minus_one_hundred_ppm() {
     // whole contract, and a wild estimate must not command a wild rate.
     drive(&mut media, 0, 12_000, 10_000, 0);
     assert_eq!(media.drift_ppm(), Some(10_000));
-    assert_eq!(media.drift_correction_ppm(), 100);
+    assert_eq!(media.drift_correction_ppm(), 83);
+    assert!(media.drift_correction_ppm().abs() <= 100);
 
     let mut media = session();
     drive(&mut media, 0, 12_000, -10_000, 0);
     assert_eq!(media.drift_ppm(), Some(-10_000));
-    assert_eq!(media.drift_correction_ppm(), -100);
+    assert_eq!(media.drift_correction_ppm(), -83);
 }
 
 #[test]
@@ -1169,35 +1191,9 @@ fn an_extended_long_run_head_then_rebuild_reanchors() {
 // head advances at the rate the integer-Hz executor actually reached, the
 // reported position carries the 10-20 ms staircase, and the estimator therefore
 // sees the residual `d - applied` exactly as on device. It exercises
-// `update_with_control`'s long-baseline branch, which every other session test
+// `update_from_residual`'s long-baseline branch, which every other session test
 // (all <= 120 s, mostly open-loop fixtures) never reaches.
 // ---------------------------------------------------------------------------
-
-/// Deterministic 32-bit LCG for the staircase offset.
-struct SessionNoiseRng(u32);
-
-impl SessionNoiseRng {
-    fn next(&mut self) -> u32 {
-        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        self.0
-    }
-
-    fn centred(&mut self, bound: i64) -> i64 {
-        if bound == 0 {
-            return 0;
-        }
-        let span = 2 * bound + 1;
-        i64::from(self.next() >> 16) % span - bound
-    }
-}
-
-/// Integer-Hz executor, mirroring `playbackRateHz` in `MediaPlayer.kt`.
-fn actuator_ppm(commanded_ppm: i32) -> i32 {
-    let max_delta_hz = (100i64 * i64::from(RATE) / 1_000_000) as i32;
-    let delta_hz = (f64::from(commanded_ppm) * f64::from(RATE) / 1_000_000.0).round() as i32;
-    let delta_hz = delta_hz.clamp(-max_delta_hz, max_delta_hz);
-    (f64::from(delta_hz) * 1_000_000.0 / f64::from(RATE)).round() as i32
-}
 
 const SESSION_NOISE_PACKET_MS: u64 = 2;
 
@@ -1209,7 +1205,7 @@ fn drive_closed_loop_session(
 ) -> Vec<(u64, i32)> {
     let mut media = session();
     let mut seed = 0x6d5a_56da_u32;
-    let mut rng = SessionNoiseRng(0x1234_5678);
+    let mut rng = common::NoiseRng::new(0x1234_5678);
     let quantum_frames = quantum_ms * i64::from(RATE) / 1_000;
     let mut now = 0u64;
     let mut packet_end = SESSION_NOISE_PACKET_MS;
@@ -1256,7 +1252,7 @@ fn drive_closed_loop_session(
                 Some(raw),
             );
             let command = media.drift_correction_ppm();
-            actual_ppm = actuator_ppm(command);
+            actual_ppm = common::actuator_ppm_oracle(command, MAX_CORRECTION_PPM, RATE);
             samples.push((now, command));
             next_report = now + report_cadence(&mut seed);
         }
@@ -1268,15 +1264,15 @@ fn drive_closed_loop_session(
         "the M5-12 reconstruction assumes the hardware playout clock"
     );
     assert!(
-        media.drift_control_ppm().is_some(),
-        "the 180 s control window must be full"
+        media.drift_residual_ppm().is_some(),
+        "the 180 s residual baseline must be full"
     );
     samples
 }
 
 #[test]
 fn closed_loop_session_does_not_saturate_and_tracks_real_drift() {
-    for (drift_ppm, max_error_ppm) in [(0i32, 25.0f64), (75, 25.0)] {
+    for (drift_ppm, max_error_ppm) in [(0i32, 25.0f64), (75, 25.0), (-75, 25.0)] {
         let samples = drive_closed_loop_session(drift_ppm, 15, 2_000, 300_000);
         let measured: Vec<i32> = samples
             .iter()

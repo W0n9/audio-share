@@ -5,6 +5,8 @@
 //! deviation that is corrected by whole-frame insertion/deletion. Every clock
 //! is injected — no test sleeps.
 
+mod common;
+
 use audio_share_client_v2_native::drift::{
     DriftConfig, DriftController, DriftEstimator, MAX_CORRECTION_PPM, RATE_SLEW_PPM_PER_UPDATE,
 };
@@ -133,16 +135,20 @@ fn reset_discards_the_window() {
     assert_eq!(e.ppm(), None);
 }
 
+/// M5-12: the §8 ±100 ppm ceiling is still the upper bound, but the integer-Hz
+/// executor at 48 kHz can only reach ±83 ppm. The command is clamped to the
+/// reachable rate, not to an unreachable 100.
 #[test]
-fn the_controller_clamps_correction_at_one_hundred_ppm() {
+fn the_controller_clamps_correction_at_the_reachable_ceiling() {
     let mut c = DriftController::new(DriftConfig::default());
     let mut now = 0u64;
     for _ in 0..200 {
         now += 100;
         c.update(now, Some(5_000), 60, RATE);
     }
-    assert_eq!(c.applied_ppm(), MAX_CORRECTION_PPM);
-    assert_eq!(c.applied_ppm(), 100);
+    assert_eq!(c.applied_ppm(), RATE_48K_ACTUATOR_LIMIT_PPM);
+    assert_eq!(c.applied_ppm(), 83);
+    assert!(c.applied_ppm().abs() <= MAX_CORRECTION_PPM);
 
     let mut c = DriftController::new(DriftConfig::default());
     let mut now = 0u64;
@@ -150,7 +156,7 @@ fn the_controller_clamps_correction_at_one_hundred_ppm() {
         now += 100;
         c.update(now, Some(-5_000), 60, RATE);
     }
-    assert_eq!(c.applied_ppm(), -MAX_CORRECTION_PPM);
+    assert_eq!(c.applied_ppm(), -RATE_48K_ACTUATOR_LIMIT_PPM);
 }
 
 #[test]
@@ -184,7 +190,8 @@ fn a_zero_estimate_slews_back_to_zero() {
         now += 100;
         c.update(now, Some(100), 60, RATE);
     }
-    assert_eq!(c.applied_ppm(), 100);
+    // 48 kHz reaches 4 Hz = 83 ppm; 100 ppm itself is not executable.
+    assert_eq!(c.applied_ppm(), RATE_48K_ACTUATOR_LIMIT_PPM);
     for _ in 0..50 {
         now += 100;
         c.update(now, Some(0), 60, RATE);
@@ -314,7 +321,7 @@ fn frame_interventions_are_bounded_and_rearm_the_timer() {
 // ---------------------------------------------------------------------------
 
 const TARGET_MS: u32 = 60;
-/// Measure only after the 180 s control window has filled and settled. The
+/// Measure only after the 180 s residual baseline has filled and settled. The
 /// same window is used by the RED (10 s only) and GREEN variants so the
 /// thresholds are independent literal expectations, not implementation
 /// formulas.
@@ -324,38 +331,9 @@ const RAIL_FRACTION_MAX: f64 = 0.10;
 const STEADY_ERROR_MAX_PPM: f64 = 25.0;
 const NOISELESS_MAX_PPM: i32 = 5;
 
-/// Integer-Hz playback-rate executor, mirroring `playbackRateHz` in
-/// `MediaPlayer.kt`: round the ppm correction to the nearest whole Hz, then
-/// clamp the Hz delta so the applied rate can never exceed the §8 ±100 ppm
-/// bound (`AudioTrack.setPlaybackRate` accepts whole Hz only). At 48 kHz the
-/// reachable range is ±4 Hz = ±83.3 ppm — a 20.8 ppm actuator step. The
-/// device diagnostic `correction_ppm` is the pre-quantisation command; the
-/// clock advances at the actual rate this returns.
-fn actuator_ppm(commanded_ppm: i32) -> i32 {
-    let max_delta_hz = (MAX_CORRECTION_PPM as i64 * i64::from(RATE) / 1_000_000) as i32;
-    let delta_hz = (f64::from(commanded_ppm) * f64::from(RATE) / 1_000_000.0).round() as i32;
-    let delta_hz = delta_hz.clamp(-max_delta_hz, max_delta_hz);
-    (f64::from(delta_hz) * 1_000_000.0 / f64::from(RATE)).round() as i32
-}
-
-/// Deterministic 32-bit LCG, the same generator the existing host fixtures use.
-struct NoiseRng(u32);
-
-impl NoiseRng {
-    fn next(&mut self) -> u32 {
-        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        self.0
-    }
-
-    /// Uniform integer in `[-bound, bound]`.
-    fn centred(&mut self, bound: i64) -> i64 {
-        if bound == 0 {
-            return 0;
-        }
-        let span = 2 * bound + 1;
-        i64::from(self.next() >> 16) % span - bound
-    }
-}
+/// The integer-Hz executor's reachable command at 48 kHz with the default
+/// §8 100 ppm ceiling: 4 Hz = 83 ppm.
+const RATE_48K_ACTUATOR_LIMIT_PPM: i32 = 83;
 
 #[derive(Clone, Copy)]
 struct NoiseCase {
@@ -374,6 +352,9 @@ struct NoiseMetrics {
     max_abs_applied: i32,
     raw_min: i32,
     raw_max: i32,
+    /// Mean of the long-baseline residual over the measured window (`0` when
+    /// the baseline had not filled, as in the warm-up test).
+    residual_mean: f64,
     samples: usize,
 }
 
@@ -388,7 +369,7 @@ struct ClosedLoop {
     hold_ms: u64,
     next_offset_ms: u64,
     offset_frames: i64,
-    rng: NoiseRng,
+    rng: common::NoiseRng,
     capture_frames: f64,
     playback_frames: f64,
     now_ms: u64,
@@ -406,7 +387,7 @@ impl ClosedLoop {
             hold_ms: case.hold_ms,
             next_offset_ms: 0,
             offset_frames: 0,
-            rng: NoiseRng(case.seed),
+            rng: common::NoiseRng::new(case.seed),
             capture_frames: 0.0,
             playback_frames: 0.0,
             now_ms: 0,
@@ -426,17 +407,21 @@ impl ClosedLoop {
         // The 10 s value keeps its §8 diagnostic semantics; control uses the
         // long-baseline residual. Both are public estimator outputs.
         let measurement = self.estimator.ppm();
-        let control = self.estimator.control_ppm();
-        let decision =
-            self.controller
-                .update_with_control(self.now_ms, measurement, control, TARGET_MS, RATE);
+        let residual = self.estimator.residual_ppm();
+        let decision = self.controller.update_from_residual(
+            self.now_ms,
+            measurement,
+            residual,
+            TARGET_MS,
+            RATE,
+        );
         self.applied_ppm = decision.rate_ppm;
 
         // 100 ms ± 3 ms report cadence. The jitter is what turns the
         // quantisation phase into a staircase rather than a fixed sawtooth.
         const CADENCE_MS: [u64; 8] = [100, 103, 99, 101, 100, 102, 98, 100];
         let dt = CADENCE_MS[self.ticks % CADENCE_MS.len()];
-        let actual_ppm = actuator_ppm(self.applied_ppm);
+        let actual_ppm = common::actuator_ppm_oracle(self.applied_ppm, MAX_CORRECTION_PPM, RATE);
         self.capture_frames +=
             dt as f64 * f64::from(RATE) * (1.0 + f64::from(self.drift_ppm) / 1_000_000.0) / 1_000.0;
         self.playback_frames +=
@@ -447,15 +432,23 @@ impl ClosedLoop {
 }
 
 fn run_noise_case(case: NoiseCase) -> NoiseMetrics {
+    run_noise_case_between(case, MEASURE_FROM_MS, MEASURE_UNTIL_MS)
+}
+
+fn run_noise_case_between(case: NoiseCase, from_ms: u64, until_ms: u64) -> NoiseMetrics {
     let mut plant = ClosedLoop::new(case);
     let mut applied = Vec::new();
     let mut raw = Vec::new();
-    while plant.now_ms <= MEASURE_UNTIL_MS {
+    let mut residual = Vec::new();
+    while plant.now_ms <= until_ms {
         plant.step();
-        if plant.now_ms >= MEASURE_FROM_MS {
+        if plant.now_ms >= from_ms {
             applied.push(plant.applied_ppm);
             if let Some(ppm) = plant.estimator.ppm() {
                 raw.push(ppm);
+            }
+            if let Some(ppm) = plant.estimator.residual_ppm() {
+                residual.push(ppm);
             }
         }
     }
@@ -471,6 +464,8 @@ fn run_noise_case(case: NoiseCase) -> NoiseMetrics {
         max_abs_applied: applied.iter().map(|ppm| ppm.abs()).max().unwrap_or(0),
         raw_min: raw.iter().copied().min().unwrap_or(0),
         raw_max: raw.iter().copied().max().unwrap_or(0),
+        residual_mean: residual.iter().map(|&ppm| f64::from(ppm)).sum::<f64>()
+            / residual.len().max(1) as f64,
         samples,
     }
 }
@@ -615,15 +610,107 @@ fn a_noiseless_zero_drift_loop_settles_near_zero() {
 fn the_integer_hz_executor_cannot_command_more_than_the_ppm_bound() {
     // 48 kHz: a whole-Hz actuator reaches 4 Hz (83.3 ppm), not 5 Hz
     // (104.2 ppm). Rounding must never push || over the §8 bound.
-    assert_eq!(actuator_ppm(0), 0);
-    assert_eq!(actuator_ppm(100), 83, "4 Hz, not 104.2 ppm");
-    assert_eq!(actuator_ppm(-100), -83);
-    assert_eq!(actuator_ppm(75), 83, "3.6 Hz rounds to 4 Hz");
+    let oracle = |ppm| common::actuator_ppm_oracle(ppm, MAX_CORRECTION_PPM, RATE);
+    assert_eq!(oracle(0), 0);
+    assert_eq!(oracle(100), 83, "4 Hz, not 104.2 ppm");
+    assert_eq!(oracle(-100), -83);
+    assert_eq!(oracle(75), 83, "3.6 Hz rounds to 4 Hz");
     for commanded in [-10_000, -100, -75, -1, 0, 1, 75, 100, 10_000] {
-        let actual = actuator_ppm(commanded);
+        let actual = oracle(commanded);
         assert!(
             actual.abs() <= MAX_CORRECTION_PPM,
             "commanded {commanded} ppm landed at {actual} ppm, beyond §8"
         );
     }
+}
+
+/// M5-12: the controller's command is capped at what the integer-Hz executor
+/// can reach. The §8 ±100 ppm value remains the upper bound, not a reachable
+/// command at 48 kHz.
+#[test]
+fn the_controller_command_is_capped_at_the_actuator_limit() {
+    for (rate, expected) in [(48_000u32, 83i32), (44_100, 90), (8_000, 0)] {
+        let mut controller = DriftController::new(DriftConfig::default());
+        let mut now = 0u64;
+        for _ in 0..50 {
+            now += 100;
+            controller.update(now, Some(10_000), 60, rate);
+        }
+        assert_eq!(controller.applied_ppm(), expected, "sample_rate={rate}");
+        assert!(controller.applied_ppm().abs() <= MAX_CORRECTION_PPM);
+    }
+}
+
+/// M5-12 applicability domain: with a real drift above the actuator ceiling,
+/// the command honestly stops at the ceiling and the residual remains. The §8
+/// whole-frame path is the backstop; this test pins that the cap does not
+/// disable it.
+#[test]
+fn above_the_actuator_ceiling_the_residual_is_left_to_frame_intervention() {
+    // 90 ppm true drift; 48 kHz reaches 83 ppm. The closed loop reports the
+    // command at the ceiling and a nonzero long residual.
+    let case = NoiseCase {
+        drift_ppm: 90,
+        quantum_ms: 15,
+        hold_ms: 2_000,
+        seed: 0x6d5a_56da,
+    };
+    // Measure after 420 s so the 180 s residual baseline itself is entirely
+    // post-warm-up; otherwise its mean still contains the ramp.
+    let m = run_noise_case_between(case, 420_000, 480_000);
+    eprintln!(
+        "M5-12 drift=+90: mean_applied={:+.1} max|applied|={} residual_mean={:+.1}",
+        m.mean_applied, m.max_abs_applied, m.residual_mean
+    );
+    assert!(
+        (80.0..=f64::from(RATE_48K_ACTUATOR_LIMIT_PPM)).contains(&m.mean_applied),
+        "the command must sit at the actuator ceiling, got {:.1}",
+        m.mean_applied
+    );
+    assert_eq!(
+        m.max_abs_applied, RATE_48K_ACTUATOR_LIMIT_PPM,
+        "the command never exceeds the reachable rate"
+    );
+    assert!(
+        (2.0..20.0).contains(&m.residual_mean),
+        "90 ppm - 83 ppm must leave a ~7 ppm residual, got {:.1}",
+        m.residual_mean
+    );
+    // The §8 sustained-deviation path is independent of the rate command.
+    let mut controller = DriftController::new(DriftConfig::default());
+    assert_eq!(controller.update(0, Some(7), 60, RATE).frame_adjust, 0);
+    assert_eq!(controller.update(100, Some(7), 85, RATE).frame_adjust, 0);
+    assert_ne!(
+        controller.update(5_201, Some(7), 85, RATE).frame_adjust,
+        0,
+        "a sustained >20 ms buffer deviation still asks for whole frames"
+    );
+}
+
+/// M5-12 warm-up: before the 180 s residual baseline fills, the controller must
+/// still use residual semantics. The old absolute-target fallback settled a
+/// real +75 ppm drift at +37.5 ppm (`d/2`); the noiseless curve must reach ~75.
+#[test]
+fn warmup_does_not_systematically_halve_real_drift() {
+    let case = NoiseCase {
+        drift_ppm: 75,
+        quantum_ms: 0,
+        hold_ms: 1_000,
+        seed: 0x6d5a_56da,
+    };
+    let m = run_noise_case_between(case, 60_000, 170_000);
+    eprintln!(
+        "M5-12 warm-up drift=+75 (60-170 s): mean_applied={:+.1} max|applied|={}",
+        m.mean_applied, m.max_abs_applied
+    );
+    assert!(
+        (m.mean_applied - 75.0).abs() <= 10.0,
+        "warm-up must track ~75 ppm, got {:.1}",
+        m.mean_applied
+    );
+    assert!(
+        (m.mean_applied - 37.5).abs() > 10.0,
+        "warm-up must not settle at the old d/2 = 37.5 ppm, got {:.1}",
+        m.mean_applied
+    );
 }

@@ -650,11 +650,11 @@ impl MediaSession {
             // rate, so the 10 s estimate is the residual `d - applied`. Drive
             // the controller from the long-baseline residual and keep the 10 s
             // value for the §8 sustained-deviation gate and diagnostics.
-            let control = self.drift.control_ppm();
-            let decision = self.drift_controller.update_with_control(
+            let residual = self.drift.residual_ppm();
+            let decision = self.drift_controller.update_from_residual(
                 now_ms,
                 self.drift_ppm,
-                control,
+                residual,
                 report.buffer_current_ms,
                 self.geometry.sample_rate,
             );
@@ -815,11 +815,11 @@ impl MediaSession {
     }
 
     /// M5-12: the long-baseline residual drift in ppm that drives the rate
-    /// controller, or `None` until the control window fills (or after a
-    /// reset). Diagnostic/control only — [`Self::drift_ppm`] keeps its §8
-    /// 10 s semantics.
-    pub fn drift_control_ppm(&self) -> Option<i32> {
-        self.drift.control_ppm()
+    /// controller, or `None` until the residual baseline fills (or after a
+    /// reset). Session-log only (not exposed through JNI) — [`Self::drift_ppm`]
+    /// keeps its §8 10 s semantics.
+    pub fn drift_residual_ppm(&self) -> Option<i32> {
+        self.drift.residual_ppm()
     }
 
     /// The retained drift window's span and sample count, logged alongside
