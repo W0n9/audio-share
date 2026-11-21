@@ -13,12 +13,12 @@
 | 环节 | 位置 |
 |---|---|
 | 控制器产出 `rate_ppm` | `native/src/drift.rs:423`（`update_with_control`） |
-| 会话读出 | `native/src/media_session.rs:848` `drift_correction_ppm()` |
+| 会话读出 | `native/src/media_session.rs:862` `drift_correction_ppm()` |
 | JNI | `native/src/jni.rs:664` `Java_dev_audioshare_v2_ClientNative_driftCorrectionPpm` |
 | Kotlin external | `app/.../ClientNative.kt:212` |
 | 播放循环取用 | `app/.../MediaPlayer.kt:693` `sink.setPlaybackRateHz(playbackRateHz(...))` |
 | ppm → 整数 Hz | `app/.../MediaPlayer.kt:26` `playbackRateHz` |
-| 平台 API | `app/.../MediaPlayer.kt:342` `setPlaybackRateHz` → 直 `track.setPlaybackRate(rateHz)`（:344） |
+| 平台 API | `app/.../MediaPlayer.kt:342` `setPlaybackRateHz` → 直接调用 `track.setPlaybackRate(rateHz)`（:344） |
 
 结论：修正**真的**通过 `AudioTrack.setPlaybackRate` 作用到播放速率，不是纯日志现象。
 符号正确：`+ppm`（采集时钟领先、缓冲增长）→ 更高的 Hz → 播放更快。单位正确：ppm
@@ -59,8 +59,11 @@ open_loop = residual + mean(实际施加的修正)
   5 Hz → **+104.2 ppm，越过 §8 的 ±100 ppm 上限**。已在
   `MediaPlayer.kt:26` 改为按 Hz 域夹紧：48 kHz 最多 4 Hz = 83.3 ppm；8 kHz 下没有
   任何整数 Hz 落在 ±100 ppm 内，因此为 0（由 §8 整帧干预兜底）。
-- native 侧 `actuator_ppm`（`native/src/drift.rs:558`）复刻同一映射，控制器在重建
+- native 侧 `actuator_ppm`（`native/src/drift.rs:565`）复刻同一映射，控制器在重建
   时记录**实际**施加的 ppm，而不是命令值；host 模型同样按整数 Hz 台阶仿真。
+- 由此得到一个诚实的能力边界：48 kHz 下实际可达的最大修正约 83.3 ppm。真实漂移
+  在 84–100 ppm 时，速率修正只能补到 83.3 ppm，剩余量交给 §8 既有整帧干预。
+  这不是放宽或收紧 §8，而是整数 Hz 执行器本身的物理分辨率。
 
 ### 0.4 SRC 被拒时的状态分叉
 
@@ -71,6 +74,13 @@ native 的 `applied_ppm` 仍认为修正已生效。**若该路由不支持 SRC�
 `setPlaybackRate rejected` 计数，因此“该路由接受 SRC”在本轮 **NOT VERIFIED**。
 下次真机复测必须 `grep 'setPlaybackRate(.*) rejected'`；若出现，本工单按 `FAIL` /
 `NOT RUN` 记录，不能宣称噪声饱和已消除。本轮未新增计数器。
+
+**这是一个明确的回归风险。** 修复后的重建公式假设实际速率 = 命令速率。若 SRC 被拒，
+实际速率保持 0，残差仍为 `d`，而 `open_loop = residual + mean(commanded)` 会变成
+正反馈并一路顶到 ±100；旧控制器在同样条件下只会收敛到 `d`。要根治，需要 Kotlin 把
+“实际接受的 Hz”回报给 native（新增 JNI 上行），或由 native 用回报的实际速率重建。
+本轮明确**不做**这个上行改动（超出 M5-12 范围），因此在非 SRC 路由上，本修复不退化为
+更差的唯一前提是设备确实接受 `setPlaybackRate`。真机复测必须先确认这一点。
 
 ### 0.5 缓冲误差 PI：未采用
 
@@ -191,8 +201,8 @@ cargo fmt --check
 实际结果：
 
 ```text
-cargo test                        : 10 个 test binary，254 passed, 0 failed
-cargo test --features test-support: 10 个 test binary，254 passed, 0 failed
+cargo test                        : 10 个 test binary，255 passed, 0 failed
+cargo test --features test-support: 10 个 test binary，255 passed, 0 failed
 cargo clippy --all-targets ...    : Finished `dev` profile，无 warning
 cargo fmt --check                 : exit 0
 ```
@@ -201,8 +211,27 @@ cargo fmt --check                 : exit 0
 
 ```text
 clock_drift_contract           : 23 passed
-clock_drift_session_contract   : 24 passed（既有用例全部保持通过）
+clock_drift_session_contract   : 25 passed（24 个既有用例 + 1 个 M5-12 闭环会话用例）
 ```
+
+会话级闭环用例（生产路径 `MediaSession::record_playback_with_head_at`）：
+
+```sh
+cargo test --test clock_drift_session_contract \
+  closed_loop_session_does_not_saturate_and_tracks_real_drift -- --nocapture
+```
+
+实际输出：
+
+```text
+M5-12 session drift=+0: rail=0.0% mean=-4.6 samples=599
+M5-12 session drift=+75: rail=0.0% mean=+71.8 samples=599
+test result: ok. 1 passed
+```
+
+它把硬件头按整数 Hz 实际速率前进、叠加 10–20 ms 台阶，跑 300 s；只有这个用例真正
+穿过 `update_with_control` 的 180 s 长基线分支（其余会话用例都在 ≤120 s 的 10 s
+回退分支上）。
 
 JVM（因改动了 Kotlin 执行器；`ANDROID_HOME` + JDK 21）：
 
@@ -236,9 +265,17 @@ testDebugUnitTest: tests=278 failures=0 errors=0 skipped=0
 - **真机复测（顶轨比例、缓冲、source、SRC 接受）**：`NOT RUN`。本轮只准备工装；
   必须另跑长会话并按本文件 §0.4 检查 `setPlaybackRate rejected`。
 - **听感 A/B（真实 ±75 ppm 下的音高抖动/平滑是否可闻）**：`NOT RUN`，人工门。
-- **前 180 s**：控制窗未满时沿用旧的 10 s 控制器（既有会话测试依赖该行为）。
-  这 180 s 内仍可能噪声顶轨；真实 ±75 ppm 在这段时间约积累 13.5 ms。修复效果从
-  控制窗填满后开始。短于 ~3 min 的会话不会进入新稳态。
+- **前 180 s 与每次窗口重建后的 180 s**：控制窗未满时沿用旧的 10 s 控制器
+  （既有会话测试依赖该行为）。这段时间内仍可能噪声顶轨；真实 ±75 ppm 在这段时间约
+  积累 13.5 ms。修复效果从控制窗填满后开始。短于 ~3 min 的会话不会进入新稳态。
+  **真机验收口径：顶轨比例必须只统计 `control_ppm != none` 的快照**（新增的
+  `playback.drift` 字段使这一点可核对）；整段会话（含暖机/重建）的比例会天然包含
+  旧行为，应单列而不是混入判据。
+- **SRC 被拒（非 SRC 路由）**：见 §0.4。实际速率为 0 时，新的重建会正反馈顶到
+  ±100；旧控制器只会收敛到 `d`。这是本轮明确的回归风险，根治需要“实际接受速率”
+  上行回报，超出本工单范围。真机复测必须先确认 `setPlaybackRate` 返回 `SUCCESS`。
+- **控制器 EMA 跨重建**：`update_with_control` 在 `control_ppm` 缺失（窗口重建/
+  切换）时清空阻尼状态，避免把新窗口与旧一代 EMA 混合；已由会话级用例覆盖。
 - **accepted-bytes 回退时钟**：生产证据 `source=hardware` 全程有效；若 `getTimestamp`
   连续不可用而切到 accepted，重建公式假设 accepted 进度也反映已施加速率。若该路径
   实际仍是开环，重建可能高估开环漂移。未在真机验证；保留为风险。
@@ -252,4 +289,5 @@ testDebugUnitTest: tests=278 failures=0 errors=0 skipped=0
 - `de6573b` test(m5-12): reproduce noise-driven drift correction saturation (RED)
 - `360b7fb` fix(m5-12): clamp the integer-Hz executor inside the §8 ppm bound
 - `d6307b7` fix(m5-12): drive drift control from a long baseline and close the rate loop
+- `6d00114` fix(m5-12): reset damped control state and cover the session path
 - 本条证据文件单独提交。
