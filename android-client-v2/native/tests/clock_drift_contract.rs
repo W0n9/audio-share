@@ -423,10 +423,13 @@ impl ClosedLoop {
         let capture = self.capture_frames.round() as u64;
         let playback = (self.playback_frames + self.offset_frames as f64).round() as u64;
         self.estimator.observe(self.now_ms, capture, playback);
-        let estimate = self.estimator.ppm();
-        let decision = self
-            .controller
-            .update(self.now_ms, estimate, TARGET_MS, RATE);
+        // The 10 s value keeps its §8 diagnostic semantics; control uses the
+        // long-baseline residual. Both are public estimator outputs.
+        let measurement = self.estimator.ppm();
+        let control = self.estimator.control_ppm();
+        let decision =
+            self.controller
+                .update_with_control(self.now_ms, measurement, control, TARGET_MS, RATE);
         self.applied_ppm = decision.rate_ppm;
 
         // 100 ms ± 3 ms report cadence. The jitter is what turns the
