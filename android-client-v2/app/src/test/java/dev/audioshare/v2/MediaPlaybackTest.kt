@@ -220,18 +220,27 @@ class MediaPlaybackTest {
     }
 
     /**
-     * M5-04: the ±100 ppm correction is applied as an integer `AudioTrack`
-     * sample rate. At 48 kHz one Hz is ~20.8 ppm, so 100 ppm rounds to 5 Hz.
+     * M5-04/M5-12: the ±100 ppm correction is applied as an integer
+     * `AudioTrack` sample rate. At 48 kHz one Hz is ~20.8 ppm, so the executor
+     * moves in 20.8 ppm steps. The Hz delta is clamped so rounding can never
+     * command more than the §8 ±100 ppm bound: 100 ppm reaches 4 Hz (83.3 ppm),
+     * not 5 Hz (104.2 ppm).
      */
     @Test
     fun drift_ppm_maps_to_the_platform_hz_granularity() {
         assertEquals(48_000, playbackRateHz(48_000, 0))
-        assertEquals(48_005, playbackRateHz(48_000, 100))
-        assertEquals(47_995, playbackRateHz(48_000, -100))
+        assertEquals(48_004, playbackRateHz(48_000, 100), "clamped to 4 Hz = 83.3 ppm")
+        assertEquals(47_996, playbackRateHz(48_000, -100))
         assertEquals(48_002, playbackRateHz(48_000, 50), "2.4 Hz rounds to 2")
+        assertEquals(48_004, playbackRateHz(48_000, 75), "3.6 Hz rounds to 4")
         assertEquals(44_104, playbackRateHz(44_100, 100), "4.41 Hz rounds to 4")
-        assertEquals(48_005, playbackRateHz(48_000, 10_000), "defensive clamp to ±100 ppm")
-        assertEquals(47_995, playbackRateHz(48_000, -10_000))
+        assertEquals(48_004, playbackRateHz(48_000, 10_000), "defensive clamp to ±100 ppm")
+        assertEquals(47_996, playbackRateHz(48_000, -10_000))
+        assertEquals(
+            8_000,
+            playbackRateHz(8_000, 100),
+            "no whole-Hz step fits inside ±100 ppm at 8 kHz",
+        )
     }
 
     /** A positive drift adjustment inserts silence and is platform-accepted. */
@@ -302,7 +311,7 @@ class MediaPlaybackTest {
             writePosition = 8L * 500,
         )
 
-        assertEquals(47_995, sink.lastPlaybackRateHz)
+        assertEquals(47_996, sink.lastPlaybackRateHz, "clamped to 4 Hz = 83.3 ppm")
         assertEquals(8L * 48, read)
         assertEquals(-48, fake.driftFramesTotal)
     }
