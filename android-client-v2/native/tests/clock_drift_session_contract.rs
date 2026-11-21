@@ -1160,3 +1160,147 @@ fn an_extended_long_run_head_then_rebuild_reanchors() {
     assert!(recovered.iter().all(|estimate| estimate.abs() <= 1));
     assert_eq!(media.playback_clock_stats().head_reanchor_events, 1);
 }
+
+// ---------------------------------------------------------------------------
+// M5-12 through the production session wiring.
+//
+// The controller/estimator contract lives in `clock_drift_contract`. This test
+// closes the loop at `MediaSession::record_playback_with_head_at`: the hardware
+// head advances at the rate the integer-Hz executor actually reached, the
+// reported position carries the 10-20 ms staircase, and the estimator therefore
+// sees the residual `d - applied` exactly as on device. It exercises
+// `update_with_control`'s long-baseline branch, which every other session test
+// (all <= 120 s, mostly open-loop fixtures) never reaches.
+// ---------------------------------------------------------------------------
+
+/// Deterministic 32-bit LCG for the staircase offset.
+struct SessionNoiseRng(u32);
+
+impl SessionNoiseRng {
+    fn next(&mut self) -> u32 {
+        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        self.0
+    }
+
+    fn centred(&mut self, bound: i64) -> i64 {
+        if bound == 0 {
+            return 0;
+        }
+        let span = 2 * bound + 1;
+        i64::from(self.next() >> 16) % span - bound
+    }
+}
+
+/// Integer-Hz executor, mirroring `playbackRateHz` in `MediaPlayer.kt`.
+fn actuator_ppm(commanded_ppm: i32) -> i32 {
+    let max_delta_hz = (100i64 * i64::from(RATE) / 1_000_000) as i32;
+    let delta_hz = (f64::from(commanded_ppm) * f64::from(RATE) / 1_000_000.0).round() as i32;
+    let delta_hz = delta_hz.clamp(-max_delta_hz, max_delta_hz);
+    (f64::from(delta_hz) * 1_000_000.0 / f64::from(RATE)).round() as i32
+}
+
+const SESSION_NOISE_PACKET_MS: u64 = 2;
+
+fn drive_closed_loop_session(
+    drift_ppm: i32,
+    quantum_ms: i64,
+    hold_ms: u64,
+    until_ms: u64,
+) -> Vec<(u64, i32)> {
+    let mut media = session();
+    let mut seed = 0x6d5a_56da_u32;
+    let mut rng = SessionNoiseRng(0x1234_5678);
+    let quantum_frames = quantum_ms * i64::from(RATE) / 1_000;
+    let mut now = 0u64;
+    let mut packet_end = SESSION_NOISE_PACKET_MS;
+    let mut next_report = 0u64;
+    let mut next_offset_ms = 0u64;
+    let mut offset_frames = 0i64;
+    let mut played = 0.0f64;
+    let mut last_raw = 0u64;
+    let mut actual_ppm = 0i32;
+    let mut samples = Vec::new();
+
+    while now <= until_ms {
+        while packet_end <= now {
+            let start = capture_at(packet_end - SESSION_NOISE_PACKET_MS, drift_ppm);
+            let end = capture_at(packet_end, drift_ppm);
+            media.on_datagram(
+                packet_end,
+                &datagram(
+                    (packet_end / SESSION_NOISE_PACKET_MS - 1) as u32,
+                    start,
+                    end - start,
+                ),
+            );
+            packet_end += SESSION_NOISE_PACKET_MS;
+        }
+
+        // The real track plays at the last rate the platform accepted.
+        played += f64::from(RATE) * (1.0 + f64::from(actual_ppm) / 1_000_000.0) / 1_000.0;
+
+        if now >= next_report {
+            if now >= next_offset_ms {
+                offset_frames = rng.centred(quantum_frames / 2);
+                next_offset_ms = now + hold_ms;
+            }
+            let raw = (played.round() as i64 + offset_frames).max(last_raw as i64) as u64;
+            last_raw = raw;
+            media.record_playback_with_head_at(
+                now,
+                PlaybackReport {
+                    submitted_bytes: played.round() as u64 * FRAME_BYTES,
+                    underruns: 0,
+                    buffer_current_ms: TARGET_MS,
+                },
+                Some(raw),
+            );
+            let command = media.drift_correction_ppm();
+            actual_ppm = actuator_ppm(command);
+            samples.push((now, command));
+            next_report = now + report_cadence(&mut seed);
+        }
+        now += 1;
+    }
+    assert_eq!(
+        media.drift_clock_source(),
+        "hardware",
+        "the M5-12 reconstruction assumes the hardware playout clock"
+    );
+    assert!(
+        media.drift_control_ppm().is_some(),
+        "the 180 s control window must be full"
+    );
+    samples
+}
+
+#[test]
+fn closed_loop_session_does_not_saturate_and_tracks_real_drift() {
+    for (drift_ppm, max_error_ppm) in [(0i32, 25.0f64), (75, 25.0)] {
+        let samples = drive_closed_loop_session(drift_ppm, 15, 2_000, 300_000);
+        let measured: Vec<i32> = samples
+            .iter()
+            .filter(|&&(now, _)| now >= 240_000)
+            .map(|&(_, command)| command)
+            .collect();
+        assert!(!measured.is_empty(), "a 60 s measurement window");
+        let rails = measured.iter().filter(|ppm| ppm.abs() >= 100).count();
+        let rail_fraction = rails as f64 / measured.len() as f64;
+        let mean = measured.iter().map(|&ppm| f64::from(ppm)).sum::<f64>() / measured.len() as f64;
+        eprintln!(
+            "M5-12 session drift={drift_ppm:+}: rail={:.1}% mean={mean:+.1} samples={}",
+            rail_fraction * 100.0,
+            measured.len()
+        );
+        assert!(
+            rail_fraction < 0.10,
+            "drift {drift_ppm:+}: correction pinned at ±100 ppm for {:.1}% of reports",
+            rail_fraction * 100.0
+        );
+        assert!(
+            (mean - f64::from(drift_ppm)).abs() <= max_error_ppm,
+            "drift {drift_ppm:+}: settled at {mean:+.1} ppm"
+        );
+        assert!(measured.iter().all(|ppm| ppm.abs() <= 100));
+    }
+}

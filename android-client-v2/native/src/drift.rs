@@ -428,6 +428,12 @@ impl DriftController {
         buffer_current_ms: u32,
         sample_rate: u32,
     ) -> DriftDecision {
+        if control.is_none() {
+            // The long window was reset or is rebuilding. Never blend the
+            // rebuilt estimate with the previous generation's damped value.
+            self.smoothed_open_loop = None;
+            self.last_control_update_ms = None;
+        }
         let mean_applied = self.record_applied_and_mean(now_ms, sample_rate);
         let target = match control {
             Some(residual) => {
@@ -480,8 +486,9 @@ impl DriftController {
     }
 
     /// First-order damping of the reconstructed drift. Seeded from the first
-    /// sample, and re-seeded after a gap so a rebuilt window is not filtered
-    /// against stale history.
+    /// sample; [`Self::update_with_control`] clears it whenever the control
+    /// input is absent, so a rebuilt window is never filtered against stale
+    /// history.
     fn smooth_open_loop(&mut self, now_ms: u64, open_loop_ppm: i32) -> f64 {
         let value = f64::from(open_loop_ppm);
         let smoothed = match (self.smoothed_open_loop, self.last_control_update_ms) {
