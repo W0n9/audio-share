@@ -5,6 +5,9 @@
 //! decision, sustained frame insert/delete (counted only when applied), and the
 //! hard-limit re-anchor.
 
+mod common;
+
+use audio_share_client_v2_native::drift::MAX_CORRECTION_PPM;
 use audio_share_client_v2_native::media::{MediaHeader, FLAG_STREAM_START};
 use audio_share_client_v2_native::media_session::{DatagramOutcome, MediaSession, PlaybackReport};
 use audio_share_client_v2_native::proto::{Configuration, PcmParameters};
@@ -12,6 +15,8 @@ use audio_share_client_v2_native::proto::{Configuration, PcmParameters};
 const RATE: u32 = 48_000;
 const FRAME_BYTES: u64 = 8; // stereo F32LE
 const TARGET_MS: u32 = 60;
+/// 48 kHz integer-Hz executor at the default §8 100 ppm ceiling: 4 Hz = 83 ppm.
+const RATE_48K_ACTUATOR_LIMIT_PPM: i32 = 83;
 
 fn config() -> Configuration {
     Configuration {
@@ -233,7 +238,17 @@ fn one_stalled_delivery_invalidates_old_drift_and_recovers_real_nonzero_drift() 
         .rfind(|sample| sample.now_ms < 11_500)
         .unwrap();
     assert!((74..=76).contains(&before.raw_ppm.unwrap()));
-    assert!((74..=76).contains(&before.correction_ppm));
+    // This fixture's accepted-bytes clock is open-loop (the model's read loop
+    // ignores `drift_correction_ppm`). Under M5-12's residual reconstruction
+    // the open-loop drift is `residual + applied`, so the command correctly
+    // rises toward the 48 kHz actuator cap (83 ppm) instead of stopping at 75.
+    // On the real closed-loop hardware path this reconstruction yields `d`,
+    // not `2d`. The stall-invalidation behaviour below is what this test pins.
+    assert!(
+        (74..=RATE_48K_ACTUATOR_LIMIT_PPM).contains(&before.correction_ppm),
+        "before the stall: correction {}",
+        before.correction_ppm
+    );
     let rebuilding: Vec<_> = trace
         .samples
         .iter()
@@ -254,7 +269,11 @@ fn one_stalled_delivery_invalidates_old_drift_and_recovers_real_nonzero_drift() 
         .all(|pair| (pair[1].correction_ppm - pair[0].correction_ppm).abs() <= 10));
     let recovered = trace.samples.last().unwrap();
     assert!((74..=76).contains(&recovered.raw_ppm.unwrap()));
-    assert!((74..=76).contains(&recovered.correction_ppm));
+    assert!(
+        (74..=RATE_48K_ACTUATOR_LIMIT_PPM).contains(&recovered.correction_ppm),
+        "after recovery: correction {}",
+        recovered.correction_ppm
+    );
 }
 
 #[test]
@@ -459,9 +478,11 @@ fn a_synthetic_one_hundred_ppm_capture_clock_is_measured_and_clamped() {
     );
     assert_eq!(
         media.drift_correction_ppm(),
-        100,
-        "the smooth controller converges on the ±100 ppm ceiling"
+        83,
+        "the smooth controller converges on the reachable 48 kHz ceiling \
+         (4 Hz = 83 ppm); §8's 100 ppm remains the upper bound"
     );
+    assert!(media.drift_correction_ppm().abs() <= 100);
     assert_eq!(
         media.take_drift_intervention(),
         0,
@@ -476,12 +497,13 @@ fn the_correction_never_exceeds_plus_or_minus_one_hundred_ppm() {
     // whole contract, and a wild estimate must not command a wild rate.
     drive(&mut media, 0, 12_000, 10_000, 0);
     assert_eq!(media.drift_ppm(), Some(10_000));
-    assert_eq!(media.drift_correction_ppm(), 100);
+    assert_eq!(media.drift_correction_ppm(), 83);
+    assert!(media.drift_correction_ppm().abs() <= 100);
 
     let mut media = session();
     drive(&mut media, 0, 12_000, -10_000, 0);
     assert_eq!(media.drift_ppm(), Some(-10_000));
-    assert_eq!(media.drift_correction_ppm(), -100);
+    assert_eq!(media.drift_correction_ppm(), -83);
 }
 
 #[test]
@@ -1159,4 +1181,122 @@ fn an_extended_long_run_head_then_rebuild_reanchors() {
     assert_eq!(media.drift_ppm(), Some(0));
     assert!(recovered.iter().all(|estimate| estimate.abs() <= 1));
     assert_eq!(media.playback_clock_stats().head_reanchor_events, 1);
+}
+
+// ---------------------------------------------------------------------------
+// M5-12 through the production session wiring.
+//
+// The controller/estimator contract lives in `clock_drift_contract`. This test
+// closes the loop at `MediaSession::record_playback_with_head_at`: the hardware
+// head advances at the rate the integer-Hz executor actually reached, the
+// reported position carries the 10-20 ms staircase, and the estimator therefore
+// sees the residual `d - applied` exactly as on device. It exercises
+// `update_from_residual`'s long-baseline branch, which every other session test
+// (all <= 120 s, mostly open-loop fixtures) never reaches.
+// ---------------------------------------------------------------------------
+
+const SESSION_NOISE_PACKET_MS: u64 = 2;
+
+fn drive_closed_loop_session(
+    drift_ppm: i32,
+    quantum_ms: i64,
+    hold_ms: u64,
+    until_ms: u64,
+) -> Vec<(u64, i32)> {
+    let mut media = session();
+    let mut seed = 0x6d5a_56da_u32;
+    let mut rng = common::NoiseRng::new(0x1234_5678);
+    let quantum_frames = quantum_ms * i64::from(RATE) / 1_000;
+    let mut now = 0u64;
+    let mut packet_end = SESSION_NOISE_PACKET_MS;
+    let mut next_report = 0u64;
+    let mut next_offset_ms = 0u64;
+    let mut offset_frames = 0i64;
+    let mut played = 0.0f64;
+    let mut last_raw = 0u64;
+    let mut actual_ppm = 0i32;
+    let mut samples = Vec::new();
+
+    while now <= until_ms {
+        while packet_end <= now {
+            let start = capture_at(packet_end - SESSION_NOISE_PACKET_MS, drift_ppm);
+            let end = capture_at(packet_end, drift_ppm);
+            media.on_datagram(
+                packet_end,
+                &datagram(
+                    (packet_end / SESSION_NOISE_PACKET_MS - 1) as u32,
+                    start,
+                    end - start,
+                ),
+            );
+            packet_end += SESSION_NOISE_PACKET_MS;
+        }
+
+        // The real track plays at the last rate the platform accepted.
+        played += f64::from(RATE) * (1.0 + f64::from(actual_ppm) / 1_000_000.0) / 1_000.0;
+
+        if now >= next_report {
+            if now >= next_offset_ms {
+                offset_frames = rng.centred(quantum_frames / 2);
+                next_offset_ms = now + hold_ms;
+            }
+            let raw = (played.round() as i64 + offset_frames).max(last_raw as i64) as u64;
+            last_raw = raw;
+            media.record_playback_with_head_at(
+                now,
+                PlaybackReport {
+                    submitted_bytes: played.round() as u64 * FRAME_BYTES,
+                    underruns: 0,
+                    buffer_current_ms: TARGET_MS,
+                },
+                Some(raw),
+            );
+            let command = media.drift_correction_ppm();
+            actual_ppm = common::actuator_ppm_oracle(command, MAX_CORRECTION_PPM, RATE);
+            samples.push((now, command));
+            next_report = now + report_cadence(&mut seed);
+        }
+        now += 1;
+    }
+    assert_eq!(
+        media.drift_clock_source(),
+        "hardware",
+        "the M5-12 reconstruction assumes the hardware playout clock"
+    );
+    assert!(
+        media.drift_residual_ppm().is_some(),
+        "the 180 s residual baseline must be full"
+    );
+    samples
+}
+
+#[test]
+fn closed_loop_session_does_not_saturate_and_tracks_real_drift() {
+    for (drift_ppm, max_error_ppm) in [(0i32, 25.0f64), (75, 25.0), (-75, 25.0)] {
+        let samples = drive_closed_loop_session(drift_ppm, 15, 2_000, 300_000);
+        let measured: Vec<i32> = samples
+            .iter()
+            .filter(|&&(now, _)| now >= 240_000)
+            .map(|&(_, command)| command)
+            .collect();
+        assert!(!measured.is_empty(), "a 60 s measurement window");
+        let rails = measured.iter().filter(|ppm| ppm.abs() >= 100).count();
+        let rail_fraction = rails as f64 / measured.len() as f64;
+        let mean = measured.iter().map(|&ppm| f64::from(ppm)).sum::<f64>() / measured.len() as f64;
+        eprintln!(
+            "M5-12 session drift={drift_ppm:+}: rail={:.1}% mean={mean:+.1} samples={}",
+            rail_fraction * 100.0,
+            measured.len()
+        );
+        assert!(
+            rail_fraction < 0.10,
+            "drift {drift_ppm:+}: correction pinned at ±100 ppm for {:.1}% of reports",
+            rail_fraction * 100.0
+        );
+        assert!(
+            (mean - f64::from(drift_ppm)).abs() <= max_error_ppm,
+            "drift {drift_ppm:+}: settled at {mean:+.1} ppm"
+        );
+        assert!(measured.iter().all(|ppm| ppm.abs() <= 100));
+    }
 }

@@ -64,6 +64,36 @@ pub const RATE_SLEW_PPM_PER_UPDATE: i32 = 10;
 /// single trigger can never produce a large audible hole.
 pub const MAX_FRAME_ADJUST_MS: i32 = 10;
 
+/// M5-12: long baseline for the residual slope that drives the rate
+/// controller (the §8 10 s window remains the diagnostic measurement). A 10 s
+/// least-squares slope over a playout position quantised to 10–20 ms swings by
+/// more than 1,000 ppm when one step lands near a window edge, so the
+/// controller must not treat it as a rate difference. A three-minute baseline
+/// bounds the worst-case un-corrected backlog to ~18 ms at the §8 ±100 ppm
+/// limit while averaging the quantisation staircase down to a few ppm.
+///
+/// This is the ticket-authorized "longer integration"; §8 itself specifies
+/// only the 10 s *measurement* window, which is unchanged.
+pub const RESIDUAL_BASELINE_MS: u64 = 180_000;
+
+/// The single derivation of the residual baseline from a configured
+/// diagnostic window. Both the estimator and the controller use this, so the
+/// window whose slope is reconstructed and the window the controller averages
+/// its own applied rate over cannot diverge.
+pub const fn residual_baseline_ms(window_ms: u64) -> u64 {
+    if window_ms > RESIDUAL_BASELINE_MS {
+        window_ms
+    } else {
+        RESIDUAL_BASELINE_MS
+    }
+}
+
+/// M5-12: damping on the reconstructed open-loop drift. Reconstructing
+/// `d = residual + mean(applied)` creates a delayed feedback path; a 20 s
+/// first-order filter removes the residual low-frequency wander without
+/// adding material lag to a quasi-static clock rate.
+pub const RESIDUAL_SMOOTHING_MS: u64 = 20_000;
+
 /// One paired observation of the two clocks at a session-clock instant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct DriftSample {
@@ -82,25 +112,41 @@ struct DriftSample {
 /// change the slope.
 pub struct DriftEstimator {
     window_ms: u64,
+    /// M5-12 long residual baseline. Always at least `window_ms` and
+    /// [`RESIDUAL_BASELINE_MS`]; derived by [`residual_baseline_ms`].
+    residual_baseline_ms: u64,
     sample_rate: u32,
     samples: VecDeque<DriftSample>,
+    /// The same observations over the longer residual baseline. Kept separate
+    /// so [`Self::ppm`] (the §8 diagnostic) keeps its exact 10 s semantics.
+    residual_samples: VecDeque<DriftSample>,
     /// Number of rejected clock intervals, not number of stall episodes.
     discontinuous_intervals: u64,
 }
 
 impl DriftEstimator {
     pub fn new(window_ms: u64, sample_rate: u32) -> Self {
+        let window_ms = window_ms.max(1);
         Self {
-            window_ms: window_ms.max(1),
+            window_ms,
+            residual_baseline_ms: residual_baseline_ms(window_ms),
             sample_rate: sample_rate.max(1),
             samples: VecDeque::new(),
+            residual_samples: VecDeque::new(),
             discontinuous_intervals: 0,
         }
     }
 
-    /// Discard the observation window.
+    /// The long baseline used by [`Self::residual_ppm`]. Exposed so the
+    /// controller can assert it averages over the same span.
+    pub const fn residual_baseline_ms(&self) -> u64 {
+        self.residual_baseline_ms
+    }
+
+    /// Discard both observation windows.
     pub fn reset(&mut self) {
         self.samples.clear();
+        self.residual_samples.clear();
     }
 
     /// Fold one (session time, capture position, playback position) sample.
@@ -122,21 +168,36 @@ impl DriftEstimator {
         match self.samples.back() {
             // Ignore a non-advancing duplicate instant; keep the newest value.
             Some(last) if now_ms <= last.now_ms => {
-                *self.samples.back_mut().unwrap() = sample;
+                if let Some(back) = self.samples.back_mut() {
+                    *back = sample;
+                }
+                if let Some(back) = self.residual_samples.back_mut() {
+                    *back = sample;
+                }
                 return;
             }
             _ => {}
         }
-        self.samples.push_back(sample);
-        // Keep ONE sample at or before the cutoff. Evicting every sample older
+        // Keep ONE sample at or before each cutoff. Evicting every sample older
         // than the cutoff leaves the retained span strictly shorter than the
         // window whenever arrivals are jittered (`front > cutoff`), and `ppm()`
         // then never returns `Some`. Retaining the latest sample at/before the
         // cutoff guarantees `last - front >= window_ms` while still bounding
-        // the window to one extra cadence interval.
-        let cutoff = now_ms.saturating_sub(self.window_ms);
-        while self.samples.len() > 1 && self.samples[1].now_ms <= cutoff {
-            self.samples.pop_front();
+        // the window to one extra cadence interval. The two windows are pushed
+        // and cleared together, so they always share the same newest sample.
+        Self::push_and_trim(&mut self.samples, self.window_ms, sample);
+        Self::push_and_trim(
+            &mut self.residual_samples,
+            self.residual_baseline_ms,
+            sample,
+        );
+    }
+
+    fn push_and_trim(samples: &mut VecDeque<DriftSample>, window_ms: u64, sample: DriftSample) {
+        samples.push_back(sample);
+        let cutoff = sample.now_ms.saturating_sub(window_ms);
+        while samples.len() > 1 && samples[1].now_ms <= cutoff {
+            samples.pop_front();
         }
     }
 
@@ -165,13 +226,44 @@ impl DriftEstimator {
     /// observations with at least [`MIN_WINDOW_SAMPLES`] samples exists.
     /// Positive means the capture clock is ahead of the playback clock (the
     /// buffer is growing; playback must speed up).
+    ///
+    /// This is the §8 10 s diagnostic and is deliberately **not** clamped or
+    /// smoothed (M5-12). The rate controller uses [`Self::residual_ppm`].
     pub fn ppm(&self) -> Option<i32> {
-        let first = self.samples.front()?;
-        let last = self.samples.back()?;
-        if last.now_ms.saturating_sub(first.now_ms) < self.window_ms {
+        Self::window_ppm(&self.samples, self.window_ms, self.sample_rate)
+    }
+
+    /// M5-12: the drift measured over the longer [`RESIDUAL_BASELINE_MS`]
+    /// baseline, used to drive the rate controller.
+    ///
+    /// A 10 s slope over a 10–20 ms-quantised playout position has a slope
+    /// error of order `q / T` (≈1,000–1,800 ppm), which is larger than the
+    /// whole ±100 ppm correction range. Over three minutes the same
+    /// quantisation contributes only a few ppm. This is still the *residual*
+    /// drift `d - applied`; [`DriftController::update_from_residual`]
+    /// reconstructs the open-loop drift before smoothing.
+    ///
+    /// `None` until the residual baseline is full (or after a reset).
+    pub fn residual_ppm(&self) -> Option<i32> {
+        Self::window_ppm(
+            &self.residual_samples,
+            self.residual_baseline_ms,
+            self.sample_rate,
+        )
+    }
+
+    /// Least-squares slope of `capture − playback` over one retained window.
+    fn window_ppm(
+        samples: &VecDeque<DriftSample>,
+        window_ms: u64,
+        sample_rate: u32,
+    ) -> Option<i32> {
+        let first = samples.front()?;
+        let last = samples.back()?;
+        if last.now_ms.saturating_sub(first.now_ms) < window_ms {
             return None;
         }
-        if self.samples.len() < MIN_WINDOW_SAMPLES {
+        if samples.len() < MIN_WINDOW_SAMPLES {
             return None;
         }
         // Without playback progress the "slope" is just the capture rate, not
@@ -181,17 +273,16 @@ impl DriftEstimator {
         {
             return None;
         }
-        let n = self.samples.len() as f64;
-        let mean_t = self.samples.iter().map(|s| s.now_ms as f64).sum::<f64>() / n;
-        let mean_e = self
-            .samples
+        let n = samples.len() as f64;
+        let mean_t = samples.iter().map(|s| s.now_ms as f64).sum::<f64>() / n;
+        let mean_e = samples
             .iter()
             .map(|s| s.capture_frames as f64 - s.playback_frames as f64)
             .sum::<f64>()
             / n;
         let mut covariance = 0.0f64;
         let mut variance = 0.0f64;
-        for sample in &self.samples {
+        for sample in samples {
             let dt = sample.now_ms as f64 - mean_t;
             let de = (sample.capture_frames as f64 - sample.playback_frames as f64) - mean_e;
             covariance += dt * de;
@@ -201,7 +292,7 @@ impl DriftEstimator {
             return None;
         }
         // frames per ms → ppm: slope * 1000 frames/s / sample_rate * 1e6.
-        let ppm = covariance / variance * 1_000_000_000.0 / f64::from(self.sample_rate);
+        let ppm = covariance / variance * 1_000_000_000.0 / f64::from(sample_rate);
         if !ppm.is_finite() {
             return None;
         }
@@ -265,6 +356,13 @@ pub struct DriftController {
     /// Whether the buffer has been inside the deadband since the last reset.
     /// Gates silence insertion (see `update`).
     seen_deadband: bool,
+    /// M5-12: the rate the executor *actually* applied, over the control
+    /// window. Used to reconstruct the open-loop drift from the residual
+    /// measurement (`residual = d - applied`).
+    applied_history: VecDeque<(u64, i32)>,
+    /// M5-12: damped reconstruction of the open-loop drift.
+    smoothed_open_loop: Option<f64>,
+    last_control_update_ms: Option<u64>,
 }
 
 impl DriftController {
@@ -274,6 +372,9 @@ impl DriftController {
             applied_ppm: 0,
             deviation_since_ms: None,
             seen_deadband: false,
+            applied_history: VecDeque::new(),
+            smoothed_open_loop: None,
+            last_control_update_ms: None,
         }
     }
 
@@ -281,10 +382,37 @@ impl DriftController {
         self.config
     }
 
-    /// The rate currently applied, in ppm. Read it through JNI for
+    /// The rate currently commanded, in ppm. Read it through JNI for
     /// `AudioTrack.setPlaybackRate`.
     pub const fn applied_ppm(&self) -> i32 {
         self.applied_ppm
+    }
+
+    /// The span whose applied-rate mean is reconstructed. Derived by the same
+    /// function as [`DriftEstimator::residual_baseline_ms`], so the two cannot
+    /// diverge for a non-default diagnostic window.
+    pub const fn residual_baseline_ms(&self) -> u64 {
+        residual_baseline_ms(self.config.window_ms)
+    }
+
+    /// The largest ppm correction the integer-Hz executor can actually reach
+    /// for this configuration. This is a *reachability* limit, not a change to
+    /// the §8 ±`max_correction_ppm` upper bound.
+    fn reachable_max_ppm(&self, sample_rate: u32) -> i32 {
+        actuator_ppm(
+            self.config.max_correction_ppm,
+            self.config.max_correction_ppm,
+            sample_rate,
+        )
+    }
+
+    /// Move the command toward `target_ppm` by at most one §8 slew step.
+    fn slew_toward(&mut self, target_ppm: i32) {
+        let delta = (target_ppm - self.applied_ppm).clamp(
+            -self.config.slew_ppm_per_update,
+            self.config.slew_ppm_per_update,
+        );
+        self.applied_ppm += delta;
     }
 
     /// Forget the smoothing state and the sustained-deviation run. Used on a
@@ -293,10 +421,18 @@ impl DriftController {
         self.applied_ppm = 0;
         self.deviation_since_ms = None;
         self.seen_deadband = false;
+        self.applied_history.clear();
+        self.smoothed_open_loop = None;
+        self.last_control_update_ms = None;
     }
 
-    /// Advance the controller. `estimate` is the estimator output (None before
-    /// the window fills). `buffer_current_ms` is the platform-reported fill.
+    /// Advance the controller treating `estimate` as the **absolute** rate
+    /// correction (open-loop semantics).
+    ///
+    /// Kept for callers/tests that supply an already-open-loop correction.
+    /// Production (`MediaSession`) uses [`Self::update_from_residual`], because
+    /// the hardware playout clock reflects the correction already and its
+    /// measurement is the *residual* drift.
     pub fn update(
         &mut self,
         now_ms: u64,
@@ -304,24 +440,162 @@ impl DriftController {
         buffer_current_ms: u32,
         sample_rate: u32,
     ) -> DriftDecision {
-        // (1) Smooth rate correction toward the clamped estimate.
-        let target = estimate.unwrap_or(0).clamp(
-            -self.config.max_correction_ppm,
-            self.config.max_correction_ppm,
-        );
-        let delta = (target - self.applied_ppm).clamp(
-            -self.config.slew_ppm_per_update,
-            self.config.slew_ppm_per_update,
-        );
-        self.applied_ppm += delta;
+        let reachable = self.reachable_max_ppm(sample_rate);
+        let target = estimate.unwrap_or(0).clamp(-reachable, reachable);
+        self.slew_toward(target);
+        self.sustained_decision(now_ms, estimate, buffer_current_ms, sample_rate)
+    }
 
-        // (2) Sustained buffer deviation → whole-frame insert/delete.
-        //
-        // Insertion adds silence at the playout point and can be audible, so it
-        // is only allowed once the buffer has actually settled inside the
-        // deadband (a startup fill or a permanently shallow application ring is
-        // not drift) AND a real drift measurement exists. Deletion only reduces
-        // latency and is safe whenever the buffer is genuinely too deep.
+    /// M5-12: advance the controller from the *residual* drift measurement.
+    ///
+    /// `measurement` is the raw 10 s diagnostic (used only for the §8
+    /// sustained-deviation gate, exactly as before). `residual` is the
+    /// long-baseline residual `d - applied` from
+    /// [`DriftEstimator::residual_ppm`]:
+    ///
+    /// 1. reconstruct the open-loop drift as `residual + mean(applied)`, where
+    ///    the mean is over the same residual baseline and uses what the
+    ///    integer-Hz executor actually applied;
+    /// 2. damp that reconstruction with a [`RESIDUAL_SMOOTHING_MS`] low-pass;
+    /// 3. slew the command toward it. The §8 ±`max_correction_ppm` *upper
+    ///    bound* is unchanged; the target is additionally capped to what the
+    ///    integer-Hz executor can reach.
+    ///
+    /// While the baseline is filling (or rebuilding after a discontinuity) the
+    /// controller uses the **same residual semantics** on the 10 s
+    /// `measurement` instead of the old absolute-target fallback. That avoids
+    /// the systematic `d/2` under-correction during warm-up; the 10 s noise can
+    /// still drive the rail there. The applied history is recorded on both
+    /// sides, so in the closed loop `residual + mean(applied) = d` holds across
+    /// the hand-over.
+    pub fn update_from_residual(
+        &mut self,
+        now_ms: u64,
+        measurement: Option<i32>,
+        residual: Option<i32>,
+        buffer_current_ms: u32,
+        sample_rate: u32,
+    ) -> DriftDecision {
+        if residual.is_none() {
+            // The long baseline was reset or is rebuilding. Never blend the
+            // rebuilt estimate with the previous generation's damped value.
+            self.smoothed_open_loop = None;
+            self.last_control_update_ms = None;
+        }
+        let reachable = self.reachable_max_ppm(sample_rate);
+        let target = match residual {
+            Some(residual) => {
+                // The residual and the applied mean must cover the *same*
+                // span; the long baseline is both.
+                let mean_applied = {
+                    self.record_applied(now_ms, sample_rate);
+                    self.applied_mean(now_ms, self.residual_baseline_ms())
+                };
+                let open_loop = residual.saturating_add(mean_applied);
+                let smoothed = self.smooth_open_loop(now_ms, open_loop);
+                smoothed
+                    .round()
+                    .clamp(-f64::from(reachable), f64::from(reachable)) as i32
+            }
+            // Warm-up/rebuild: the same residual reconstruction, but on the
+            // short measurement. The applied mean must cover that same short
+            // span; using the 180 s mean here would under-count the recent
+            // correction and leave a systematic warm-up error.
+            //
+            // Never fall back to treating the residual as an absolute target
+            // (`applied = d - applied` would settle at d/2). With no
+            // measurement at all (a rebuild) the old behaviour is kept: the
+            // rate slews back to zero until fresh evidence exists.
+            None => {
+                self.record_applied(now_ms, sample_rate);
+                measurement.map_or(0, |ppm| {
+                    let mean_applied = self.applied_mean(now_ms, self.config.window_ms);
+                    ppm.saturating_add(mean_applied)
+                        .clamp(-reachable, reachable)
+                })
+            }
+        };
+        self.slew_toward(target);
+        self.sustained_decision(now_ms, measurement, buffer_current_ms, sample_rate)
+    }
+
+    /// Record the rate in effect since the previous update.
+    ///
+    /// The estimator measures `capture - playback`, so after correction it
+    /// reports `d - applied`, not `d`. Adding the mean applied correction over
+    /// the same window recovers the open-loop drift. The integer-Hz executor is
+    /// included so the reconstruction uses the rate the platform actually
+    /// reached, not the pre-quantisation command.
+    fn record_applied(&mut self, now_ms: u64, sample_rate: u32) {
+        let actual = actuator_ppm(
+            self.applied_ppm,
+            self.config.max_correction_ppm,
+            sample_rate,
+        );
+        self.applied_history.push_back((now_ms, actual));
+        let cutoff = now_ms.saturating_sub(self.residual_baseline_ms());
+        while self.applied_history.len() > 1 {
+            let (at_ms, _) = *self.applied_history.front().expect("non-empty");
+            if at_ms > cutoff {
+                break;
+            }
+            self.applied_history.pop_front();
+        }
+    }
+
+    /// Mean of the actually-applied rate over the trailing `window_ms`.
+    /// `record_applied` keeps enough history for both the diagnostic window
+    /// (warm-up) and the residual baseline.
+    fn applied_mean(&self, now_ms: u64, window_ms: u64) -> i32 {
+        let cutoff = now_ms.saturating_sub(window_ms);
+        let mut sum = 0i64;
+        let mut count = 0i64;
+        for &(at_ms, ppm) in &self.applied_history {
+            if at_ms >= cutoff {
+                sum += i64::from(ppm);
+                count += 1;
+            }
+        }
+        if count == 0 {
+            0
+        } else {
+            (sum / count) as i32
+        }
+    }
+
+    /// First-order damping of the reconstructed drift. Seeded from the first
+    /// sample; [`Self::update_from_residual`] clears it whenever the residual
+    /// input is absent, so a rebuilt window is never filtered against stale
+    /// history.
+    fn smooth_open_loop(&mut self, now_ms: u64, open_loop_ppm: i32) -> f64 {
+        let value = f64::from(open_loop_ppm);
+        let smoothed = match (self.smoothed_open_loop, self.last_control_update_ms) {
+            (Some(previous), Some(last_ms)) => {
+                let dt_ms = now_ms.saturating_sub(last_ms) as f64;
+                let alpha = 1.0 - (-dt_ms / RESIDUAL_SMOOTHING_MS as f64).exp();
+                previous + alpha * (value - previous)
+            }
+            _ => value,
+        };
+        self.smoothed_open_loop = Some(smoothed);
+        self.last_control_update_ms = Some(now_ms);
+        smoothed
+    }
+
+    /// §8 sustained buffer deviation → whole-frame insert/delete.
+    ///
+    /// Insertion adds silence at the playout point and can be audible, so it
+    /// is only allowed once the buffer has actually settled inside the
+    /// deadband (a startup fill or a permanently shallow application ring is
+    /// not drift) AND a real drift measurement exists. Deletion only reduces
+    /// latency and is safe whenever the buffer is genuinely too deep.
+    fn sustained_decision(
+        &mut self,
+        now_ms: u64,
+        measurement: Option<i32>,
+        buffer_current_ms: u32,
+        sample_rate: u32,
+    ) -> DriftDecision {
         let error_ms = buffer_current_ms as i32 - self.config.target_ms as i32;
         let mut frame_adjust = 0i32;
         if error_ms.abs() <= self.config.deviation_threshold_ms {
@@ -331,7 +605,7 @@ impl DriftController {
             self.deviation_since_ms = Some(now_ms);
         } else if now_ms.saturating_sub(self.deviation_since_ms.unwrap()) > self.config.sustained_ms
         {
-            let insert_allowed = self.seen_deadband && estimate.is_some();
+            let insert_allowed = self.seen_deadband && measurement.is_some();
             if error_ms > 0 || insert_allowed {
                 frame_adjust = Self::frames_for(error_ms, sample_rate, self.config);
             }
@@ -357,6 +631,26 @@ impl DriftController {
             frames
         }
     }
+}
+
+/// The ppm rate `AudioTrack.setPlaybackRate` can actually reach for a
+/// configured correction ceiling.
+///
+/// The platform API accepts whole Hz, so a 48 kHz stream moves in ~20.83 ppm
+/// steps and rounding a ±100 ppm command to 5 Hz would apply **104.2 ppm**,
+/// outside the §8 bound. Clamp the *Hz* delta to the largest whole-Hz value
+/// that does not exceed `max_correction_ppm`, then report the actual ppm.
+/// This mirrors `playbackRateHz` in `MediaPlayer.kt`.
+fn actuator_ppm(commanded_ppm: i32, max_correction_ppm: i32, sample_rate: u32) -> i32 {
+    if sample_rate == 0 {
+        return 0;
+    }
+    let rate = i64::from(sample_rate);
+    let max_delta_hz = (i64::from(max_correction_ppm.max(0)) * rate / 1_000_000).max(0);
+    let requested =
+        (f64::from(commanded_ppm) * f64::from(sample_rate) / 1_000_000.0).round() as i64;
+    let delta_hz = requested.clamp(-max_delta_hz, max_delta_hz);
+    (delta_hz * 1_000_000 / rate) as i32
 }
 
 #[cfg(test)]
@@ -434,5 +728,101 @@ mod tests {
         let (span_ms, samples) = estimator.window_stats();
         assert!(span_ms >= DRIFT_WINDOW_MS, "span {span_ms}");
         assert!(samples >= MIN_WINDOW_SAMPLES, "samples {samples}");
+    }
+
+    /// M5-12: the diagnostic window and the residual baseline have independent
+    /// spans. The §8 10 s value must publish first; the controller must wait
+    /// for the longer baseline.
+    #[test]
+    fn residual_ppm_requires_the_long_baseline() {
+        let mut estimator = DriftEstimator::new(DRIFT_WINDOW_MS, 48_000);
+        let mut now = 0u64;
+        while now <= DRIFT_WINDOW_MS + 1_000 {
+            estimator.observe(now, now * 48, now * 48);
+            now += 100;
+        }
+        assert_eq!(estimator.ppm(), Some(0));
+        assert_eq!(
+            estimator.residual_ppm(),
+            None,
+            "10 s is not the residual baseline"
+        );
+        while now <= RESIDUAL_BASELINE_MS + 1_000 {
+            estimator.observe(now, now * 48, now * 48);
+            now += 100;
+        }
+        assert_eq!(estimator.residual_ppm(), Some(0));
+        // A reset clears both.
+        estimator.reset();
+        assert_eq!(estimator.ppm(), None);
+        assert_eq!(estimator.residual_ppm(), None);
+    }
+
+    /// M5-12: the integer-Hz executor never commands more than the configured
+    /// §8 ceiling allows. 48 kHz: 5 Hz would be 104.2 ppm, so the reachable
+    /// ceiling is 4 Hz. 44.1 kHz truncates to 90 ppm; 8 kHz has no whole-Hz
+    /// step inside ±100 ppm.
+    #[test]
+    fn integer_hz_actuator_stays_inside_the_ppm_bound() {
+        assert_eq!(actuator_ppm(0, MAX_CORRECTION_PPM, 48_000), 0);
+        assert_eq!(
+            actuator_ppm(100, MAX_CORRECTION_PPM, 48_000),
+            83,
+            "4 Hz, not 104.2 ppm"
+        );
+        assert_eq!(actuator_ppm(-100, MAX_CORRECTION_PPM, 48_000), -83);
+        assert_eq!(
+            actuator_ppm(75, MAX_CORRECTION_PPM, 48_000),
+            83,
+            "3.6 Hz rounds to 4 Hz"
+        );
+        assert_eq!(actuator_ppm(10_000, MAX_CORRECTION_PPM, 48_000), 83);
+        assert_eq!(actuator_ppm(100, MAX_CORRECTION_PPM, 44_100), 90);
+        assert_eq!(
+            actuator_ppm(100, MAX_CORRECTION_PPM, 8_000),
+            0,
+            "no whole-Hz step fits inside ±100 ppm at 8 kHz"
+        );
+        // A smaller configured ceiling is honoured: 40 ppm at 48 kHz can
+        // reach 1 Hz = 20 ppm, not the default 83.
+        assert_eq!(actuator_ppm(40, 40, 48_000), 20);
+    }
+
+    /// M5-12: the estimator's residual baseline and the controller's
+    /// applied-rate mean derive from the same function, including for a
+    /// non-default diagnostic window.
+    #[test]
+    fn estimator_and_controller_agree_on_the_residual_baseline() {
+        for window_ms in [DRIFT_WINDOW_MS, 30_000, RESIDUAL_BASELINE_MS + 60_000] {
+            let estimator = DriftEstimator::new(window_ms, 48_000);
+            let controller = DriftController::new(DriftConfig {
+                window_ms,
+                ..DriftConfig::default()
+            });
+            assert_eq!(
+                estimator.residual_baseline_ms(),
+                controller.residual_baseline_ms(),
+                "window_ms={window_ms}"
+            );
+            assert_eq!(
+                estimator.residual_baseline_ms(),
+                residual_baseline_ms(window_ms)
+            );
+        }
+    }
+
+    /// M5-12: the command never exceeds what the integer-Hz executor can reach,
+    /// even when the §8 ceiling is 100 ppm.
+    #[test]
+    fn the_controller_command_never_exceeds_the_actuator_limit() {
+        for (rate, expected) in [(48_000u32, 83i32), (44_100, 90), (8_000, 0)] {
+            let mut controller = DriftController::new(DriftConfig::default());
+            let mut now = 0u64;
+            for _ in 0..50 {
+                now += 100;
+                controller.update(now, Some(10_000), 60, rate);
+            }
+            assert_eq!(controller.applied_ppm(), expected, "sample_rate={rate}");
+        }
     }
 }
