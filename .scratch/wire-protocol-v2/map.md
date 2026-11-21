@@ -36,7 +36,7 @@
 - **裁决**：逐窗 ±100 ppm 在 10 s 窗口上不可达——实测位置量化约 10–20 ms（≈1,000–2,000 ppm），而 ±100 ppm 需要 <1 ms。B 改按规范 §8/§11.2 口径：长期快照中位数/均值 ±100、无 |ppm| ≥ 10,000 灾难离群、覆盖完整、`correction_ppm` 有界、缓冲有界。判据已写入 [Windows 复测清单](evidence/m5-09/windows-retest.md)，逐窗极值仍全量记录。
 - **[M5-11](issues/m5-11-playout-clock-source.md) resolved，假设未证实**：换成硬件播放时钟后逐窗噪声未下降（同条件更差），说明接受量阶梯不是主噪声源。代码保留（更忠实的时钟），原始目标不可达已记入工单。
 - **[M5-12](issues/m5-12-drift-correction-saturation.md) `needs-triage`**：修正 118/186 顶在 ±100 ppm；作为质量项，stable 前处理，不否决 B。
-- **beta 合入待维护者确认**；M5-07（60 min soak + p95/p99）仍为人工门，B 已 PASS 故可排期；M5-01 可并行。
+- **beta 合入（2026-11-21 维护者裁决）**：将 `integration/m5` 快进合入 `integration/wire-protocol-v2-beta`；仅本地，**不 push、不打 tag**。M5-12 作为 stable 前质量项继续跟踪；M5-07（60 min soak + p95/p99）仍为人工门；M5-01 可并行。
 - 前序：合成等时钟输入在真实 native 播放路径产生 +185,488 ppm；只禁用 trim 仍有离群，不是现场回放或已确认的真机根因。采样断续修复和两轴审查修复合入 `cb28095`，同步短停不再反复清窗，`playback.drift_interval` 保留诊断覆盖与极值。Native 默认/`test-support` 各 240 **PASS**，Clippy、fmt **PASS**（[host 证据](evidence/m5-09/host-drift.md)）。
 
 ## Fog
