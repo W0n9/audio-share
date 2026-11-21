@@ -46,3 +46,48 @@ pub fn seed(default: u64, label: &str) -> u64 {
     eprintln!("{label} seed = {seed}");
     seed
 }
+
+/// Deterministic 32-bit LCG used by the M5-12 noise fixtures.
+pub struct NoiseRng(u32);
+
+impl NoiseRng {
+    pub fn new(seed: u32) -> Self {
+        Self(seed)
+    }
+
+    pub fn next(&mut self) -> u32 {
+        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        self.0
+    }
+
+    /// Uniform integer in `[-bound, bound]`.
+    pub fn centred(&mut self, bound: i64) -> i64 {
+        if bound == 0 {
+            return 0;
+        }
+        let span = 2 * bound + 1;
+        i64::from(self.next() >> 16) % span - bound
+    }
+}
+
+/// M5-12 integer-Hz playback executor, independently implemented.
+///
+/// This is deliberately an **oracle**, not a call into the production mapping,
+/// so a production regression cannot make the test agree with itself.
+///
+/// `AudioTrack.setPlaybackRate` accepts whole Hz only. Round the ppm command to
+/// the nearest Hz, clamp that Hz delta to the largest whole-Hz value that stays
+/// at or below `max_correction_ppm`, and report the actual ppm. The production
+/// controller stores integer ppm, so the actual is truncated (`4 Hz` at 44.1 kHz
+/// is 90 ppm, not 90.7).
+pub fn actuator_ppm_oracle(commanded_ppm: i32, max_correction_ppm: i32, sample_rate: u32) -> i32 {
+    if sample_rate == 0 {
+        return 0;
+    }
+    let rate = i64::from(sample_rate);
+    let max_delta_hz = (i64::from(max_correction_ppm.max(0)) * rate / 1_000_000).max(0);
+    let requested =
+        (f64::from(commanded_ppm) * f64::from(sample_rate) / 1_000_000.0).round() as i64;
+    let delta_hz = requested.clamp(-max_delta_hz, max_delta_hz);
+    (delta_hz * 1_000_000 / rate) as i32
+}

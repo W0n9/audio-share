@@ -1136,6 +1136,7 @@ impl Session {
         let (
             diagnostics,
             drift_ppm,
+            drift_residual_ppm,
             drift_window,
             drift_interval,
             discontinuous_intervals,
@@ -1156,6 +1157,7 @@ impl Session {
             (
                 diagnostics,
                 media.drift_ppm(),
+                media.drift_residual_ppm(),
                 media.drift_window(),
                 media.take_drift_interval(),
                 media.drift_discontinuous_intervals(),
@@ -1232,10 +1234,13 @@ impl Session {
             drift_interval.max_report_gap_ms,
         );
         let (span_ms, sample_count) = drift_window;
+        let residual_ppm =
+            drift_residual_ppm.map_or_else(|| "none".to_owned(), |ppm| ppm.to_string());
         if let Some(drift_ppm) = drift_ppm {
             log::info!(
-                "event = playback.drift drift_ppm={} span_ms={} sample_count={} correction_ppm={} buffer_current_ms={} buffer_target_ms={} discontinuous_intervals={}",
+                "event = playback.drift drift_ppm={} residual_ppm={} span_ms={} sample_count={} correction_ppm={} buffer_current_ms={} buffer_target_ms={} discontinuous_intervals={}",
                 drift_ppm,
+                residual_ppm,
                 span_ms,
                 sample_count,
                 correction_ppm,
@@ -1245,7 +1250,8 @@ impl Session {
             );
         } else if discontinuous_intervals > 0 {
             log::info!(
-                "event = playback.drift_window status=rebuilding span_ms={} sample_count={} correction_ppm={} discontinuous_intervals={}",
+                "event = playback.drift_window status=rebuilding residual_ppm={} span_ms={} sample_count={} correction_ppm={} discontinuous_intervals={}",
+                residual_ppm,
                 span_ms,
                 sample_count,
                 correction_ppm,

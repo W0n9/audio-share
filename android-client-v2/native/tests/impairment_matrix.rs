@@ -471,10 +471,12 @@ fn row8_hundred_ppm_drift_engages_rate_match_and_stays_bounded() {
             peak <= 100,
             "rate correction must respect the ±100 ppm bound"
         );
+        // M5-12: 48 kHz's integer-Hz executor cannot reach 100 ppm (5 Hz would
+        // be 104.2 ppm); the command settles at the reachable 4 Hz = 83 ppm.
+        let reachable = if measurement >= 0 { 83 } else { -83 };
         assert_eq!(
-            decision.rate_ppm,
-            measurement.clamp(-100, 100),
-            "the controller converges to the clamped estimate"
+            decision.rate_ppm, reachable,
+            "the controller converges to the reachable actuator limit"
         );
     }
 

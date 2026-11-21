@@ -15,16 +15,21 @@ import kotlin.math.roundToInt
  * M5-04: map a §8 drift correction in ppm to the integer sample rate
  * `AudioTrack.setPlaybackRate` accepts.
  *
- * At 48 kHz one Hz is ~20.8 ppm, so ±100 ppm rounds to ±5 Hz — the effective
- * application granularity. The residual (up to ~10 ppm) is absorbed by the
- * buffer, and a sustained >20 ms deviation is corrected by whole frames.
- * The input is defensively clamped to the §8 ±100 ppm bound even though the
- * native controller already clamps.
+ * At 48 kHz one Hz is ~20.8 ppm, so the executor moves in 20.8 ppm steps.
+ * ±100 ppm would round to ±5 Hz = ±104.2 ppm, which is **outside** the §8
+ * bound, so the Hz delta is clamped to the largest whole-Hz value that stays
+ * within ±100 ppm (48 kHz: ±4 Hz = ±83.3 ppm). The remaining error is below
+ * one actuator step; a sustained >20 ms deviation is still corrected by whole
+ * frames. The native controller models this same quantisation when it
+ * reconstructs the open-loop drift (M5-12).
  */
 internal fun playbackRateHz(sampleRate: Int, ppm: Int): Int {
     if (sampleRate <= 0) return sampleRate
     val clamped = ppm.coerceIn(-100, 100)
-    val delta = (clamped.toLong() * sampleRate / 1_000_000.0).roundToInt()
+    val maxDelta = (100L * sampleRate / 1_000_000L).toInt().coerceAtLeast(0)
+    val delta = (clamped.toLong() * sampleRate / 1_000_000.0)
+        .roundToInt()
+        .coerceIn(-maxDelta, maxDelta)
     return (sampleRate + delta).coerceIn(1, sampleRate * 2)
 }
 
