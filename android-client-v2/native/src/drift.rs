@@ -482,46 +482,58 @@ impl DriftController {
             self.smoothed_open_loop = None;
             self.last_control_update_ms = None;
         }
-        let mean_applied = self.record_applied_and_mean(now_ms, sample_rate);
         let reachable = self.reachable_max_ppm(sample_rate);
         let target = match residual {
             Some(residual) => {
+                // The residual and the applied mean must cover the *same*
+                // span; the long baseline is both.
+                let mean_applied = {
+                    self.record_applied(now_ms, sample_rate);
+                    self.applied_mean(now_ms, self.residual_baseline_ms())
+                };
                 let open_loop = residual.saturating_add(mean_applied);
                 let smoothed = self.smooth_open_loop(now_ms, open_loop);
                 smoothed
                     .round()
                     .clamp(-f64::from(reachable), f64::from(reachable)) as i32
             }
-            // Warm-up/rebuild: the same residual reconstruction on the short
-            // measurement. Never fall back to treating the residual as an
-            // absolute target (`applied = d - applied` would settle at d/2).
-            // With no measurement at all (a rebuild) the old behaviour is kept:
-            // the rate slews back to zero until fresh evidence exists.
-            None => measurement
-                .map_or(0, |ppm| ppm.saturating_add(mean_applied))
-                .clamp(-reachable, reachable),
+            // Warm-up/rebuild: the same residual reconstruction, but on the
+            // short measurement. The applied mean must cover that same short
+            // span; using the 180 s mean here would under-count the recent
+            // correction and leave a systematic warm-up error.
+            //
+            // Never fall back to treating the residual as an absolute target
+            // (`applied = d - applied` would settle at d/2). With no
+            // measurement at all (a rebuild) the old behaviour is kept: the
+            // rate slews back to zero until fresh evidence exists.
+            None => {
+                self.record_applied(now_ms, sample_rate);
+                measurement.map_or(0, |ppm| {
+                    let mean_applied = self.applied_mean(now_ms, self.config.window_ms);
+                    ppm.saturating_add(mean_applied)
+                        .clamp(-reachable, reachable)
+                })
+            }
         };
         self.slew_toward(target);
         self.sustained_decision(now_ms, measurement, buffer_current_ms, sample_rate)
     }
 
-    /// Record the rate in effect since the previous update and return its mean
-    /// over the residual baseline.
+    /// Record the rate in effect since the previous update.
     ///
     /// The estimator measures `capture - playback`, so after correction it
     /// reports `d - applied`, not `d`. Adding the mean applied correction over
     /// the same window recovers the open-loop drift. The integer-Hz executor is
     /// included so the reconstruction uses the rate the platform actually
     /// reached, not the pre-quantisation command.
-    fn record_applied_and_mean(&mut self, now_ms: u64, sample_rate: u32) -> i32 {
+    fn record_applied(&mut self, now_ms: u64, sample_rate: u32) {
         let actual = actuator_ppm(
             self.applied_ppm,
             self.config.max_correction_ppm,
             sample_rate,
         );
         self.applied_history.push_back((now_ms, actual));
-        let window_ms = self.residual_baseline_ms();
-        let cutoff = now_ms.saturating_sub(window_ms);
+        let cutoff = now_ms.saturating_sub(self.residual_baseline_ms());
         while self.applied_history.len() > 1 {
             let (at_ms, _) = *self.applied_history.front().expect("non-empty");
             if at_ms > cutoff {
@@ -529,12 +541,26 @@ impl DriftController {
             }
             self.applied_history.pop_front();
         }
-        let sum: i64 = self
-            .applied_history
-            .iter()
-            .map(|&(_, ppm)| i64::from(ppm))
-            .sum();
-        (sum / self.applied_history.len() as i64) as i32
+    }
+
+    /// Mean of the actually-applied rate over the trailing `window_ms`.
+    /// `record_applied` keeps enough history for both the diagnostic window
+    /// (warm-up) and the residual baseline.
+    fn applied_mean(&self, now_ms: u64, window_ms: u64) -> i32 {
+        let cutoff = now_ms.saturating_sub(window_ms);
+        let mut sum = 0i64;
+        let mut count = 0i64;
+        for &(at_ms, ppm) in &self.applied_history {
+            if at_ms >= cutoff {
+                sum += i64::from(ppm);
+                count += 1;
+            }
+        }
+        if count == 0 {
+            0
+        } else {
+            (sum / count) as i32
+        }
     }
 
     /// First-order damping of the reconstructed drift. Seeded from the first
