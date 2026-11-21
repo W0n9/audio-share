@@ -20,7 +20,12 @@
 
 - 客户端收集 `playback.drift_clock`、`playback.drift_interval`、`playback.drift`、`playback.drift_window`、`playback.trim` 和缓冲/损失快照；Server 收集 `media.stats` / `media.drops`。**必须记录 `source=`**：`hardware` 才代表本次测的是硬件播放时钟；若为 `accepted`（`head_give_up_events > 0` 或启动回退），说明 `getTimestamp`/播放头在该设备不可用，本轮**不能**用来证明漂移精度，按该原因记 `NOT RUN`/`FAIL` 并保留诊断，不能当通过。按同一会话和 stream `instance` 核对区间连续性，记录 `start_ms/end_ms`、`reports/valid_estimates`、`min_ppm/max_ppm` 和 `max_report_gap_ms`。`discontinuous_intervals` 计被拒绝的相邻采样区间，不计独立停滞或 re-anchor 事件。
 - 区分首次 10 s 窗口预热和后续测量缺口。检查从首次有效估计到窗口结束的诊断覆盖：除了明确记载的暖机/重建区间，`reports` 应非零、`valid_estimates` 应等于 `reports`，且不得有缺失区间或未解释的异常 `max_report_gap_ms`。明确记录所有重建与时长，不把 0 个估计、`none` 或缺日志当作 0 ppm；没有足够稳态覆盖或重建导致无法完成有效验收，不判 PASS。
-- 用**所有区间内产生的有效估计**的 `min_ppm/max_ppm` 判定 ±100 ppm，包括部分有效的重建区间；不能只看每 5 s `playback.drift` 的末值。记录样本数和极值；若只从 `playback.drift` 快照算中位数，明确标为快照中位数，仅作诊断。±100 ppm 是**本次基线试验**的原始估计判据，不是协议对物理时钟差的限幅。另验实际 `correction_ppm` 始终在 ±100 ppm 内。
+- **判据（2026-11-21 维护者裁决，取代原「每个区间极值都在 ±100 ppm」）**，以规范 §8/§11.2 为准：
+  - 长期快照的**中位数与均值**在 ±100 ppm 内；
+  - **无灾难性离群**：任何有效估计不得出现历史失效量级（|ppm| ≥ 10,000）；
+  - 覆盖完整（上一条）；缓冲有界；re-anchor 触发与计数正常（下一条）；
+  - `correction_ppm` 始终在 ±100 ppm 内；**顶轨比例只作质量指标**，由 [M5-12](../../issues/m5-12-drift-correction-saturation.md) 跟踪，不单独否决 B。
+  - 逐窗 `min_ppm/max_ppm` 仍全量记录用于诊断与回归，但单窗极值不作否决项：10 s 窗口在本平台的量化误差约 10–20 ms（≈1,000–2,000 ppm），±100 ppm 需要小于 1 ms 的位置分辨率。
 - 用同一会话的相邻 5 s 快照求 `reanchor_events` 与 `reanchor_frames` 增量，记录最大值及对应原始估计和缓冲数据。不得出现类似历史单周期 `+7` 次的突跳；发现超差或缺样，保留上下文，不事后剔除来判为通过。
 - 记录缓冲、Server pending 和丢弃。有异常就保留原始时间窗；不要据单个累计计数推断实际播放或单向延迟。
 - 记录结论 `PASS` / `FAIL` / `NOT RUN` 及原因；如果没有有效窗口，不能记作通过。原始日志仅留本地，回传时先移除地址、设备/身份标识和配对内容。

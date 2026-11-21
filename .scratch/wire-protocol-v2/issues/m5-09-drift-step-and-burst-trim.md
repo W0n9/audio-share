@@ -2,9 +2,9 @@
 
 **What to build:** 先在 Rust host 上复现用例 B 的 `drift_ppm` 离群，然后只修能通过证据归因的代码问题。re-anchor 突跳是关联信号，不预先认定为因果。
 
-**Blocked by:** M5-11（播放侧时钟源修复后重跑真机 B）
+**Blocked by:** —
 
-**Status:** ready-for-human（实施已合入 `cb28095`；B3 实测 FAIL 于漂移精度，裁决走 [M5-11](m5-11-playout-clock-source.md)）
+**Status:** resolved（2026-11-21：按裁决口径，用例 B 真机 PASS；见 Comments）
 
 **Type:** task
 
@@ -41,3 +41,10 @@
 - [Windows + Android 真机用例 B](../evidence/m5-09/windows-retest.md) **NOT RUN**，最终 arm64 调试 APK 已构建并核验。没有真机证据不写 `resolved`，不动 beta。
 - **用例 B 复测（`cb28095` APK + `431997b` Server）：FAIL**。见 [RESULT-B3](../evidence/m5-09/RESULT-B3.md)。稳态原始估计全区间极值 −645…+532 ppm，67/67 区间至少一端越界；覆盖 PASS（3,277/3,277、gap ≤113 ms、`discontinuous_intervals=0`）；re-anchor **0 次**，历史 +7 未复现；Server pending 0、drops 0。`correction_ppm` 有 35/67 快照顶在 ±100。应用 ring 全程 0–26 ms（目标 60），不计入漂移插帧（`seen_deadband` 未建立，符合现有设计）。
 - **待核查的代码事实**（不是已确认根因）：`submitted_position()` 用 `AudioTrack.write` 已接受字节数（`media_session.rs:663`），不是硬件播放头；10 s 窗口下单个 2052 帧块约合 4,275 ppm，与观测噪声量级一致。形态与 host 批提交压力模型相似，仍需 RED 后再改。
+
+### 2026-11-21：用例 B 按裁决口径判定 PASS
+
+- 证据：[48 kHz 复测](./../evidence/m5-11/RESULT-WINDOWS-48K.md)。前置（48 kHz 自检、`source=hardware`）、覆盖 9,052/9,052、re-anchor 0、Server pending 0/零丢弃、缓冲有界均通过。
+- 漂移：快照中位数 −1 ppm、均值 −9.6 ppm（±100 内）；无 |ppm| ≥ 10,000 的灾难离群；逐窗极值 −1,807…+723 如实记录，按 2026-11-21 裁决不再作为否决项。
+- `correction_ppm` 有 118/186 顶轨，作为质量项转 [M5-12](m5-12-drift-correction-saturation.md)；不在本票内放宽。
+- 本票关闭的是 M5-09 的验收项；M5-07（60 min soak + p95/p99）仍为独立人工门，`NOT RUN`。

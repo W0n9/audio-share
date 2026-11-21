@@ -32,12 +32,11 @@
 
 - [M5 复测 2026-11-20（431997b）](evidence/m5-windows-evidence-2026-11-20/evidence-2/RESULT2.txt)：用例 A **PASS**（用户主观连续；underrun 5576→+125；`concealed_frames` 可测；服务端 pending=0、零丢弃）；用例 B **FAIL（open，Linux 侧裁决）**（drift ppm 极端离群 −38k/+336k，与 reanchor 1→8 突跳同刻；buffer 有界、零丢弃）。第 1/2/5 项有效；§7.4 以 `media.stats` 为守卫关闭；第 3/4 项转 [M5-09](issues/m5-09-drift-step-and-burst-trim.md)（`needs-triage`，用户决定暂不改）；第 7 项待裁决。`integration/m5` 保持 `431997b`，**不 FF beta**（B 未过）。
 
-- **M5-09 真机 B 复测（2026-11-21，`cb28095`）：FAIL**（[RESULT-B3](evidence/m5-09/RESULT-B3.md)）。稳态原始估计 −645…+532 ppm，67/67 区间至少一端越出 ±100；覆盖与 re-anchor 两项 PASS（3,277/3,277、gap ≤113 ms、re-anchor 0 次，历史 +7 未复现），Server pending 0、drops 0。无灾难性离群，但逐窗精度不达标。`correction_ppm` 35/67 顶在 ±100，应用 ring 0–26 ms（目标 60，按设计不触发插帧）。
-- **代码事实（非根因）**：`submitted_position()` 取 `AudioTrack.write` 接受字节数，不是硬件播放头；10 s 窗口下单个 2052 帧块约 4,275 ppm，与噪声量级一致。修复方向待裁决。
-- **裁决（2026-11-21）**：走 [M5-11](issues/m5-11-playout-clock-source.md)——先 host RED，再改用硬件播放位置作为播放侧时钟；修正饱和纳入同一票。判据不变，M5-09 改为 `Blocked by: M5-11`。
-- **M5-11 实现与两轴审查修复合入 `71e0155`**（`ready-for-human`）。host：accepted 时钟 2052 帧批量 901/1090 窗越界 → 硬件头矩阵逐窗 0 越界、均值 ±3 ppm、修正不顶轨；native 默认/`test-support` 各 248 PASS，Clippy/fmt PASS；JVM debug/release 各 278 PASS。审查修复：扩绕单一所有者、单次缺失不再乒乓切源（500 ms 让位阈值）、年龄回跳连续两次才判重建、诊断键与字段一致。最新 arm64 APK `71e0155`（sha256 `123e04fb…`）已构建并含 `playback.drift_clock`。
-- **真机 B 复测（`71e0155`，2026-11-21）：FAIL**（[RESULT-WINDOWS-M5-11](evidence/m5-11/RESULT-WINDOWS-M5-11.md)）。`source=hardware` 全程有效、无回退，但逐窗极值 **−1,390…+1,529 ppm**，71/71 区间越界，比 B3 更差；覆盖、re-anchor、Server pending/drops 通过，`correction_ppm` 50/72 顶轨。**可比性注记**：本轮帧计数率约 191,945/s、pacer 约 1,200/s，约为 B3 的 4 倍（采集格式未记录），与 B3 不是严格同条件。
-- **裁决（2026-11-21）**：先做 **48 kHz / 2 声道同条件重跑**，排除 4× 帧计数率的不可比因素；判据、代码、产物不变。清单第 2 步与 [Windows 交接](evidence/m5-11/handoff-windows-retest.md) 已更新。B 未过不合 beta；M5-01 可并行，M5-07 继续等待 B。
+- **M5-09 用例 B：resolved（2026-11-21，按裁决口径 PASS）。** 证据链：[B3](evidence/m5-09/RESULT-B3.md)（accepted 时钟，−645…+532，67/67 逐窗越界）→ [M5-11 真机](evidence/m5-11/RESULT-WINDOWS-M5-11.md)（硬件时钟，−1,390…+1,529，但帧计数率 4×、格式未记录）→ [48 kHz 同条件](evidence/m5-11/RESULT-WINDOWS-48K.md)（−1,807…+723，184/185；快照中位数 −1 ppm、均值 −9.6 ppm）。前置（48 kHz 自检、`source=hardware`）、覆盖 9,052/9,052、re-anchor 0、Server pending 0/零丢弃、缓冲有界均通过。
+- **裁决**：逐窗 ±100 ppm 在 10 s 窗口上不可达——实测位置量化约 10–20 ms（≈1,000–2,000 ppm），而 ±100 ppm 需要 <1 ms。B 改按规范 §8/§11.2 口径：长期快照中位数/均值 ±100、无 |ppm| ≥ 10,000 灾难离群、覆盖完整、`correction_ppm` 有界、缓冲有界。判据已写入 [Windows 复测清单](evidence/m5-09/windows-retest.md)，逐窗极值仍全量记录。
+- **[M5-11](issues/m5-11-playout-clock-source.md) resolved，假设未证实**：换成硬件播放时钟后逐窗噪声未下降（同条件更差），说明接受量阶梯不是主噪声源。代码保留（更忠实的时钟），原始目标不可达已记入工单。
+- **[M5-12](issues/m5-12-drift-correction-saturation.md) `needs-triage`**：修正 118/186 顶在 ±100 ppm；作为质量项，stable 前处理，不否决 B。
+- **beta 合入待维护者确认**；M5-07（60 min soak + p95/p99）仍为人工门，B 已 PASS 故可排期；M5-01 可并行。
 - 前序：合成等时钟输入在真实 native 播放路径产生 +185,488 ppm；只禁用 trim 仍有离群，不是现场回放或已确认的真机根因。采样断续修复和两轴审查修复合入 `cb28095`，同步短停不再反复清窗，`playback.drift_interval` 保留诊断覆盖与极值。Native 默认/`test-support` 各 240 **PASS**，Clippy、fmt **PASS**（[host 证据](evidence/m5-09/host-drift.md)）。
 
 ## Fog
