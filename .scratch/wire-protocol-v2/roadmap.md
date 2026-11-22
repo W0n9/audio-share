@@ -1,18 +1,17 @@
 # Wire Protocol v2 — 工程路线图
 
-Status: M4（13–15）已完成并合入 `phase-2/wire-protocol-v2` @ `0377b59`（2026-11-15 fast-forward），同日补齐真机验收并修复三个端到端缺陷；2026-11-16 维护者授权 customer beta 路径（工单 19–26）并新增 `EMULATOR` 证据状态；M5–M7 仍为提案草稿（本文不新增后续授权，不改变任何已 accepted 的规范或裁决）
-Feature: wire-protocol-v2
-Last updated: 2026-11-16
-Integration branch: `phase-2/wire-protocol-v2` @ `1cb4e80`（M4 主体 `0377b59` + 真机修复 `1cb4e80` 均已合入）
+阅读提示：§1–4 混合了不同日期的规划和回填记录。v0.6.0 以 §5 的 2026-11-22 裁决为准；最新整理见 [v0.6.0 发布审阅包](../v0.6.0-review/README.md)。
+
+2026-11-16 基线：M4（13–15）已合入 `phase-2/wire-protocol-v2` @ `1cb4e80`（M4 主体 `0377b59` + 真机修复）；维护者授权 Customer Beta 路径并增加 `EMULATOR` 证据状态。后续 M5、Beta 与发布裁决见 [`map.md`](map.md)。
 
 ## 0. 本文的定位与读法
 
-- 本文是**排期/依赖视图**，不是规范、不是 ADR、不是工单。规范权威是 `docs/wire-protocol-v2/{spec,pairing,threat-model}.md`（2026-11-12 accepted）与 `docs/adr/0004-wire-protocol-v2-transport.md`；产品与验收语义的基线是 `.scratch/wire-protocol-v2/spec.md`。冲突时以后者为准。
+- 本文是**排期/依赖视图**，不是规范、不是 ADR、不是工单。协议行为以 `docs/wire-protocol-v2/{spec,pairing,threat-model}.md`（2026-11-12 accepted）与 `docs/adr/0004-wire-protocol-v2-transport.md` 为准；`.scratch/wire-protocol-v2/spec.md` 留作产品与验收语义的基线。v0.6.0 的例外只适用于本次发布门槛，见 §5。
 - 进度与裁决的权威记录是 `map.md`（Notes / Decisions-so-far / Fog）和 `issues/NN-*.md`。工单的创建、`Blocked by`、`Status: claimed/resolved`、frontier 规则见 `docs/agents/issue-tracker.md`。
 - 证据状态词的权威定义见 `docs/agents/evidence-policy.md`（`PASS` / `FAIL` / `NOT RUN` / `WAIVED` / `EMULATOR`）。
 - 状态词：`DONE` 已完成并有证据 · `NEXT` 下一个可执行范围 · `PLANNED` 已列入但尚未创建工单 · `NOT RUN` 未验证，不得写成 PASS · `WAIVED` 维护者明确豁免，不等于 validated · `EMULATOR` 仅在 Android 模拟器上验证，真机仍为 `NOT RUN`，不得写成真机 PASS。
 - 本文**不含排期日期与负责人**：仓库中没有这类信息，由维护者确定后补入。
-- 本文件位于 `.scratch/`，按 `prototype-brief.md` 的约定保持未跟踪，不要 `git add`。
+- 本路线图已由 Git 跟踪；原始证据仍按证据政策默认留在本地。
 
 ## 1. 当前位置（基线快照）
 
@@ -25,7 +24,7 @@ Integration branch: `phase-2/wire-protocol-v2` @ `1cb4e80`（M4 主体 `0377b59`
 
 最终验收（`evidence/post-fix-device-acceptance.md`）：workspace 465 PASS / 4 既有 ignored、native 默认与 `test-support` 各 102、JVM 36、默认 `assembleRelease` PASS、真机 READY / rebind / recreate / lock / ACTION_STOP→701 全 PASS；frozen v0.3.4 APK SHA 匹配且 wire probe PASS。
 
-**基线能力边界（a5de2d9，M4 之前）**：只有控制通道的 READY 稳态，没有 v2 媒体发送或播放、播放统计、抖动缓冲/漂移修正、生产 pairing（QR/SAS/Keystore）、GUI/CLI 生命周期状态、多 Client 隔离能力。**M4 已实现并合入集成分支**：单 Client PCM 发送/接收、AudioTrack 播放、§9 统计、显式关闭；真机验收 NOT RUN。仍没有 jitter/drift/concealment、生产 pairing/GUI、多 Client（M5–M7）。
+**基线能力边界（`a5de2d9`，M4 之前）**：只有控制通道的 READY 稳态，没有 v2 媒体发送或播放、播放统计、抖动缓冲/漂移修正、生产 pairing（QR/SAS/Keystore）、GUI/CLI 生命周期状态或多 Client 隔离。M4 随后实现单 Client PCM、`AudioTrack` 播放、§9 统计与显式关闭，真机复验见下表；再之后的 Beta、M5 实施与裁决以 `map.md` 的对应记录为准。
 
 ## 2. 里程碑与完成判据（M4–M7）
 
