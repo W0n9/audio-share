@@ -28,6 +28,6 @@
 
 ## 对外发布前须处理
 
-- [ ] **先确定正式构建提交与版本策略。** 保留本地标签直到维护者决定其最终用途；本次不改打标签。核对 Server/产品发布号、独立的 Android 应用版本、签名与资产命名。现有 [`Make Release`](../../.github/workflows/release.yml#L152-L208) 是手动触发的 draft 流程：它当前会读出 `0.5.0-beta`，尝试创建 `v0.5.0-beta` pre-release 草稿，并选用过时的 beta 说明（其中写「无抖动缓冲与漂移修正」）。不能用它原样发布 v0.6.0。若只把 `VERSION` 改成 `0.6.0`，stable 分支还会查找目前不存在的 `metadata/en-US/changelogs/600999.txt`；Android 签名 APK 的版本断言与文件名也仍是 beta 硬编码。
-- [ ] **用确定的提交出包并验收。** 核对 Windows/Linux Server 与 Android 签名 APK 的二进制版本、签名、ABI、SHA-256、无 `test-support`；在实际候选产物上记录配对、播放、停止、升级和兼容性复验结果。未执行的项目继续记 `NOT RUN`，需要额外豁免时由维护者裁决。
-- [ ] **核准对外文案和发布目标。** 审阅[发布说明草稿](../release-notes-v0.6.0.md)，确认单 Client 与所有未验证项的披露；确认远端、tag 目标与 draft 资产后，再决定是否推送与发布。不把本审阅包或原始日志当发布附件。
+- [ ] **确定正式构建提交与版本策略。** 当前标签仍指向旧版本源码，本分支不改标签和版本。正式发布提交需将服务器的 `VERSION` 设为 `0.6.0`，并用 `bash scripts/apply_version.sh` 同步 Cargo/Tauri 元数据；Android 应用版本独立，由维护者决定。工作流按实际 APK 版本命名，不要求两者一致。
+- [ ] **先仅打包并验收。** 在正式提交所在的 ref 手动运行 [`Make Release`](../../.github/workflows/release.yml)，输入 `version=0.6.0`，保持 `create_draft=false`。下载 Actions artifacts，核对 Windows/Linux Server 与 Android 签名 APK 的二进制版本、签名、ABI、SHA-256、无 `test-support`；记录配对、播放、停止、升级和兼容性复验。未执行的项目继续记 `NOT RUN`，需要额外豁免时由维护者裁决。
+- [ ] **确认标签和对外文案，再创建 draft。** 审阅[对外说明](../../docs/releases/v0.6.0.md)与[证据草稿](../release-notes-v0.6.0.md)。确认远端 `v0.6.0` 标签指向正式构建提交后，选择同一提交重新运行 `Make Release`，设 `create_draft=true`。该次运行会重新构建，不复用先前 artifacts；核对 draft 附件的哈希与验收记录，必要时复验最终资产，再手动发布。不把原始日志当发布附件；工作流不会创建标签或自动公开 Release。

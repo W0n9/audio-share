@@ -1,25 +1,72 @@
 name: Make Release
 
-# Server 0.5.0-beta + Android Client v2 beta release.
-#
-# The v1 Android Client (v0.3.4) and its existing release/F-Droid artifacts are
-# not rebuilt or replaced here; they remain available as the compatibility
-# fallback. This workflow only creates a draft GitHub Release on manual
-# dispatch and never publishes it.
+# 只打包 Server 与 Android Client v2，不重建 v1 / F-Droid 产物。
+# 默认仅上传 Actions artifacts；可选地创建 GitHub draft，不会自动发布或打标签。
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: '预期的产品/Server 版本（不带 v，必须与所选提交的 VERSION 一致）'
+        required: true
+        type: string
+      create_draft:
+        description: '创建 GitHub draft（要求远端标签已指向所选提交）'
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: make-release-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Check release inputs
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check product version
+        id: version
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          bash scripts/check-release-version.sh "$REQUESTED_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check release notes and remote tag before build
+        if: inputs.create_draft
+        shell: bash
+        run: |
+          notes="docs/releases/v$VERSION.md"
+          if [[ ! -s "$notes" ]]; then
+            printf '缺少 GitHub 发布说明：%s\n' "$notes" >&2
+            exit 1
+          fi
+          bash scripts/check-release-tag.sh "v$VERSION" "$GITHUB_SHA"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+
   build_server:
     name: Build and package Server
+    needs: preflight
     uses: ./.github/workflows/server-rewrite.yml
 
   build_android:
-    name: Build signed Android beta APK
+    name: Build signed Android v2 APK
+    needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    outputs:
+      apk_name: ${{ steps.package.outputs.apk_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust stable (Android targets)
         uses: dtolnay/rust-toolchain@stable
@@ -30,7 +77,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Set up Android SDK / NDK
         uses: android-actions/setup-android@v3
@@ -38,9 +85,9 @@ jobs:
       - name: Install NDK, build-tools, and platform
         run: |
           sdkmanager --install \
-            "ndk;27.2.12479018" \
-            "build-tools;36.0.0" \
-            "platforms;android-37.0"
+            'ndk;27.2.12479018' \
+            'build-tools;36.0.0' \
+            'platforms;android-37.0'
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -58,9 +105,7 @@ jobs:
             > "$RUNNER_TEMP/audio-share-beta-keys/audio-share-beta.jks"
           chmod 600 "$RUNNER_TEMP/audio-share-beta-keys/audio-share-beta.jks"
 
-      # native/.cargo/config.toml contains this developer machine's NDK paths.
-      # The CARGO_TARGET_*_LINKER and CC_/AR_ variables below override them
-      # without modifying the checked-in file.
+      # 覆盖 native/.cargo/config.toml 中的本机 NDK 路径，不改源码。
       - name: Build signed universal APK (arm64-v8a + x86_64)
         working-directory: android-client-v2
         env:
@@ -79,42 +124,34 @@ jobs:
           export AR_x86_64_linux_android="$NDK/llvm-ar"
           ./gradlew assembleRelease -PandroidAbis=arm64-v8a,x86_64
 
-      - name: Verify APK signature, version, and ABI
+      - name: Verify and package signed APK
+        id: package
         shell: bash
         run: |
           set -euo pipefail
-          apk=android-client-v2/app/build/outputs/apk/release/app-release.apk
-          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
-          aapt="$ANDROID_HOME/build-tools/36.0.0/aapt"
-          test -f "$apk"
-          "$apksigner" verify --verbose --print-certs "$apk"
-          badging=$("$aapt" dump badging "$apk")
-          echo "$badging" | grep -q "package: name='dev.audioshare.v2' versionCode='2' versionName='0.2.0-beta'"
-          echo "$badging" | grep -q "native-code: 'arm64-v8a' 'x86_64'"
-          if unzip -p "$apk" 'classes*.dex' | strings | grep -qE 'TestSupportHarness|pinnedSpki|serverKey|smoke-client'; then
-            echo 'error: test-support path found in production APK' >&2
-            exit 1
-          fi
-          mkdir -p dist-android
-          cp "$apk" dist-android/audio-share-client-v2-0.2.0-beta.apk
-          (cd dist-android && sha256sum audio-share-client-v2-0.2.0-beta.apk \
-            > audio-share-client-v2-0.2.0-beta.apk.sha256)
+          apk_name=$(bash scripts/package-android-release.sh "$ANDROID_HOME/build-tools/36.0.0" \
+            android-client-v2/app/build/outputs/apk/release dist-android)
+          printf 'apk_name=%s\n' "$apk_name" >> "$GITHUB_OUTPUT"
 
       - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
           name: audio-share-client-v2-android
           path: |
-            dist-android/audio-share-client-v2-0.2.0-beta.apk
-            dist-android/audio-share-client-v2-0.2.0-beta.apk.sha256
+            dist-android/${{ steps.package.outputs.apk_name }}
+            dist-android/${{ steps.package.outputs.apk_name }}.sha256
           if-no-files-found: error
 
   create_release:
     name: Create draft release
-    needs: [build_server, build_android]
-    runs-on: ubuntu-latest
+    if: inputs.create_draft
+    needs: [preflight, build_server, build_android]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      APK_NAME: ${{ needs.build_android.outputs.apk_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -123,88 +160,7 @@ jobs:
         with:
           path: release_bin
 
-      - name: Verify release artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(bash ./scripts/get_version.sh -n)
-
-          # Android beta APK (new in 0.5.0-beta).
-          test -f release_bin/audio-share-client-v2-android/audio-share-client-v2-0.2.0-beta.apk
-          test -f release_bin/audio-share-client-v2-android/audio-share-client-v2-0.2.0-beta.apk.sha256
-
-          # Server artifacts, unchanged from the 0.4.x release layout.
-          test -f release_bin/AudioShareServer-windows/AudioShareServer.exe
-          test -f release_bin/AudioShareServer-windows/AudioShareServer.exe.sha256
-          test -f release_bin/audio-share-server-cmd-windows/audio-share-server-cmd-windows.zip
-          test -f release_bin/audio-share-server-cmd-windows/audio-share-server-cmd-windows.zip.sha256
-          test -f "release_bin/audio-share-server-deb/AudioShareServer_${version}_amd64.deb"
-          test -f "release_bin/audio-share-server-deb/AudioShareServer_${version}_amd64.deb.sha256"
-          test -f "release_bin/audio-share-server-appimage/AudioShareServer_${version}_amd64.AppImage"
-          test -f "release_bin/audio-share-server-appimage/AudioShareServer_${version}_amd64.AppImage.sha256"
-          test -f release_bin/audio-share-server-cmd-linux/audio-share-server-cmd-linux.tar.gz
-          test -f release_bin/audio-share-server-cmd-linux/audio-share-server-cmd-linux.tar.gz.sha256
-
-          for sum in release_bin/*/*.sha256; do
-            (cd "$(dirname "$sum")" && sha256sum -c "$(basename "$sum")")
-          done
-
-      - name: Generate release notes
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(bash ./scripts/get_version.sh -n)
-          if [[ "$version" == *-* ]]; then
-            # Pre-release versions have no metadata/F-Droid changelog entry.
-            cat > notes <<'EOF'
-          Wire Protocol v2 beta: encrypted, paired audio from a Server to one
-          Android Client. The Android beta APK is signed with the dedicated beta
-          key and installed alongside the v1 app (`dev.audioshare.v2`).
-
-          v1 compatibility
-          - v1 is frozen and still works; v1 is UNENCRYPTED and UNAUTHENTICATED
-            and must be used only on a trusted network.
-          - A v2 failure never falls back to v1, plaintext, or anonymous
-            encryption.
-          - The existing v1 APK (v0.3.4) and F-Droid release remain available.
-
-          Known beta limitations
-          - One Client per Server (no concurrent phones or multi-Client isolation).
-          - No jitter buffer, packet-loss concealment, or clock-drift correction.
-          - No diagnostics export, telemetry, or raw-audio recording.
-          - No F-Droid distribution and no in-app auto-update.
-          - No boot start or background restart after reboot.
-          - Windows is smoke-tested only; Linux is the full-acceptance platform.
-
-          Upgrade and rollback
-          - Server: stop the old process, keep your existing config.ini and data
-            directory, then replace the executable/package. Pairings and the
-            Server identity stay in the data directory.
-          - Android: install the signed beta APK next to v1. Earlier test builds
-            signed with a debug key must be uninstalled first; uninstalling
-            loses their pairing and the app must be paired again.
-          - Rollback: reinstall the previous Server artifact and keep the v1 APK.
-            A Server identity reset invalidates all v2 pairings and requires
-            re-pairing.
-
-          Verify every download with its SHA-256 checksum before installing.
-          EOF
-          else
-            code=$(bash ./scripts/get_version.sh -c)
-            changelog="metadata/en-US/changelogs/${code}.txt"
-            test -f "$changelog"
-            cp "$changelog" notes
-          fi
-
-      - name: Create GitHub draft release
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(bash ./scripts/get_version.sh -n)
-          extra=()
-          if [[ "$version" == *-* ]]; then
-            extra+=(--prerelease)
-          fi
-          gh release create "v$version" -d "${extra[@]}" -F notes -t "v$version" release_bin/*/*
+      - name: Verify assets and create GitHub draft
+        run: bash scripts/create-draft-release.sh release_bin "$VERSION" "$APK_NAME" "$GITHUB_SHA"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
