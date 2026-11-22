@@ -40,5 +40,6 @@
 
 ## Notes
 
+- 真机复测交接：[handoff-windows-retest](../evidence/m5-12/handoff-windows-retest.md)（产物哈希、前置检查、判据与回传格式）。
 - 相关：`android-client-v2/native/src/drift.rs`（`DriftController`，`slew_ppm_per_update`、死区）。
 - 本票不是 M5-09/B 的否决项；B 已按 2026-11-21 裁决口径判定。stable 前须关闭或明确 `WAIVED`。
