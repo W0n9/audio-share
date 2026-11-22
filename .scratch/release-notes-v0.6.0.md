@@ -1,12 +1,12 @@
 # Audio Share 0.6.0 — release notes draft
 
-Status: **local annotated tag only** (`v0.6.0`), 2026-11-22. Not pushed, no GitHub Release,
-no release artifacts built for this version. Created under the maintainer's narrowed stable
-gate (see `roadmap.md` §5, 2026-11-22 ruling).
+Status as recorded on 2026-11-22: **local annotated tag only** (`v0.6.0`), not pushed,
+no GitHub Release, and no release artifacts built for this version. See the maintainer's
+[narrowed stable gate](wire-protocol-v2/roadmap.md#5-发布与迁移-gateexperimental--stable).
 
-Tag target: `ac9482a` on `integration/wire-protocol-v2-beta` (code + device evidence).
-The Android app in this build still reports `0.2.0-beta` (`versionCode 2`); `VERSION` /
-`versionName` / `versionCode` were **not** changed and no artifact was rebuilt for 0.6.0.
+The tag points to `675f290`; `ac9482a` is the earlier code and device-evidence baseline.
+The tagged source still has `VERSION=0.5.0-beta`, and the v2 Android app reports
+`0.2.0-beta` (`versionCode 2`). These are not v0.6.0 release artifacts.
 
 ## What this release is
 
@@ -36,12 +36,19 @@ full M7 acceptance.
 
 ## Verified
 
-- Host: `cargo test` 260 / `--features test-support` 260, clippy, fmt; JVM 278.
-- Device (M5-12, APK `4120cdd`, Windows Server `431997b`, 48 kHz): judgement window
-  180 snapshots, correction at the actuator ceiling **0/180**, `residual_ppm` median 1 /
-  mean 0.92, `correction_ppm` max 5 while the raw 10 s estimate still ranged −225…+361
-  (170/180 intervals outside ±100). Buffer 0–20 ms, server pending 0, drops 0.
-- Device (M5-09): see `wire-protocol-v2/evidence/m5-12/` and `evidence/m5-11/`.
+- Host `PASS`: [native tests](wire-protocol-v2/evidence/m5-12/host-drift-saturation.md)
+  260 each for default and `test-support`, Clippy, fmt;
+  [JVM 278](wire-protocol-v2/map.md#decisions-so-far).
+- M5-12 [Windows + Android device `PASS`](wire-protocol-v2/evidence/m5-12/RESULT-WINDOWS.md)
+  (debug APK `4120cdd`, Server `431997b`, 48 kHz): at the actuator ceiling **0/180**
+  in the post-warm-up judgement window (**17/33** during warm-up, reported separately).
+  `residual_ppm` median 1 / mean 0.92; max absolute correction 5 ppm. Raw 10 s snapshots
+  ranged −225…+361 ppm; separately, 170/180 diagnostic intervals crossed ±100 ppm.
+  Buffer 0–20 ms; Server pending frames and drops both 0 in the judgement window.
+- M5-09 Windows + Android device: `PASS` under the
+  [adjudicated long-window drift, coverage, and bounds criteria](wire-protocol-v2/evidence/m5-09/windows-retest.md).
+  The [48 kHz run](wire-protocol-v2/evidence/m5-11/RESULT-WINDOWS-48K.md) still failed the
+  earlier per-window criterion.
 
 ## Not verified — WAIVED / NOT RUN, never PASS
 

@@ -2,8 +2,8 @@
 
 ## Notes
 
-集成分支：`integration/wire-protocol-v2-beta`（产物与 tag 对应 `362d023`，2026-11-18；前序 M4 集成分支为 `phase-2/wire-protocol-v2` @ `1cb4e80`）。本地 annotated tag `v0.5.0-beta` 指向 `362d023`（工单 35 裁决 B 后重建，未 push）；其后的文档提交不属于发布内容。
-本地 annotated tag `v0.6.0` 指向 `675f290`（2026-11-22，首个 stable 标记；**仅本地、未 push、未发 Release、未重建发布产物**；stable 门槛按维护者裁决收窄，见下方 stable 门槛收窄条目与 `roadmap.md` §5；说明见 `release-notes-v0.6.0.md`）。
+历史 Beta 发布基线：annotated tag `v0.5.0-beta` 指向 `362d023`（工单 35 裁决 B 后重建）；该版本的产物与 2026-11-18 的预发布见下方工单 24 记录。`integration/wire-protocol-v2-beta` 此后已继续推进，不等于该标签。前序 M4 集成分支为 `phase-2/wire-protocol-v2` @ `1cb4e80`。
+本地 annotated tag `v0.6.0` 指向 `675f290`（2026-11-22，首个 stable 标记；**仅本地、未 push、未发 Release、未重建发布产物**；stable 门槛按维护者裁决收窄，见下方 stable 门槛收窄条目与 `roadmap.md` §5；说明见 [发布说明](../release-notes-v0.6.0.md)）。整理后的提案、实验与放行清单见 [v0.6.0 发布审阅包](../v0.6.0-review/README.md)。
 本轮授权范围：2026-11-14 维护者确认 M4（Tracer-Bullet 第 4 步）——单 Android Client PCM、播放统计与显式关闭；固定基线 `a5de2d9`，隔离分支 `phase-4/single-client-pcm`。
 原始设计 baseline 与 normative 协议不同；M5 抖动/漂移/损伤恢复、M6 生产 pairing/GUI/多 Client、M7 release 等后续阶段没有因本轮批准而自动宣称实现。
 已确认公共测试 seam：① Server capture 输入到认证 QUIC 媒体/控制输出；② native 媒体交付、实际播放提交与统计 Interface；③ Android 播放 Interface 与真实 Service/Binder。逐切片 RED→GREEN，预期字节来自 normative spec/golden vectors，不把收包当播放证据。
