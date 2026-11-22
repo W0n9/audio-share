@@ -104,7 +104,10 @@ Kotlin 把“实际接受的 Hz”回报给 native（新增 JNI 上行），或�
 - 位置测量噪声：每 `hold_ms` 重新抽取一个偏移，均匀整数落在
   `[-q/2, +q/2]` 帧（`q` = 10/15/20 ms），即 10–20 ms 的量化台阶，不是白噪声。
 - 每个报告：`observe → ppm()/residual_ppm() → update_from_residual`；不使用私有函数。
-- 顶轨定义：测量窗内 `|correction_ppm| == 100` 的周期占比。
+- 顶轨定义（GREEN / 真机）：测量窗内命令值停在**整数 Hz 执行器上限**的周期占比
+  （48 kHz：`|correction_ppm| ≥ 83`）。M5-12 把命令夹到执行器上限后，§8 的 ±100 已
+  不可达，用 100 作阈值会让判据恒真；RED 的 53–70% 是旧实现（未夹紧、命令可到 100）
+  按 ±100 统计的结果，只作量级对照，不可与新阈值直接相减。
 - **长基线 180 s + 20 s 一阶阻尼**。180 s 是工单授权的“更长积分”，不是 spec §8
   原文；§8 的 10 s 测量窗语义（`ppm()`/`drift_ppm`）完全未变。
 - 测量窗 240–300 s（598 个控制周期），让 180 s 基线先填满并稳定。
@@ -188,20 +191,25 @@ sample_rate 8 kHz  : 0 ppm (no whole-Hz step inside ±100 ppm)
 ### 4.2 噪声矩阵
 
 ```text
-M5-12 drift=0 q=10ms hold=1000ms seed=0x6d5a56da: rail=0.0% mean_applied=-1.3 max|applied|=2 raw=[-714,878]
-M5-12 drift=0 q=15ms hold=1000ms seed=0x12345678: rail=0.0% mean_applied=-9.6 max|applied|=17 raw=[-1520,920]
-M5-12 drift=0 q=20ms hold=2000ms seed=0x12345678: rail=0.0% mean_applied=+15.2 max|applied|=16 raw=[-1250,1664]
-M5-12 drift=+75 q=10ms hold=1000ms seed=0x6d5a56da: rail=0.0% mean_applied=+75.5 err=+0.5 raw=[-722,870]
-M5-12 drift=+75 q=20ms hold=2000ms seed=0x12345678: rail=0.0% mean_applied=+83.0 err=+8.0 raw=[-1238,1676]
-M5-12 drift=-75 q=15ms hold=2000ms seed=0x12345678: rail=0.0% mean_applied=-81.4 err=-6.4 raw=[-926,977]
+M5-12 drift=0 q=10ms hold=1000ms seed=0x6d5a56da: ceil=0.0% rail=0.0% mean_applied=-1.3 max|applied|=2 raw=[-714,878]
+M5-12 drift=0 q=15ms hold=1000ms seed=0x12345678: ceil=0.0% rail=0.0% mean_applied=-9.6 max|applied|=17 raw=[-1520,920]
+M5-12 drift=0 q=20ms hold=2000ms seed=0x12345678: ceil=0.0% rail=0.0% mean_applied=-5.2 max|applied|=8 raw=[-2087,1684]
+M5-12 drift=+75 q=10ms hold=1000ms seed=0x6d5a56da: ceil=0.0% mean_applied=+75.5 err=+0.5 raw=[-722,870]
+M5-12 drift=+75 q=20ms hold=1000ms seed=0x6d5a56da: ceil=22.4% mean_applied=+80.7 err=+5.7 raw=[-1194,1603]
+M5-12 drift=-75 q=15ms hold=1000ms seed=0x6d5a56da: ceil=28.3% mean_applied=-77.6 err=-2.6 raw=[-949,1010]
 M5-12 noiseless drift=0: mean_applied=+0.0 max|applied|=0
 ```
 
+`ceil` 是按 83 ppm 执行器上限统计的驻留比例，`rail` 是按 §8 ±100 统计（夹紧后恒为 0，
+只作上界检查）。零漂移单元 `ceil = 0.0 %`、`max|applied|` 只有 2–17 ppm——说明
+不是「夹紧后自然为 0」，而是控制器真的没被噪声推满；±75 单元出现 0–28 % 的
+`ceil` 属预期（4 Hz = 83 ppm 是 75 ppm 最近的可达台阶），该组判据用的是稳态误差。
+
 | 指标 | GREEN（修复后） | 阈值 | 结论 |
 |---|---|---|---|
-| 无漂移顶轨比例 | 12/12 单元 0.0 % | < 10 % | **PASS** |
-| ±75 顶轨比例 | 24/24 单元 0.0 % | < 10 % | **PASS** |
+| 无漂移顶轨比例 | 12/12 单元 0.0 %（83 ppm 执行器上限） | < 10 % | **PASS** |
 | ±75 稳态误差 | −7.7 … +12.8 ppm | ≤ 25 ppm | **PASS** |
+| ±75 命令上界 | 始终 ≤ 83（执行器上限） | ≤ 100 | **PASS** |
 | 无噪声 drift=0 | mean_applied = 0.0，max 0 | ≤ 5 ppm | **PASS** |
 | §8 ±100 ppm 上界 | 命令始终 ≤ 83（48 kHz 可达上限），≤ 100 | 不变 | **PASS** |
 

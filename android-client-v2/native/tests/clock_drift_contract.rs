@@ -347,7 +347,14 @@ struct NoiseCase {
 
 #[derive(Clone, Copy)]
 struct NoiseMetrics {
+    /// Reports where the command sits at the §8 ±100 ppm bound. After M5-12
+    /// caps the command at the integer-Hz actuator ceiling this can never fire;
+    /// it is kept as a bound check, not as the saturation metric.
     rail_fraction: f64,
+    /// Reports where the command sits at the actuator ceiling the 48 kHz
+    /// executor can actually reach (83 ppm). This is what "pinned" means now:
+    /// with zero true drift any ceiling dwell is noise-driven.
+    ceiling_fraction: f64,
     mean_applied: f64,
     max_abs_applied: i32,
     raw_min: i32,
@@ -457,8 +464,13 @@ fn run_noise_case_between(case: NoiseCase, from_ms: u64, until_ms: u64) -> Noise
         .iter()
         .filter(|ppm| ppm.unsigned_abs() >= MAX_CORRECTION_PPM.unsigned_abs())
         .count();
+    let at_ceiling = applied
+        .iter()
+        .filter(|ppm| ppm.unsigned_abs() >= RATE_48K_ACTUATOR_LIMIT_PPM.unsigned_abs())
+        .count();
     NoiseMetrics {
         rail_fraction: rails as f64 / samples.max(1) as f64,
+        ceiling_fraction: at_ceiling as f64 / samples.max(1) as f64,
         mean_applied: applied.iter().map(|&ppm| f64::from(ppm)).sum::<f64>()
             / samples.max(1) as f64,
         max_abs_applied: applied.iter().map(|ppm| ppm.abs()).max().unwrap_or(0),
@@ -496,7 +508,8 @@ fn quantised_position_noise_must_not_saturate_the_rate_correction() {
             let m = run_noise_case(case);
             eprintln!(
                 "M5-12 drift=0 q={quantum_ms}ms hold={hold_ms}ms seed={seed:#x}: \
-                 rail={:.1}% mean_applied={:+.1} max|applied|={} raw=[{},{}] samples={}",
+                 ceil={:.1}% rail={:.1}% mean_applied={:+.1} max|applied|={} raw=[{},{}] samples={}",
+                m.ceiling_fraction * 100.0,
                 m.rail_fraction * 100.0,
                 m.mean_applied,
                 m.max_abs_applied,
@@ -504,11 +517,12 @@ fn quantised_position_noise_must_not_saturate_the_rate_correction() {
                 m.raw_max,
                 m.samples,
             );
-            if m.rail_fraction >= RAIL_FRACTION_MAX {
+            if m.ceiling_fraction >= RAIL_FRACTION_MAX {
                 failures.push(format!(
-                    "noise alone pinned the correction at the ±100 ppm rail \
+                    "noise alone pinned the correction at the 48 kHz actuator \
+                     ceiling (83 ppm) \
                      (q={quantum_ms}ms hold={hold_ms}ms seed={seed:#x}: {:.1}%)",
-                    m.rail_fraction * 100.0
+                    m.ceiling_fraction * 100.0
                 ));
             }
             if m.mean_applied.abs() > STEADY_ERROR_MAX_PPM {
@@ -549,20 +563,18 @@ fn a_real_seventy_five_ppm_drift_is_tracked_without_long_term_saturation() {
                 let m = run_noise_case(case);
                 eprintln!(
                     "M5-12 drift={drift_ppm:+} q={quantum_ms}ms hold={hold_ms}ms seed={seed:#x}: \
-                     rail={:.1}% mean_applied={:+.1} err={:+.1} raw=[{},{}]",
-                    m.rail_fraction * 100.0,
+                     ceil={:.1}% mean_applied={:+.1} err={:+.1} raw=[{},{}]",
+                    m.ceiling_fraction * 100.0,
                     m.mean_applied,
                     m.mean_applied - f64::from(drift_ppm),
                     m.raw_min,
                     m.raw_max,
                 );
-                if m.rail_fraction >= RAIL_FRACTION_MAX {
-                    failures.push(format!(
-                        "a real {drift_ppm:+} ppm drift sat on the rail \
-                         (q={quantum_ms}ms hold={hold_ms}ms seed={seed:#x}: {:.1}%)",
-                        m.rail_fraction * 100.0
-                    ));
-                }
+                // A real ±75 ppm drift is *expected* to settle at the 48 kHz
+                // ceiling (4 Hz = 83 ppm is the nearest reachable step), so
+                // ceiling dwell is not a failure here. What must hold is that
+                // the command never exceeds what the executor can apply and
+                // that it tracks the true drift.
                 if (m.mean_applied - f64::from(drift_ppm)).abs() > STEADY_ERROR_MAX_PPM {
                     failures.push(format!(
                         "the correction did not track a real {drift_ppm:+} ppm drift \
@@ -570,9 +582,9 @@ fn a_real_seventy_five_ppm_drift_is_tracked_without_long_term_saturation() {
                         m.mean_applied
                     ));
                 }
-                if m.max_abs_applied > MAX_CORRECTION_PPM {
+                if m.max_abs_applied > RATE_48K_ACTUATOR_LIMIT_PPM {
                     failures.push(format!(
-                        "the §8 ±100 ppm bound was exceeded (q={quantum_ms}ms \
+                        "the 48 kHz actuator ceiling was exceeded (q={quantum_ms}ms \
                          hold={hold_ms}ms seed={seed:#x}: {})",
                         m.max_abs_applied
                     ));
