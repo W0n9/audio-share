@@ -63,9 +63,13 @@ jobs:
         run: |
           bash scripts/apply_version.sh
           git diff --exit-code -- \
-            Cargo.toml Cargo.lock \
+            Cargo.toml Cargo.lock tools/rust-android-interop/Cargo.lock \
             gui/package.json gui/package-lock.json \
             gui/src-tauri/Cargo.toml gui/src-tauri/tauri.conf.json
+
+      - name: Test release scripts without publishing
+        if: runner.os == 'Linux'
+        run: bash scripts/release-workflow.test.sh
 
       - name: Check formatting
         run: cargo fmt --check
