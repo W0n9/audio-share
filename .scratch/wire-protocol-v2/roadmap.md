@@ -107,6 +107,13 @@ Beta 明确排除：M5 抖动缓冲/隐藏/漂移/损伤矩阵与 fuzz、多 Cli
 
 - 当前产品状态（baseline §47–55、ADR-0004 §41）：v1 冻结在 65530；v2 独立 UDP 65531、ALPN `audio-share/v2`、默认与 v1 同时启用但标记 **experimental**；新 Android Client 优先 v2，**v2 失败后绝不自动回退 v1**、明文或匿名加密。
 - stable 判定前置：M4–M7 全部 DoD 满足；真实 v2 Android release 存在；migration guide 与 rollback path 已发布；v1 的 "trusted networks only" 标注与独立禁用开关可用；§4 中标记「阻断 stable」的项全部关闭或有维护者书面豁免。
+
+> **2026-11-22 维护者裁决（stable 门槛收窄）**：M5 未完成项（§11.2 真实网络行、60 min soak、
+> p95/p99、端到端可听基线）、M6（多 Client 与生产化）、M7（全量验收、v1 回归、migration/
+> rollback）以及 §4 中标「阻断 stable」的项，**均不构成本次 stable 的门槛**，转入后续里程碑。
+> 这是维护者的书面豁免，不代表这些项已验证：release notes 与相关文档必须继续标
+> `WAIVED` / `NOT RUN`，不得写成 `PASS`。本次 stable 的实际能力边界为单 Client
+> （M4 + 已裁决的 M5 子集）。
 - v1 **不设移除日期**；只有在上述条件成立后才重新讨论其默认值。产品版本、Android app 版本、Wire Protocol major 是三个独立值。
 - 发布产物：release notes、migration guide、rollback path、v1/v2 双协议配置说明、脱敏诊断导出说明。不得引入外部 telemetry、原始 PCM 落盘或密钥日志。
 
