@@ -94,9 +94,16 @@ class ServerStore {
    */
   private pendingPaired = $state<{
     clientId: string;
+    approvalId: number;
     name: string;
     ticks: number;
   } | null>(null);
+  /**
+   * The approved request the current success line belongs to. A poll that was
+   * in flight during approval still carries that request; it must not clear
+   * the success context. Any other live/pending request does.
+   */
+  private succeededRequest: { clientId: string; approvalId: number } | null = null;
   private pairingTimer: ReturnType<typeof setInterval> | null = null;
   /** The current `pairingError` came from polling, so a good poll may clear it. */
   private pairingErrorFromPoll = false;
@@ -362,6 +369,7 @@ class ServerStore {
       this.pairedName = null;
       this.pairingSucceeded = false;
       this.pendingPaired = null;
+      this.succeededRequest = null;
       this.pairingErrorFromPoll = false;
     }
   }
@@ -414,9 +422,15 @@ class ServerStore {
       }
       // A new attempt invalidates the previous success context: do not let an
       // old success line (or a consumed-QR suppression) outlive its invitation.
-      if (this.pairing.live.length > 0 || this.pairing.pending.length > 0) {
+      // A poll already in flight during approval still carries the approved
+      // request itself, so match on identity rather than on list emptiness.
+      if (
+        this.pairing.live.some((request) => !this.isSucceededRequest(request)) ||
+        this.pairing.pending.some((request) => !this.isSucceededRequest(request))
+      ) {
         this.pairedName = null;
         this.pairingSucceeded = false;
+        this.succeededRequest = null;
       }
     } catch (error) {
       this.pairingError = String(error);
@@ -438,6 +452,7 @@ class ServerStore {
       this.pairedName = null;
       this.pairingSucceeded = false;
       this.pendingPaired = null;
+      this.succeededRequest = null;
     } catch (error) {
       this.failAction(error);
     } finally {
@@ -456,6 +471,7 @@ class ServerStore {
       this.pairedName = null;
       this.pairingSucceeded = false;
       this.pendingPaired = null;
+      this.succeededRequest = null;
     } catch (error) {
       this.failAction(error);
     } finally {
@@ -473,6 +489,7 @@ class ServerStore {
       this.pairedName = null;
       this.pairingSucceeded = false;
       this.pendingPaired = null;
+      this.succeededRequest = null;
     } catch (error) {
       this.failAction(error);
     } finally {
@@ -489,6 +506,7 @@ class ServerStore {
     this.pairingError = null;
     this.pairedName = null;
     this.pairingSucceeded = false;
+    this.succeededRequest = null;
     try {
       this.pairing = await api.pairingApprove(approvalId);
       // The driver persists after `decide` returns, so the device list may
@@ -496,6 +514,7 @@ class ServerStore {
       if (request) {
         this.pendingPaired = {
           clientId: request.clientId,
+          approvalId: request.approvalId,
           name: request.wouldRestore ?? request.displayName,
           ticks: 0,
         };
@@ -520,6 +539,10 @@ class ServerStore {
     if (client?.state === "active") {
       this.pairedName = pending.name;
       this.pairingSucceeded = true;
+      this.succeededRequest = {
+        clientId: pending.clientId,
+        approvalId: pending.approvalId,
+      };
       if (this.repairTarget?.clientId === pending.clientId) {
         this.repairTarget = null;
       }
@@ -530,6 +553,17 @@ class ServerStore {
     // Persistence failures fail closed and never reach the device list; stop
     // waiting instead of showing success for a pairing the store rejected.
     if (pending.ticks > 15) this.pendingPaired = null;
+  }
+
+  /** Whether `request` is the approved request the success line belongs to. */
+  private isSucceededRequest(request: {
+    clientId: string;
+    approvalId: number;
+  }): boolean {
+    return (
+      this.succeededRequest?.clientId === request.clientId &&
+      this.succeededRequest?.approvalId === request.approvalId
+    );
   }
 
   /** Record a command failure; only the next action (not a poll) clears it. */
