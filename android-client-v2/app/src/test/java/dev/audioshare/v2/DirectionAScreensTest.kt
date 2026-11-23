@@ -85,6 +85,23 @@ class HomeScreenTest : RobolectricComposeTestBase() {
     }
 
     @Test
+    fun re_pair_targets_the_server_selected_by_the_typed_address() {
+        val first = StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")
+        val typed = StoredServer("cd".repeat(32), "Desk", "other.example:65531")
+        start(
+            AppState(
+                address = "other.example:65531",
+                storedServers = listOf(first, typed),
+            )
+        )
+        compose.onNodeWithTag("pair-code").performScrollTo().performClick()
+        assertTrue(
+            events.contains(UiEvent.RePairRequested("cd".repeat(32))),
+            "Re-pair must open the record Connect would target, not blindly the first",
+        )
+    }
+
+    @Test
     fun a_server_that_needs_repairing_disables_connect_but_keeps_re_pair_available() {
         start(
             AppState(
