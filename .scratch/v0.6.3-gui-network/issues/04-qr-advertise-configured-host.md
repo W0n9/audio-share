@@ -7,7 +7,7 @@
 **Blocked by:** 无
 
 **Category:** bug
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 ## Agent Brief
 
@@ -55,3 +55,4 @@
 ## Comments
 
 - 2026-11-23: triage 由维护者在 v0.6.2 真机测试中报告。核实：v0.6.2 的 GUI v2 starter 固定 `bind_host: "::"` + `addr_hint: None`；runtime 回落到默认 IPv4；`settings.host` 只传给 v1。维护者决定 #04 只改二维码广告地址，v2 绑定保持双栈。
+- 2026-11-24: code-complete on `integration/v0.6.3-gui-network` (tip `a1681a0`). Automated verification PASS: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (672 passed / 0 failed), `svelte-check` 101 files 0 errors / 0 warnings, Vite production build. `%scope` 现已在 Host 字段下给出用户可见提示（ticket 05）。Windows 真机 QR 配对 `NOT RUN`；ticket 保持 `ready-for-human`。
