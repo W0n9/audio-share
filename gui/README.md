@@ -116,8 +116,9 @@ xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- bash -c '
 
 The shell follows the selected Variant C layout: a centered status and
 circular Start/Stop, quick Endpoint and Encoding controls, a collapsible
-Network configuration whose Host field suggests the enumerated local IPv4
-addresses, and one scrolling Settings page with grouped disclosures
+Network configuration whose Host field suggests the enumerated local IPv4 and
+non-loopback IPv6 addresses (link-local addresses, which need a `%scope`
+suffix, are excluded), and one scrolling Settings page with grouped disclosures
 (Appearance with System / Light / Dark theme, Startup & window, Updates,
 System, About). See
 [`docs/server-rewrite/gui-modernization-acceptance.md`](../docs/server-rewrite/gui-modernization-acceptance.md).

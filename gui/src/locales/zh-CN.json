@@ -28,6 +28,7 @@
   "main.hintReady": "随时可以启动",
   "config.warningTitle": "配置提示",
   "field.host": "主机",
+  "field.hostScopeHint": "带 %scope 后缀的链路本地 IPv6 地址无法写入配对二维码，将改用默认地址。",
   "field.port": "端口",
   "field.endpoint": "音频端点",
   "field.encoding": "编码",

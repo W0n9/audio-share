@@ -12,6 +12,12 @@
   /** Stop keeps its own visual while the stop request is in flight. */
   const showStop = $derived(running || state === "stopping");
   const locked = $derived(server.settingsLocked);
+  /**
+   * Mirrors the QR fallback: a Host carrying a `%scope` suffix cannot be
+   * encoded in the pairing payload, so the runtime advertises the default
+   * address instead. Surface that to the operator where they typed it.
+   */
+  const hostHasScope = $derived(server.settings.host.includes("%"));
   const address = $derived(
     running && server.status.address
       ? server.status.address
@@ -137,6 +143,7 @@
               list="host-addresses"
               bind:value={server.settings.host}
               disabled={locked}
+              aria-describedby={hostHasScope ? "host-scope-hint" : undefined}
               onchange={persist}
             />
             <datalist id="host-addresses">
@@ -144,6 +151,11 @@
                 <option value={address}></option>
               {/each}
             </datalist>
+            {#if hostHasScope}
+              <p class="sub" id="host-scope-hint">
+                {t("field.hostScopeHint")}
+              </p>
+            {/if}
           </div>
           <div class="field">
             <label for="port">{t("field.port")}</label>
