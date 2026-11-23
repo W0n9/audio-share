@@ -7,7 +7,7 @@
 **Blocked by:** 01, 02, 03, 04
 
 **Category:** bug
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 ## 修复项
 
@@ -42,3 +42,4 @@
 ## Comments
 
 - 2026-11-23: 由两轴 code review 生成。Spec 轴确认 3 项（#01 组合边界、#04 提示缺失、#02 焦点回归）；Standards 轴无硬违规，报告文档漂移与若干判断性 smell。
+- 2026-11-24: review 修复已合入 `integration/v0.6.3-gui-network`（tip `a1681a0`）。自动化验证 PASS：fmt、clippy `-D warnings`、`cargo test --workspace`（672 passed / 0 failed）、svelte-check（101 files，0 errors / 0 warnings）、Vite 构建。已处理 #02 焦点回落、#04 `%scope` 用户可见提示、文档漂移与低风险质量项；#01 pending + live 组合边界只记录未改布局。Windows 真机项 `NOT RUN`，ticket 保持 `ready-for-human`。
