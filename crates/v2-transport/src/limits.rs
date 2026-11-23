@@ -282,10 +282,7 @@ impl OutstandingRequests {
     /// Admit a request, or return false when the bound is already reached
     /// (or the id is already outstanding — a duplicate request id).
     pub fn track(&mut self, request_id: u64) -> bool {
-        if self.pending.len() >= self.limit || !self.pending.insert(request_id) {
-            return false;
-        }
-        true
+        self.pending.len() < self.limit && self.pending.insert(request_id)
     }
 
     /// Mark a request resolved (its response was emitted or the session ended).
