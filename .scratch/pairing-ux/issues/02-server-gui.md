@@ -4,17 +4,17 @@
 
 **Blocked by:** 01。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## 验收
 
-- [ ] revoked 行：`Re-pair`（打开新的配对邀请，并记住目标 `client_id` 用于提示）+ `Delete`（二次确认；仅 revoked 行可见）。
-- [ ] active 行：只有 `Revoke`；不提供 `Delete`。
-- [ ] live/pending 卡命中 `would_restore`：标题“此设备已被撤销”，正文说明“恢复后不会生成新密钥”，按钮“恢复设备”；普通设备仍显示“接受设备”。
-- [ ] 配对失败态（consumed / expired）：`Refresh QR code` 置前；同屏保留“使用配对码”入口，无需先刷新。
-- [ ] 配对成功：设备列表更新，并显示一行“{name} 已配对。”
-- [ ] 文案按 `spec.md` 的 en/zh 定稿录入两个 locale。
-- [ ] `svelte-check` 与生产构建 PASS。
+- [x] revoked 行：`Re-pair`（打开新的配对邀请，并记住目标 `client_id` 用于提示）+ `Delete`（二次确认；仅 revoked 行可见）。
+- [x] active 行：只有 `Revoke`；不提供 `Delete`。
+- [x] live/pending 卡命中 `would_restore`：标题“此设备已被撤销”，正文说明“恢复后不会生成新密钥”，按钮“恢复设备”；普通设备仍显示“接受设备”。
+- [x] 配对失败态（consumed / expired）：`Refresh QR code` 置前；同屏保留“使用配对码”入口，无需先刷新。
+- [x] 配对成功：设备列表更新，并显示一行“{name} 已配对。”
+- [x] 文案按 `spec.md` 的 en/zh 定稿录入两个 locale。
+- [x] `svelte-check` 与生产构建 PASS。
 
 ## 事实来源
 
@@ -34,3 +34,6 @@
 - Limitation: Svelte/store behaviour has no test runner; it is covered by `svelte-check`
   plus the production build only. Real device: not applicable / `NOT RUN`.
 - Details: `.scratch/pairing-ux/evidence/README.md`.
+- Review fixes merged at `6242ec7`: SAS is reachable during a re-pair invitation, the
+  restore card is one Svelte snippet, and the GUI success state is one type; svelte-check,
+  production build and GUI Rust tests PASS. Status: resolved.
