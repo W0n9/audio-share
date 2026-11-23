@@ -331,6 +331,7 @@ object AppReducer {
                 state.copy(
                     screen = screen,
                     outcome = event.outcome,
+                    storedServers = state.projectedRepairState(event.outcome),
                     stopRequested = if (event.outcome is SessionOutcome.Ended) {
                         false
                     } else {
@@ -351,6 +352,9 @@ object AppReducer {
         is UiEvent.SessionOutcomeChanged -> Reduction(
             state.copy(
                 outcome = event.outcome,
+                // The Service persists the flag; this keeps the visible card
+                // in step until the next credential load.
+                storedServers = state.projectedRepairState(event.outcome),
                 stopRequested = if (event.outcome is SessionOutcome.Ended) {
                     false
                 } else {
@@ -714,6 +718,40 @@ object AppReducer {
     private fun formatSas(raw: String): String {
         val code = SasCode.normalize(raw) ?: return raw
         return SasCode.format(code)
+    }
+}
+
+/**
+ * Project a repair-relevant outcome onto the selected credential for display.
+ * The durable owner is the Service; this only mirrors it in the current UI
+ * lifetime. A saved Server not involved in the session is untouched.
+ */
+private fun AppState.projectedRepairState(outcome: SessionOutcome?): List<StoredServer> {
+    val intent: Boolean? = when (outcome) {
+        is SessionOutcome.Live -> if (
+            outcome.phase == LivePhase.READY || outcome.phase == LivePhase.PLAYING
+        ) {
+            false
+        } else {
+            null
+        }
+
+        is SessionOutcome.Ended -> {
+            val reason = outcome.reason as? EndReason.Surfaced
+            if (reason != null && ErrorGuidanceBook.forCode(reason.code)?.requiresRepairing == true) {
+                true
+            } else {
+                null
+            }
+        }
+
+        is SessionOutcome.Reconnecting -> null
+        null -> null
+    }
+    val pin = selectedPin()
+    if (intent == null || pin == null) return storedServers
+    return storedServers.map {
+        if (it.serverSpkiSha256Hex == pin) it.copy(needsRepairing = intent) else it
     }
 }
 

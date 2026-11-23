@@ -618,6 +618,39 @@ class AppStateReducerTest {
     // ---- ticket 03: needs-repairing gate and Forget Server -------------------
 
     @Test
+    fun a_repairing_outcome_marks_the_visible_server_without_a_reload() {
+        val ended = AppReducer.reduce(
+            sessionState(SessionOutcome.Live(LivePhase.PLAYING)),
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Ended(EndReason.Surfaced(204))),
+        ).state
+        assertTrue(
+            ended.storedServers.single().needsRepairing,
+            "Home must show Needs re-pairing after the session surfaces 204",
+        )
+    }
+
+    @Test
+    fun a_successful_authentication_clears_the_visible_repair_state() {
+        val flagged = sessionState(SessionOutcome.Live(LivePhase.AUTHENTICATING)).copy(
+            storedServers = listOf(stored().copy(needsRepairing = true)),
+        )
+        val ready = AppReducer.reduce(
+            flagged,
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Live(LivePhase.READY)),
+        ).state
+        assertFalse(ready.storedServers.single().needsRepairing)
+    }
+
+    @Test
+    fun a_non_repairing_outcome_leaves_the_visible_repair_state_alone() {
+        val ended = AppReducer.reduce(
+            sessionState(SessionOutcome.Live(LivePhase.PLAYING)),
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Ended(EndReason.Surfaced(601))),
+        ).state
+        assertFalse(ended.storedServers.single().needsRepairing)
+    }
+
+    @Test
     fun startup_maps_the_persisted_needs_repairing_flag_into_the_server_list() {
         val loaded = AppReducer.reduce(
             AppState(),
