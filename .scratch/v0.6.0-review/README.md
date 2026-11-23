@@ -9,6 +9,7 @@
 | 延迟、缓冲、漂移、网络损伤分别测了什么 | [实验结果与证据索引](experiments.md) |
 | 各代提案、规格和工单应以哪份为准 | [提案与历史索引](proposals.md) |
 | 哪些材料可以后续归档，哪些不能当重复文件删 | [归档候选与保留规则](archive.md) |
+| GitHub Actions 版本、Windows 构建耗时与挂起问题的调研 | [Windows CI 与 Action 调研](windows-ci-research.md) |
 
 **先看两条结论：**
 
