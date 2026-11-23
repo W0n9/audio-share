@@ -28,6 +28,7 @@
   "main.hintReady": "Ready when you are",
   "config.warningTitle": "Configuration notice",
   "field.host": "Host",
+  "field.hostScopeHint": "Link-local IPv6 addresses with a %scope suffix cannot be written into the pairing QR code; the default address is advertised instead.",
   "field.port": "Port",
   "field.endpoint": "Audio endpoint",
   "field.encoding": "Encoding",
