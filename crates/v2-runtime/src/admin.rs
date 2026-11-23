@@ -53,6 +53,10 @@ pub struct PendingRequestView {
     pub address: String,
     /// The per-connection SAS (`123 456`), known only after the device connects.
     pub sas: Option<String>,
+    /// `Some(saved_display_name)` when the identity's stored record is
+    /// revoked: approving restores it in place (ADR-0006), and the saved name
+    /// is the one that comes back. `None` for a new or active identity.
+    pub restore_candidate: Option<String>,
 }
 
 /// A live pairing presented before the Client's confirmation (ticket 29).
@@ -77,6 +81,9 @@ pub struct PresentedRequestView {
     pub fingerprint: String,
     /// Seconds until the pairing deadline, measured when the view was built.
     pub expires_in_secs: u64,
+    /// `Some(saved_display_name)` when the identity's stored record is
+    /// revoked: approving restores it in place (ADR-0006). `None` otherwise.
+    pub restore_candidate: Option<String>,
 }
 
 /// Lifecycle of the most recently opened QR invitation, for local operator
@@ -132,8 +139,13 @@ pub trait PairingAdmin: Send + Sync + fmt::Debug {
     /// Every live pairing presented before the Client's confirmation.
     fn presented(&self) -> Vec<PresentedRequestView>;
     /// Approve one pending pairing by its process-local `approval_id`;
-    /// `false` when the id is not pending.
+    /// `false` when the id is not pending. A plain Accept never restores a
+    /// revoked identity (ADR-0006).
     fn approve(&self, approval_id: u64) -> bool;
+    /// Approve one pending pairing with the explicit Restore decision;
+    /// `false` when the id is not pending. Use only when the request carries
+    /// a `restore_candidate` (ADR-0006).
+    fn restore(&self, approval_id: u64) -> bool;
     /// Decline one pending pairing by its process-local `approval_id`;
     /// `false` when the id is not pending.
     fn decline(&self, approval_id: u64) -> bool;
@@ -141,6 +153,10 @@ pub trait PairingAdmin: Send + Sync + fmt::Debug {
     fn clients(&self) -> Vec<ClientView>;
     /// Revoke one Client by canonical `client_id`; keeps the record for audit.
     fn revoke(&self, client_id: &str) -> Result<ClientView, String>;
+    /// Delete one **revoked** Client record by canonical `client_id`
+    /// (permanent). An active record is an error and is left unchanged: the
+    /// operator must revoke first (ADR-0006).
+    fn delete(&self, client_id: &str) -> Result<ClientView, String>;
     /// The §7.4 Server SPKI fingerprint.
     fn fingerprint(&self) -> String;
 }
@@ -229,12 +245,17 @@ impl PairingAdmin for CorePairingAdmin {
                     .expires_at
                     .saturating_duration_since(now)
                     .as_secs(),
+                restore_candidate: presented.restore_candidate,
             })
             .collect()
     }
 
     fn approve(&self, approval_id: u64) -> bool {
         self.core.approve(approval_id)
+    }
+
+    fn restore(&self, approval_id: u64) -> bool {
+        self.core.restore(approval_id)
     }
 
     fn decline(&self, approval_id: u64) -> bool {
@@ -252,6 +273,13 @@ impl PairingAdmin for CorePairingAdmin {
             .map_err(|error| error.to_string())
     }
 
+    fn delete(&self, client_id: &str) -> Result<ClientView, String> {
+        self.core
+            .delete(client_id)
+            .map(client_view)
+            .map_err(|error| error.to_string())
+    }
+
     fn fingerprint(&self) -> String {
         self.core.fingerprint()
     }
@@ -265,6 +293,7 @@ fn pending_view(request: ApprovalRequest) -> PendingRequestView {
         mode: requested_mode(request.mode),
         address: request.address,
         sas: request.sas,
+        restore_candidate: request.restore_candidate,
     }
 }
 

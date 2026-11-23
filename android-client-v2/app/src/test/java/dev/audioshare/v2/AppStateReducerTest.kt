@@ -615,6 +615,306 @@ class AppStateReducerTest {
         assertEquals(AppCommand.ConnectStored("ab".repeat(32)), retry.command)
     }
 
+    // ---- ticket 03: needs-repairing gate and Forget Server -------------------
+
+    @Test
+    fun a_repairing_outcome_marks_the_visible_server_without_a_reload() {
+        val ended = AppReducer.reduce(
+            sessionState(SessionOutcome.Live(LivePhase.PLAYING)),
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Ended(EndReason.Surfaced(204))),
+        ).state
+        assertTrue(
+            ended.storedServers.single().needsRepairing,
+            "Home must show Needs re-pairing after the session surfaces 204",
+        )
+    }
+
+    @Test
+    fun a_successful_authentication_clears_the_visible_repair_state() {
+        val flagged = sessionState(SessionOutcome.Live(LivePhase.AUTHENTICATING)).copy(
+            storedServers = listOf(stored().copy(needsRepairing = true)),
+        )
+        val ready = AppReducer.reduce(
+            flagged,
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Live(LivePhase.READY)),
+        ).state
+        assertFalse(ready.storedServers.single().needsRepairing)
+    }
+
+    @Test
+    fun a_non_repairing_outcome_leaves_the_visible_repair_state_alone() {
+        val ended = AppReducer.reduce(
+            sessionState(SessionOutcome.Live(LivePhase.PLAYING)),
+            UiEvent.SessionOutcomeChanged(SessionOutcome.Ended(EndReason.Surfaced(601))),
+        ).state
+        assertFalse(ended.storedServers.single().needsRepairing)
+    }
+
+    @Test
+    fun startup_maps_the_persisted_needs_repairing_flag_into_the_server_list() {
+        val loaded = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(
+                rememberedAddress = null,
+                credentials = listOf(record().copy(needsRepairing = true)),
+            ),
+        ).state
+        assertTrue(loaded.storedServers.single().needsRepairing)
+        assertTrue(loaded.hasStoredPairing, "the card still exists; it is not silently forgotten")
+    }
+
+    @Test
+    fun auto_connect_is_blocked_by_the_persisted_flag_across_a_cold_start() {
+        assertFalse(
+            AutoConnectPolicy.shouldAutoConnect(
+                savedStatePresent = false,
+                hasCredential = true,
+                outcome = null,
+                needsRepairing = true,
+            ),
+            "the cold-start gate must read the credential, not an in-memory outcome",
+        )
+
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(null, listOf(record().copy(needsRepairing = true))),
+        ).state
+        val auto = AppReducer.reduce(startup, UiEvent.AutoConnectStarted)
+        assertEquals(AppScreen.HOME, auto.state.screen)
+        assertEquals(AppCommand.None, auto.command)
+    }
+
+    @Test
+    fun auto_connect_never_reaches_a_flagged_record_selected_by_address() {
+        val flagged = record().copy(needsRepairing = true)
+        val clean = record(pin = "12".repeat(32), address = "other.example:65531")
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded("10.0.2.2:65531", listOf(clean, flagged)),
+        ).state
+        assertEquals("ab".repeat(32), startup.selectedPin(), "the typed address picks the flagged Server")
+
+        val auto = AppReducer.reduce(startup, UiEvent.AutoConnectStarted)
+
+        assertEquals(AppCommand.None, auto.command)
+        assertEquals(AppScreen.HOME, auto.state.screen)
+    }
+
+    @Test
+    fun auto_connect_targets_the_clean_record_matched_by_address() {
+        val flagged = record().copy(needsRepairing = true)
+        val clean = record(pin = "12".repeat(32), address = "other.example:65531")
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded("other.example:65531", listOf(flagged, clean)),
+        ).state
+
+        val auto = AppReducer.reduce(startup, UiEvent.AutoConnectStarted)
+
+        assertEquals(AppCommand.ConnectStored("12".repeat(32)), auto.command)
+    }
+
+    @Test
+    fun auto_connect_still_fires_for_a_paired_record() {
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(null, listOf(record())),
+        ).state
+        val auto = AppReducer.reduce(startup, UiEvent.AutoConnectStarted)
+        assertEquals(AppCommand.ConnectStored("ab".repeat(32)), auto.command)
+    }
+
+    @Test
+    fun forget_requires_an_explicit_confirmation_and_never_deletes_on_request() {
+        val pin = "ab".repeat(32)
+        val requested = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531", storedServers = listOf(stored())),
+            UiEvent.ForgetServerRequested(pin),
+        )
+        assertEquals(pin, requested.state.pendingForgetPin)
+        assertEquals(AppCommand.None, requested.command, "the request only opens the dialog")
+        assertEquals(1, requested.state.storedServers.size, "nothing is deleted yet")
+
+        val dismissed = AppReducer.reduce(requested.state, UiEvent.ForgetServerDismissed)
+        assertNull(dismissed.state.pendingForgetPin)
+        assertEquals(AppCommand.None, dismissed.command)
+        assertEquals(1, dismissed.state.storedServers.size)
+    }
+
+    @Test
+    fun an_unknown_pin_cannot_open_the_forget_dialog() {
+        val requested = AppReducer.reduce(
+            AppState(storedServers = listOf(stored())),
+            UiEvent.ForgetServerRequested("cd".repeat(32)),
+        )
+        assertNull(requested.state.pendingForgetPin)
+        assertEquals(AppCommand.None, requested.command)
+    }
+
+    @Test
+    fun confirming_forget_deletes_the_matching_server_and_clears_its_address() {
+        val pin = "ab".repeat(32)
+        val requested = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531", storedServers = listOf(stored())),
+            UiEvent.ForgetServerRequested(pin),
+        ).state
+
+        val confirmed = AppReducer.reduce(requested, UiEvent.ForgetServerConfirmed)
+
+        assertEquals(AppCommand.ForgetServer(pin), confirmed.command)
+        assertTrue(confirmed.state.storedServers.isEmpty())
+        assertFalse(confirmed.state.hasStoredPairing)
+        assertEquals("", confirmed.state.address, "the forgotten Server's address is cleared")
+        assertEquals(AppScreen.HOME, confirmed.state.screen)
+        assertNull(confirmed.state.outcome)
+        assertNull(confirmed.state.pendingForgetPin)
+    }
+
+    @Test
+    fun confirming_forget_keeps_an_address_that_belongs_to_another_server() {
+        val requested = AppReducer.reduce(
+            AppState(address = "other.example:65531", storedServers = listOf(stored())),
+            UiEvent.ForgetServerRequested("ab".repeat(32)),
+        ).state
+
+        val confirmed = AppReducer.reduce(requested, UiEvent.ForgetServerConfirmed)
+
+        assertEquals("other.example:65531", confirmed.state.address)
+        assertEquals(AppCommand.ForgetServer("ab".repeat(32)), confirmed.command)
+    }
+
+    // ---- ticket 04: dedicated re-pair context -------------------------------
+
+    @Test
+    fun re_pair_from_home_carries_the_stored_pin_and_prefills_its_address() {
+        val pin = "ab".repeat(32)
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(
+                rememberedAddress = null,
+                credentials = listOf(record().copy(needsRepairing = true)),
+            ),
+        ).state
+
+        val repair = AppReducer.reduce(startup, UiEvent.RePairRequested(pin))
+
+        assertEquals(AppScreen.PAIRING, repair.state.screen)
+        assertEquals(PairingIntent.RePair(pin), repair.state.pairingIntent)
+        assertEquals("10.0.2.2:65531", repair.state.address, "the address is prefilled from the record")
+        assertNull(repair.state.pairing, "no exchange is in flight yet")
+        assertEquals(AppCommand.None, repair.command)
+    }
+
+    @Test
+    fun a_repairing_close_enters_the_same_re_pair_context_and_keeps_the_cause() {
+        val ended = sessionState(SessionOutcome.Ended(EndReason.Surfaced(204)))
+
+        val repair = AppReducer.reduce(ended, UiEvent.Retry)
+
+        assertEquals(AppScreen.PAIRING, repair.state.screen)
+        assertEquals(PairingIntent.RePair("ab".repeat(32)), repair.state.pairingIntent)
+        assertEquals("10.0.2.2:65531", repair.state.address)
+        assertEquals(204, repair.state.sessionError?.code, "the failure cause stays visible")
+        assertEquals(AppCommand.None, repair.command)
+    }
+
+    @Test
+    fun starting_a_pairing_keeps_the_repair_context() {
+        val repair = AppReducer.reduce(
+            AppState(
+                screen = AppScreen.PAIRING,
+                address = "10.0.2.2:65531",
+                storedServers = listOf(stored()),
+                pairingIntent = PairingIntent.RePair("ab".repeat(32)),
+            ),
+            UiEvent.StartSasPairing,
+        )
+
+        assertEquals(AppCommand.BeginSas("10.0.2.2:65531"), repair.command)
+        assertEquals(PairingIntent.RePair("ab".repeat(32)), repair.state.pairingIntent)
+    }
+
+    @Test
+    fun cancelling_a_re_pair_returns_to_the_first_pairing_context() {
+        val repair = AppState(
+            screen = AppScreen.PAIRING,
+            address = "10.0.2.2:65531",
+            storedServers = listOf(stored()),
+            pairingIntent = PairingIntent.RePair("ab".repeat(32)),
+        )
+
+        val cancelled = AppReducer.reduce(repair, UiEvent.CancelPairing)
+
+        assertEquals(AppScreen.HOME, cancelled.state.screen)
+        assertEquals(PairingIntent.First, cancelled.state.pairingIntent)
+    }
+
+    @Test
+    fun connect_routes_a_needs_repairing_record_into_the_re_pair_context() {
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(
+                rememberedAddress = null,
+                credentials = listOf(record().copy(needsRepairing = true)),
+            ),
+        ).state
+
+        // SESSION's "Connect again" uses the same event. A revoked device must
+        // not silently no-op: it opens the dedicated RePair context with the
+        // saved address prefilled.
+        val connect = AppReducer.reduce(startup, UiEvent.ConnectRequested)
+
+        assertEquals(AppScreen.PAIRING, connect.state.screen)
+        assertEquals(PairingIntent.RePair("ab".repeat(32)), connect.state.pairingIntent)
+        assertEquals("10.0.2.2:65531", connect.state.address)
+        assertEquals(AppCommand.None, connect.command, "no ConnectStored is issued")
+    }
+
+    @Test
+    fun forgetting_a_non_session_server_keeps_the_live_outcome() {
+        val selected = stored()
+        val other = StoredServer("12".repeat(32), "Desk", "10.0.2.2:65532")
+        val state = AppState(
+            screen = AppScreen.SETTINGS,
+            address = selected.address,
+            storedServers = listOf(selected, other),
+            outcome = SessionOutcome.Live(LivePhase.PLAYING),
+            pendingForgetPin = other.serverSpkiSha256Hex,
+        )
+
+        val reduced = AppReducer.reduce(state, UiEvent.ForgetServerConfirmed)
+
+        // The Service leaves the other Server's session running; the reducer
+        // must keep showing it instead of blanking the UI.
+        assertEquals(SessionOutcome.Live(LivePhase.PLAYING), reduced.state.outcome)
+        assertFalse(reduced.state.stopRequested)
+        assertEquals(listOf(selected), reduced.state.storedServers)
+    }
+
+    @Test
+    fun pairing_completed_clears_repairing_and_drops_other_records_on_the_same_address() {
+        val pin = "ab".repeat(32)
+        val sameAddressOtherPin = StoredServer("cd".repeat(32), "Old Pixel", "10.0.2.2:65531")
+        val otherServer = StoredServer("12".repeat(32), "Desk", "other.example:65531")
+        val state = AppState(
+            screen = AppScreen.PAIRING,
+            storedServers = listOf(stored().copy(needsRepairing = true), sameAddressOtherPin, otherServer),
+            pairingIntent = PairingIntent.RePair(pin),
+        )
+
+        val completed = AppReducer.reduce(state, UiEvent.PairingCompleted(record()))
+
+        assertEquals(AppScreen.SESSION, completed.state.screen)
+        assertEquals(PairingIntent.First, completed.state.pairingIntent)
+        assertEquals(
+            setOf("ab".repeat(32), "12".repeat(32)),
+            completed.state.storedServers.map { it.serverSpkiSha256Hex }.toSet(),
+            "the stale record on the re-paired address is removed; the other Server stays",
+        )
+        assertFalse(completed.state.storedServers.single { it.serverSpkiSha256Hex == pin }.needsRepairing)
+        assertEquals(2, completed.state.storedServers.size)
+    }
+
     // ---- startup ------------------------------------------------------------
 
     @Test

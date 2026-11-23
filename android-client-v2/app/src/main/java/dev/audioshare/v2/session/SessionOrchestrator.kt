@@ -5,6 +5,7 @@ import dev.audioshare.v2.ClientSigner
 import dev.audioshare.v2.CredentialRecord
 import dev.audioshare.v2.CredentialStore
 import dev.audioshare.v2.EndReason
+import dev.audioshare.v2.ErrorGuidanceBook
 import dev.audioshare.v2.OutcomeSink
 import dev.audioshare.v2.PairingConfirmGate
 import dev.audioshare.v2.PairingSnapshot
@@ -13,7 +14,9 @@ import dev.audioshare.v2.SessionConfiguration
 import dev.audioshare.v2.SessionOutcome
 import dev.audioshare.v2.SessionOutcomeStore
 import dev.audioshare.v2.StopReason
+import dev.audioshare.v2.isSameServerAddressAs
 import dev.audioshare.v2.pairedAtNow
+import dev.audioshare.v2.repairStateForOutcome
 import org.json.JSONObject
 
 /**
@@ -61,6 +64,8 @@ internal class SessionOrchestrator(
 ) {
     private val lock = Any()
     private var engine: SessionEngine? = null
+    /** The Server pin the current session talks to ("" for a SAS exchange). */
+    private var sessionServerPin: String? = null
     /** Ownership token for listener callbacks; also orphans a stopped engine. */
     private var generation = 0L
     private var pairingSource: PairingStateRelay.Source? = null
@@ -88,12 +93,17 @@ internal class SessionOrchestrator(
         val ownerGeneration = synchronized(lock) {
             pairingSource = owningPairingSource
             handoffClaimed = false
+            sessionServerPin = configuration.serverSpkiSha256Hex
             ++generation
         }
         val sink = if (configuration.pairing != null) {
             OutcomeSink.NONE
         } else {
-            outcomes.beginGeneration()
+            trackRepairState(
+                delegate = outcomes.beginGeneration(),
+                serverSpkiSha256Hex = configuration.serverSpkiSha256Hex,
+                ownerGeneration = ownerGeneration,
+            )
         }
         val listener = object : SessionEngine.Listener {
             override fun onLog(line: String) = log(line)
@@ -130,6 +140,7 @@ internal class SessionOrchestrator(
             ++generation
             current = engine
             engine = null
+            sessionServerPin = null
             source = pairingSource
             pairingSource = null
         }
@@ -145,6 +156,24 @@ internal class SessionOrchestrator(
         teardown(reason)
         confirmGate.reset()
         pairing.clear()
+    }
+
+    /**
+     * Local Forget cleanup: stop the current session only when it belongs to
+     * the forgotten Server. Returns true when no session for another Server
+     * remains (stopped or already idle), so the caller may tear the Service
+     * down; false when a different Server's live session must keep running.
+     */
+    fun stopIfOwnedBy(serverSpkiSha256Hex: String): Boolean {
+        val (owns, hasEngine) = synchronized(lock) {
+            val owns = engine != null && sessionServerPin == serverSpkiSha256Hex
+            owns to (engine != null)
+        }
+        if (owns) {
+            stop(StopReason.Shutdown)
+            return true
+        }
+        return !hasEngine
     }
 
     /** Exactly-once per exchange, mirroring the Service's QR confirm gate. */
@@ -185,14 +214,89 @@ internal class SessionOrchestrator(
      * terminal: the SESSION screen must show the typed error card with
      * "Pair again" (ticket 17).
      */
-    fun reportStoredConnectFailure(code: Int, message: String) {
+    fun reportStoredConnectFailure(
+        code: Int,
+        message: String,
+        serverSpkiSha256Hex: String? = null,
+    ) {
         log(message)
         teardown(StopReason.Superseded)
+        // A missing stored key (205) is the cold-start face of "needs
+        // re-pairing": record it on the credential so the Home/Settings badge
+        // and the auto-connect gate see it after the next process start.
+        serverSpkiSha256Hex?.let { markNeedsRepairing(it, code) }
         outcomes.beginGeneration().publish(SessionOutcome.Ended(EndReason.Surfaced(code)))
     }
 
     private fun isCurrent(ownerGeneration: Long): Boolean =
         synchronized(lock) { ownerGeneration == generation }
+
+    /**
+     * Observe the session outcome without changing the replayable store: a
+     * surfaced close that [ErrorGuidanceBook] marks `requiresRepairing` sets
+     * the persisted flag, and a successful authentication clears it. The
+     * generation guard keeps a superseded engine from writing.
+     */
+    private fun trackRepairState(
+        delegate: OutcomeSink,
+        serverSpkiSha256Hex: String,
+        ownerGeneration: Long,
+    ): OutcomeSink = OutcomeSink { outcome ->
+        delegate.publish(outcome)
+        if (serverSpkiSha256Hex.isNotEmpty() && isCurrent(ownerGeneration)) {
+            repairStateForOutcome(outcome)?.let { needsRepairing ->
+                updateNeedsRepairing(serverSpkiSha256Hex, needsRepairing)
+            }
+        }
+    }
+
+    private fun markNeedsRepairing(serverSpkiSha256Hex: String, code: Int) {
+        if (ErrorGuidanceBook.forCode(code)?.requiresRepairing == true) {
+            updateNeedsRepairing(serverSpkiSha256Hex, true)
+        }
+    }
+
+    /** Persist only an actual transition; the real store commits synchronously. */
+    private fun updateNeedsRepairing(serverSpkiSha256Hex: String, value: Boolean) {
+        val record = credentials.find(serverSpkiSha256Hex) ?: return
+        if (record.needsRepairing == value) return
+        try {
+            credentials.upsert(record.copy(needsRepairing = value))
+            log(
+                if (value) "marked $serverSpkiSha256Hex as needing re-pairing"
+                else "cleared needs re-pairing for $serverSpkiSha256Hex",
+            )
+        } catch (e: Exception) {
+            // The outcome still reaches the UI; the durable flag is best
+            // effort and retried by the next terminal outcome.
+            log("could not persist needs-repairing: ${e.message}")
+        }
+    }
+
+    /**
+     * A successful pairing replaces records for the same `host:port`
+     * (ADR-0006 §3). Best effort: the new record is already durable, so a
+     * deletion failure only leaves a stale row and must not fail the handoff.
+     */
+    private fun removeStaleRecordsForAddress(record: CredentialRecord) {
+        val stale = try {
+            credentials.all().filter {
+                it.serverSpkiSha256Hex != record.serverSpkiSha256Hex &&
+                    it.isSameServerAddressAs(record)
+            }
+        } catch (e: Exception) {
+            log("could not list credentials for address cleanup: ${e.message}")
+            return
+        }
+        for (old in stale) {
+            try {
+                credentials.delete(old.serverSpkiSha256Hex)
+                log("removed stale pairing ${old.serverSpkiSha256Hex} for ${record.host}:${record.port}")
+            } catch (e: Exception) {
+                log("could not remove stale pairing ${old.serverSpkiSha256Hex}: ${e.message}")
+            }
+        }
+    }
 
     private fun persistCredential(
         json: String,
@@ -216,6 +320,8 @@ internal class SessionOrchestrator(
                 displayName = obj.optString("display_name").ifEmpty { context.displayName },
                 host = context.host,
                 port = context.port,
+                // A successful pairing is the explicit re-pair: clear the flag.
+                needsRepairing = false,
             )
         } catch (e: Exception) {
             log("credential parse failed: ${e.message}")
@@ -231,6 +337,9 @@ internal class SessionOrchestrator(
             log("credential persistence failed: ${e.message}")
             return
         }
+        // A successful pairing replaces every record for the same address
+        // (ADR-0006 §3); records for a different Server are never touched.
+        removeStaleRecordsForAddress(record)
         log("stored pairing for ${record.displayName} (software_backed=${record.softwareBacked})")
         if (!isCurrent(ownerGeneration)) {
             log("persisted credential belongs to a superseded exchange; not handing off")

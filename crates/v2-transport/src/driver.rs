@@ -316,9 +316,10 @@ enum DriverEvent {
     /// The media task found the transport cannot carry datagrams (§7.3 → 602).
     MediaDatagramUnsupported,
     /// The local operator approved a verified pairing (from the Pairing Core
-    /// decision callback; never a blocking UI call inside `handle`). The
-    /// payload is the process-local `approval_id`, not the wire request id.
-    PairingApproved(u64),
+    /// decision callback; never a blocking UI call inside `handle`). The id is
+    /// the process-local `approval_id`, not the wire request id; `restore`
+    /// distinguishes an explicit Restore from a plain Accept (ADR-0006).
+    PairingApproved { approval_id: u64, restore: bool },
     /// The local operator declined a verified pairing.
     PairingDeclined(u64),
 }
@@ -747,11 +748,24 @@ impl SessionServer {
                                         let decisions = event_tx.clone();
                                         pairing.request_approval(
                                             request,
-                                            Box::new(move |approved| {
-                                                let event = if approved {
-                                                    DriverEvent::PairingApproved(approval_id)
-                                                } else {
-                                                    DriverEvent::PairingDeclined(approval_id)
+                                            Box::new(move |decision| {
+                                                use crate::pairing::ApprovalDecision;
+                                                let event = match decision {
+                                                    ApprovalDecision::Decline => {
+                                                        DriverEvent::PairingDeclined(approval_id)
+                                                    }
+                                                    ApprovalDecision::Accept => {
+                                                        DriverEvent::PairingApproved {
+                                                            approval_id,
+                                                            restore: false,
+                                                        }
+                                                    }
+                                                    ApprovalDecision::Restore => {
+                                                        DriverEvent::PairingApproved {
+                                                            approval_id,
+                                                            restore: true,
+                                                        }
+                                                    }
                                                 };
                                                 let _ = decisions.send(event);
                                             }),
@@ -858,9 +872,13 @@ impl SessionServer {
                         DriverEvent::MediaDatagramUnsupported => {
                             machine.handle(Event::Fatal(ErrorCode::DATAGRAM_UNSUPPORTED))
                         }
-                        DriverEvent::PairingApproved(approval_id) => {
-                            machine.handle(Event::PairingApproved { approval_id })
-                        }
+                        DriverEvent::PairingApproved {
+                            approval_id,
+                            restore,
+                        } => machine.handle(Event::PairingApproved {
+                            approval_id,
+                            restore,
+                        }),
                         DriverEvent::PairingDeclined(approval_id) => {
                             machine.handle(Event::PairingDeclined { approval_id })
                         }

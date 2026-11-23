@@ -151,5 +151,13 @@
   "pairing.revoked": "Revoked",
   "pairing.active": "Active",
   "pairing.revoke": "Revoke",
-  "pairing.confirmRevoke": "Revoke {name}? It loses access and its active session closes within 5 seconds."
+  "pairing.confirmRevoke": "Revoke {name}? It loses access and its active session closes within 5 seconds.",
+  "pairing.rePair": "Re-pair",
+  "pairing.delete": "Delete",
+  "pairing.confirmDelete": "Delete {name}'s record? It is removed permanently; this cannot be undone.",
+  "pairing.restoreTitle": "This device was revoked",
+  "pairing.restoreBody": "Restoring gives the saved pairing access again. No new key is created.",
+  "pairing.restoreAccept": "Restore device",
+  "pairing.restoring": "Restoring {name}",
+  "pairing.paired": "{name} is paired."
 }

@@ -58,9 +58,78 @@ class HomeScreenTest : RobolectricComposeTestBase() {
         compose.onNodeWithTag("home-server-card").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Pixel").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("connect").performScrollTo().assertIsDisplayed().assertIsEnabled()
-        compose.onNodeWithTag("pair-code").assertTextContains(str(R.string.home_pair_new))
+        compose.onNodeWithTag("pair-code")
+            .assertTextContains(str(R.string.home_re_pair))
         compose.onNodeWithTag("scan-qr")
-            .assertTextContains(str(R.string.home_scan_qr_instead))
+            .assertDoesNotExist() // no separate "Scan QR instead" button
+    }
+
+    @Test
+    fun the_paired_re_pair_action_opens_the_dedicated_repair_context() {
+        start(
+            AppState(
+                address = "10.0.2.2:65531",
+                storedServers = listOf(storedServer()),
+            )
+        )
+        compose.onNodeWithTag("pair-code").performScrollTo().performClick()
+        assertTrue(events.contains(UiEvent.RePairRequested("ab".repeat(32))))
+        compose.onNodeWithTag("pairing-title").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("pairing-repair-hint")
+            .performScrollTo()
+            .assertTextContains(str(R.string.pairing_repair_hint))
+
+        // The saved address is the one SAS pairing will use.
+        compose.onNodeWithTag("start-code-pairing").performScrollTo().performClick()
+        assertTrue(commands.contains(AppCommand.BeginSas("10.0.2.2:65531")))
+    }
+
+    @Test
+    fun re_pair_targets_the_server_selected_by_the_typed_address() {
+        val first = StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")
+        val typed = StoredServer("cd".repeat(32), "Desk", "other.example:65531")
+        start(
+            AppState(
+                address = "other.example:65531",
+                storedServers = listOf(first, typed),
+            )
+        )
+        compose.onNodeWithTag("pair-code").performScrollTo().performClick()
+        assertTrue(
+            events.contains(UiEvent.RePairRequested("cd".repeat(32))),
+            "Re-pair must open the record Connect would target, not blindly the first",
+        )
+    }
+
+    @Test
+    fun a_server_that_needs_repairing_disables_connect_but_keeps_re_pair_available() {
+        start(
+            AppState(
+                address = "10.0.2.2:65531",
+                storedServers = listOf(storedServer().copy(needsRepairing = true)),
+            )
+        )
+        compose.onNodeWithTag("connect")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertIsNotEnabled()
+        compose.onNodeWithTag("pair-code")
+            .performScrollTo()
+            .assertIsEnabled()
+            .assertTextContains(str(R.string.home_re_pair))
+    }
+
+    @Test
+    fun a_server_that_needs_repairing_says_so_on_the_card() {
+        start(
+            AppState(
+                address = "10.0.2.2:65531",
+                storedServers = listOf(storedServer().copy(needsRepairing = true)),
+            )
+        )
+        compose.onNodeWithTag("home-server-status")
+            .assertTextContains(str(R.string.server_needs_repairing))
+        compose.onNodeWithText(str(R.string.home_paired_badge)).assertDoesNotExist()
     }
 
     @Test
@@ -155,9 +224,42 @@ class SettingsScreenTest : RobolectricComposeTestBase() {
             .assertTextContains(str(R.string.settings_empty_body))
         compose.onNodeWithTag("settings-pair")
             .assertIsDisplayed()
-            .assertTextContains(str(R.string.settings_pair_phone))
+            .assertTextContains(str(R.string.settings_pair_server))
             .performClick()
         assertTrue(events.contains(UiEvent.ShowHome))
+    }
+
+    @Test
+    fun paired_settings_shows_the_repair_state_and_forgets_only_after_confirmation() {
+        val pin = "cd".repeat(32)
+        start(
+            AppState(
+                screen = AppScreen.SETTINGS,
+                address = "10.0.2.2:65531",
+                storedServers = listOf(
+                    StoredServer(pin, "Pixel", "10.0.2.2:65531", needsRepairing = true),
+                ),
+            )
+        )
+        compose.onNodeWithTag("settings-needs-repairing")
+            .performScrollTo()
+            .assertTextContains(str(R.string.server_needs_repairing))
+
+        compose.onNodeWithTag("settings-forget").performScrollTo().performClick()
+        compose.onNodeWithText(str(R.string.forget_server_confirm, "Pixel"))
+            .assertIsDisplayed()
+        compose.onNodeWithText(str(R.string.action_cancel)).performClick()
+        kotlin.test.assertFalse(
+            commands.contains(AppCommand.ForgetServer(pin)),
+            "dismissing the dialog deletes nothing",
+        )
+
+        compose.onNodeWithTag("settings-forget").performScrollTo().performClick()
+        compose.onNodeWithText(str(R.string.action_forget)).performClick()
+
+        assertTrue(commands.contains(AppCommand.ForgetServer(pin)))
+        compose.onNodeWithTag("home-title").assertIsDisplayed()
+        compose.onNodeWithTag("home-server-card").assertDoesNotExist()
     }
 }
 
@@ -176,7 +278,7 @@ class AccessibilitySemanticsTest : RobolectricComposeTestBase() {
     @Test
     fun shell_and_primary_targets_are_at_least_48dp() {
         start(AppState(address = "10.0.2.2:65531", storedServers = listOf(storedServer())))
-        for (tag in listOf("settings", "about", "connect", "pair-code", "scan-qr")) {
+        for (tag in listOf("settings", "about", "connect", "pair-code")) {
             compose.onNodeWithTag(tag)
                 .assertHeightIsAtLeast(48.dp)
                 .assertWidthIsAtLeast(48.dp)

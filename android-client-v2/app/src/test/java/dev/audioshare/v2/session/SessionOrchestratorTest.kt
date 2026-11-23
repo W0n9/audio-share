@@ -113,6 +113,35 @@ class SessionOrchestratorTest {
     }
 
     @Test
+    fun forget_stops_only_the_session_it_owns() {
+        val fixture = Fixture()
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        val engine = fixture.factory.engines.single()
+        val otherPin = "bb".repeat(32)
+
+        assertFalse(
+            fixture.orchestrator.stopIfOwnedBy(otherPin),
+            "forgetting another Server must not tear this session down",
+        )
+        assertTrue(fixture.orchestrator.hasEngine, "the live session keeps running")
+        assertEquals(emptyList(), engine.stops)
+        assertNull(fixture.outcomes.snapshot(), "no outcome is invented for a non-owner")
+
+        assertTrue(
+            fixture.orchestrator.stopIfOwnedBy(PIN),
+            "the owning Server may stop the session",
+        )
+        assertFalse(fixture.orchestrator.hasEngine)
+        assertEquals(listOf(StopReason.Shutdown), engine.stops)
+    }
+
+    @Test
+    fun forget_with_no_session_reports_nothing_left_running() {
+        val fixture = Fixture()
+        assertTrue(fixture.orchestrator.stopIfOwnedBy(PIN))
+    }
+
+    @Test
     fun confirm_pairing_is_forwarded_once_per_exchange_and_resets_for_a_new_one() {
         val fixture = Fixture()
         fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
@@ -214,6 +243,153 @@ class SessionOrchestratorTest {
         engine.sink.publish(SessionOutcome.Ended(EndReason.Surfaced(204)))
 
         assertNull(fixture.outcomes.snapshot())
+    }
+
+    // ---- ticket 03: needs-repairing persistence ---------------------------
+
+    @Test
+    fun a_repairing_surfaced_close_persists_needs_repairing_on_the_credential() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord())
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        val engine = fixture.factory.engines.single()
+
+        engine.sink.publish(SessionOutcome.Ended(EndReason.Surfaced(204)))
+
+        assertTrue(fixture.credentials.find(PIN)!!.needsRepairing)
+    }
+
+    @Test
+    fun a_non_repairing_surfaced_close_leaves_the_credential_paired() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord())
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+
+        fixture.factory.engines.single().sink.publish(
+            SessionOutcome.Ended(EndReason.Surfaced(601)),
+        )
+
+        assertFalse(fixture.credentials.find(PIN)!!.needsRepairing)
+    }
+
+    @Test
+    fun successful_authentication_clears_needs_repairing_once() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord().copy(needsRepairing = true))
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        val engine = fixture.factory.engines.single()
+        val upsertsAfterSeed = fixture.credentials.upserts
+
+        engine.sink.publish(SessionOutcome.Live(LivePhase.READY))
+        assertFalse(fixture.credentials.find(PIN)!!.needsRepairing)
+        assertEquals(upsertsAfterSeed + 1, fixture.credentials.upserts)
+
+        engine.sink.publish(SessionOutcome.Live(LivePhase.PLAYING))
+        engine.sink.publish(SessionOutcome.Live(LivePhase.READY))
+        assertEquals(
+            upsertsAfterSeed + 1,
+            fixture.credentials.upserts,
+            "a session that is already repaired must not commit on every tick",
+        )
+    }
+
+    @Test
+    fun authenticating_is_not_success_and_does_not_clear_the_flag() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord().copy(needsRepairing = true))
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+
+        fixture.factory.engines.single().sink.publish(
+            SessionOutcome.Live(LivePhase.AUTHENTICATING),
+        )
+
+        assertTrue(fixture.credentials.find(PIN)!!.needsRepairing)
+    }
+
+    @Test
+    fun pairing_persists_a_record_with_needs_repairing_cleared() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord().copy(needsRepairing = true))
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+
+        fixture.factory.engines.single().listener.onCredential(credentialJson("client-1"))
+
+        assertFalse(
+            fixture.credentials.find(PIN)!!.needsRepairing,
+            "a successful pairing is the explicit re-pair",
+        )
+    }
+
+    // ---- ticket 04: successful pairing replaces the address ----------------
+
+    @Test
+    fun a_successful_pairing_removes_other_credentials_on_the_same_address() {
+        val fixture = Fixture()
+        val staleOnSameAddress = credentialRecord().copy(
+            serverSpkiSha256Hex = "cc".repeat(32),
+            clientId = "old-client",
+        )
+        val otherServer = credentialRecord().copy(
+            serverSpkiSha256Hex = "dd".repeat(32),
+            host = "198.51.100.7",
+            addressHint = "198.51.100.7:65531",
+        )
+        fixture.seed(credentialRecord().copy(needsRepairing = true))
+        fixture.seed(staleOnSameAddress)
+        fixture.seed(otherServer)
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+
+        fixture.factory.engines.single().listener.onCredential(credentialJson("client-1"))
+
+        assertEquals(
+            setOf(PIN, "dd".repeat(32)),
+            fixture.credentials.all().map { it.serverSpkiSha256Hex }.toSet(),
+            "same host:port records are replaced; a different Server is kept",
+        )
+        val repaired = fixture.credentials.find(PIN)!!
+        assertFalse(repaired.needsRepairing, "a successful pairing clears needs-repairing")
+        assertEquals("client-1", repaired.clientId, "the new identity replaces the old record")
+    }
+
+    @Test
+    fun a_missing_key_stored_connect_failure_marks_the_record() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord())
+
+        fixture.orchestrator.reportStoredConnectFailure(
+            code = 205,
+            message = "the stored Client key is gone",
+            serverSpkiSha256Hex = PIN,
+        )
+
+        assertTrue(fixture.credentials.find(PIN)!!.needsRepairing)
+    }
+
+    @Test
+    fun a_non_repairing_stored_connect_failure_does_not_mark_the_record() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord())
+
+        fixture.orchestrator.reportStoredConnectFailure(
+            code = 601,
+            message = "network failure",
+            serverSpkiSha256Hex = PIN,
+        )
+
+        assertFalse(fixture.credentials.find(PIN)!!.needsRepairing)
+    }
+
+    @Test
+    fun a_superseded_engine_cannot_change_the_repair_state() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord())
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        val first = fixture.factory.engines.single()
+
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        first.sink.publish(SessionOutcome.Ended(EndReason.Surfaced(204)))
+
+        assertFalse(fixture.credentials.find(PIN)!!.needsRepairing)
     }
 
     // ---- ticket 17: Service-owned pairing handoff --------------------------
@@ -349,6 +525,9 @@ class SessionOrchestratorTest {
             onPairingCompleted = { completed += it },
         )
 
+        /** Seed a previously paired record, as a cold start would load it. */
+        fun seed(record: CredentialRecord) = credentials.upsert(record)
+
         /** Run the tasks the Service's main-thread handler would run. */
         fun drain() {
             while (pending.isNotEmpty()) pending.removeFirst()()
@@ -382,6 +561,19 @@ class SessionOrchestratorTest {
             port = 65531,
             displayName = "phone",
             mode = "qr",
+        )
+
+        fun credentialRecord() = CredentialRecord(
+            serverSpkiSha256Hex = PIN,
+            serverPublicKeyHex = SERVER_KEY,
+            addressHint = "192.0.2.10:65531",
+            keyAlias = "v2-test",
+            pairedAt = "2026-11-16T00:00:00Z",
+            softwareBacked = true,
+            clientId = "client-1",
+            displayName = "phone",
+            host = "192.0.2.10",
+            port = 65531,
         )
 
         fun credentialJson(clientId: String) = JSONObject().apply {
@@ -422,11 +614,14 @@ private object FakeSigner : ClientSigner {
 private class InMemoryCredentialStore : CredentialStore {
     private val records = mutableListOf<CredentialRecord>()
     var failUpsert = false
+    var upserts = 0
+        private set
 
     override fun upsert(record: CredentialRecord) {
         if (failUpsert) throw IllegalStateException("credential store unavailable")
         records.removeAll { it.serverSpkiSha256Hex == record.serverSpkiSha256Hex }
         records += record
+        upserts += 1
     }
 
     override fun all(): List<CredentialRecord> = records.toList()

@@ -177,6 +177,27 @@ object ClientIdentity {
         return ClientIdentityResult(signer, alias, softwareBacked = true, hardwareBacked = false)
     }
 
+    /**
+     * Remove both possible identities for [alias]: the app-private software
+     * key files and the Keystore entry, regardless of how the record was
+     * created (`software_backed` is only a marker). Absent entries are a
+     * no-op; Keystore failures are raised so the caller can log them.
+     */
+    fun delete(context: Context, alias: String) {
+        SoftwareIdentitySigner.delete(context, alias)
+        // No AndroidKeyStore provider (JVM tests, or a platform variant
+        // without it) means no Keystore identity exists to remove. A real
+        // entry failure still propagates so ForgetServer can log it.
+        val keyStore = try {
+            KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        } catch (_: java.security.NoSuchAlgorithmException) {
+            null
+        } catch (_: java.security.KeyStoreException) {
+            null
+        }
+        if (keyStore != null && keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
+    }
+
     private fun keystoreContains(alias: String): Boolean = try {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         keyStore.containsAlias(alias) && keyStore.getKey(alias, null) != null
@@ -288,6 +309,12 @@ internal class SoftwareIdentitySigner private constructor(
             } catch (_: Exception) {
                 null
             }
+        }
+
+        fun delete(context: Context, alias: String) {
+            val (privateFile, publicFile) = files(context, alias)
+            privateFile.delete()
+            publicFile.delete()
         }
 
         private fun files(context: Context, alias: String): Pair<File, File> {

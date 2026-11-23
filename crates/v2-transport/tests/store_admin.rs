@@ -4,9 +4,11 @@
 
 use std::sync::Arc;
 
-use v2_transport::auth_store::{AuthorizationStore, ClientState, StoredClient};
+use v2_transport::auth_store::{
+    Authorization, AuthorizationStore, ClientState, StoreError, StoredClient,
+};
 use v2_transport::identity::{IdentityConfig, ServerIdentity};
-use v2_transport::pairing;
+use v2_transport::pairing::{self, PairingError};
 
 const CLIENT_PUB: &str = "03d0a529de7475641ac050c792b42cff079107ca5310da7953d2595121477c0f6d";
 
@@ -105,6 +107,57 @@ fn revoke_by_client_id_keeps_the_record_for_audit() {
     ));
 }
 
+#[test]
+fn delete_removes_only_revoked_records_and_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = AuthorizationStore::open(dir.path()).unwrap();
+    store.upsert(client("Test Phone")).unwrap();
+    let client_id = "cf7940b474310246";
+
+    let error = store
+        .delete_client(client_id)
+        .expect_err("an active record cannot be deleted");
+    assert!(
+        matches!(error, StoreError::ClientActive { .. }),
+        "unexpected error {error}"
+    );
+    assert_eq!(store.clients().len(), 1, "the active record is unchanged");
+    assert_eq!(store.clients()[0].state, ClientState::Active);
+
+    store.revoke_client(client_id).unwrap();
+    let deleted = store
+        .delete_client(client_id)
+        .expect("a revoked record deletes");
+    assert_eq!(deleted.client_id, client_id);
+    assert_eq!(deleted.state, ClientState::Revoked);
+    assert!(
+        store.clients().is_empty(),
+        "the record is gone from the list"
+    );
+    assert!(
+        matches!(
+            store.authorize(&unhex(CLIENT_PUB)),
+            Authorization::Unknown(_)
+        ),
+        "a deleted identity is refused at authentication"
+    );
+
+    let text = std::fs::read_to_string(dir.path().join("pairing").join("clients.json")).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        json["clients"].as_array().unwrap().len(),
+        0,
+        "the record is gone from clients.json"
+    );
+    assert!(
+        matches!(
+            store.delete_client(client_id),
+            Err(StoreError::UnknownClientId { .. })
+        ),
+        "deleting an unknown id is an error"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn headless_lock_is_exclusive_and_0600() {
@@ -194,7 +247,7 @@ fn pairing_core_persist_sets_timestamps_and_notifies_explicitly() {
     );
     let mut paired = core.subscribe_paired();
     let record = core
-        .persist_client(&unhex(CLIENT_PUB), "Test Phone")
+        .persist_client(&unhex(CLIENT_PUB), "Test Phone", pairing::PersistMode::New)
         .unwrap();
     assert_eq!(record.client_id, "cf7940b474310246");
     assert_eq!(record.created_at.len(), 20);
@@ -208,8 +261,119 @@ fn pairing_core_persist_sets_timestamps_and_notifies_explicitly() {
     let notified = paired.try_recv().expect("paired notification");
     assert_eq!(notified.client_id, record.client_id);
     // Re-pairing keeps the original created_at while updating last_seen_at.
-    let again = core.persist_client(&unhex(CLIENT_PUB), "Renamed").unwrap();
+    let again = core
+        .persist_client(&unhex(CLIENT_PUB), "Renamed", pairing::PersistMode::New)
+        .unwrap();
     assert_eq!(again.created_at, record.created_at);
     assert_eq!(again.display_name, "Renamed");
     assert_eq!(store.clients().len(), 1);
+}
+
+#[test]
+fn revoked_record_restores_in_place_with_the_saved_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(AuthorizationStore::open(dir.path()).unwrap());
+    let core = pairing::PairingCore::new(
+        unhex("11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c"),
+        Arc::clone(&store),
+    );
+    let first = core
+        .persist_client(&unhex(CLIENT_PUB), "Test Phone", pairing::PersistMode::New)
+        .unwrap();
+    let client_id = first.client_id.clone();
+    let created_at = first.created_at.clone();
+    assert!(
+        core.restore_candidate(&unhex(CLIENT_PUB)).is_none(),
+        "an active record is not a restore"
+    );
+
+    store.revoke_client(&client_id).unwrap();
+    assert_eq!(
+        core.restore_candidate(&unhex(CLIENT_PUB)).as_deref(),
+        Some("Test Phone"),
+        "a revoked record would be restored with its saved name"
+    );
+
+    let restored = core
+        .persist_client(&unhex(CLIENT_PUB), "Renamed", pairing::PersistMode::Restore)
+        .expect("explicit restore");
+    assert_eq!(restored.client_id, client_id, "the same client id");
+    assert_eq!(restored.created_at, created_at, "created_at is preserved");
+    assert_eq!(restored.state, ClientState::Active);
+    assert_eq!(
+        restored.display_name, "Test Phone",
+        "the saved record is restored, not replaced by the new name"
+    );
+    assert_eq!(store.clients().len(), 1, "exactly one record");
+    assert_eq!(store.clients()[0].client_id, client_id);
+    assert_eq!(store.clients()[0].state, ClientState::Active);
+    assert!(core.restore_candidate(&unhex(CLIENT_PUB)).is_none());
+}
+
+#[test]
+fn revoked_record_is_not_reactivated_without_restore_confirmation() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(AuthorizationStore::open(dir.path()).unwrap());
+    let core = pairing::PairingCore::new(
+        unhex("11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c"),
+        Arc::clone(&store),
+    );
+    let first = core
+        .persist_client(&unhex(CLIENT_PUB), "Test Phone", pairing::PersistMode::New)
+        .unwrap();
+    store.revoke_client(&first.client_id).unwrap();
+
+    let error = core
+        .persist_client(&unhex(CLIENT_PUB), "Test Phone", pairing::PersistMode::New)
+        .expect_err("a plain pairing must not restore a revoked record");
+    assert!(
+        matches!(error, PairingError::RestoreNotConfirmed),
+        "unexpected error {error}"
+    );
+    assert_eq!(store.clients().len(), 1, "no record is added");
+    assert_eq!(store.clients()[0].client_id, first.client_id);
+    assert_eq!(store.clients()[0].state, ClientState::Revoked);
+}
+
+#[test]
+fn an_explicit_restore_of_a_non_revoked_identity_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(AuthorizationStore::open(dir.path()).unwrap());
+    let core = pairing::PairingCore::new(
+        unhex("11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c"),
+        Arc::clone(&store),
+    );
+
+    // No record at all: Restore must never insert a brand-new identity.
+    let error = core
+        .persist_client(
+            &unhex(CLIENT_PUB),
+            "Test Phone",
+            pairing::PersistMode::Restore,
+        )
+        .expect_err("restore requires a revoked record");
+    assert!(
+        matches!(error, PairingError::RestoreUnavailable),
+        "unexpected error {error}"
+    );
+    assert!(store.clients().is_empty(), "no record is added");
+
+    // An active record: Restore is equally invalid and must not rewrite it.
+    let active = core
+        .persist_client(&unhex(CLIENT_PUB), "Test Phone", pairing::PersistMode::New)
+        .unwrap();
+    let error = core
+        .persist_client(
+            &unhex(CLIENT_PUB),
+            "Test Phone",
+            pairing::PersistMode::Restore,
+        )
+        .expect_err("restore requires a revoked record");
+    assert!(
+        matches!(error, PairingError::RestoreUnavailable),
+        "unexpected error {error}"
+    );
+    assert_eq!(store.clients().len(), 1);
+    assert_eq!(store.clients()[0].client_id, active.client_id);
+    assert_eq!(store.clients()[0].state, ClientState::Active);
 }

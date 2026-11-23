@@ -141,7 +141,7 @@ enum Commands {
     /// the v2 UDP port for the pairing, so stop a running Server first if it
     /// already holds the port. It does not start the v1 Server.
     Pair(PairArgs),
-    /// List or revoke paired Clients (offline; takes the headless lock).
+    /// List, revoke, or delete paired Clients (offline; takes the headless lock).
     ///
     /// Run this while no Server Core is running; the lock also excludes
     /// concurrent as-cmd admin operations.
@@ -183,6 +183,11 @@ enum ClientsAction {
     List,
     /// Revoke one Client by canonical `client_id` (the record is kept).
     Revoke {
+        /// Canonical 16-hex-character client id.
+        client_id: String,
+    },
+    /// Delete one revoked Client record permanently (revoke first).
+    Delete {
         /// Canonical 16-hex-character client id.
         client_id: String,
     },
@@ -456,6 +461,23 @@ fn run_clients(action: ClientsAction) -> Result<(), String> {
             );
             Ok(())
         }
+        ClientsAction::Delete { client_id } => {
+            // Delete is only allowed after revocation (ADR-0006); the store
+            // returns "revoke it before deleting" for an active record.
+            let deleted = store
+                .delete_client(&client_id)
+                .map_err(|error| error.to_string())?;
+            println!(
+                "deleted client {} ({})",
+                deleted.client_id, deleted.display_name
+            );
+            println!("the record is gone permanently; this identity is refused at authentication");
+            append_line(
+                &paths::paths().log,
+                &format!("event=client.deleted client_id={}", deleted.client_id),
+            );
+            Ok(())
+        }
     }
 }
 
@@ -619,6 +641,9 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
                     "\nDevice connected: {} [{}] from {}",
                     request.display_name, request.client_id, request.address
                 );
+                if let Some(saved) = request.restore_candidate.as_deref() {
+                    print_restore_notice(saved);
+                }
                 if let Some(sas) = request.sas.as_deref() {
                     println!("Pairing code: {sas}");
                 }
@@ -635,18 +660,32 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
                     "\nIncoming device: {} [{}] from {}",
                     request.display_name, request.client_id, request.address
                 );
+                let restored_name = request.restore_candidate.clone();
+                if let Some(saved) = restored_name.as_deref() {
+                    print_restore_notice(saved);
+                }
                 if let Some(sas) = request.sas.as_deref() {
                     println!("Pairing code: {sas}");
                 }
                 println!("Compare the code with the phone before accepting.");
                 let _ = std::io::stdout().flush();
-                let accepted = if args.accept {
-                    true
-                } else {
-                    confirm("Accept this device? [y/N]: ", accept_pairing)?
+                // ADR-0006: --accept is a plain Accept. It must never silently
+                // restore a revoked identity; that needs an explicit prompt.
+                let accepted = match restored_name.as_deref() {
+                    Some(saved) => {
+                        confirm(&format!("Restore {saved}? [y/N]: "), accept_pairing)?
+                    }
+                    None if args.accept => true,
+                    None => confirm("Accept this device? [y/N]: ", accept_pairing)?,
                 };
                 if accepted {
-                    core.approve(request.approval_id);
+                    // A revoked identity is restored only by the explicit
+                    // Restore decision; every other accept is a plain Accept.
+                    if restored_name.is_some() {
+                        core.restore(request.approval_id);
+                    } else {
+                        core.approve(request.approval_id);
+                    }
                     println!("Accepted; waiting for the phone to finish pairing...");
                 } else {
                     core.decline(request.approval_id);
@@ -671,6 +710,13 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
     admin.cancel();
     runtime.stop();
     outcome
+}
+
+/// The one wording for a revoked identity awaiting an explicit Restore.
+fn print_restore_notice(saved: &str) {
+    println!(
+        "This identity was revoked; accepting restores the saved pairing for {saved} (no new key)."
+    );
 }
 
 /// Render a QR as compact UTF-8 half-block terminal art (4-module quiet zone).

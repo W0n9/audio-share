@@ -151,5 +151,13 @@
   "pairing.revoked": "已撤销",
   "pairing.active": "有效",
   "pairing.revoke": "撤销",
-  "pairing.confirmRevoke": "撤销 {name}？该设备将失去访问权限，其活动会话会在 5 秒内关闭。"
+  "pairing.confirmRevoke": "撤销 {name}？该设备将失去访问权限，其活动会话会在 5 秒内关闭。",
+  "pairing.rePair": "重新配对",
+  "pairing.delete": "删除",
+  "pairing.confirmDelete": "删除 {name} 的记录？该记录将被永久移除，无法撤销。",
+  "pairing.restoreTitle": "此设备已被撤销",
+  "pairing.restoreBody": "恢复后该配对将重新生效，不会生成新密钥。",
+  "pairing.restoreAccept": "恢复设备",
+  "pairing.restoring": "正在恢复 {name}",
+  "pairing.paired": "{name} 已配对。"
 }
