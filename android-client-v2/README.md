@@ -11,9 +11,11 @@ Kotlin app owns the UI and the reconnect policy.
 # Default ABI is arm64-v8a (real devices).
 ANDROID_HOME=$HOME/Android/Sdk ./gradlew assembleRelease
 
-# Beta universal APK: arm64-v8a + x86_64 in one signed APK.
-ANDROID_HOME=$HOME/Android/Sdk ./gradlew assembleRelease \
-  -PandroidAbis=arm64-v8a,x86_64
+# Release artifacts: one signed APK per ABI (the release workflow runs both).
+ANDROID_HOME=$HOME/Android/Sdk ./gradlew assembleRelease -PandroidAbis=arm64-v8a
+ANDROID_HOME=$HOME/Android/Sdk ./gradlew assembleRelease -PandroidAbis=x86_64
+
+# A universal APK is no longer produced; -PandroidAbis takes a single ABI.
 
 # E2E / device-test build: adds the TEST-ONLY fixture client identity key.
 ANDROID_HOME=$HOME/Android/Sdk ./gradlew assembleRelease -PtestSupport=true
