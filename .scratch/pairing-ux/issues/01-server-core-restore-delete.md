@@ -23,3 +23,18 @@
 - `crates/v2-runtime/src/admin.rs:118-146`（`PairingAdmin` trait）
 - `crates/as-cmd/src/main.rs:179-189`（现有 `clients` 只有 list/revoke）
 - `docs/wire-protocol-v2/pairing.md:310-316`（§8.3 替换必须是显式管理员动作）
+
+## Comments
+
+- Merge: `34f3857` (implementation `64e6d97`).
+- Closeout snapshot (`d28e099`): **PASS**.
+- Rust host: `cargo test -p v2-transport -p v2-runtime -p as-cmd` → 355 passed, 0 failed,
+  1 ignored (the ignored case needs real PipeWire). `pairing_live` 8/8, no hang.
+- Emulator (`emulator:audio-share-api35`, API 35, x86_64, `EMULATOR`): a revoked identity
+  was refused with typed 204; SAS re-pairing of the same identity required the explicit
+  Restore prompt and restored the same `client_id` and `created_at` with one active
+  record. Real device `NOT RUN`.
+- `as-cmd clients delete`: manual smoke PASS — active refused with "revoke it before
+  deleting", then revoke → delete → `no paired clients`. Store/admin tests cover the same
+  paths; there is no dedicated CLI test for `delete`.
+- Details: `.scratch/pairing-ux/evidence/README.md`.

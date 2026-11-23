@@ -22,3 +22,22 @@
 - `android-client-v2/app/src/main/java/dev/audioshare/v2/AudioShareApp.kt:651-693`（`Scan again` 主按钮）
 - `android-client-v2/app/src/main/java/dev/audioshare/v2/ControlSessionService.kt:243,271-275`（QR/SAS 别名策略）
 - `android-client-v2/app/src/main/java/dev/audioshare/v2/AppState.kt:131-135`（`selectedPin` 按地址优先、旧记录在前）
+
+## Comments
+
+- Merge/tip: `fe38989` (with `b57d1c9`).
+- Closeout snapshot (`d28e099`): **PASS** for JVM and build evidence.
+- JVM: `./gradlew testReleaseUnitTest -PnoNative=true` (JDK 21) → 325 tests, 0 failures,
+  0 errors, 0 skipped; `BUILD SUCCESSFUL in 25s`.
+- Emulator (`emulator:audio-share-api35`, API 35, x86_64, `EMULATOR`): a SAS re-pair after
+  revocation reused the stored identity (same `client_id`), triggered the Server's
+  explicit Restore prompt, and restored the same record (`created_at` preserved, one
+  active row); the stored credential then authenticated (`RELOAD_OK`). Real device
+  `NOT RUN`.
+- The legacy device contract's `pairSas` case still fails its `awaitPairingPhase("COMPLETE")`
+  assertion because the session handoff clears the pairing snapshot. The clearing path is
+  unchanged between `v0.6.0` and `d28e099` (diff over `SessionOrchestrator.kt` /
+  `Pairing.kt`), but it was not re-run against a `v0.6.0` build; pairing and Restore were
+  verified independently. `pairQr`, the manual Re-pair/Restore/Forget UI checklist, and
+  the real device are `NOT RUN`.
+- Details: `.scratch/pairing-ux/evidence/README.md`.
