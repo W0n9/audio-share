@@ -205,6 +205,13 @@ pub enum StoreError {
         /// The id that was not found.
         client_id: String,
     },
+    /// The caller tried to delete an active record. Delete is only allowed
+    /// after revocation, so one action cannot erase an authorized identity
+    /// (ADR-0006, pairing.md §8.3).
+    ClientActive {
+        /// The active id that was not deleted.
+        client_id: String,
+    },
 }
 
 impl fmt::Display for StoreError {
@@ -222,8 +229,12 @@ impl fmt::Display for StoreError {
                 public_key.len()
             ),
             Self::UnknownClientId { client_id } => {
-                write!(f, "revoke of unknown client id {client_id:?}")
+                write!(f, "unknown client id {client_id:?}")
             }
+            Self::ClientActive { client_id } => write!(
+                f,
+                "client {client_id:?} is active; revoke it before deleting"
+            ),
         }
     }
 }
@@ -599,6 +610,33 @@ impl AuthorizationStore {
                 client_id: client_id.to_owned(),
             })?;
         self.revoke(&public_key)
+    }
+
+    /// Delete a record by canonical `client_id`.
+    ///
+    /// Delete is allowed only for a revoked record (ADR-0006: an active device
+    /// is revoked first, so one action cannot both terminate a session and
+    /// erase the audit row). An active record is an error and is left
+    /// unchanged; the identity is then refused because no record remains
+    /// (`authorize` → [`Authorization::Unknown`]). Persists atomically.
+    pub fn delete_client(&self, client_id: &str) -> Result<StoredClient, StoreError> {
+        let removed = {
+            let mut guard = self.clients.write().expect("authorization store lock");
+            let position = guard
+                .iter()
+                .position(|client| client.client_id == client_id)
+                .ok_or_else(|| StoreError::UnknownClientId {
+                    client_id: client_id.to_owned(),
+                })?;
+            if guard[position].state == ClientState::Active {
+                return Err(StoreError::ClientActive {
+                    client_id: client_id.to_owned(),
+                });
+            }
+            guard.remove(position)
+        };
+        self.persist()?;
+        Ok(removed)
     }
 
     /// Invalidate every pairing (identity reset / operator clear).

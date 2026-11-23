@@ -341,6 +341,10 @@ struct PendingPairing {
     /// The live view published to the operator before `PairingConfirm`
     /// (delivered once; ticket 29).
     presented: Option<PairingPresented>,
+    /// The saved display name when the identity's stored record was revoked
+    /// at presentation: approving is an explicit Restore (ADR-0006). Captured
+    /// once so the presented card and the approval card agree.
+    would_restore: Option<String>,
     /// The TM-5 concurrency slot for this exchange; dropped with the pending
     /// exchange on approval, decline, deadline, or connection loss.
     _permit: PairingPermit,
@@ -984,6 +988,7 @@ impl StateMachine {
             mode: pending.mode,
             address: String::new(),
             sas: pending.sas.clone(),
+            would_restore: pending.would_restore.clone(),
         })
     }
 
@@ -1154,15 +1159,21 @@ impl StateMachine {
         // publishes it only after PairingResponse is written (ticket 29). It
         // shares the approval handle used later by the post-confirm card.
         let approval_id = core.next_approval_id();
+        let presented_client_id = auth::client_id_hex(&request.client_public_key);
+        // ADR-0006: a revoked stored record is only reactivated by an explicit
+        // Restore. Flag it now so every operator surface can ask before the
+        // approval, and carry the decision into persistence.
+        let would_restore = core.restore_candidate(&presented_client_id);
         let presented = PairingPresented {
             approval_id,
             mode,
-            client_id: auth::client_id_hex(&request.client_public_key),
+            client_id: presented_client_id,
             display_name: display_name.clone(),
             address: String::from_utf8_lossy(source).into_owned(),
             sas: sas.clone(),
             fingerprint: core.fingerprint(),
             expires_at: Instant::now() + pairing::PAIRING_DEADLINE,
+            would_restore: would_restore.clone(),
         };
         self.pending_pairing = Some(PendingPairing {
             request_id: request.request_id,
@@ -1175,6 +1186,7 @@ impl StateMachine {
             verified: false,
             approval_requested: false,
             presented: Some(presented),
+            would_restore,
             _permit: permit,
         });
         self.state = ServerState::Authenticating;
@@ -1242,10 +1254,11 @@ impl StateMachine {
         let request_id = pending.request_id;
         let client_public_key = pending.client_public_key.clone();
         let display_name = pending.display_name.clone();
+        let restore = pending.would_restore.is_some();
         let Some(core) = self.config.pairing.clone() else {
             return self.internal_error(request_id);
         };
-        let client = match core.persist_client(&client_public_key, &display_name) {
+        let client = match core.persist_client(&client_public_key, &display_name, restore) {
             Ok(client) => client,
             Err(error) => {
                 // §10.3: a store write failure fails closed, never a silent
