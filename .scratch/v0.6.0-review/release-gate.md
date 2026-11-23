@@ -41,6 +41,14 @@
 | deb `0.6.0`、`as-cmd --version` 自报 `0.6.0`、Windows exe 含 `0.6.0` | `PASS` |
 | 真机安装播放、Windows 运行、升级路径 | `NOT RUN` |
 
+**Draft（2026-11-23）**：本地与 fork 的 `v0.6.0` annotated 标签已指向 `c502981`；
+在标签 ref 上运行
+[45114429469](https://github.com/W0n9/audio-share/actions/runs/45114429469) 创建了
+**未发布 draft**，14 个附件（7 个文件 + 7 个校验和）。7 个文件的 sidecar 与 GitHub
+记录的附件摘要逐一比对一致。首次运行时 Ubuntu 作业在
+`v2_media::reported_playback_diagnostics_are_observable` 挂起，触发了 30 分钟作业上限；
+重跑通过。挂起与 Windows 上此前的 live 测试挂起共用无超时的 QUIC 握手路径，仍需单独排查。
+
 ## 对外发布前须处理
 
 - [x] **版本策略已定。** 产品与 Android 应用版本均为 `0.6.0`（`versionCode 3`），Rust/Tauri 元数据已通过 `scripts/apply_version.sh` 同步；Android 发布改为按 ABI 各出一个签名 APK。正式构建仍需从包含这些改动的提交进行。
