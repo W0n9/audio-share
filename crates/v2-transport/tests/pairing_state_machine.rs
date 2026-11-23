@@ -232,6 +232,7 @@ fn qr_happy_path_verifies_then_waits_for_local_approval() {
 
     let out = machine.handle(Event::PairingApproved {
         approval_id: approval.approval_id,
+        restore: false,
     });
     assert_eq!(out.len(), 1);
     match body(&out[0]) {
@@ -255,6 +256,183 @@ fn qr_happy_path_verifies_then_waits_for_local_approval() {
     assert_eq!(clients[0].created_at.len(), 20);
     assert!(clients[0].created_at.ends_with('Z'));
     assert_eq!(clients[0].last_seen_at.len(), 20);
+}
+
+/// Seed a revoked record for the QR fixture identity and return its stored
+/// `client_id` and `created_at`.
+fn seed_revoked_identity(core: &PairingCore) -> (String, String) {
+    let seeded = core
+        .persist_client(&unhex(CLIENT_PUB), "Old Phone", pairing::PersistMode::New)
+        .expect("seed record");
+    core.revoke(&seeded.client_id).expect("revoke seed");
+    (seeded.client_id, seeded.created_at)
+}
+
+#[test]
+fn approving_a_revoked_identity_restores_the_saved_record_in_place() {
+    let clock = TestClock::new();
+    let core = core_with_nonce(clock);
+    let store = core.store().clone();
+    let (client_id, created_at) = seed_revoked_identity(&core);
+
+    let mut machine = machine(config(Arc::clone(&core)));
+    machine.handle(frame_event(
+        frame::Body::PairingRequest(request_qr()),
+        "192.168.1.20",
+    ));
+    let presented = machine
+        .take_pairing_presented()
+        .expect("live pairing is presented");
+    assert_eq!(
+        presented.restore_candidate.as_deref(),
+        Some("Old Phone"),
+        "a revoked identity is flagged with its saved name before confirmation"
+    );
+
+    machine.handle(frame_event(
+        frame::Body::PairingConfirm(PairingConfirm {
+            request_id: 1,
+            binding_echo: unhex(QR_BINDING),
+            client_proof: unhex(QR_PROOF),
+        }),
+        "192.168.1.20",
+    ));
+    let approval = machine
+        .take_pairing_approval_request()
+        .expect("verified pairing surfaces an approval request");
+    assert_eq!(
+        approval.restore_candidate.as_deref(),
+        Some("Old Phone"),
+        "the approval card is an explicit Restore confirmation"
+    );
+    assert_eq!(approval.client_id, client_id);
+
+    let out = machine.handle(Event::PairingApproved {
+        approval_id: approval.approval_id,
+        restore: true,
+    });
+    assert_eq!(out.len(), 1);
+    match body(&out[0]) {
+        frame::Body::PairingResult(result) => {
+            assert_eq!(result.request_id, 1);
+            assert_eq!(result.status.code, 0);
+        }
+        other => panic!("expected PairingResult(OK), got {other:?}"),
+    }
+    let paired = out[0].paired_client.as_ref().expect("paired broadcast");
+    assert_eq!(paired.client_id, client_id);
+    assert_eq!(paired.created_at, created_at);
+
+    let clients = store.clients();
+    assert_eq!(clients.len(), 1, "restore leaves exactly one record");
+    assert_eq!(clients[0].client_id, client_id);
+    assert_eq!(clients[0].created_at, created_at, "created_at preserved");
+    assert_eq!(clients[0].display_name, "Old Phone", "the saved record");
+    assert_eq!(clients[0].state, ClientState::Active);
+}
+
+#[test]
+fn declining_a_revoked_identity_keeps_it_revoked_and_adds_nothing() {
+    let clock = TestClock::new();
+    let core = core_with_nonce(clock);
+    let store = core.store().clone();
+    let (client_id, created_at) = seed_revoked_identity(&core);
+
+    let mut machine = machine(config(Arc::clone(&core)));
+    machine.handle(frame_event(
+        frame::Body::PairingRequest(request_qr()),
+        "192.168.1.20",
+    ));
+    machine.handle(frame_event(
+        frame::Body::PairingConfirm(PairingConfirm {
+            request_id: 1,
+            binding_echo: unhex(QR_BINDING),
+            client_proof: unhex(QR_PROOF),
+        }),
+        "192.168.1.20",
+    ));
+    let approval = machine
+        .take_pairing_approval_request()
+        .expect("verified pairing surfaces an approval request");
+    assert_eq!(approval.restore_candidate.as_deref(), Some("Old Phone"));
+
+    let out = machine.handle(Event::PairingDeclined {
+        approval_id: approval.approval_id,
+    });
+    match body(&out[0]) {
+        frame::Body::PairingResult(result) => {
+            assert_eq!(result.status.code, ErrorCode::PAIRING_REJECTED.code)
+        }
+        other => panic!("expected PairingResult(201), got {other:?}"),
+    }
+    assert!(
+        out.iter().all(|outcome| outcome.paired_client.is_none()),
+        "a decline never broadcasts a paired client"
+    );
+
+    let clients = store.clients();
+    assert_eq!(clients.len(), 1, "no record is added");
+    assert_eq!(clients[0].client_id, client_id);
+    assert_eq!(clients[0].created_at, created_at);
+    assert_eq!(clients[0].state, ClientState::Revoked, "still revoked");
+}
+
+#[test]
+fn a_record_revoked_after_presentation_is_not_restored_by_a_plain_approval() {
+    let clock = TestClock::new();
+    let core = core_with_nonce(clock);
+    let store = core.store().clone();
+    // Active when the pairing is presented: this is an ordinary re-pairing.
+    let seeded = core
+        .persist_client(&unhex(CLIENT_PUB), "Old Phone", pairing::PersistMode::New)
+        .expect("seed active record");
+    let mut machine = machine(config(Arc::clone(&core)));
+    machine.handle(frame_event(
+        frame::Body::PairingRequest(request_qr()),
+        "192.168.1.20",
+    ));
+    let presented = machine
+        .take_pairing_presented()
+        .expect("live pairing is presented");
+    assert!(presented.restore_candidate.is_none());
+
+    // The operator revokes between presentation and approval.
+    core.revoke(&seeded.client_id).expect("revoke mid-pairing");
+
+    machine.handle(frame_event(
+        frame::Body::PairingConfirm(PairingConfirm {
+            request_id: 1,
+            binding_echo: unhex(QR_BINDING),
+            client_proof: unhex(QR_PROOF),
+        }),
+        "192.168.1.20",
+    ));
+    let approval = machine
+        .take_pairing_approval_request()
+        .expect("verified pairing surfaces an approval request");
+    assert!(
+        approval.restore_candidate.is_none(),
+        "the card was built before the revocation"
+    );
+
+    let out = machine.handle(Event::PairingApproved {
+        approval_id: approval.approval_id,
+        restore: false,
+    });
+    match body(&out[0]) {
+        frame::Body::Error(error) => {
+            assert_eq!(error.status.code, ErrorCode::INTERNAL_ERROR.code)
+        }
+        other => panic!("expected a fail-closed Error, got {other:?}"),
+    }
+    assert!(
+        out.iter().all(|outcome| outcome.paired_client.is_none()),
+        "no OK result and no paired broadcast"
+    );
+    let clients = store.clients();
+    assert_eq!(clients.len(), 1);
+    assert_eq!(clients[0].client_id, seeded.client_id);
+    assert_eq!(clients[0].state, ClientState::Revoked, "still revoked");
 }
 
 #[test]
@@ -695,6 +873,7 @@ fn sas_window_pairs_without_a_nonce_and_derives_the_fixture_sas() {
     assert_eq!(approval.sas.as_deref(), Some("900 067"));
     let out = machine.handle(Event::PairingApproved {
         approval_id: approval.approval_id,
+        restore: false,
     });
     match body(&out[0]) {
         frame::Body::PairingResult(result) => assert_eq!(result.status.code, 0),

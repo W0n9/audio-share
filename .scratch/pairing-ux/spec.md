@@ -1,6 +1,8 @@
 # 配对、撤销与重新配对的交互
 
-Status: ready-for-agent (2026-11-23)
+Status: ready-for-human
+Remaining human gate: the full manual UI checklist (pairQr, QR re-pair, Forget)
+and a real device.
 Feature: pairing-ux
 
 ## 问题
@@ -96,6 +98,8 @@ Server 卡片或 Settings 提供“忘记此 Server”，二次确认后删除�
 | [04](issues/04-android-repair-flow.md) | Android：专用重配入口、SAS 密钥复用、失败阻断态 | 01, 03 |
 | [05](issues/05-closeout.md) | 文档、测试与证据收口 | 02, 04 |
 
+合并 SHA、命令结果与证据边界见 `evidence/README.md`。
+
 ## 文案定稿
 
 **Android**（当前只有 `values/` 英文）
@@ -128,9 +132,15 @@ Server 卡片或 Settings 提供“忘记此 Server”，二次确认后删除�
   revoked 且无新记录；delete 只允许 revoked。
 - JVM 测试：needs-repairing 置位/清除；需要重配时 `AutoConnectPolicy` 不自动连接；Forget 删除
   凭据与密钥；配对成功清理同地址记录；SAS 复用地址命中的 `keyAlias`。
-- GUI：`svelte-check` + 生产构建；revoked 行的两个动作与确认文案。
-- 设备：模拟器完整走一遍撤销→重配→恢复；真机 PASS 仅在排到真机会话时记录，否则按证据政策
-  标 `EMULATOR` / `NOT RUN`。
+- GUI：`svelte-check` + 生产构建通过；revoked 行的两个动作与确认文案由代码审阅覆盖
+  （`gui/` 没有 Svelte/store 测试运行器）。
+- 设备（代码审阅前快照，`d28e099`）：模拟器已跑 Keystore、SAS 配对、认证、204 撤销、SAS
+  重配 Restore（同一 `client_id`、同一 `created_at`、单条 active 记录），标 `EMULATOR`。
+  审阅修复后本机没有连接的模拟器/真机（`adb devices` 为空），设备用例一律 `NOT RUN`，不得
+  沿用旧快照冒充修复后的结果。既有的 `pairSas` 用例已改为等待一次性配对交接（不再轮询会
+  被 `beginSession()` 清空的 `COMPLETE` 快照）；该用例在本轮同样未复跑。`pairQr`、QR 重配、
+  “首次配对 → 撤销 → QR 重配恢复 → 撤销 → SAS 重配恢复 → Forget”完整 UI 清单、真机均为
+  `NOT RUN`。详见 `evidence/README.md`。
 
 ## 不在本轮
 

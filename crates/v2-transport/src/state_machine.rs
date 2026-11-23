@@ -183,6 +183,8 @@ pub enum Event {
     PairingApproved {
         /// The process-local approval handle (never the wire request id).
         approval_id: u64,
+        /// The operator explicitly chose Restore (rather than a plain Accept).
+        restore: bool,
     },
     /// The local operator declined a verified pairing (§5.2 "approval
     /// declined" row): 201 + Close(201), nothing persisted.
@@ -341,6 +343,12 @@ struct PendingPairing {
     /// The live view published to the operator before `PairingConfirm`
     /// (delivered once; ticket 29).
     presented: Option<PairingPresented>,
+    /// The saved display name when the identity's stored record was revoked
+    /// at presentation: approving is an explicit Restore (ADR-0006). Captured
+    /// once so the presented card and the approval card agree. Display only:
+    /// the actual persistence decision comes from the operator's explicit
+    /// [`ApproveDecision`](crate::pairing::ApprovalDecision).
+    restore_candidate: Option<String>,
     /// The TM-5 concurrency slot for this exchange; dropped with the pending
     /// exchange on approval, decline, deadline, or connection loss.
     _permit: PairingPermit,
@@ -492,7 +500,10 @@ impl StateMachine {
                 }
             }
             Event::PairingDeadline => self.handle_pairing_deadline(),
-            Event::PairingApproved { approval_id } => self.handle_pairing_approved(approval_id),
+            Event::PairingApproved {
+                approval_id,
+                restore,
+            } => self.handle_pairing_approved(approval_id, restore),
             Event::PairingDeclined { approval_id } => self.handle_pairing_declined(approval_id),
             Event::IdleTimeout => {
                 // §5.2 "any": idle timeout → transport close carrying 601.
@@ -984,6 +995,7 @@ impl StateMachine {
             mode: pending.mode,
             address: String::new(),
             sas: pending.sas.clone(),
+            restore_candidate: pending.restore_candidate.clone(),
         })
     }
 
@@ -1154,15 +1166,21 @@ impl StateMachine {
         // publishes it only after PairingResponse is written (ticket 29). It
         // shares the approval handle used later by the post-confirm card.
         let approval_id = core.next_approval_id();
+        let presented_client_id = auth::client_id_hex(&request.client_public_key);
+        // ADR-0006: a revoked stored record is only reactivated by an explicit
+        // Restore. Flag it now so every operator surface can ask before the
+        // approval, and carry the decision into persistence.
+        let restore_candidate = core.restore_candidate(&request.client_public_key);
         let presented = PairingPresented {
             approval_id,
             mode,
-            client_id: auth::client_id_hex(&request.client_public_key),
+            client_id: presented_client_id,
             display_name: display_name.clone(),
             address: String::from_utf8_lossy(source).into_owned(),
             sas: sas.clone(),
             fingerprint: core.fingerprint(),
             expires_at: Instant::now() + pairing::PAIRING_DEADLINE,
+            restore_candidate: restore_candidate.clone(),
         };
         self.pending_pairing = Some(PendingPairing {
             request_id: request.request_id,
@@ -1175,6 +1193,7 @@ impl StateMachine {
             verified: false,
             approval_requested: false,
             presented: Some(presented),
+            restore_candidate,
             _permit: permit,
         });
         self.state = ServerState::Authenticating;
@@ -1232,7 +1251,7 @@ impl StateMachine {
         Vec::new()
     }
 
-    fn handle_pairing_approved(&mut self, approval_id: u64) -> Vec<Outcome> {
+    fn handle_pairing_approved(&mut self, approval_id: u64, restore: bool) -> Vec<Outcome> {
         let Some(pending) = self.pending_pairing.as_ref() else {
             return Vec::new();
         };
@@ -1242,10 +1261,19 @@ impl StateMachine {
         let request_id = pending.request_id;
         let client_public_key = pending.client_public_key.clone();
         let display_name = pending.display_name.clone();
+        // The persistence decision is the operator's explicit choice, never
+        // inferred from the record's state (ADR-0006). A mismatched pair --
+        // plain Accept of a now-revoked record, or Restore of a non-revoked
+        // one -- fails closed in `persist_client`.
+        let mode = if restore {
+            pairing::PersistMode::Restore
+        } else {
+            pairing::PersistMode::New
+        };
         let Some(core) = self.config.pairing.clone() else {
             return self.internal_error(request_id);
         };
-        let client = match core.persist_client(&client_public_key, &display_name) {
+        let client = match core.persist_client(&client_public_key, &display_name, mode) {
             Ok(client) => client,
             Err(error) => {
                 // §10.3: a store write failure fails closed, never a silent

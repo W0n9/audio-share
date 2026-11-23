@@ -3,17 +3,32 @@ package dev.audioshare.v2
 /** The five beta screens (ticket 06 "Navigation": HOME, PAIRING, SESSION, ABOUT, SETTINGS). */
 enum class AppScreen { HOME, PAIRING, SESSION, ABOUT, SETTINGS }
 
+/**
+ * Why the PAIRING screen was opened (ticket 04). `First` is the general
+ * pairing page; `RePair` is the dedicated re-pairing flow for one stored
+ * Server, which keeps the failure cause visible and shows the fixed
+ * "ask the Server operator to start pairing" instruction. The five-screen
+ * model is unchanged: both intents share the PAIRING screen.
+ */
+sealed interface PairingIntent {
+    data object First : PairingIntent
+    data class RePair(val serverSpkiSha256Hex: String) : PairingIntent
+}
+
 /** A paired Server as the UI needs it (public credential data only). */
 data class StoredServer(
     val serverSpkiSha256Hex: String,
     val displayName: String?,
     val address: String,
+    /** Persisted credential state: the Server must be paired again. */
+    val needsRepairing: Boolean = false,
 ) {
     companion object {
         fun from(record: CredentialRecord) = StoredServer(
             serverSpkiSha256Hex = record.serverSpkiSha256Hex,
             displayName = record.displayName,
             address = record.addressHint.ifEmpty { "${record.host}:${record.port}" },
+            needsRepairing = record.needsRepairing,
         )
     }
 }
@@ -103,6 +118,8 @@ data class AppState(
     /** Local button-disable while an asynchronous Stop is in flight. */
     val stopRequested: Boolean = false,
     val pairing: PairingUi? = null,
+    /** Why PAIRING is open: the general page or a stored Server's re-pair. */
+    val pairingIntent: PairingIntent = PairingIntent.First,
     val scanActive: Boolean = false,
     val scanNotice: ScanNotice? = null,
     /**
@@ -112,6 +129,11 @@ data class AppState(
      * PairingUi already exists, and it is dropped whenever pairing is cleared.
      */
     val restoredSasInput: String = "",
+    /**
+     * `Forget this Server` confirmation target. Set only by an explicit user
+     * request; the dialog is the confirmation, never a silent delete.
+     */
+    val pendingForgetPin: String? = null,
 ) {
     val hasStoredPairing: Boolean get() = storedServers.isNotEmpty()
 
@@ -127,12 +149,21 @@ data class AppState(
             ?.let { it as? EndReason.Surfaced }
             ?.let { SessionError(it.code, ErrorGuidanceBook.forCode(it.code)) }
 
-    /** Prefer the credential matching the typed address, else the first. */
-    fun selectedPin(): String? {
-        val typed = address.trim()
-        return storedServers.firstOrNull { it.address == typed }?.serverSpkiSha256Hex
-            ?: storedServers.firstOrNull()?.serverSpkiSha256Hex
+    /** The stored Server matching the typed address, else the first. */
+    fun selectedServer(): StoredServer? {
+        val typed = ServerAddress.parse(address)
+        val matching = typed?.let { target ->
+            storedServers.firstOrNull { it.serverAddress() == target }
+        }
+        return matching ?: storedServers.firstOrNull()
     }
+
+    /** The stored Server with this pin, when present. */
+    fun serverForPin(pin: String): StoredServer? =
+        storedServers.firstOrNull { it.serverSpkiSha256Hex == pin }
+
+    /** Prefer the credential matching the typed address, else the first. */
+    fun selectedPin(): String? = selectedServer()?.serverSpkiSha256Hex
 }
 
 sealed interface UiEvent {
@@ -172,6 +203,12 @@ sealed interface UiEvent {
     data class PairingCompleted(val record: CredentialRecord) : UiEvent
     data object ShowHome : UiEvent
     data object ShowPairing : UiEvent
+    /**
+     * Open the PAIRING screen in the dedicated re-pairing context for one
+     * stored Server (ticket 04). The address is prefilled from the record and
+     * the failure cause (when one is showing) stays visible.
+     */
+    data class RePairRequested(val serverSpkiSha256Hex: String) : UiEvent
     data object ShowAbout : UiEvent
     data object ShowSettings : UiEvent
     data object RequestScan : UiEvent
@@ -179,6 +216,12 @@ sealed interface UiEvent {
     data object ScanClosed : UiEvent
     data object PairingUriRejected : UiEvent
     data object Retry : UiEvent
+    /** Open the `Forget this Server?` confirmation; nothing is deleted yet. */
+    data class ForgetServerRequested(val serverSpkiSha256Hex: String) : UiEvent
+    /** The user confirmed the open Forget dialog. */
+    data object ForgetServerConfirmed : UiEvent
+    /** The user cancelled the open Forget dialog. */
+    data object ForgetServerDismissed : UiEvent
 }
 
 /** Session side effects the Activity executes after reducing an event. */
@@ -190,6 +233,8 @@ sealed interface AppCommand {
     data object CancelPairing : AppCommand
     data class ConnectStored(val serverSpkiSha256Hex: String?) : AppCommand
     data object Stop : AppCommand
+    /** Delete the credential and Client identity key, then stop the session. */
+    data class ForgetServer(val serverSpkiSha256Hex: String) : AppCommand
 }
 
 data class Reduction(val state: AppState, val command: AppCommand = AppCommand.None)
@@ -204,7 +249,13 @@ object AutoConnectPolicy {
         savedStatePresent: Boolean,
         hasCredential: Boolean,
         outcome: SessionOutcome?,
-    ): Boolean = !savedStatePresent && hasCredential && isEligibleOutcome(outcome)
+        /**
+         * Read from the *persisted* credential, not the in-memory outcome: a
+         * cold start must not reconnect a device the Server revoked.
+         */
+        needsRepairing: Boolean = false,
+    ): Boolean = !savedStatePresent && hasCredential && !needsRepairing &&
+        isEligibleOutcome(outcome)
 
     /** `null` (no session) and a terminal Ended are eligible; Live/Reconnecting are not. */
     fun isEligibleOutcome(outcome: SessionOutcome?): Boolean = when (outcome) {
@@ -237,8 +288,14 @@ object AppReducer {
         UiEvent.ConnectRequested -> connect(state)
 
         UiEvent.AutoConnectStarted -> {
+            // Gate on the record connect() will actually target: the persisted
+            // needs-repairing flag wins over the outcome, so a revoked
+            // credential is never reconnected after a cold start even when
+            // another saved Server is clean.
+            val selected = state.selectedServer()
             val canStart = state.screen == AppScreen.HOME &&
-                state.hasStoredPairing &&
+                selected != null &&
+                !selected.needsRepairing &&
                 AutoConnectPolicy.isEligibleOutcome(state.outcome)
             if (canStart) connect(state) else Reduction(state)
         }
@@ -304,6 +361,7 @@ object AppReducer {
                 state.copy(
                     screen = screen,
                     outcome = event.outcome,
+                    storedServers = state.projectedRepairState(event.outcome),
                     stopRequested = if (event.outcome is SessionOutcome.Ended) {
                         false
                     } else {
@@ -324,6 +382,9 @@ object AppReducer {
         is UiEvent.SessionOutcomeChanged -> Reduction(
             state.copy(
                 outcome = event.outcome,
+                // The Service persists the flag; this keeps the visible card
+                // in step until the next credential load.
+                storedServers = state.projectedRepairState(event.outcome),
                 stopRequested = if (event.outcome is SessionOutcome.Ended) {
                     false
                 } else {
@@ -365,12 +426,19 @@ object AppReducer {
 
         is UiEvent.PairingCompleted -> {
             val server = StoredServer.from(event.record)
+            // A successful pairing replaces every record for the same address
+            // (ADR-0006 §3): the new record wins and the stale one on that
+            // host:port disappears from the list too.
             val servers = state.storedServers
-                .filterNot { it.serverSpkiSha256Hex == server.serverSpkiSha256Hex } + server
+                .filterNot {
+                    it.serverSpkiSha256Hex == server.serverSpkiSha256Hex ||
+                        it.isSameServerAddressAs(server)
+                } + server
             Reduction(
                 state.copy(
                     screen = AppScreen.SESSION,
                     storedServers = servers,
+                    pairingIntent = PairingIntent.First,
                     stopRequested = false,
                     pairing = null,
                     scanActive = false,
@@ -383,11 +451,17 @@ object AppReducer {
         UiEvent.ShowHome -> Reduction(
             state.copy(
                 screen = AppScreen.HOME,
+                pairingIntent = PairingIntent.First,
                 scanActive = false,
                 scanNotice = null,
                 restoredSasInput = "",
             )
         )
+
+        // A repair entry point (Home's Needs re-pairing card or the 204 error
+        // card) opens the same PAIRING screen but keeps the stored pin, the
+        // prefilled address and the visible failure cause (ticket 04).
+        is UiEvent.RePairRequested -> rePair(state, event.serverSpkiSha256Hex)
 
         UiEvent.ShowPairing -> Reduction(
             state.copy(
@@ -438,6 +512,23 @@ object AppReducer {
         )
 
         UiEvent.Retry -> retry(state)
+
+        is UiEvent.ForgetServerRequested -> {
+            val known = state.storedServers.any {
+                it.serverSpkiSha256Hex == event.serverSpkiSha256Hex
+            }
+            Reduction(
+                if (known) {
+                    state.copy(pendingForgetPin = event.serverSpkiSha256Hex)
+                } else {
+                    state
+                }
+            )
+        }
+
+        UiEvent.ForgetServerConfirmed -> forgetServer(state)
+
+        UiEvent.ForgetServerDismissed -> Reduction(state.copy(pendingForgetPin = null))
     }
 
     private fun cancelPairing(state: AppState): Reduction = Reduction(
@@ -450,6 +541,7 @@ object AppReducer {
             outcome = null,
             stopRequested = false,
             pairing = null,
+            pairingIntent = PairingIntent.First,
             scanActive = false,
             scanNotice = null,
             restoredSasInput = "",
@@ -471,6 +563,13 @@ object AppReducer {
                     scanNotice = null,
                 )
             )
+        }
+        // A revoked device must be re-paired, never reconnected (ticket 04).
+        // Route the request into the RePair context instead of silently doing
+        // nothing (this is also SESSION's "Connect again" for a UserStop).
+        val target = state.selectedServer()
+        if (target?.needsRepairing == true) {
+            return rePair(state, target.serverSpkiSha256Hex)
         }
         if (!state.hasStoredPairing) {
             return Reduction(
@@ -613,16 +712,67 @@ object AppReducer {
         }
     }
 
+    /**
+     * Remove the confirmed Server from the UI and return to the unpaired
+     * Home state. The Service performs the durable delete (credential + key)
+     * and stops the session; the Activity clears a matching remembered
+     * address. The address field is cleared only when it belonged to this
+     * record, so another Server's address is never thrown away.
+     */
+    private fun forgetServer(state: AppState): Reduction {
+        val pin = state.pendingForgetPin ?: return Reduction(state)
+        val record = state.serverForPin(pin)
+            ?: return Reduction(state.copy(pendingForgetPin = null))
+        val addressMatches = state.address.trim() == record.address
+        // The Service stops only the forgotten Server's session. Clear the
+        // replayable outcome only when this is the Server the session belongs
+        // to (the selected one); forgetting another record must not blank a
+        // live session's UI.
+        val forgettingSessionOwner = state.selectedPin() == pin
+        return Reduction(
+            state.copy(
+                screen = AppScreen.HOME,
+                storedServers = state.storedServers.filterNot {
+                    it.serverSpkiSha256Hex == pin
+                },
+                address = if (addressMatches) "" else state.address,
+                addressError = if (addressMatches) null else state.addressError,
+                rememberedAddress = if (state.rememberedAddress == record.address) {
+                    null
+                } else {
+                    state.rememberedAddress
+                },
+                outcome = if (forgettingSessionOwner) null else state.outcome,
+                stopRequested = if (forgettingSessionOwner) false else state.stopRequested,
+                pairing = null,
+                scanActive = false,
+                scanNotice = null,
+                restoredSasInput = "",
+                pendingForgetPin = null,
+            ),
+            AppCommand.ForgetServer(pin),
+        )
+    }
+
     private fun retry(state: AppState): Reduction {
         val error = state.sessionError
         if (error?.requiresRepairing == true) {
-            return Reduction(
-                state.copy(
-                    screen = AppScreen.PAIRING,
-                    pairing = null,
-                    restoredSasInput = "",
+            // The 204/205/202 card's action is the same dedicated re-pair
+            // context as Home's Needs re-pairing entry. Keep the outcome so
+            // the failure cause stays visible on the PAIRING screen.
+            val pin = state.selectedPin()
+            return if (pin != null) {
+                rePair(state, pin)
+            } else {
+                Reduction(
+                    state.copy(
+                        screen = AppScreen.PAIRING,
+                        pairingIntent = PairingIntent.First,
+                        pairing = null,
+                        restoredSasInput = "",
+                    )
                 )
-            )
+            }
         }
         if (state.hasStoredPairing) {
             return connect(state)
@@ -630,9 +780,42 @@ object AppReducer {
         return Reduction(state.copy(screen = AppScreen.HOME))
     }
 
+    /** Open PAIRING for one stored Server, prefilling its saved address. */
+    private fun rePair(state: AppState, serverSpkiSha256Hex: String): Reduction {
+        val server = state.serverForPin(serverSpkiSha256Hex)
+            ?: return Reduction(state)
+        val address = server.address
+        return Reduction(
+            state.copy(
+                screen = AppScreen.PAIRING,
+                address = address,
+                addressError = validateAddressInput(address),
+                pairingIntent = PairingIntent.RePair(serverSpkiSha256Hex),
+                pairing = null,
+                scanActive = false,
+                scanNotice = null,
+                restoredSasInput = "",
+            )
+        )
+    }
+
     private fun formatSas(raw: String): String {
         val code = SasCode.normalize(raw) ?: return raw
         return SasCode.format(code)
+    }
+}
+
+/**
+ * Project a repair-relevant outcome onto the selected credential for display.
+ * The durable owner is the Service; this only mirrors it in the current UI
+ * lifetime. A saved Server not involved in the session is untouched.
+ */
+private fun AppState.projectedRepairState(outcome: SessionOutcome?): List<StoredServer> {
+    val intent = outcome?.let(::repairStateForOutcome)
+    val pin = selectedPin()
+    if (intent == null || pin == null) return storedServers
+    return storedServers.map {
+        if (it.serverSpkiSha256Hex == pin) it.copy(needsRepairing = intent) else it
     }
 }
 

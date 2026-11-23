@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -112,6 +113,46 @@ fun AudioShareApp(
             }
         }
     }
+
+    ForgetServerDialog(state, onEvent)
+}
+
+/**
+ * The one destructive confirmation in the app. It is a dialog, not a screen:
+ * the five-screen model is unchanged. Delete happens only on Forget.
+ */
+@Composable
+private fun ForgetServerDialog(state: AppState, onEvent: (UiEvent) -> Unit) {
+    val pin = state.pendingForgetPin ?: return
+    val server = state.serverForPin(pin) ?: return
+    AlertDialog(
+        onDismissRequest = { onEvent(UiEvent.ForgetServerDismissed) },
+        title = { Text(stringResource(R.string.forget_server)) },
+        text = {
+            Text(
+                stringResource(
+                    R.string.forget_server_confirm,
+                    server.displayName ?: server.address,
+                ),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onEvent(UiEvent.ForgetServerConfirmed) },
+                modifier = Modifier.testTag("forget-confirm"),
+            ) {
+                Text(stringResource(R.string.action_forget))
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = { onEvent(UiEvent.ForgetServerDismissed) },
+                modifier = Modifier.testTag("forget-cancel"),
+            ) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        },
+    )
 }
 
 /**
@@ -210,9 +251,20 @@ private fun HomeScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
                     )
                 }
                 Text(
-                    stringResource(R.string.home_paired_badge),
+                    stringResource(
+                        if (server.needsRepairing) {
+                            R.string.server_needs_repairing
+                        } else {
+                            R.string.home_paired_badge
+                        },
+                    ),
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (server.needsRepairing) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    modifier = Modifier.testTag("home-server-status"),
                 )
             }
         }
@@ -242,29 +294,29 @@ private fun HomeScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
 
     Spacer(Modifier.height(16.dp))
     if (state.hasStoredPairing) {
+        // A revoked/needs-re-pairing credential cannot connect: the Server has
+        // to restore it first (ADR-0006 §4, ticket 04).
+        val selected = state.selectedServer()
         PrimaryButton(
             text = stringResource(R.string.home_connect),
             onClick = { onEvent(UiEvent.ConnectRequested) },
+            enabled = selected?.needsRepairing != true,
             tag = "connect",
         )
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
-            onClick = { onEvent(UiEvent.StartSasPairing) },
-            enabled = canStartPairing(state),
+            // Re-pair opens the same PAIRING screen in its dedicated re-pair
+            // context: the fixed instruction, the saved address prefilled, and
+            // any visible failure cause (ticket 04). Target the same record
+            // Connect would use (the typed address wins), else the first.
+            onClick = {
+                state.selectedServer()?.let {
+                    onEvent(UiEvent.RePairRequested(it.serverSpkiSha256Hex))
+                }
+            },
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("pair-code"),
         ) {
-            Text(stringResource(R.string.home_pair_new))
-        }
-        Spacer(Modifier.height(8.dp))
-        TextButton(
-            onClick = rememberScanStarter(onEvent),
-            modifier = Modifier.heightIn(min = 48.dp).testTag("scan-qr"),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                horizontal = 16.dp,
-                vertical = 8.dp,
-            ),
-        ) {
-            Text(stringResource(R.string.home_scan_qr_instead))
+            Text(stringResource(R.string.home_re_pair))
         }
     } else {
         PrimaryButton(
@@ -335,15 +387,52 @@ private fun PairingScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(16.dp))
 
         val pairing = state.pairing
+        // The re-pair context (ticket 04) keeps the failure cause and the
+        // fixed operator instruction visible before a new exchange starts.
+        if (state.pairingIntent is PairingIntent.RePair && pairing == null && !state.scanActive) {
+            RepairInstructions(state)
+        }
+        Spacer(Modifier.height(16.dp))
+
         when {
             state.scanActive -> PairingScanner(state, onEvent)
             pairing == null -> PairingEntries(state, onEvent)
             else -> PairingExchange(pairing, onEvent)
         }
     }
+}
+
+/**
+ * Ticket 04: the dedicated re-pairing preamble. The failure cause (when the
+ * flow was entered from a repairing close) stays readable, followed by the
+ * fixed instruction that the Server operator must start a fresh pairing.
+ */
+@Composable
+private fun RepairInstructions(state: AppState) {
+    val cause = state.sessionError
+    if (cause?.code != null) {
+        Spacer(Modifier.height(12.dp))
+        Text(
+            stringResource(ErrorGuidanceResources.titleRes(cause.code)),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.testTag("pairing-repair-cause"),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            stringResource(ErrorGuidanceResources.guidanceRes(cause.code)),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag("pairing-repair-cause-guidance"),
+        )
+    }
+    Spacer(Modifier.height(12.dp))
+    Text(
+        stringResource(R.string.pairing_repair_hint),
+        style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.testTag("pairing-repair-hint"),
+    )
 }
 
 /** Direction A: the not-started entries are only shown when nothing is in flight. */
@@ -670,9 +759,9 @@ private fun PairingFailed(pairing: PairingUi, onEvent: (UiEvent) -> Unit) {
         // camera is never reopened by a snapshot or by recomposition.
         pairing.isBlockingInvitationFailure && pairing.mode == "qr" -> {
             PrimaryButton(
-                text = stringResource(R.string.pairing_scan_again),
+                text = stringResource(R.string.pairing_scan_new_code),
                 onClick = rememberScanStarter(onEvent),
-                tag = "scan-again",
+                tag = "scan-new-code",
             )
             Text(
                 stringResource(R.string.pairing_camera_stays_closed),
@@ -988,7 +1077,7 @@ private fun SettingsScreen(
         )
         Spacer(Modifier.height(16.dp))
         PrimaryButton(
-            text = stringResource(R.string.settings_pair_phone),
+            text = stringResource(R.string.settings_pair_server),
             onClick = { onEvent(UiEvent.ShowHome) },
             tag = "settings-pair",
         )
@@ -1009,12 +1098,28 @@ private fun SettingsScreen(
                     label = stringResource(R.string.settings_server_address),
                     value = server.address,
                 )
+                if (server.needsRepairing) {
+                    LabeledValue(
+                        label = stringResource(R.string.settings_server_status),
+                        value = stringResource(R.string.server_needs_repairing),
+                        valueTag = "settings-needs-repairing",
+                    )
+                }
                 LabeledValue(
                     label = stringResource(R.string.settings_server_fingerprint),
                     value = server.serverSpkiSha256Hex,
                     valueTag = "settings-fingerprint",
                 )
             }
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = {
+                onEvent(UiEvent.ForgetServerRequested(server.serverSpkiSha256Hex))
+            },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("settings-forget"),
+        ) {
+            Text(stringResource(R.string.forget_server))
         }
     }
     Spacer(Modifier.height(16.dp))

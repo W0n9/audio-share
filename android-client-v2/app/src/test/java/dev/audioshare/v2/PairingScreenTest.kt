@@ -224,11 +224,18 @@ class PairingScreenTest : RobolectricComposeTestBase() {
         )
         // The failed exchange never reopens the camera by itself.
         compose.onNodeWithTag("qr-scanner").assertDoesNotExist()
+        compose.onNodeWithText(str(R.string.pairing_failed_invitation_qr))
+            .performScrollTo()
+            .assertIsDisplayed()
         compose.onNodeWithText(str(R.string.pairing_camera_stays_closed))
             .performScrollTo()
             .assertIsDisplayed()
+        compose.onNodeWithTag("scan-again").assertDoesNotExist()
 
-        compose.onNodeWithTag("scan-again").performScrollTo().performClick()
+        compose.onNodeWithTag("scan-new-code")
+            .performScrollTo()
+            .assertTextContains(str(R.string.pairing_scan_new_code))
+            .performClick()
         assertTrue(events.contains(UiEvent.RequestScan))
         compose.onNodeWithTag("qr-scanner").assertIsDisplayed()
     }
@@ -251,6 +258,9 @@ class PairingScreenTest : RobolectricComposeTestBase() {
         compose.onNodeWithText(str(R.string.pairing_camera_stays_closed))
             .performScrollTo()
             .assertIsDisplayed()
+        compose.onNodeWithTag("scan-new-code")
+            .performScrollTo()
+            .assertTextContains(str(R.string.pairing_scan_new_code))
     }
 
     @Test
@@ -310,13 +320,56 @@ class PairingScreenTest : RobolectricComposeTestBase() {
         compose.onNodeWithText(str(R.string.pairing_failed_invitation_sas))
             .performScrollTo()
             .assertIsDisplayed()
-        compose.onNodeWithTag("scan-again").assertDoesNotExist()
+        compose.onNodeWithTag("scan-new-code").assertDoesNotExist()
         compose.onNodeWithTag("pairing-try-again")
             .performScrollTo()
             .assertIsDisplayed()
             .assertTextContains(str(R.string.pairing_try_again))
             .performClick()
         assertTrue(events.contains(UiEvent.ShowPairing))
+    }
+
+    // ---- ticket 04: dedicated re-pair context ------------------------------
+
+    @Test
+    fun re_pair_context_shows_the_fixed_operator_instruction_with_qr_primary_and_sas_secondary() {
+        start(
+            AppState(
+                screen = AppScreen.PAIRING,
+                address = "10.0.2.2:65531",
+                pairingIntent = PairingIntent.RePair("ab".repeat(32)),
+                storedServers = listOf(StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")),
+            )
+        )
+
+        compose.onNodeWithTag("pairing-repair-hint")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertTextContains(str(R.string.pairing_repair_hint))
+        // QR stays the primary action; the pairing code is the secondary one.
+        compose.onNodeWithTag("scan-qr").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("start-code-pairing").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun re_pair_context_keeps_the_failure_cause_visible() {
+        start(
+            AppState(
+                screen = AppScreen.PAIRING,
+                address = "10.0.2.2:65531",
+                storedServers = listOf(StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")),
+                outcome = SessionOutcome.Ended(EndReason.Surfaced(204)),
+                pairingIntent = PairingIntent.RePair("ab".repeat(32)),
+            )
+        )
+
+        compose.onNodeWithTag("pairing-repair-cause")
+            .performScrollTo()
+            .assertTextContains(str(R.string.error_204_title))
+        compose.onNodeWithTag("pairing-repair-cause-guidance")
+            .performScrollTo()
+            .assertTextContains(str(R.string.error_204_guidance))
+        compose.onNodeWithTag("pairing-repair-hint").performScrollTo().assertIsDisplayed()
     }
 
     // ---- 6. COMPLETE --------------------------------------------------------
@@ -387,7 +440,7 @@ class PairingScreenTest : RobolectricComposeTestBase() {
                 PairingUi(mode = "qr", phase = "FAILED", errorCode = 201),
             )
         )
-        assertTargetsAtLeast48("scan-again", "pairing-back-home")
+        assertTargetsAtLeast48("scan-new-code", "pairing-back-home")
     }
 
     @Test
