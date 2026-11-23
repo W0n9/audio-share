@@ -41,7 +41,9 @@
 | 产物 SHA-256 与 sidecar 一致性（本地下载后复核） | `PASS` |
 | APK：`0.6.0` / `versionCode 3`、单 ABI、`CN=Audio Share Beta`、无 test-support | `PASS` |
 | deb `0.6.0`、`as-cmd --version` 自报 `0.6.0`、Windows exe 含 `0.6.0` | `PASS` |
-| 真机安装播放、Windows 运行、升级路径 | `NOT RUN` |
+| 真机安装播放 | `PASS`（用户 2026-11-23 报告：发布 APK 真机安装与播放通过） |
+| Windows 运行 | `PASS`（用户 2026-11-23 报告：发布 Server 包在 Windows 运行通过） |
+| 升级路径 | `WAIVED`（用户 2026-11-23 裁决；升级提示仍保留在发布说明） |
 
 **Draft（2026-11-23，最终重建）**：文档整理提交 `88f6f07` 已推 fork 分支，
 `v0.6.0` annotated 标签（原 `6499c2d` → 新 `812aeb1`）已 force-move 到该提交；旧 draft
@@ -53,8 +55,10 @@
 此前的 [45114429469](https://github.com/W0n9/audio-share/actions/runs/45114429469)
 draft 已被替换，其附件摘要核对记录不再适用于当前 draft。
 
-**仍为 `NOT RUN`**：最终 draft 产物的真机安装播放、Windows 运行与升级路径。
-发布前必须补做，或由维护者明确裁决豁免。
+**验收更新（2026-11-23，用户报告/裁决）**：最终 draft 产物的真机安装播放与
+Windows 运行均为 `PASS`；升级路径用户裁决 `WAIVED`，不视为 `PASS`，升级提示
+（先卸载旧 v2 beta）仍保留在对外发布说明中。其余未验证项（声学时延基线、
+60 分钟 soak、真实网络损伤、设备时钟漂移注入、听感 A/B）仍按上文记录。
 
 ## 对外发布前须处理
 
