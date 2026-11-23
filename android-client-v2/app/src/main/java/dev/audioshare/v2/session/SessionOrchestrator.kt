@@ -5,6 +5,8 @@ import dev.audioshare.v2.ClientSigner
 import dev.audioshare.v2.CredentialRecord
 import dev.audioshare.v2.CredentialStore
 import dev.audioshare.v2.EndReason
+import dev.audioshare.v2.ErrorGuidanceBook
+import dev.audioshare.v2.LivePhase
 import dev.audioshare.v2.OutcomeSink
 import dev.audioshare.v2.PairingConfirmGate
 import dev.audioshare.v2.PairingSnapshot
@@ -93,7 +95,11 @@ internal class SessionOrchestrator(
         val sink = if (configuration.pairing != null) {
             OutcomeSink.NONE
         } else {
-            outcomes.beginGeneration()
+            trackRepairState(
+                delegate = outcomes.beginGeneration(),
+                serverSpkiSha256Hex = configuration.serverSpkiSha256Hex,
+                ownerGeneration = ownerGeneration,
+            )
         }
         val listener = object : SessionEngine.Listener {
             override fun onLog(line: String) = log(line)
@@ -185,14 +191,78 @@ internal class SessionOrchestrator(
      * terminal: the SESSION screen must show the typed error card with
      * "Pair again" (ticket 17).
      */
-    fun reportStoredConnectFailure(code: Int, message: String) {
+    fun reportStoredConnectFailure(
+        code: Int,
+        message: String,
+        serverSpkiSha256Hex: String? = null,
+    ) {
         log(message)
         teardown(StopReason.Superseded)
+        // A missing stored key (205) is the cold-start face of "needs
+        // re-pairing": record it on the credential so the Home/Settings badge
+        // and the auto-connect gate see it after the next process start.
+        serverSpkiSha256Hex?.let { markNeedsRepairing(it, code) }
         outcomes.beginGeneration().publish(SessionOutcome.Ended(EndReason.Surfaced(code)))
     }
 
     private fun isCurrent(ownerGeneration: Long): Boolean =
         synchronized(lock) { ownerGeneration == generation }
+
+    /**
+     * Observe the session outcome without changing the replayable store: a
+     * surfaced close that [ErrorGuidanceBook] marks `requiresRepairing` sets
+     * the persisted flag, and a successful authentication clears it. The
+     * generation guard keeps a superseded engine from writing.
+     */
+    private fun trackRepairState(
+        delegate: OutcomeSink,
+        serverSpkiSha256Hex: String,
+        ownerGeneration: Long,
+    ): OutcomeSink = OutcomeSink { outcome ->
+        delegate.publish(outcome)
+        if (serverSpkiSha256Hex.isNotEmpty() && isCurrent(ownerGeneration)) {
+            when (outcome) {
+                is SessionOutcome.Live -> if (
+                    outcome.phase == LivePhase.READY || outcome.phase == LivePhase.PLAYING
+                ) {
+                    updateNeedsRepairing(serverSpkiSha256Hex, false)
+                }
+
+                is SessionOutcome.Ended -> {
+                    val reason = outcome.reason as? EndReason.Surfaced
+                    val code = reason?.code
+                    if (ErrorGuidanceBook.forCode(code)?.requiresRepairing == true) {
+                        updateNeedsRepairing(serverSpkiSha256Hex, true)
+                    }
+                }
+
+                is SessionOutcome.Reconnecting -> Unit
+            }
+        }
+    }
+
+    private fun markNeedsRepairing(serverSpkiSha256Hex: String, code: Int) {
+        if (ErrorGuidanceBook.forCode(code)?.requiresRepairing == true) {
+            updateNeedsRepairing(serverSpkiSha256Hex, true)
+        }
+    }
+
+    /** Persist only an actual transition; the real store commits synchronously. */
+    private fun updateNeedsRepairing(serverSpkiSha256Hex: String, value: Boolean) {
+        val record = credentials.find(serverSpkiSha256Hex) ?: return
+        if (record.needsRepairing == value) return
+        try {
+            credentials.upsert(record.copy(needsRepairing = value))
+            log(
+                if (value) "marked $serverSpkiSha256Hex as needing re-pairing"
+                else "cleared needs re-pairing for $serverSpkiSha256Hex",
+            )
+        } catch (e: Exception) {
+            // The outcome still reaches the UI; the durable flag is best
+            // effort and retried by the next terminal outcome.
+            log("could not persist needs-repairing: ${e.message}")
+        }
+    }
 
     private fun persistCredential(
         json: String,

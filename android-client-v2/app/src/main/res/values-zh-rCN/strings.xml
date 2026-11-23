@@ -14,11 +14,11 @@
     <string name="home_subtitle_paired">连接到已在此手机上配对的服务器。</string>
     <string name="home_paired_server">已配对的服务器</string>
     <string name="home_paired_badge">已配对</string>
+    <string name="home_re_pair">重新配对</string>
+    <string name="server_needs_repairing">需要重新配对</string>
     <string name="home_connect">连接</string>
     <string name="home_pair_code">使用配对码</string>
-    <string name="home_pair_new">配对新手机</string>
     <string name="home_scan_qr">扫描二维码</string>
-    <string name="home_scan_qr_instead">改用扫描二维码</string>
     <string name="server_address_label">服务器地址</string>
     <string name="server_address_placeholder">host:port</string>
 
@@ -93,9 +93,14 @@
     <string name="settings_paired_server">已配对的服务器</string>
     <string name="settings_server_name">名称</string>
     <string name="settings_server_address">地址</string>
+    <string name="settings_server_status">状态</string>
     <string name="settings_server_fingerprint">指纹</string>
     <string name="settings_empty_body">尚未配对任何服务器。</string>
-    <string name="settings_pair_phone">配对此手机</string>
+    <string name="settings_pair_server">配对服务器</string>
+    <string name="forget_server">忘记此服务器</string>
+    <string name="forget_server_confirm">忘记 %1$s？此手机上保存的配对及其密钥将被删除。</string>
+    <string name="action_forget">忘记</string>
+    <string name="action_cancel">取消</string>
     <string name="settings_about_link">关于此测试版</string>
 
     <!-- 前台通知 -->

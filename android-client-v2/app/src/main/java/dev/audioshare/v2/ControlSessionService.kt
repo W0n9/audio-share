@@ -65,6 +65,13 @@ interface SessionController {
 
     /** Stop the session. */
     fun disconnect()
+
+    /**
+     * Forget this Server locally (ADR-0006 §4): delete the credential and the
+     * Client identity key, then stop its session. The UI confirms first; the
+     * Service never deletes silently.
+     */
+    fun forgetServer(serverSpkiSha256Hex: String)
 }
 
 /**
@@ -78,6 +85,13 @@ class ControlSessionService : Service(), SessionController {
     private val binder = ControlBinder(this)
     private val credentials by lazy { SharedPreferencesCredentialStore(this) }
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val forgetter by lazy {
+        ForgetServer(
+            credentials = credentials,
+            deleteIdentity = IdentityKeyDeleter { alias -> ClientIdentity.delete(this, alias) },
+            log = { Log.i(TAG, it) },
+        )
+    }
 
     /**
      * One-shot handoff target. It is deliberately not replayed: a late
@@ -158,6 +172,10 @@ class ControlSessionService : Service(), SessionController {
         dispatch(ACTION_STOP)
     }
 
+    override fun forgetServer(serverSpkiSha256Hex: String) {
+        dispatch(ACTION_FORGET_SERVER) { putExtra(EXTRA_SERVER_PIN, serverSpkiSha256Hex) }
+    }
+
     private fun dispatch(action: String, configure: Intent.() -> Unit = {}) {
         val intent = Intent(this, ControlSessionService::class.java).setAction(action).apply(configure)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -205,6 +223,13 @@ class ControlSessionService : Service(), SessionController {
                 startForegroundCompat()
                 connectStoredNow(intent.getStringExtra(EXTRA_SERVER_PIN))
                 return START_STICKY
+            }
+            ACTION_FORGET_SERVER -> {
+                // dispatch() used startForegroundService(); claim the slot
+                // before the (fast) local cleanup removes it again.
+                startForegroundCompat()
+                forgetServerNow(intent.getStringExtra(EXTRA_SERVER_PIN))
+                return START_NOT_STICKY
             }
         }
         startForegroundCompat()
@@ -318,6 +343,7 @@ class ControlSessionService : Service(), SessionController {
             orchestrator.reportStoredConnectFailure(
                 code = 205,
                 message = "the stored Client key is gone; re-pair the phone",
+                serverSpkiSha256Hex = record.serverSpkiSha256Hex,
             )
             stopForegroundCompat()
             stopSelf()
@@ -332,6 +358,26 @@ class ControlSessionService : Service(), SessionController {
             signer = identity.signer,
         )
         startSession(configuration)
+    }
+
+    private fun forgetServerNow(serverSpkiSha256Hex: String?) {
+        if (serverSpkiSha256Hex != null) {
+            try {
+                forgetter.forget(serverSpkiSha256Hex)
+            } catch (e: Exception) {
+                // The credential delete is authoritative and already logged
+                // inside ForgetServer; a store failure here must not keep the
+                // session (and the Server card) alive.
+                Log.e(TAG, "forget failed for $serverSpkiSha256Hex: ${e.message}")
+            }
+        }
+        // Forget is local cleanup, not a user Stop: a Shutdown teardown
+        // invalidates the replayable outcome, so Home returns to the
+        // unpaired state without a STOPPED card.
+        orchestrator.stop(StopReason.Shutdown)
+        releaseMediaSession()
+        stopForegroundCompat()
+        stopSelf()
     }
 
     private fun startSession(configuration: SessionConfiguration, pairingContext: PairingContext? = null) {
@@ -452,6 +498,7 @@ class ControlSessionService : Service(), SessionController {
         const val ACTION_CONFIRM_PAIRING = "dev.audioshare.v2.CONFIRM_PAIRING"
         const val ACTION_CANCEL_PAIRING = "dev.audioshare.v2.CANCEL_PAIRING"
         const val ACTION_CONNECT_STORED = "dev.audioshare.v2.CONNECT_STORED"
+        const val ACTION_FORGET_SERVER = "dev.audioshare.v2.FORGET_SERVER"
 
         const val EXTRA_PAIRING_URI = "pairingUri"
         const val EXTRA_ADDRESS = "address"
