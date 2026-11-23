@@ -2,7 +2,11 @@
   import { server } from "../lib/store.svelte";
   import { t } from "../lib/i18n.svelte";
   import ErrorLine from "../lib/ErrorLine.svelte";
-  import type { PairingMode } from "../lib/ipc";
+  import type {
+    PairingLiveInfo,
+    PairingMode,
+    PairingRequestInfo,
+  } from "../lib/ipc";
 
   const v2 = $derived(server.status.v2);
   const v2Ready = $derived(v2.state === "running");
@@ -40,8 +44,17 @@
     }
   }
 
-  function approve(approvalId: number): void {
-    void server.approvePairing(approvalId);
+  /**
+   * A revoked identity's card is the explicit Restore confirmation (ADR-0006):
+   * its button must carry the Restore decision, never a plain Accept. Every
+   * other card is an ordinary approve.
+   */
+  function decide(request: PairingLiveInfo | PairingRequestInfo): void {
+    if (request.restoreCandidate) {
+      void server.restorePairing(request.approvalId);
+    } else {
+      void server.approvePairing(request.approvalId);
+    }
   }
 
   function decline(approvalId: number): void {
@@ -60,15 +73,15 @@
    */
   function restoreName(request: {
     clientId: string;
-    wouldRestore: string | null;
+    restoreCandidate: string | null;
   }): string | null {
     // Only a real restore candidate gets the Restoring label; a Re-pair
     // invitation alone must not imply that an active/new identity is restored.
-    if (!request.wouldRestore) return null;
+    if (!request.restoreCandidate) return null;
     if (server.repairTarget?.clientId === request.clientId) {
       return server.repairTarget.displayName;
     }
-    return request.wouldRestore;
+    return request.restoreCandidate;
   }
 
   function countdown(seconds: number): string {
@@ -76,6 +89,63 @@
     return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
   }
 </script>
+
+<!-- One card for a live or verified pairing. The only differences are the
+     live hint (no actions yet) and the approve/decline footer. -->
+{#snippet requestCard(
+  request: PairingLiveInfo | PairingRequestInfo,
+  live: boolean,
+)}
+  {@const label = restoreName(request)}
+  <div class="pairing-card" class:pairing-card-live={live}>
+    {#if request.restoreCandidate}
+      <div class="pairing-card-title">{t("pairing.restoreTitle")}</div>
+      <div class="pairing-card-device">{request.displayName}</div>
+      <p class="pairing-hint">{t("pairing.restoreBody")}</p>
+    {:else}
+      <div class="pairing-card-title">{request.displayName}</div>
+    {/if}
+    {#if label}
+      <p class="pairing-restore-name">
+        {t("pairing.restoring", { name: label })}
+      </p>
+    {/if}
+    <div class="pairing-row">
+      <span>{t("pairing.clientId")}</span>
+      <code>{request.clientId}</code>
+    </div>
+    <div class="pairing-row">
+      <span>{t("pairing.address")}</span>
+      <code>{request.address}</code>
+    </div>
+    <div class="pairing-code">
+      <span>{t("pairing.pairingCode")}</span>
+      <strong>{request.sas ?? t("pairing.codeUnavailable")}</strong>
+    </div>
+    {#if live}
+      <p class="pairing-hint">{t("pairing.liveHint")}</p>
+    {:else}
+      <div class="pairing-card-actions">
+        <button
+          class="pairing-primary"
+          disabled={server.pairingBusy}
+          onclick={() => decide(request)}
+        >
+          {request.restoreCandidate
+            ? t("pairing.restoreAccept")
+            : t("pairing.accept")}
+        </button>
+        <button
+          class="pairing-secondary"
+          disabled={server.pairingBusy}
+          onclick={() => decline(request.approvalId)}
+        >
+          {t("pairing.decline")}
+        </button>
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
 {#if server.pairingOpen}
   <div class="pairing-backdrop" role="presentation">
@@ -143,6 +213,18 @@
                   <strong class="pairing-countdown">{countdown(invitation.expiresInSecs)}</strong>
                 </div>
                 <p class="pairing-hint">{t("pairing.sasHint")}</p>
+                <!-- QR mode also admits SAS in the same operator-opened window
+                     (the admin begin(Qr) path opens both), so a Re-pair row can
+                     switch to the pairing code without losing the invitation. -->
+                {#if invitation.mode === "qr"}
+                  <button
+                    class="pairing-secondary"
+                    disabled={!v2Ready || server.pairingBusy}
+                    onclick={usePairingCode}
+                  >
+                    {t("pairing.startSas")}
+                  </button>
+                {/if}
               {:else}
                 <p class="pairing-error">
                   {invitation.state === "consumed"
@@ -176,34 +258,7 @@
         {#if live.length > 0}
           <div class="pairing-section-title">{t("pairing.liveTitle")}</div>
           {#each live as request (request.approvalId)}
-            {@const label = restoreName(request)}
-            <div class="pairing-card pairing-card-live">
-              {#if request.wouldRestore}
-                <div class="pairing-card-title">{t("pairing.restoreTitle")}</div>
-                <div class="pairing-card-device">{request.displayName}</div>
-                <p class="pairing-hint">{t("pairing.restoreBody")}</p>
-              {:else}
-                <div class="pairing-card-title">{request.displayName}</div>
-              {/if}
-              {#if label}
-                <p class="pairing-restore-name">
-                  {t("pairing.restoring", { name: label })}
-                </p>
-              {/if}
-              <div class="pairing-row">
-                <span>{t("pairing.clientId")}</span>
-                <code>{request.clientId}</code>
-              </div>
-              <div class="pairing-row">
-                <span>{t("pairing.address")}</span>
-                <code>{request.address}</code>
-              </div>
-              <div class="pairing-code">
-                <span>{t("pairing.pairingCode")}</span>
-                <strong>{request.sas ?? t("pairing.codeUnavailable")}</strong>
-              </div>
-              <p class="pairing-hint">{t("pairing.liveHint")}</p>
-            </div>
+            {@render requestCard(request, true)}
           {/each}
           <!-- A consumed QR hides the invitation block; keep Cancel reachable
                while a live connection waits for the phone's confirmation. -->
@@ -239,51 +294,7 @@
         {#if pending.length > 0}
           <div class="pairing-section-title">{t("pairing.pendingTitle")}</div>
           {#each pending as request (request.approvalId)}
-            {@const label = restoreName(request)}
-            <div class="pairing-card">
-              {#if request.wouldRestore}
-                <div class="pairing-card-title">{t("pairing.restoreTitle")}</div>
-                <div class="pairing-card-device">{request.displayName}</div>
-                <p class="pairing-hint">{t("pairing.restoreBody")}</p>
-              {:else}
-                <div class="pairing-card-title">{request.displayName}</div>
-              {/if}
-              {#if label}
-                <p class="pairing-restore-name">
-                  {t("pairing.restoring", { name: label })}
-                </p>
-              {/if}
-              <div class="pairing-row">
-                <span>{t("pairing.clientId")}</span>
-                <code>{request.clientId}</code>
-              </div>
-              <div class="pairing-row">
-                <span>{t("pairing.address")}</span>
-                <code>{request.address}</code>
-              </div>
-              <div class="pairing-code">
-                <span>{t("pairing.pairingCode")}</span>
-                <strong>{request.sas ?? t("pairing.codeUnavailable")}</strong>
-              </div>
-              <div class="pairing-card-actions">
-                <button
-                  class="pairing-primary"
-                  disabled={server.pairingBusy}
-                  onclick={() => approve(request.approvalId)}
-                >
-                  {request.wouldRestore
-                    ? t("pairing.restoreAccept")
-                    : t("pairing.accept")}
-                </button>
-                <button
-                  class="pairing-secondary"
-                  disabled={server.pairingBusy}
-                  onclick={() => decline(request.approvalId)}
-                >
-                  {t("pairing.decline")}
-                </button>
-              </div>
-            </div>
+            {@render requestCard(request, false)}
           {/each}
         {/if}
 
