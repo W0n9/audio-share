@@ -615,6 +615,111 @@ class AppStateReducerTest {
         assertEquals(AppCommand.ConnectStored("ab".repeat(32)), retry.command)
     }
 
+    // ---- ticket 03: needs-repairing gate and Forget Server -------------------
+
+    @Test
+    fun startup_maps_the_persisted_needs_repairing_flag_into_the_server_list() {
+        val loaded = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(
+                rememberedAddress = null,
+                credentials = listOf(record().copy(needsRepairing = true)),
+            ),
+        ).state
+        assertTrue(loaded.storedServers.single().needsRepairing)
+        assertTrue(loaded.hasStoredPairing, "the card still exists; it is not silently forgotten")
+    }
+
+    @Test
+    fun auto_connect_is_blocked_by_the_persisted_flag_across_a_cold_start() {
+        assertFalse(
+            AutoConnectPolicy.shouldAutoConnect(
+                savedStatePresent = false,
+                hasCredential = true,
+                outcome = null,
+                needsRepairing = true,
+            ),
+            "the cold-start gate must read the credential, not an in-memory outcome",
+        )
+
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(null, listOf(record().copy(needsRepairing = true))),
+        ).state
+        val auto = AppReducer.reduce(startup, UiEvent.AutoConnectStarted)
+        assertEquals(AppScreen.HOME, auto.state.screen)
+        assertEquals(AppCommand.None, auto.command)
+    }
+
+    @Test
+    fun auto_connect_still_fires_for_a_paired_record() {
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(null, listOf(record())),
+        ).state
+        val auto = AppReducer.reduce(startup, UiEvent.AutoConnectStarted)
+        assertEquals(AppCommand.ConnectStored("ab".repeat(32)), auto.command)
+    }
+
+    @Test
+    fun forget_requires_an_explicit_confirmation_and_never_deletes_on_request() {
+        val pin = "ab".repeat(32)
+        val requested = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531", storedServers = listOf(stored())),
+            UiEvent.ForgetServerRequested(pin),
+        )
+        assertEquals(pin, requested.state.pendingForgetPin)
+        assertEquals(AppCommand.None, requested.command, "the request only opens the dialog")
+        assertEquals(1, requested.state.storedServers.size, "nothing is deleted yet")
+
+        val dismissed = AppReducer.reduce(requested.state, UiEvent.ForgetServerDismissed)
+        assertNull(dismissed.state.pendingForgetPin)
+        assertEquals(AppCommand.None, dismissed.command)
+        assertEquals(1, dismissed.state.storedServers.size)
+    }
+
+    @Test
+    fun an_unknown_pin_cannot_open_the_forget_dialog() {
+        val requested = AppReducer.reduce(
+            AppState(storedServers = listOf(stored())),
+            UiEvent.ForgetServerRequested("cd".repeat(32)),
+        )
+        assertNull(requested.state.pendingForgetPin)
+        assertEquals(AppCommand.None, requested.command)
+    }
+
+    @Test
+    fun confirming_forget_deletes_the_matching_server_and_clears_its_address() {
+        val pin = "ab".repeat(32)
+        val requested = AppReducer.reduce(
+            AppState(address = "10.0.2.2:65531", storedServers = listOf(stored())),
+            UiEvent.ForgetServerRequested(pin),
+        ).state
+
+        val confirmed = AppReducer.reduce(requested, UiEvent.ForgetServerConfirmed)
+
+        assertEquals(AppCommand.ForgetServer(pin), confirmed.command)
+        assertTrue(confirmed.state.storedServers.isEmpty())
+        assertFalse(confirmed.state.hasStoredPairing)
+        assertEquals("", confirmed.state.address, "the forgotten Server's address is cleared")
+        assertEquals(AppScreen.HOME, confirmed.state.screen)
+        assertNull(confirmed.state.outcome)
+        assertNull(confirmed.state.pendingForgetPin)
+    }
+
+    @Test
+    fun confirming_forget_keeps_an_address_that_belongs_to_another_server() {
+        val requested = AppReducer.reduce(
+            AppState(address = "other.example:65531", storedServers = listOf(stored())),
+            UiEvent.ForgetServerRequested("ab".repeat(32)),
+        ).state
+
+        val confirmed = AppReducer.reduce(requested, UiEvent.ForgetServerConfirmed)
+
+        assertEquals("other.example:65531", confirmed.state.address)
+        assertEquals(AppCommand.ForgetServer("ab".repeat(32)), confirmed.command)
+    }
+
     // ---- startup ------------------------------------------------------------
 
     @Test

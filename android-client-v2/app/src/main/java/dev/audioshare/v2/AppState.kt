@@ -8,12 +8,15 @@ data class StoredServer(
     val serverSpkiSha256Hex: String,
     val displayName: String?,
     val address: String,
+    /** Persisted credential state: the Server must be paired again. */
+    val needsRepairing: Boolean = false,
 ) {
     companion object {
         fun from(record: CredentialRecord) = StoredServer(
             serverSpkiSha256Hex = record.serverSpkiSha256Hex,
             displayName = record.displayName,
             address = record.addressHint.ifEmpty { "${record.host}:${record.port}" },
+            needsRepairing = record.needsRepairing,
         )
     }
 }
@@ -112,8 +115,16 @@ data class AppState(
      * PairingUi already exists, and it is dropped whenever pairing is cleared.
      */
     val restoredSasInput: String = "",
+    /**
+     * `Forget this Server` confirmation target. Set only by an explicit user
+     * request; the dialog is the confirmation, never a silent delete.
+     */
+    val pendingForgetPin: String? = null,
 ) {
     val hasStoredPairing: Boolean get() = storedServers.isNotEmpty()
+
+    /** A saved pairing that still needs an explicit re-pair. */
+    val hasRecordNeedingRepair: Boolean get() = storedServers.any { it.needsRepairing }
 
     /**
      * The surfaced-close presentation, derived from the outcome only. [code]
@@ -179,6 +190,12 @@ sealed interface UiEvent {
     data object ScanClosed : UiEvent
     data object PairingUriRejected : UiEvent
     data object Retry : UiEvent
+    /** Open the `Forget this Server?` confirmation; nothing is deleted yet. */
+    data class ForgetServerRequested(val serverSpkiSha256Hex: String) : UiEvent
+    /** The user confirmed the open Forget dialog. */
+    data object ForgetServerConfirmed : UiEvent
+    /** The user cancelled the open Forget dialog. */
+    data object ForgetServerDismissed : UiEvent
 }
 
 /** Session side effects the Activity executes after reducing an event. */
@@ -190,6 +207,8 @@ sealed interface AppCommand {
     data object CancelPairing : AppCommand
     data class ConnectStored(val serverSpkiSha256Hex: String?) : AppCommand
     data object Stop : AppCommand
+    /** Delete the credential and Client identity key, then stop the session. */
+    data class ForgetServer(val serverSpkiSha256Hex: String) : AppCommand
 }
 
 data class Reduction(val state: AppState, val command: AppCommand = AppCommand.None)
@@ -204,7 +223,13 @@ object AutoConnectPolicy {
         savedStatePresent: Boolean,
         hasCredential: Boolean,
         outcome: SessionOutcome?,
-    ): Boolean = !savedStatePresent && hasCredential && isEligibleOutcome(outcome)
+        /**
+         * Read from the *persisted* credential, not the in-memory outcome: a
+         * cold start must not reconnect a device the Server revoked.
+         */
+        needsRepairing: Boolean = false,
+    ): Boolean = !savedStatePresent && hasCredential && !needsRepairing &&
+        isEligibleOutcome(outcome)
 
     /** `null` (no session) and a terminal Ended are eligible; Live/Reconnecting are not. */
     fun isEligibleOutcome(outcome: SessionOutcome?): Boolean = when (outcome) {
@@ -237,8 +262,10 @@ object AppReducer {
         UiEvent.ConnectRequested -> connect(state)
 
         UiEvent.AutoConnectStarted -> {
+            // The persisted needs-repairing flag wins over the outcome: a
+            // revoked credential must not auto-connect after a cold start.
             val canStart = state.screen == AppScreen.HOME &&
-                state.hasStoredPairing &&
+                state.storedServers.any { !it.needsRepairing } &&
                 AutoConnectPolicy.isEligibleOutcome(state.outcome)
             if (canStart) connect(state) else Reduction(state)
         }
@@ -438,6 +465,23 @@ object AppReducer {
         )
 
         UiEvent.Retry -> retry(state)
+
+        is UiEvent.ForgetServerRequested -> {
+            val known = state.storedServers.any {
+                it.serverSpkiSha256Hex == event.serverSpkiSha256Hex
+            }
+            Reduction(
+                if (known) {
+                    state.copy(pendingForgetPin = event.serverSpkiSha256Hex)
+                } else {
+                    state
+                }
+            )
+        }
+
+        UiEvent.ForgetServerConfirmed -> forgetServer(state)
+
+        UiEvent.ForgetServerDismissed -> Reduction(state.copy(pendingForgetPin = null))
     }
 
     private fun cancelPairing(state: AppState): Reduction = Reduction(
@@ -611,6 +655,43 @@ object AppReducer {
                 state.copy(pairing = pairing, scanActive = false, restoredSasInput = "")
             )
         }
+    }
+
+    /**
+     * Remove the confirmed Server from the UI and return to the unpaired
+     * Home state. The Service performs the durable delete (credential + key)
+     * and stops the session; the Activity clears a matching remembered
+     * address. The address field is cleared only when it belonged to this
+     * record, so another Server's address is never thrown away.
+     */
+    private fun forgetServer(state: AppState): Reduction {
+        val pin = state.pendingForgetPin ?: return Reduction(state)
+        val record = state.storedServers.firstOrNull { it.serverSpkiSha256Hex == pin }
+            ?: return Reduction(state.copy(pendingForgetPin = null))
+        val addressMatches = state.address.trim() == record.address
+        return Reduction(
+            state.copy(
+                screen = AppScreen.HOME,
+                storedServers = state.storedServers.filterNot {
+                    it.serverSpkiSha256Hex == pin
+                },
+                address = if (addressMatches) "" else state.address,
+                addressError = if (addressMatches) null else state.addressError,
+                rememberedAddress = if (state.rememberedAddress == record.address) {
+                    null
+                } else {
+                    state.rememberedAddress
+                },
+                outcome = null,
+                stopRequested = false,
+                pairing = null,
+                scanActive = false,
+                scanNotice = null,
+                restoredSasInput = "",
+                pendingForgetPin = null,
+            ),
+            AppCommand.ForgetServer(pin),
+        )
     }
 
     private fun retry(state: AppState): Reduction {
