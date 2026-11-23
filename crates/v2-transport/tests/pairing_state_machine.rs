@@ -232,6 +232,7 @@ fn qr_happy_path_verifies_then_waits_for_local_approval() {
 
     let out = machine.handle(Event::PairingApproved {
         approval_id: approval.approval_id,
+        restore: false,
     });
     assert_eq!(out.len(), 1);
     match body(&out[0]) {
@@ -261,7 +262,7 @@ fn qr_happy_path_verifies_then_waits_for_local_approval() {
 /// `client_id` and `created_at`.
 fn seed_revoked_identity(core: &PairingCore) -> (String, String) {
     let seeded = core
-        .persist_client(&unhex(CLIENT_PUB), "Old Phone", false)
+        .persist_client(&unhex(CLIENT_PUB), "Old Phone", pairing::PersistMode::New)
         .expect("seed record");
     core.revoke(&seeded.client_id).expect("revoke seed");
     (seeded.client_id, seeded.created_at)
@@ -283,7 +284,7 @@ fn approving_a_revoked_identity_restores_the_saved_record_in_place() {
         .take_pairing_presented()
         .expect("live pairing is presented");
     assert_eq!(
-        presented.would_restore.as_deref(),
+        presented.restore_candidate.as_deref(),
         Some("Old Phone"),
         "a revoked identity is flagged with its saved name before confirmation"
     );
@@ -300,7 +301,7 @@ fn approving_a_revoked_identity_restores_the_saved_record_in_place() {
         .take_pairing_approval_request()
         .expect("verified pairing surfaces an approval request");
     assert_eq!(
-        approval.would_restore.as_deref(),
+        approval.restore_candidate.as_deref(),
         Some("Old Phone"),
         "the approval card is an explicit Restore confirmation"
     );
@@ -308,6 +309,7 @@ fn approving_a_revoked_identity_restores_the_saved_record_in_place() {
 
     let out = machine.handle(Event::PairingApproved {
         approval_id: approval.approval_id,
+        restore: true,
     });
     assert_eq!(out.len(), 1);
     match body(&out[0]) {
@@ -352,7 +354,7 @@ fn declining_a_revoked_identity_keeps_it_revoked_and_adds_nothing() {
     let approval = machine
         .take_pairing_approval_request()
         .expect("verified pairing surfaces an approval request");
-    assert_eq!(approval.would_restore.as_deref(), Some("Old Phone"));
+    assert_eq!(approval.restore_candidate.as_deref(), Some("Old Phone"));
 
     let out = machine.handle(Event::PairingDeclined {
         approval_id: approval.approval_id,
@@ -382,7 +384,7 @@ fn a_record_revoked_after_presentation_is_not_restored_by_a_plain_approval() {
     let store = core.store().clone();
     // Active when the pairing is presented: this is an ordinary re-pairing.
     let seeded = core
-        .persist_client(&unhex(CLIENT_PUB), "Old Phone", false)
+        .persist_client(&unhex(CLIENT_PUB), "Old Phone", pairing::PersistMode::New)
         .expect("seed active record");
     let mut machine = machine(config(Arc::clone(&core)));
     machine.handle(frame_event(
@@ -392,7 +394,7 @@ fn a_record_revoked_after_presentation_is_not_restored_by_a_plain_approval() {
     let presented = machine
         .take_pairing_presented()
         .expect("live pairing is presented");
-    assert!(presented.would_restore.is_none());
+    assert!(presented.restore_candidate.is_none());
 
     // The operator revokes between presentation and approval.
     core.revoke(&seeded.client_id).expect("revoke mid-pairing");
@@ -409,12 +411,13 @@ fn a_record_revoked_after_presentation_is_not_restored_by_a_plain_approval() {
         .take_pairing_approval_request()
         .expect("verified pairing surfaces an approval request");
     assert!(
-        approval.would_restore.is_none(),
+        approval.restore_candidate.is_none(),
         "the card was built before the revocation"
     );
 
     let out = machine.handle(Event::PairingApproved {
         approval_id: approval.approval_id,
+        restore: false,
     });
     match body(&out[0]) {
         frame::Body::Error(error) => {
@@ -870,6 +873,7 @@ fn sas_window_pairs_without_a_nonce_and_derives_the_fixture_sas() {
     assert_eq!(approval.sas.as_deref(), Some("900 067"));
     let out = machine.handle(Event::PairingApproved {
         approval_id: approval.approval_id,
+        restore: false,
     });
     match body(&out[0]) {
         frame::Body::PairingResult(result) => assert_eq!(result.status.code, 0),

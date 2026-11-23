@@ -12,8 +12,9 @@ use std::time::{Duration, Instant};
 
 use v2_transport::auth_store::AuthorizationStore;
 use v2_transport::pairing::{
-    binding_context, derive_sas_code, encode_qr_uri, format_sas, parse_qr_uri, InvitationState,
-    PairingCore, PairingError, PairingPresented, QrPayloadError, MAX_OUTSTANDING_NONCES, NONCE_TTL,
+    binding_context, derive_sas_code, encode_qr_uri, format_sas, parse_qr_uri, ApprovalDecision,
+    InvitationState, PairingCore, PairingError, PairingPresented, QrPayloadError,
+    MAX_OUTSTANDING_NONCES, NONCE_TTL,
 };
 use v2_transport::schema::{PairingMode, PairingRequest};
 
@@ -425,20 +426,23 @@ fn approval_is_an_explicit_decision_and_never_a_side_effect() {
         mode: PairingMode::Qr,
         address: "192.168.1.20:65531".to_owned(),
         sas: Some("900 067".to_owned()),
-        would_restore: None,
+        restore_candidate: None,
     };
     let decisions = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&decisions);
     core.request_approval(
         request.clone(),
-        Box::new(move |approved| {
-            sink.lock().unwrap().push((request.approval_id, approved));
+        Box::new(move |decision| {
+            sink.lock().unwrap().push((request.approval_id, decision));
         }),
     );
     assert_eq!(core.pending_approvals().len(), 1);
     assert!(core.approve(41));
     assert!(core.pending_approvals().is_empty());
-    assert_eq!(*decisions.lock().unwrap(), vec![(41, true)]);
+    assert_eq!(
+        *decisions.lock().unwrap(),
+        vec![(41, ApprovalDecision::Accept)]
+    );
 
     // A missing approval id is a no-op, not a panic.
     assert!(!core.approve(99));
@@ -462,10 +466,10 @@ fn concurrent_approvals_with_the_same_wire_request_id_are_independent() {
                 mode: PairingMode::Qr,
                 address: "192.168.1.20:50000".to_owned(),
                 sas: Some(sas.to_owned()),
-                would_restore: None,
+                restore_candidate: None,
             },
-            Box::new(move |approved| {
-                sink.lock().unwrap().push((client_id.to_owned(), approved));
+            Box::new(move |decision| {
+                sink.lock().unwrap().push((client_id.to_owned(), decision));
             }),
         );
         approval_ids.push(approval_id);
@@ -501,7 +505,7 @@ fn concurrent_approvals_with_the_same_wire_request_id_are_independent() {
     );
     assert_eq!(
         *decisions.lock().unwrap(),
-        vec![("8899aabbccddeeff".to_owned(), true)]
+        vec![("8899aabbccddeeff".to_owned(), ApprovalDecision::Accept)]
     );
 }
 
@@ -515,7 +519,7 @@ fn presented(approval_id: u64, sas: &str) -> PairingPresented {
         sas: Some(sas.to_owned()),
         fingerprint: "FP".to_owned(),
         expires_at: Instant::now() + Duration::from_secs(600),
-        would_restore: None,
+        restore_candidate: None,
     }
 }
 
@@ -545,7 +549,7 @@ fn presented_pairings_are_published_and_cleared_by_local_decisions() {
             mode: PairingMode::Qr,
             address: "192.168.1.20:65531".to_owned(),
             sas: Some("654 321".to_owned()),
-            would_restore: None,
+            restore_candidate: None,
         },
         Box::new(|_| {}),
     );
@@ -574,10 +578,10 @@ fn cancel_declines_every_pending_approval_and_closes_the_sas_window() {
                 mode: PairingMode::Sas,
                 address: "192.168.1.20:50000".to_owned(),
                 sas: Some("123 456".to_owned()),
-                would_restore: None,
+                restore_candidate: None,
             },
-            Box::new(move |approved| {
-                sink.lock().unwrap().push((client_id.to_owned(), approved));
+            Box::new(move |decision| {
+                sink.lock().unwrap().push((client_id.to_owned(), decision));
             }),
         ));
     }
@@ -590,8 +594,8 @@ fn cancel_declines_every_pending_approval_and_closes_the_sas_window() {
     assert_eq!(
         decisions,
         vec![
-            ("0011223344556677".to_owned(), false),
-            ("8899aabbccddeeff".to_owned(), false),
+            ("0011223344556677".to_owned(), ApprovalDecision::Decline),
+            ("8899aabbccddeeff".to_owned(), ApprovalDecision::Decline),
         ],
         "every pending connection must be told the pairing was declined"
     );

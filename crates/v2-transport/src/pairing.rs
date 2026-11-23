@@ -435,7 +435,35 @@ pub struct ApprovalRequest {
     /// revoked: approving restores that saved record in place, and the
     /// operator's approve is the explicit Restore confirmation (ADR-0006).
     /// `None` for a new or already-active identity.
-    pub would_restore: Option<String>,
+    pub restore_candidate: Option<String>,
+}
+
+/// The operator's decision on one verified pairing.
+///
+/// The decision is explicit (ADR-0006): [`Accept`](Self::Accept) never
+/// reactivates a revoked record, and [`Restore`](Self::Restore) is only valid
+/// for an identity whose stored record is revoked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ApprovalDecision {
+    /// Ordinary accept: a new identity is inserted, an active one re-paired.
+    Accept,
+    /// Explicit Restore of a revoked record in place.
+    Restore,
+    /// Reject the pairing; nothing is persisted.
+    Decline,
+}
+
+/// How [`PairingCore::persist_client`] treats an existing stored record.
+///
+/// A two-variant enum (rather than a `bool`) makes "restore a brand-new
+/// identity" unrepresentable: [`Restore`](Self::Restore) requires a revoked
+/// record, and [`New`](Self::New) refuses to reactivate one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PersistMode {
+    /// Ordinary pairing: insert a new record or re-pair an active one.
+    New,
+    /// Explicit Restore of the revoked record for this identity.
+    Restore,
 }
 
 /// A live pairing as presented to the local operator.
@@ -467,7 +495,7 @@ pub struct PairingPresented {
     /// `Some(saved_display_name)` when the identity's stored record is
     /// revoked: approving restores that saved record in place (ADR-0006).
     /// `None` for a new or already-active identity.
-    pub would_restore: Option<String>,
+    pub restore_candidate: Option<String>,
 }
 
 impl fmt::Debug for PairingPresented {
@@ -482,7 +510,7 @@ impl fmt::Debug for PairingPresented {
             .field("sas", &self.sas.as_ref().map(|_| "<redacted>"))
             .field("fingerprint", &self.fingerprint)
             .field("expires_at", &self.expires_at)
-            .field("would_restore", &self.would_restore)
+            .field("restore_candidate", &self.restore_candidate)
             .finish()
     }
 }
@@ -515,6 +543,9 @@ pub enum PairingError {
     /// explicit restore confirmation (ADR-0006). Fail closed: the record
     /// stays revoked and no OK result is written.
     RestoreNotConfirmed,
+    /// An explicit Restore was requested for an identity that has no revoked
+    /// record (missing or already active). Fail closed: no record is written.
+    RestoreUnavailable,
     /// Identity provisioning failed.
     Identity(IdentityError),
 }
@@ -536,6 +567,12 @@ impl fmt::Display for PairingError {
                 write!(
                     f,
                     "a revoked pairing requires an explicit restore confirmation"
+                )
+            }
+            Self::RestoreUnavailable => {
+                write!(
+                    f,
+                    "an explicit restore was requested but no revoked record exists"
                 )
             }
             Self::Identity(error) => write!(f, "server identity: {error}"),
@@ -572,7 +609,7 @@ struct CurrentQrInvitation {
 
 struct PendingApproval {
     request: ApprovalRequest,
-    decide: Box<dyn FnOnce(bool) + Send>,
+    decide: Box<dyn FnOnce(ApprovalDecision) + Send>,
 }
 
 /// An RAII slot in the TM-5 concurrent-pairing bound.
@@ -789,7 +826,7 @@ impl PairingCore {
             .map(|(_, pending)| pending)
             .collect();
         for pending in pending {
-            (pending.decide)(false);
+            (pending.decide)(ApprovalDecision::Decline);
         }
     }
 
@@ -981,7 +1018,7 @@ impl PairingCore {
     pub fn request_approval(
         &self,
         mut request: ApprovalRequest,
-        decide: Box<dyn FnOnce(bool) + Send>,
+        decide: Box<dyn FnOnce(ApprovalDecision) + Send>,
     ) -> u64 {
         if request.approval_id == 0 {
             request.approval_id = self.next_approval_id();
@@ -1004,28 +1041,26 @@ impl PairingCore {
     }
 
     /// Approve one pending pairing; `false` when the id is not pending.
+    ///
+    /// This is a plain Accept (ADR-0006): it never restores a revoked record.
+    /// A revoked identity needs [`Self::restore`].
     pub fn approve(&self, approval_id: u64) -> bool {
-        let pending = self
-            .approvals
-            .lock()
-            .expect("pairing approval lock")
-            .remove(&approval_id);
-        match pending {
-            Some(pending) => {
-                let client_id = pending.request.client_id.clone();
-                self.clear_presented(approval_id);
-                (pending.decide)(true);
-                // Log the decision after it is delivered: a dead connection
-                // must not produce an "accepted" line the Client never saw.
-                crate::session_log::pairing_accepted(&client_id);
-                true
-            }
-            None => false,
-        }
+        self.decide(approval_id, ApprovalDecision::Accept)
+    }
+
+    /// Approve one pending pairing with the explicit Restore decision
+    /// (ADR-0006); `false` when the id is not pending. A restore of an
+    /// identity whose record is not revoked fails closed in persistence.
+    pub fn restore(&self, approval_id: u64) -> bool {
+        self.decide(approval_id, ApprovalDecision::Restore)
     }
 
     /// Decline one pending pairing; `false` when the id is not pending.
     pub fn decline(&self, approval_id: u64) -> bool {
+        self.decide(approval_id, ApprovalDecision::Decline)
+    }
+
+    fn decide(&self, approval_id: u64, decision: ApprovalDecision) -> bool {
         let pending = self
             .approvals
             .lock()
@@ -1035,8 +1070,21 @@ impl PairingCore {
             Some(pending) => {
                 let client_id = pending.request.client_id.clone();
                 self.clear_presented(approval_id);
-                (pending.decide)(false);
-                crate::session_log::pairing_declined(&client_id);
+                (pending.decide)(decision);
+                match decision {
+                    ApprovalDecision::Accept => {
+                        // Log the decision after it is delivered: a dead
+                        // connection must not produce an "accepted" line the
+                        // Client never saw.
+                        crate::session_log::pairing_accepted(&client_id);
+                    }
+                    ApprovalDecision::Restore => {
+                        crate::session_log::pairing_restored(&client_id);
+                    }
+                    ApprovalDecision::Decline => {
+                        crate::session_log::pairing_declined(&client_id);
+                    }
+                }
                 true
             }
             None => false,
@@ -1076,34 +1124,36 @@ impl PairingCore {
         self.paired_tx.subscribe()
     }
 
-    /// The saved display name when a stored record for `client_id` is
+    /// The saved display name when the stored record for `public_key` is
     /// revoked, i.e. an approved pairing would **restore** that record rather
     /// than create a new one or update an active one; `None` otherwise
-    /// (ADR-0006). Local admin surfaces expose this as `would_restore` so the
-    /// operator can confirm a Restore and see the name that will be restored.
-    pub fn restore_candidate(&self, client_id: &str) -> Option<String> {
+    /// (ADR-0006). Local admin surfaces expose this as `restore_candidate` so
+    /// the operator can confirm a Restore and see the name that will come back.
+    pub fn restore_candidate(&self, public_key: &[u8]) -> Option<String> {
         self.store
-            .clients()
-            .into_iter()
-            .find(|client| client.client_id == client_id && client.state == ClientState::Revoked)
+            .record_for(public_key)
+            .filter(|client| client.state == ClientState::Revoked)
             .map(|client| client.display_name)
     }
 
     /// Persist a successful pairing through [`AuthorizationStore::upsert`]
     /// (the production path; never `insert_for_tests`).
     ///
-    /// `restore` is the operator's explicit restore confirmation, captured
-    /// when the pairing was presented ([`Self::restore_candidate`]). When the
-    /// stored identity is revoked:
+    /// `mode` is the operator's explicit decision, carried from the approval
+    /// (see [`ApprovalDecision`]). When the stored identity is revoked:
     ///
-    /// - `restore = true`: the saved record becomes active **in place** — the
-    ///   same `client_id`, `created_at`, and display name, with only `state`
-    ///   and `last_seen_at` changing (ADR-0006: Restore is not a new pairing).
-    /// - `restore = false`: an error ([`PairingError::RestoreNotConfirmed`]);
+    /// - [`PersistMode::Restore`]: the saved record becomes active **in
+    ///   place** — the same `client_id`, `created_at`, and display name, with
+    ///   only `state` and `last_seen_at` changing (ADR-0006: Restore is not a
+    ///   new pairing).
+    /// - [`PersistMode::New`]: an error ([`PairingError::RestoreNotConfirmed`]);
     ///   a plain pairing never silently reactivates a revoked record.
     ///
-    /// A new identity inserts a new record; an active identity is re-paired
-    /// exactly as before.
+    /// An explicit [`PersistMode::Restore`] for a missing or already-active
+    /// identity is also an error ([`PairingError::RestoreUnavailable`]): the
+    /// pair (decision, stored state) must agree, so "restore a new identity"
+    /// cannot silently insert one. A new identity with `New` inserts a record;
+    /// an active identity with `New` is re-paired exactly as before.
     ///
     /// This method only writes the record. The success broadcast is a separate
     /// step ([`Self::notify_paired`]) so the driver can fire it *after* the
@@ -1114,7 +1164,7 @@ impl PairingCore {
         &self,
         public_key: &[u8],
         display_name: &str,
-        restore: bool,
+        mode: PersistMode,
     ) -> Result<StoredClient, PairingError> {
         if auth::parse_client_public_key(public_key).is_err() {
             return Err(PairingError::Malformed(
@@ -1123,22 +1173,25 @@ impl PairingCore {
         }
         let now = rfc3339_now();
         let existing = self.store.record_for(public_key);
-        if let Some(record) = existing
+        let revoked = existing
             .as_ref()
-            .filter(|record| record.state == ClientState::Revoked)
-        {
-            if !restore {
-                return Err(PairingError::RestoreNotConfirmed);
+            .is_some_and(|record| record.state == ClientState::Revoked);
+        match (mode, revoked) {
+            (PersistMode::New, true) => return Err(PairingError::RestoreNotConfirmed),
+            (PersistMode::Restore, false) => return Err(PairingError::RestoreUnavailable),
+            (PersistMode::Restore, true) => {
+                // Restore the saved record in place: identity, creation time,
+                // and display name are the record's, not the new pairing's.
+                let record = existing.expect("revoked implies an existing record");
+                let client = StoredClient {
+                    state: ClientState::Active,
+                    last_seen_at: now,
+                    ..record
+                };
+                self.store.upsert(client.clone())?;
+                return Ok(client);
             }
-            // Restore the saved record in place: identity, creation time, and
-            // display name are the record's, not the new pairing's.
-            let client = StoredClient {
-                state: ClientState::Active,
-                last_seen_at: now,
-                ..record.clone()
-            };
-            self.store.upsert(client.clone())?;
-            return Ok(client);
+            (PersistMode::New, false) => {}
         }
         let display_name = normalize_display_name(display_name);
         let created_at = existing
