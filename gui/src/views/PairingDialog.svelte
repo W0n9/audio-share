@@ -2,7 +2,7 @@
   import { server } from "../lib/store.svelte";
   import { t } from "../lib/i18n.svelte";
   import ErrorLine from "../lib/ErrorLine.svelte";
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import type {
     PairingInvitation,
     PairingLiveInfo,
@@ -18,6 +18,29 @@
 
   let body: HTMLDivElement | undefined = $state();
   let invitationEl: HTMLDivElement | undefined = $state();
+  let dialogEl: HTMLDivElement | undefined = $state();
+
+  /** Destructive action awaiting the in-app confirmation dialog. */
+  type ConfirmTarget = {
+    kind: "revoke" | "delete";
+    clientId: string;
+    displayName: string;
+  };
+  let confirmTarget = $state<ConfirmTarget | null>(null);
+  let confirmTrigger: HTMLElement | null = null;
+  let confirmCancelEl: HTMLButtonElement | undefined = $state();
+  let confirmActionEl: HTMLButtonElement | undefined = $state();
+
+  // Closing the pairing dialog must also drop a confirmation that was left
+  // open, otherwise it would reappear the next time pairing opens.
+  $effect(() => {
+    if (!server.pairingOpen) {
+      untrack(() => {
+        confirmTarget = null;
+        confirmTrigger = null;
+      });
+    }
+  });
 
   function begin(mode: PairingMode): void {
     void server.beginPairing(mode);
@@ -48,10 +71,12 @@
     }
   }
 
-  function remove(clientId: string, displayName: string): void {
-    if (window.confirm(t("pairing.confirmDelete", { name: displayName }))) {
-      void server.deleteClient(clientId);
-    }
+  function remove(
+    clientId: string,
+    displayName: string,
+    trigger: HTMLElement | null,
+  ): void {
+    openConfirm({ kind: "delete", clientId, displayName }, trigger);
   }
 
   /**
@@ -71,10 +96,85 @@
     void server.declinePairing(approvalId);
   }
 
-  function revoke(clientId: string, displayName: string): void {
-    if (window.confirm(t("pairing.confirmRevoke", { name: displayName }))) {
-      void server.revokeClient(clientId);
+  function revoke(
+    clientId: string,
+    displayName: string,
+    trigger: HTMLElement | null,
+  ): void {
+    openConfirm({ kind: "revoke", clientId, displayName }, trigger);
+  }
+
+  function openConfirm(target: ConfirmTarget, trigger: HTMLElement | null): void {
+    confirmTrigger = trigger;
+    confirmTarget = target;
+    // Move focus into the dialog once it has rendered. Cancel is the safe
+    // default for a destructive action.
+    void tick().then(() => confirmCancelEl?.focus());
+  }
+
+  /** Close without acting; focus returns to the button that opened it. */
+  function closeConfirm(): void {
+    const trigger = confirmTrigger;
+    confirmTarget = null;
+    confirmTrigger = null;
+    void tick().then(() => {
+      if (trigger?.isConnected) trigger.focus();
+      else dialogEl?.focus();
+    });
+  }
+
+  /** Only an explicit confirmation runs the destructive action. */
+  function applyConfirm(): void {
+    const target = confirmTarget;
+    if (!target) return;
+    const trigger = confirmTrigger;
+    confirmTarget = null;
+    confirmTrigger = null;
+    if (target.kind === "revoke") void server.revokeClient(target.clientId);
+    else void server.deleteClient(target.clientId);
+    // The row may disappear (delete) or lose the pressed button (revoke), so
+    // fall back to the pairing dialog when the trigger is no longer rendered.
+    void tick().then(() => {
+      if (trigger?.isConnected) trigger.focus();
+      else dialogEl?.focus();
+    });
+  }
+
+  /**
+   * Escape cancels; Tab stays inside the two actions. The background pairing
+   * dialog is `inert` while this dialog is open, so it cannot take focus.
+   */
+  function onConfirmKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeConfirm();
+      return;
     }
+    if (event.key !== "Tab") return;
+    const focusable = [confirmCancelEl, confirmActionEl].filter(
+      (el): el is HTMLButtonElement => el !== undefined && !el.disabled,
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  /**
+   * Escape still cancels if a backdrop click moved focus out of the dialog.
+   * The dialog handler stops propagation while focus is inside it.
+   */
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || !confirmTarget) return;
+    event.preventDefault();
+    closeConfirm();
   }
 
   /**
@@ -99,6 +199,8 @@
     return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
   }
 </script>
+
+<svelte:window onkeydown={onWindowKeydown} />
 
 <!-- One card for a live or verified pairing. The only differences are the
      live hint (no actions yet) and the approve/decline footer. -->
@@ -236,6 +338,9 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="pairing-title"
+      bind:this={dialogEl}
+      tabindex="-1"
+      inert={confirmTarget !== null}
     >
       <header class="pairing-header">
         <h2 id="pairing-title">{t("pairing.title")}</h2>
@@ -346,7 +451,8 @@
                   <button
                     class="pairing-link danger"
                     disabled={server.deletingClientId !== null}
-                    onclick={() => remove(client.clientId, client.displayName)}
+                    onclick={(event) =>
+                      remove(client.clientId, client.displayName, event.currentTarget)}
                   >
                     {t("pairing.delete")}
                   </button>
@@ -354,7 +460,8 @@
                   <button
                     class="pairing-link danger"
                     disabled={server.revokingClientId !== null}
-                    onclick={() => revoke(client.clientId, client.displayName)}
+                    onclick={(event) =>
+                      revoke(client.clientId, client.displayName, event.currentTarget)}
                   >
                     {t("pairing.revoke")}
                   </button>
@@ -366,4 +473,59 @@
       </div>
     </div>
   </div>
+
+  <!-- Destructive confirmation. Same backdrop, surface, radius, and type as
+       the pairing dialog; a second layer only because it stacks above it. -->
+  {#if confirmTarget}
+    <div
+      class="pairing-backdrop pairing-backdrop-stacked"
+      role="presentation"
+    >
+      <div
+        class="pairing-dialog pairing-confirm"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="pairing-confirm-title"
+        aria-describedby="pairing-confirm-body"
+        onkeydown={onConfirmKeydown}
+        tabindex="-1"
+      >
+        <header class="pairing-header">
+          <h2 id="pairing-confirm-title">
+            {confirmTarget.kind === "revoke"
+              ? t("pairing.confirmRevokeTitle")
+              : t("pairing.confirmDeleteTitle")}
+          </h2>
+        </header>
+        <div class="pairing-body">
+          <p class="pairing-confirm-body" id="pairing-confirm-body">
+            {confirmTarget.kind === "revoke"
+              ? t("pairing.confirmRevoke", { name: confirmTarget.displayName })
+              : t("pairing.confirmDelete", { name: confirmTarget.displayName })}
+          </p>
+          <div class="pairing-actions pairing-confirm-actions">
+            <button
+              class="pairing-secondary"
+              bind:this={confirmCancelEl}
+              onclick={closeConfirm}
+            >
+              {t("action.cancel")}
+            </button>
+            <button
+              class="pairing-primary danger"
+              bind:this={confirmActionEl}
+              disabled={confirmTarget.kind === "revoke"
+                ? server.revokingClientId !== null
+                : server.deletingClientId !== null}
+              onclick={applyConfirm}
+            >
+              {confirmTarget.kind === "revoke"
+                ? t("pairing.revoke")
+                : t("pairing.delete")}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
 {/if}
