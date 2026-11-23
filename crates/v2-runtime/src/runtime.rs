@@ -19,7 +19,7 @@ use v2_transport::auth_store::{AuthorizationStore, StoreLock};
 use v2_transport::driver::SessionServer;
 use v2_transport::identity::{IdentityConfig, ServerIdentity};
 use v2_transport::limits::{CapacityGuard, Limits};
-use v2_transport::pairing::PairingCore;
+use v2_transport::pairing::{validate_addr_hint, PairingCore};
 use v2_transport::transport::{Transport, TransportConfig};
 
 use crate::admin::{CorePairingAdmin, PairingAdmin};
@@ -307,46 +307,41 @@ pub async fn resolve_bind_address(host: &str, port: u16) -> Result<SocketAddr, R
 ///
 /// The Host only chooses the advertised address; the runtime still binds the
 /// dual-stack wildcard. IPv6 literals are bracketed (`[addr]:port`), matching
-/// the payload validator and the Android client.
+/// the payload validator and the Android Client.
 ///
 /// Returns `None` when the caller must fall back to the runtime's default
 /// non-loopback IPv4: an empty host, a wildcard (`0.0.0.0`/`::`), a scoped
 /// IPv6 literal (`%scope` cannot appear in a pairing payload), a value that is
-/// not a valid payload host, or `port == 0`. Fallback keeps the emitted hint
-/// parseable instead of producing an invalid payload.
+/// not a valid payload host, or `port == 0`. The composed hint is checked by
+/// the transport validator, so it keeps exactly the parser's host alphabet and
+/// port range instead of duplicating them.
 pub fn qr_addr_hint(host: &str, port: u16) -> Option<String> {
     let host = host.trim();
     if host.is_empty() || port == 0 || host.contains('%') {
         return None;
     }
+    let bracketed = host.starts_with('[');
     let unbracketed = match host.strip_prefix('[') {
         Some(rest) => rest.strip_suffix(']')?,
         None => host,
     };
-    if let Ok(address) = unbracketed.parse::<Ipv6Addr>() {
+    let candidate = if let Ok(address) = unbracketed.parse::<Ipv6Addr>() {
         if address.is_unspecified() {
             return None;
         }
-        return Some(format!("[{address}]:{port}"));
-    }
-    if host.starts_with('[') {
+        format!("[{address}]:{port}")
+    } else if bracketed {
         // Brackets are only valid around an IPv6 literal.
         return None;
-    }
-    if let Ok(address) = unbracketed.parse::<Ipv4Addr>() {
+    } else if let Ok(address) = unbracketed.parse::<Ipv4Addr>() {
         if address.is_unspecified() {
             return None;
         }
-        return Some(format!("{address}:{port}"));
-    }
-    // A DNS name must match the payload validator's host alphabet.
-    if !unbracketed
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-    {
-        return None;
-    }
-    Some(format!("{unbracketed}:{port}"))
+        format!("{address}:{port}")
+    } else {
+        format!("{unbracketed}:{port}")
+    };
+    validate_addr_hint(&candidate).ok().map(|()| candidate)
 }
 
 /// The §9.2 revocation poll interval the driver uses. Revocation is effective
