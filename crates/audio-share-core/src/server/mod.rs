@@ -82,9 +82,10 @@ pub fn default_host() -> Option<std::net::Ipv4Addr> {
 /// Every usable local IPv4 address, deduplicated, with [`default_host`]'s
 /// choice first.
 ///
-/// The GUI offers this list as Host suggestions; v0.3.4's MFC combo enumerated
-/// the same non-loopback interfaces. Enumeration order is preserved for the
-/// remaining addresses.
+/// This IPv4-only list supplies the default Host selection. The GUI offers
+/// [`local_host_addresses`] (this list plus non-loopback IPv6) as Host
+/// suggestions; v0.3.4's MFC combo enumerated the same non-loopback
+/// interfaces. Enumeration order is preserved for the remaining addresses.
 pub fn local_addresses() -> Vec<std::net::Ipv4Addr> {
     let Ok(interfaces) = if_addrs::get_if_addrs() else {
         return Vec::new();
@@ -122,7 +123,7 @@ pub fn local_host_addresses() -> Vec<std::net::IpAddr> {
 
 /// Order usable local addresses: [`arrange_addresses`]' IPv4 result first,
 /// then the usable IPv6 addresses in enumeration order, deduplicated.
-pub fn arrange_host_addresses(
+fn arrange_host_addresses(
     ipv4: impl IntoIterator<Item = std::net::Ipv4Addr>,
     ipv6: impl IntoIterator<Item = std::net::Ipv6Addr>,
 ) -> Vec<std::net::IpAddr> {
