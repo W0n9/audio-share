@@ -120,10 +120,11 @@ android {
         // ticket 08 gate: Android 8 / API 26 baseline, same as the prototype
         minSdk = 26
         targetSdk = 36
-        // Beta release: applicationId dev.audioshare.v2 so the beta coexists
-        // with the v1 app (ticket 21 acceptance).
-        versionCode = 2
-        versionName = "0.2.0-beta"
+        // v2 Client release: applicationId dev.audioshare.v2 so it coexists
+        // with the v1 app (ticket 21 acceptance). The release workflow builds
+        // one signed APK per ABI instead of a universal APK.
+        versionCode = 3
+        versionName = "0.6.0"
         testInstrumentationRunner = "dev.audioshare.v2.ControlSessionInstrumentation"
         ndk {
             // arm64-v8a is the real-device scope; x86_64 is the emulator ABI.
