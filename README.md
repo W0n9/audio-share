@@ -11,16 +11,21 @@
 Audio Share shares a computer's audio with an Android phone over the network,
 so the phone becomes a speaker for the computer.
 
-Version 0.4.0 replaces the Server with a Rust implementation: a shared
-`audio-share-core` crate, a Tauri v2 Server GUI for Windows and Linux, and the
-headless `as-cmd` command line. The Wire Protocol is frozen at upstream
-v0.3.4; the released **Android Client remains v0.3.4** and works without an
-update.
+Version 0.6.0 ships the Rust Server with **two transports**: the frozen,
+unencrypted v1 Wire Protocol (port 65530) for the existing v0.3.4 Android
+client, and the encrypted, paired **Wire Protocol v2** (QUIC, UDP port 65531)
+for the v2 Android client. The v2 client ships as two separately signed APKs,
+one per ABI: `arm64-v8a` for phones and `x86_64` for emulators and x86 devices.
+The v2 app (`dev.audioshare.v2`) installs alongside v1; it does not replace the
+v1 app or its F-Droid listing.
 
 <p>
-<img src="docs/server-rewrite/img/gui-mod-04-main-light.png" width="30%" alt="Server GUI">
-<img src="metadata/en-US/images/phoneScreenshots/1.png" width="30%" alt="Android Client">
+<img src="docs/images/v2-server-pairing.png" width="25%" alt="v2 Server GUI pairing dialog">
+<img src="docs/images/v2-client-pairing.png" width="25%" alt="v2 Android Client pairing screen">
+<img src="docs/images/v2-client-playing.png" width="25%" alt="v2 Android Client playing screen">
 </p>
+
+<sub>Screenshots from pre-release testing; the UI is available in English and Chinese.</sub>
 
 ## Download
 
@@ -33,13 +38,49 @@ Release artifacts (each with a `sha256sum`-format `.sha256` sidecar):
 | Linux | `AudioShareServer_<version>_amd64.deb` | Server GUI for Ubuntu 24.04+; installs `/usr/bin/AudioShareServer`. |
 | Linux | `AudioShareServer_<version>_amd64.AppImage` | Self-contained Server GUI image; requires FUSE 2 to run directly. |
 | Linux | `audio-share-server-cmd-linux.tar.gz` | Headless `as-cmd` inside a top-level `audio-share-server-cmd/` directory. |
-| Android | v0.3.4 APK (unchanged) | No new APK is built or attached for 0.4.0. Use the v0.3.4 release or F-Droid. |
+| Android | `audio-share-client-v2-<version>-arm64-v8a.apk` | v2 Client for arm64 phones. |
+| Android | `audio-share-client-v2-<version>-x86_64.apk` | v2 Client for x86_64 emulators and devices. |
+
+The v1 APK is unchanged at v0.3.4. Use the [v0.3.4 release](https://github.com/mkckr0/audio-share/releases/tag/v0.3.4)
+or F-Droid if you need it. Verify every download against its SHA-256 sidecar.
+See the [release notes](docs/releases/v0.6.0.md) for compatibility, upgrade
+notes, and validation limits.
 
 Linux packages depend on WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`), GTK 3, the
 StatusNotifier appindicator (`libayatana-appindicator3-1`), and PipeWire
 (`libpipewire-0.3-0`). The deb declares these dependencies. A running PipeWire
 session with a session manager (WirePlumber) is required for audio capture; the
 desktop session must provide it.
+
+## Pair a v2 Client
+
+The v2 transport is enabled by default on UDP port 65531; allow that port
+through the firewall and make sure the phone can reach the Server host.
+
+1. Start the Server GUI, pick an Endpoint and an Encoding, and click **Start Server**.
+2. Open the **Pairing** dialog and choose a mode:
+   - **QR (primary):** scan the displayed invitation with the v2 Android app.
+     The QR pins the Server's public key; the invitation expires and is
+     single-use.
+   - **SAS (fallback, no camera):** if the app cannot scan, start SAS mode and
+     compare the six-digit code shown on both ends. The SAS protects against
+     an active first-connection MITM only when it is actually compared; an
+     unchecked confirmation is trust-on-first-use. You can also verify the
+     Server's SPKI fingerprint out of band (§7.2–7.4 of the pairing spec).
+3. Approve the verified device on the Server. The phone then stores the pairing
+   and connects automatically on later runs.
+4. In the v2 app, select the paired Server and press play.
+
+Pairing is one Client per Server in this release; concurrent phones and
+multi-Client isolation are not supported. A failed v2 connection never falls
+back to v1 or plaintext. If an older v2 beta left stale credentials (error
+205), uninstall the old v2 app, install the current APK, and pair again;
+uninstalling removes saved pairings. Full semantics are in the
+[pairing specification](docs/wire-protocol-v2/pairing.md).
+
+The v1 client needs no pairing: enter the Server's host and port 65530 in the
+v0.3.4 app and press play. **Use v1 only on a trusted network** — it is
+unencrypted and unauthenticated.
 
 ## Server GUI
 
@@ -48,7 +89,8 @@ desktop session must provide it.
    address matching v0.3.4's private-network mask; the field also suggests the
    machine's local IPv4 addresses. Make sure the phone can reach it.
 3. Pick an audio Endpoint and an Encoding, then click **Start Server**.
-4. In the Android Client, enter the same host and port and press play.
+4. In the Android Client, enter the same host and port and press play (for v1),
+   or pair once and press play (for v2).
 
 The window is tray-first: Show, Start/Stop, and Exit are available from the
 tray menu. Settings include the appearance theme (System / Light / Dark),
@@ -67,8 +109,9 @@ the GUI. Run it from the unpacked `as-cmd` archive:
 as-cmd -b
 ```
 
-A bare `-b` binds the default address (v0.3.4's private-network mask) on port
-`65530` and selects the default endpoint. Useful flags:
+A bare `-b` binds the default address (v0.3.4's private-network mask) on v1
+port `65530` and selects the default endpoint. The v2 transport starts in
+parallel on UDP `65531` unless `--v2-port=0` disables it. Useful flags:
 
 | Flag | Meaning |
 |---|---|
@@ -81,7 +124,24 @@ A bare `-b` binds the default address (v0.3.4's private-network mask) on port
 | `--channels <n>` | Capture channels; `0` (the default) uses the endpoint value. |
 | `--sample-rate <hz>` | Capture sample rate; `0` (the default) uses the endpoint value. |
 | `--list-encoding` | List the supported encodings, exit 0. |
+| `--v2-port <port>` | v2 QUIC listen port; default `65531`; `0` disables v2. |
 | `-V`, `--verbose` | Enable trace-level logging. |
+
+Headless pairing and authorization use subcommands:
+
+```bash
+as-cmd pair [--sas] [--accept] [--addr host:port] [--timeout seconds]
+as-cmd clients list
+as-cmd clients revoke <client-id>
+as-cmd identity reset [--yes]
+```
+
+`pair` prints a QR invitation (or opens only the SAS window with `--sas`) and
+waits up to 600 seconds for a device by default (`--timeout`); `--accept`
+approves the first verified device without a prompt. Invitation lifetime is
+governed by the pairing specification, not by `--timeout`. `clients` lists or
+revokes authorized Clients; `identity reset` generates a new Server identity
+and invalidates all existing pairings.
 
 Examples:
 
@@ -90,12 +150,15 @@ as-cmd -b
 as-cmd --bind=192.168.1.20
 as-cmd --bind=192.168.1.20 --encoding=f32 --channels=2 --sample-rate=48000
 as-cmd -b 192.168.1.20:65080 -e 38 --encoding=s16
+as-cmd pair --addr 192.168.1.20:65531
 ```
 
 Ctrl-C stops capture and closes the TCP/UDP server gracefully. Errors print to
 stderr with a non-zero exit code. See
 [`docs/server-rewrite/as-cmd.md`](docs/server-rewrite/as-cmd.md) for the full
-flag/dispatch/exit-code contract and intentional differences from v0.3.4.
+v1 flag/dispatch/exit-code contract, and
+[`docs/wire-protocol-v2/pairing.md`](docs/wire-protocol-v2/pairing.md) §11.2 for
+headless pairing details.
 
 ## Configuration and logs
 
@@ -119,7 +182,7 @@ the rewrite's value and a backup is kept when migration changes a file.
 
 ## Protocol compatibility
 
-The v0.3.4 Wire Protocol is frozen for 0.4.0:
+v1 is frozen at upstream v0.3.4:
 
 - TCP control commands are fixed 4-byte little-endian integers:
   `GET_FORMAT = 1`, `START_PLAY = 2`, `HEARTBEAT = 3`.
@@ -133,11 +196,15 @@ The v0.3.4 Wire Protocol is frozen for 0.4.0:
 - The client binds UDP by sending its play id as a 4-byte little-endian
   integer to the server's TCP/UDP port.
 
-The rewrite starts capture before accepting clients, so `GET_FORMAT` always
-returns the real capture format instead of the old empty-format race. Server
-stop closes TCP/UDP sessions without a protocol "bye"; clients reconnect as
-before. Full byte-level details, protobuf field numbers, and close semantics
-are in [`docs/protocol.md`](docs/protocol.md).
+v2 is a separate, encrypted transport on UDP 65531. It uses QUIC with
+Ed25519 Server identities and per-Client credentials from pairing, a framed
+control plane, and a media plane with a bounded jitter buffer, concealment,
+and playback clock-drift correction. It is specified in the
+[v2 specification](docs/wire-protocol-v2/spec.md),
+[pairing specification](docs/wire-protocol-v2/pairing.md), and
+[threat model](docs/wire-protocol-v2/threat-model.md). Byte-level v1 details,
+protobuf field numbers, and close semantics are in
+[`docs/protocol.md`](docs/protocol.md).
 
 ## Build from source
 
@@ -156,6 +223,9 @@ Prerequisites:
 
 - Windows: the default Rust Windows toolchain with the Visual Studio 2022
   C++ build tools and Windows SDK, plus the WebView2 Runtime to run the GUI.
+- Android v2: Android SDK and NDK 27.2 (see
+  [`android-client-v2/README.md`](android-client-v2/README.md) for signing,
+  per-ABI builds, and device-test builds).
 
 Build `as-cmd` and the GUI:
 
@@ -187,12 +257,21 @@ cargo run -p protocol-harness -- replay \
 ```
 
 More detail: [build and packaging](docs/server-rewrite/README.md),
-[Wire Protocol](docs/protocol.md), and the
+[v1 Wire Protocol](docs/protocol.md), and the
 [deviation record](docs/adr/0003-server-rewrite-deviations.md).
 
 ## Known limitations
 
-- No code signing, MSI/NSIS installer, or Tauri self-updater in this release.
+- This release supports one v2 Client per Server; concurrent phones and
+  multi-Client isolation are outside its scope.
+- The acoustic latency baseline and the 60-minute single-client run were
+  waived; no p95/p99 audible-latency target is claimed. Real-network
+  impairment testing, device clock-drift injection, and listening A/B for the
+  drift-control change were not run; the impairment matrix was exercised on
+  host only. See the [release notes](docs/releases/v0.6.0.md).
+- No code signing for Windows binaries, MSI/NSIS installer, or Tauri
+  self-updater in this release. The v2 APKs are signed with the project's
+  beta key.
 - Windows requires WebView2. Linux requires WebKitGTK 4.1, GTK 3, the
   appindicator library, and a running PipeWire session.
 - The GUI exposes Endpoint and Encoding only; channels and sample rate remain
@@ -203,13 +282,9 @@ More detail: [build and packaging](docs/server-rewrite/README.md),
   format and sends no PCM until the operator presses Stop then Start (or
   restarts `as-cmd`). A capture supervisor is follow-up work.
 - Linux tray left-click is not delivered by Tauri; use the right-click menu.
-- The Android Client is unchanged at v0.3.4. No Android source, version, or
-  APK changes ship in 0.4.0.
-- Real-device Android acceptance and long-run soak are release-gate checks
-  tracked in [`docs/server-rewrite/`](docs/server-rewrite/README.md); scripted
-  Wire Protocol replay is the automated compatibility check.
-- The UDP header/reorder experiments on the `main` branch are not part of this
-  release (see [ADR-0001](docs/adr/0001-server-rewrite-baseline.md)).
+- The v1 Android Client is unchanged at v0.3.4. A failed v2 connection never
+  silently switches to v1 or plaintext. Full migration and rollback acceptance
+  are outside this release.
 
 ## License
 
@@ -232,5 +307,9 @@ Copyright 2022-2024 mkckr0 <https://github.com/mkckr0>
 - [wasapi](https://github.com/HEnquist/wasapi-rs) — MIT
 - [windows-rs](https://github.com/microsoft/windows-rs) — MIT/Apache-2.0
 - [Protocol Buffers](https://github.com/protocolbuffers/protobuf) — BSD-3-Clause
+- [quinn](https://github.com/quinn-rs/quinn) — MIT/Apache-2.0 (Wire Protocol v2)
+- [rustls](https://github.com/rustls/rustls) — Apache-2.0/MIT/ISC (Wire Protocol v2)
+- [ring](https://github.com/briansmith/ring) — Apache-2.0/ISC (Wire Protocol v2)
+- [rcgen](https://github.com/rustls/rcgen) — Apache-2.0/MIT/ISC (Wire Protocol v2)
 - [Ktor](https://github.com/ktorio/ktor) — Apache-2.0 (Android Client)
 - [MaterialKolor](https://github.com/jordond/MaterialKolor) — MIT (Android Client)

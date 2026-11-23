@@ -127,13 +127,13 @@ Automated results (this ticket branch, all green):
   into Running. The server binds in ~20 ms headlessly, faster than any
   screenshot round-trip; burst captures (6 frames at ~0.15 s spacing) caught
   only Stopped and Running frames. On Windows a background burst caught
-  "正在启动服务器…" with the muted pending dot, the disabled translucent
-  action, the "正在启动…" label, locked settings, and the "服务器运行期间
-  设置已锁定" footer hint, then Running (`img/gui-mod-04-win-starting.png`).
+  "Starting server…" ("正在启动服务器…") with the muted pending dot, the disabled translucent
+  action, the "Starting…" ("正在启动…") label, locked settings, and the "Settings are locked while
+the server is running" ("服务器运行期间设置已锁定") footer hint, then Running (`img/gui-mod-04-win-starting.png`).
   The transition is a new design with no visual reference; its feel still
   needs a human look. (agent, Windows desktop; feel check human.)
 - [x] Stopping transition observed on a real desktop. The same Windows burst
-  caught "正在停止服务器…" with the muted danger action and locked settings,
+  caught "Stopping server…" ("正在停止服务器…") with the muted danger action and locked settings,
   then Stopped with the unlocked footer (`img/gui-mod-04-win-stopping.png`).
   (agent, Windows desktop; feel check human.)
 - [x] Repeated activation is blocked: the action button is disabled while a
@@ -149,7 +149,7 @@ Automated results (this ticket branch, all green):
   alert "cannot resolve address … Name or service not known", the window
   back in Stopped; errors render as `role="alert"` paragraphs under the
   hero. Windows desktop re-check: an invalid host produced "cannot resolve
-  address … 不知道这样的主机。(os error 11001)" in the same alert with the
+  address … unknown host (不知道这样的主机). (os error 11001)" in the same alert with the
   layout intact, `img/gui-mod-04-win-main-error.png`.)
 - [x] Start failure returns the window to Stopped (controller test "a failed
   start publishes a readable error and recovers" in the `server_gui` suite).
@@ -307,7 +307,7 @@ Automated results (this ticket branch, all green):
   platform gating code path (`server.platform === "windows"`) is shared with
   the Linux branch verified above. Windows desktop, agent: both rows render
   in the System group (`img/gui-mod-04-win-settings-system-expanded-zh.png`);
-  the Sound Panel action was invoked and the UI reported "声音面板已打开。";
+  the Sound Panel action was invoked and the UI reported "Sound Panel opened." ("声音面板已打开。");
   the maintainer then completed the UAC-guarded Repair Firewall action.)
 
 ## i18n
@@ -377,9 +377,9 @@ Automated results (this ticket branch, all green):
   2026-11-11 with the same Xiaomi M2007J22C (Android 12 / API 31) and the
   released v0.3.4 APK (`versionCode 3004`) against the modernized GUI server
   on `10.8.144.155:65530`. The phone created a 48 kHz stereo f32 AudioTrack
-  (format `0x5`, 2052 frames), displayed "已开始", and played for 30 s with
+  (format `0x5`, 2052 frames), displayed "Started" ("已开始"), and played for 30 s with
   no FATAL/underrun in logcat. Stopping the server produced the expected
-  "Not enough data available … 会在2秒内重试" prompt; restarting it made the
+  "Not enough data available … retrying in 2 s" ("Not enough data available … 会在2秒内重试") prompt; restarting it made the
   phone reconnect automatically and create a new AudioTrack (124 → 125) with
   playback resumed. Screenshots: `img/gui-mod-04-android-v034-playing.png`,
   `img/gui-mod-04-android-v034-retry.png`,

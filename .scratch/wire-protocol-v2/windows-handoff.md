@@ -1,6 +1,9 @@
-# Windows 11 Beta 验收 Handoff
+# Windows 11 Beta Acceptance Handoff (internal, historical)
 
-Status: 人工验收指引（2026-11-16）  
+> Internal handoff note from the v0.5.0-beta era. Not public documentation.
+> Kept only for the local issue-tracker workflow; excluded from source archives.
+
+Status: manual acceptance guide (2026-11-16)
 Feature: wire-protocol-v2 customer beta  
 适用工单: 24（Windows 产物）、25（真机 + Windows + v1 回归）
 

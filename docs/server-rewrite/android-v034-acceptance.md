@@ -140,7 +140,7 @@ Evidence: `audio-share-artifacts/android/`.
 | s24 | `0100000008000000080410021880f702` | 6 (`PCM_24_BIT_PACKED`), 48 kHz stereo | ok, 1416/1464 B, 440 Hz |
 | s32 | `0100000008000000080510021880f702` | 3 (`PCM_32_BIT`), 48 kHz stereo | ok, 440 Hz, aligned |
 
-Each case showed the pause button and “已开始” on the phone, and `dumpsys
+Each case showed the pause button and "Started" ("已开始") on the phone, and `dumpsys
 media.audio_flinger` reported an active track for the app PID with the format
 in the table. The phone auto-reconnected between rows (new AudioTrack id each
 time).
@@ -170,8 +170,7 @@ PipeWire sink or a different Windows driver is required to run them.
   two-Android-client item remains partial.
 - **Reconnect**: the server was stopped/started between every matrix row; the
   phone reconnected automatically and created a new AudioTrack each time.
-  With Wi-Fi disabled for 10 s the app showed “Network is unreachable,
-  会在2秒内重试”; re-enabling Wi-Fi rejoined the hotspot and playback resumed
+  With Wi-Fi disabled for 10 s the app showed "Network is unreachable, retrying in 2 s" ("Network is unreachable, 会在2秒内重试"); re-enabling Wi-Fi rejoined the hotspot and playback resumed
   (AudioTrack id changed from 125 to 126; screenshots
   `heartbeat-wifi-off.png` / `heartbeat-wifi-on.png`).
 - **Heartbeat timeout**: a Windows `protocol-harness probe --no-heartbeat-reply
@@ -186,7 +185,7 @@ PipeWire sink or a different Windows driver is required to run them.
   every sample; it auto-reconnected once around 15:10 (track 129 → 131) and
   stayed on track 131 for the remaining ~31 minutes. No app FATAL/exception,
   no broadcast-drop warning; wlan0 received 682,263,771 bytes during the run.
-  At 15:45 the phone still showed 193 K/s and “已开始”. Evidence:
+  At 15:45 the phone still showed 193 K/s and "Started" ("已开始"). Evidence:
   `audio-share-artifacts/android/soak-60m-fixed/` (`soak.csv`,
   `soak-summary.json`, `probe-01..12.json`, `soak-final-probe.json`,
   `final-screenshot.png`, `soak-final-60m.png`, `final-logcat.txt`).
@@ -194,7 +193,7 @@ PipeWire sink or a different Windows driver is required to run them.
 ### Fixed during the real-client run: UDP broadcast stall
 
 The first 60-minute attempt (pre-fix `as-cmd`) stalled after about five
-minutes: the phone still showed “已开始” but received 0.1 K/s, the monitor's
+minutes: the phone still showed "Started" ("已开始") but received 0.1 K/s, the monitor's
 second probe got **0 datagrams** while `GET_FORMAT`/`START_PLAY`/heartbeats
 still worked, and a separate `wasapi-spike capture` could still capture
 144,000 frames in 3 s. Root cause: `broadcast_loop` awaited
@@ -230,16 +229,16 @@ combinations (N/A on this Realtek host) are still open; the ticket-15 "real
 APK" box stays unchecked until the two-client item is recorded (the mono
 combinations require a different host/driver). The scripted matrix, server
 soak, and GUI checklist are necessary but not sufficient: only the real v0.3.4
-APK can prove the "无感播放" (seamless playback) requirement.
+APK can prove the "seamless playback" ("无感播放") requirement.
 
 ## Modernized-build re-check (2026-11-11)
 
 The modernized Server GUI (Variant C, ticket branch) was checked against the
 same phone and the released v0.3.4 APK (`versionCode 3004`). The phone
 connected to `10.8.144.155:65530` and created a 48 kHz stereo f32 AudioTrack
-(format `0x5`, 2052 frames), displayed "已开始", and played for 30 s with no
+(format `0x5`, 2052 frames), displayed "Started" ("已开始"), and played for 30 s with no
 FATAL/underrun in logcat. Stopping the server produced the client's
-"Not enough data available … 会在2秒内重试" prompt; restarting it made the
+"Not enough data available … retrying in 2 s" ("Not enough data available … 会在2秒内重试") prompt; restarting it made the
 phone reconnect automatically and create a new AudioTrack (124 → 125) with
 playback resumed. Screenshots:
 `docs/server-rewrite/img/gui-mod-04-android-v034-{playing,retry,reconnected}.png`.

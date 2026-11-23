@@ -1,3 +1,9 @@
+> **Superseded internal draft.** The state below was recorded on 2026-11-22 and is
+> no longer current. The public release notes live in
+> [`docs/releases/v0.6.0.md`](../docs/releases/v0.6.0.md); the current release
+> gate and tag/draft state are in [`v0.6.0-review/release-gate.md`](v0.6.0-review/release-gate.md).
+> Kept for the evidence trail only.
+
 # Audio Share 0.6.0 — release notes draft
 
 Status as recorded on 2026-11-22: **local annotated tag only** (`v0.6.0`), not pushed,
