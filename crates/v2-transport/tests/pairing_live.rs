@@ -105,10 +105,15 @@ impl PairingServer {
 }
 
 async fn connect(address: SocketAddr) -> quinn::Connection {
-    v2_transport::test_support::connect_with_alpn(address, ALPN_PROTOCOL)
-        .expect("client endpoint")
-        .await
-        .expect("QUIC handshake")
+    // 握手没有超时会在无响应的 runner 上永久挂起；限时并把阶段写进失败信息。
+    tokio::time::timeout(Duration::from_secs(10), async {
+        v2_transport::test_support::connect_with_alpn(address, ALPN_PROTOCOL)
+            .expect("client endpoint")
+            .await
+            .expect("QUIC handshake")
+    })
+    .await
+    .expect("QUIC handshake did not complete within 10 s")
 }
 
 async fn read_frame(recv: &mut quinn::RecvStream) -> Frame {

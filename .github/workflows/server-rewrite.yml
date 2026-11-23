@@ -29,6 +29,8 @@ jobs:
   rust:
     name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # 防止某个 live 测试挂起时占满 6 小时默认上限；正常最慢步骤约 5 分钟。
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +38,7 @@ jobs:
           - ubuntu-24.04
           - windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -91,12 +93,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust stable (Windows)
         uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -143,7 +145,7 @@ jobs:
             --out-dir "$GITHUB_WORKSPACE/dist-windows"
 
       - name: Upload portable GUI exe
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AudioShareServer-windows
           path: |
@@ -152,7 +154,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Windows as-cmd archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: audio-share-server-cmd-windows
           path: |
@@ -165,12 +167,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -221,21 +223,21 @@ jobs:
             --arch amd64
 
       - name: Upload deb
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: audio-share-server-deb
           path: dist-linux/*.deb*
           if-no-files-found: error
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: audio-share-server-appimage
           path: dist-linux/*.AppImage*
           if-no-files-found: error
 
       - name: Upload Linux as-cmd archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: audio-share-server-cmd-linux
           path: dist-linux/audio-share-server-cmd-linux.tar.gz*
