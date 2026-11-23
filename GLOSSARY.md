@@ -88,6 +88,26 @@ _Avoid_: accept (reserve "accept" for the Server operator)
 The Server operator's explicit authorization of a verified Client, expressed as "Accept device" in the Server GUI or the confirmation in `as-cmd`. Distinct from Client Confirmation.
 _Avoid_: client confirmation, pairing confirmation
 
+**Revocation**:
+The Server operator's withdrawal of a paired Client's authorization. The record stays as revoked for audit, new connections are refused immediately, and an active session is closed. Reversible only by an explicit Restore.
+_Avoid_: unpair, block, ban
+
+**Restore**:
+The Server operator's explicit re-authorization of a revoked Client record, making the same identity active again. It is never a side effect of pairing.
+_Avoid_: un-revoke, re-accept, re-enable
+
+**Delete (device record)**:
+The removal of a paired Client record from the Server's authorization store; the identity loses access and its audit entry is gone. Cannot be undone.
+_Avoid_: remove device (ambiguous with Forget Server)
+
+**Forget Server**:
+The Android Client user's local removal of a stored Server credential and its Client identity key. No Server-side record changes.
+_Avoid_: unpair, remove pairing (ambiguous with Delete)
+
+**Re-pairing**:
+Establishing a pairing again for a Client that was paired before — after a Revocation, a Server identity reset, or a lost Client key. The result is either a Restore (same identity) or a new device record (new identity).
+_Avoid_: re-link, repair, rebind
+
 ## Session
 
 **Client Session**:
