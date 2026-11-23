@@ -569,6 +569,15 @@ async fn pairing_approve(
     state.controller.pairing_approve(approval_id)
 }
 
+/// Approve one pending pairing as an explicit Restore (ADR-0006).
+#[tauri::command]
+async fn pairing_restore(
+    state: State<'_, AppState>,
+    approval_id: u64,
+) -> Result<PairingStatus, String> {
+    state.controller.pairing_restore(approval_id)
+}
+
 /// Decline one pending pairing.
 #[tauri::command]
 async fn pairing_decline(
@@ -727,6 +736,7 @@ fn main() {
             pairing_cancel,
             pairing_poll,
             pairing_approve,
+            pairing_restore,
             pairing_decline,
             clients_list,
             clients_revoke,

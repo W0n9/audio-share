@@ -570,6 +570,15 @@ impl ServerController {
         Ok(self.pairing_status())
     }
 
+    /// Approve one pending pairing with the explicit Restore decision (ADR-0006).
+    pub fn pairing_restore(&self, approval_id: u64) -> Result<PairingStatus, String> {
+        let admin = self.pairing_admin()?;
+        if !admin.restore(approval_id) {
+            return Err("that pairing request is no longer pending".to_owned());
+        }
+        Ok(self.pairing_status())
+    }
+
     /// Decline one pending pairing by request id.
     pub fn pairing_decline(&self, approval_id: u64) -> Result<PairingStatus, String> {
         let admin = self.pairing_admin()?;
@@ -668,7 +677,7 @@ fn pending_info(request: PendingRequestView) -> PairingRequestInfo {
         mode: mode_name(request.mode),
         address: request.address,
         sas: request.sas,
-        would_restore: request.would_restore,
+        restore_candidate: request.restore_candidate,
     }
 }
 
@@ -682,7 +691,7 @@ fn live_info(request: PresentedRequestView) -> PairingLiveInfo {
         sas: request.sas,
         fingerprint: request.fingerprint,
         expires_in_secs: request.expires_in_secs,
-        would_restore: request.would_restore,
+        restore_candidate: request.restore_candidate,
     }
 }
 
@@ -786,6 +795,27 @@ mod tests {
             lock(&self.state)
                 .calls
                 .push(format!("approve:{approval_id}"));
+            let mut state = lock(&self.state);
+            match state
+                .pending
+                .iter()
+                .position(|request| request.approval_id == approval_id)
+            {
+                Some(index) => {
+                    state.pending.remove(index);
+                    state
+                        .presented
+                        .retain(|request| request.approval_id != approval_id);
+                    true
+                }
+                None => false,
+            }
+        }
+
+        fn restore(&self, approval_id: u64) -> bool {
+            lock(&self.state)
+                .calls
+                .push(format!("restore:{approval_id}"));
             let mut state = lock(&self.state);
             match state
                 .pending
@@ -932,7 +962,7 @@ mod tests {
             mode: RequestedPairingMode::Qr,
             address: "192.168.1.44:50000".to_owned(),
             sas: Some("123 456".to_owned()),
-            would_restore: None,
+            restore_candidate: None,
         }
     }
 
@@ -946,7 +976,7 @@ mod tests {
             sas: Some("123 456".to_owned()),
             fingerprint: "FP".to_owned(),
             expires_in_secs: 600,
-            would_restore: None,
+            restore_candidate: None,
         }
     }
 
@@ -1622,7 +1652,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pairing_status_forwards_would_restore_for_revoked_identities() {
+    async fn pairing_status_forwards_restore_candidate_for_revoked_identities() {
         let (_admin, admin_state, starter, _stopped) = fake_v2();
         let controller = ServerController::new(test_settings());
         controller.enable_v2(starter, 0);
@@ -1632,27 +1662,27 @@ mod tests {
         lock(&admin_state).pending.push(pending_request());
         lock(&admin_state).presented.push(live_request());
         let status = controller.pairing_status();
-        assert_eq!(status.pending[0].would_restore, None);
-        assert_eq!(status.live[0].would_restore, None);
+        assert_eq!(status.pending[0].restore_candidate, None);
+        assert_eq!(status.live[0].restore_candidate, None);
 
         // A revoked identity forwards the saved display name to both views so
         // the dialog can ask for an explicit Restore (ADR-0006).
         lock(&admin_state).pending.clear();
         lock(&admin_state).presented.clear();
         let mut pending = pending_request();
-        pending.would_restore = Some("Pixel 8 (saved)".to_owned());
+        pending.restore_candidate = Some("Pixel 8 (saved)".to_owned());
         lock(&admin_state).pending.push(pending);
         let mut live = live_request();
-        live.would_restore = Some("Pixel 8 (saved)".to_owned());
+        live.restore_candidate = Some("Pixel 8 (saved)".to_owned());
         lock(&admin_state).presented.push(live);
 
         let status = controller.pairing_status();
         assert_eq!(
-            status.pending[0].would_restore.as_deref(),
+            status.pending[0].restore_candidate.as_deref(),
             Some("Pixel 8 (saved)")
         );
         assert_eq!(
-            status.live[0].would_restore.as_deref(),
+            status.live[0].restore_candidate.as_deref(),
             Some("Pixel 8 (saved)")
         );
 

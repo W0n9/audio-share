@@ -133,7 +133,7 @@ export interface PairingRequestInfo {
    * Saved display name when approving restores a revoked record in place
    * (ADR-0006); null for a new or active identity.
    */
-  wouldRestore: string | null;
+  restoreCandidate: string | null;
 }
 
 /** A live pairing shown before the Client confirms. */
@@ -148,7 +148,7 @@ export interface PairingLiveInfo {
   /** Seconds until the pairing deadline; refreshed by polling. */
   expiresInSecs: number;
   /** Saved display name when approving restores a revoked record in place. */
-  wouldRestore: string | null;
+  restoreCandidate: string | null;
 }
 
 /** The polled pairing dialog state. */
@@ -196,6 +196,9 @@ export const api = {
   pairingPoll: () => invoke<PairingStatus>("pairing_poll"),
   pairingApprove: (approvalId: number) =>
     invoke<PairingStatus>("pairing_approve", { approvalId }),
+  /** Explicit Restore of a revoked identity (ADR-0006). */
+  pairingRestore: (approvalId: number) =>
+    invoke<PairingStatus>("pairing_restore", { approvalId }),
   pairingDecline: (approvalId: number) =>
     invoke<PairingStatus>("pairing_decline", { approvalId }),
   clientsList: () => invoke<ClientInfo[]>("clients_list"),
