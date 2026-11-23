@@ -4,17 +4,17 @@
 
 **Blocked by:** 01, 03。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## 验收
 
-- [ ] `AppState` 增加 `PairingIntent`（`First` | `RePair(serverPin)`）；PAIRING 屏据此渲染重配提示，不新增第六个屏。
-- [ ] 204 错误卡与 `Needs re-pairing` 卡片的入口都进入 `RePair` 上下文；重配完成前 Home 的 `Connect` 禁用。
-- [ ] 重配提示：“Ask the Server operator to start pairing. Then scan the new QR code or use the pairing code.”；地址从记录预填；QR 为主、SAS 次之。
-- [ ] SAS 重配：输入地址命中已存记录时复用该记录的 `keyAlias`；未命中时按现有逻辑生成新身份。
-- [ ] 配对成功：删除同 `host:port` 的其他记录；清除 `needsRepairing`；进入 SESSION。
-- [ ] 201/206 阻断态：显示“邀请已失效，请服务端刷新后再扫新码”，按钮 `Scan new code`；不再显示裸 `Scan again`。
-- [ ] JVM/UI 测试覆盖：RePair 上下文、SAS 密钥复用、同地址清理、失败态文案与按钮。
+- [x] `AppState` 增加 `PairingIntent`（`First` | `RePair(serverPin)`）；PAIRING 屏据此渲染重配提示，不新增第六个屏。
+- [x] 204 错误卡与 `Needs re-pairing` 卡片的入口都进入 `RePair` 上下文；重配完成前 Home 的 `Connect` 禁用。
+- [x] 重配提示：“Ask the Server operator to start pairing. Then scan the new QR code or use the pairing code.”；地址从记录预填；QR 为主、SAS 次之。
+- [x] SAS 重配：输入地址命中已存记录时复用该记录的 `keyAlias`；未命中时按现有逻辑生成新身份。
+- [x] 配对成功：删除同 `host:port` 的其他记录；清除 `needsRepairing`；进入 SESSION。
+- [x] 201/206 阻断态：显示“邀请已失效，请服务端刷新后再扫新码”，按钮 `Scan new code`；不再显示裸 `Scan again`。
+- [x] JVM/UI 测试覆盖：RePair 上下文、SAS 密钥复用、同地址清理、失败态文案与按钮。
 
 ## 事实来源
 
@@ -41,3 +41,6 @@
   verified independently. `pairQr`, the manual Re-pair/Restore/Forget UI checklist, and
   the real device are `NOT RUN`.
 - Details: `.scratch/pairing-ux/evidence/README.md`.
+- Review fixes merged at `6242ec7`: QR re-pair reuses a SAS-origin record's key, cleanup
+  is strict `host:port`, SESSION "Connect again" routes to RePair, and the 201/206
+  blocking state is retained; Android JVM 332 tests PASS. Status: resolved.

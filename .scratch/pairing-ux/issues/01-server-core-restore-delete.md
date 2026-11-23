@@ -4,17 +4,17 @@
 
 **Blocked by:** 无。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## 验收
 
-- [ ] 配对完成路径按 `public_key` 命中既有 revoked 记录时，不直接 `upsert` 覆盖；`PendingRequestView` / `PresentedRequestView` 暴露 `would_restore`（含既有 `display_name`）。
-- [ ] 恢复确认后：原记录 `state=active`、`client_id` 不变、`created_at` 保留；列表中只有这一条。
-- [ ] 拒绝恢复：记录保持 revoked，不写 `PairingResult(OK)`，不广播 paired。
-- [ ] 无既有记录的新配对行为不变；active 记录再次配对的行为不变。
-- [ ] `PairingAdmin` 增加 `delete(client_id)`：仅允许 revoked；active 返回错误并保持原状；删除后列表与 `clients.json` 都不再有该记录。
-- [ ] `as-cmd clients delete <client_id>` 使用同一 Core 状态；删除 active 设备时提示先撤销。
-- [ ] Rust host 测试覆盖：revoked→恢复、revoked→拒绝、active 不得删除、删除后认证被拒。
+- [x] 配对完成路径按 `public_key` 命中既有 revoked 记录时，不直接 `upsert` 覆盖；`PendingRequestView` / `PresentedRequestView` 暴露 `would_restore`（含既有 `display_name`）。
+- [x] 恢复确认后：原记录 `state=active`、`client_id` 不变、`created_at` 保留；列表中只有这一条。
+- [x] 拒绝恢复：记录保持 revoked，不写 `PairingResult(OK)`，不广播 paired。
+- [x] 无既有记录的新配对行为不变；active 记录再次配对的行为不变。
+- [x] `PairingAdmin` 增加 `delete(client_id)`：仅允许 revoked；active 返回错误并保持原状；删除后列表与 `clients.json` 都不再有该记录。
+- [x] `as-cmd clients delete <client_id>` 使用同一 Core 状态；删除 active 设备时提示先撤销。
+- [x] Rust host 测试覆盖：revoked→恢复、revoked→拒绝、active 不得删除、删除后认证被拒。
 
 ## 事实来源
 
@@ -38,3 +38,7 @@
   deleting", then revoke → delete → `no paired clients`. Store/admin tests cover the same
   paths; there is no dedicated CLI test for `delete`.
 - Details: `.scratch/pairing-ux/evidence/README.md`.
+- Review fixes merged on `integration/pairing-ux` at `6242ec7`: Restore is an explicit
+  `ApprovalDecision`, `would_restore` renamed to `restore_candidate`, and `persist_client`
+  takes `PersistMode`; Rust 357 / GUI 114 / Android JVM 332 tests PASS, fmt/clippy/build
+  PASS. Status: resolved.
