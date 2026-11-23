@@ -309,9 +309,12 @@ private fun HomeScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
         OutlinedButton(
             // Re-pair opens the same PAIRING screen in its dedicated re-pair
             // context: the fixed instruction, the saved address prefilled, and
-            // any visible failure cause (ticket 04).
+            // any visible failure cause (ticket 04). Target the same record
+            // Connect would use (the typed address wins), else the first.
             onClick = {
-                onEvent(UiEvent.RePairRequested(state.storedServers.first().serverSpkiSha256Hex))
+                val pin = state.selectedPin()
+                    ?: state.storedServers.first().serverSpkiSha256Hex
+                onEvent(UiEvent.RePairRequested(pin))
             },
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("pair-code"),
         ) {
