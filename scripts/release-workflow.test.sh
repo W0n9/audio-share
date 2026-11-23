@@ -81,7 +81,7 @@ git tag v0.6.0-rc.1 "$commit"
 bash scripts/check-release-tag.sh v0.6.0 "$commit"
 bash scripts/check-release-tag.sh v0.6.0-rc.1 "$commit"
 expect_fail '拒绝创建 draft' bash scripts/check-release-tag.sh v0.6.0-old "$commit"
-expect_fail 'origin 没有' bash scripts/check-release-tag.sh v0.6.1 "$commit"
+expect_fail 'origin 没有' bash scripts/check-release-tag.sh v0.6.2 "$commit"
 
 # 捕获 gh 参数，确保只上传验证过的资产，且不创建新标签或发布。
 cat >fake-bin/gh <<'EOF'

@@ -11,7 +11,7 @@
 Audio Share shares a computer's audio with an Android phone over the network,
 so the phone becomes a speaker for the computer.
 
-Version 0.6.1 ships the Rust Server with **two transports**: the frozen,
+Version 0.6.2 ships the Rust Server with **two transports**: the frozen,
 unencrypted v1 Wire Protocol (port 65530) for the existing v0.3.4 Android
 client, and the encrypted, paired **Wire Protocol v2** (QUIC, UDP port 65531)
 for the v2 Android client. The v2 client ships as two separately signed APKs,
@@ -71,12 +71,21 @@ through the firewall and make sure the phone can reach the Server host.
    and connects automatically on later runs.
 4. In the v2 app, select the paired Server and press play.
 
+To manage an already paired phone, open the same dialog: **Revoke** removes its
+authorization and closes an active session within five seconds. A revoked row
+offers **Re-pair** (open a fresh invitation) and **Delete** (remove the record
+permanently; revoke first). On the phone, a revoked or identity-reset Server
+shows **Needs re-pairing**; **Re-pair** keeps the cause and address, and
+**Forget this Server** deletes the local pairing and its key. Re-pairing the
+same phone keeps its identity, and the Server operator confirms **Restore
+device** before it becomes active again.
+
 Pairing is one Client per Server in this release; concurrent phones and
 multi-Client isolation are not supported. A failed v2 connection never falls
 back to v1 or plaintext. If an older v2 beta left stale credentials (error
-205), uninstall the old v2 app, install the current APK, and pair again;
-uninstalling removes saved pairings. Full semantics are in the
-[pairing specification](docs/wire-protocol-v2/pairing.md).
+205), use **Forget this Server** in the app and pair again; uninstalling the old
+v2 app remains the fallback and also removes saved pairings. Full semantics are
+in the [pairing specification](docs/wire-protocol-v2/pairing.md).
 
 The v1 client needs no pairing: enter the Server's host and port 65530 in the
 v0.3.4 app and press play. **Use v1 only on a trusted network** — it is
@@ -133,15 +142,17 @@ Headless pairing and authorization use subcommands:
 as-cmd pair [--sas] [--accept] [--addr host:port] [--timeout seconds]
 as-cmd clients list
 as-cmd clients revoke <client-id>
+as-cmd clients delete <client-id>
 as-cmd identity reset [--yes]
 ```
 
 `pair` prints a QR invitation (or opens only the SAS window with `--sas`) and
 waits up to 600 seconds for a device by default (`--timeout`); `--accept`
 approves the first verified device without a prompt. Invitation lifetime is
-governed by the pairing specification, not by `--timeout`. `clients` lists or
-revokes authorized Clients; `identity reset` generates a new Server identity
-and invalidates all existing pairings.
+governed by the pairing specification, not by `--timeout`. `clients` lists,
+revokes, or deletes authorized Clients; `delete` only removes a revoked record,
+so revoke it first. `identity reset` generates a new Server identity and
+invalidates all existing pairings.
 
 Examples:
 
