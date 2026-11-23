@@ -53,7 +53,8 @@
 7 个 `.sha256` sidecar，共 14 个附件；正文由 `docs/releases/v0.6.0.md` 生成，包含下载表、
 校验命令与验证边界。所有构建作业成功，标签对象解引用到 `88f6f07`。
 此前的 [45114429469](https://github.com/W0n9/audio-share/actions/runs/45114429469)
-draft 已被替换，其附件摘要核对记录不再适用于当前 draft。
+draft 已被替换，其附件摘要核对记录不再适用于当前 draft。注意该 draft 的源码仍带
+beta 文案和上游版权方，不能作为公开构建；修复见 `docs/releases/v0.6.1.md`。
 
 **验收更新（2026-11-23，用户报告/裁决）**：最终 draft 产物的真机安装播放与
 Windows 运行均为 `PASS`；升级路径用户裁决 `WAIVED`，不视为 `PASS`，升级提示

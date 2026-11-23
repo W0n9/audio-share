@@ -1065,6 +1065,12 @@ private fun AboutScreen(versionName: String, versionCode: Int, onEvent: (UiEvent
         style = MaterialTheme.typography.titleMedium,
         modifier = Modifier.testTag("about-version"),
     )
+    Text(
+        stringResource(R.string.about_copyright),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.testTag("about-copyright"),
+    )
     Spacer(Modifier.height(16.dp))
 
     SectionTitle(stringResource(R.string.about_known_limitations))

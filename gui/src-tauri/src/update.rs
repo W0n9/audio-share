@@ -9,13 +9,13 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// Latest-release endpoint used by v0.3.4 and this rewrite.
-pub const API_URL: &str = "https://api.github.com/repos/mkckr0/audio-share/releases/latest";
+/// Latest-release endpoint for the repository that publishes current builds.
+pub const API_URL: &str = "https://api.github.com/repos/W0n9/audio-share/releases/latest";
 
 /// Network timeout for the release request.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The version compiled into this build (`0.4.0`).
+/// The version compiled into this build.
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The user agent GitHub requires for unauthenticated requests.
@@ -234,8 +234,8 @@ mod tests {
     use super::*;
 
     const NEWER_BODY: &str = r#"{
-        "url": "https://api.github.com/repos/mkckr0/audio-share/releases/1",
-        "html_url": "https://github.com/mkckr0/audio-share/releases/tag/v0.4.1",
+        "url": "https://api.github.com/repos/W0n9/audio-share/releases/1",
+        "html_url": "https://github.com/W0n9/audio-share/releases/tag/v0.4.1",
         "tag_name": "v0.4.1",
         "name": "Audio Share 0.4.1",
         "draft": false,
@@ -243,12 +243,12 @@ mod tests {
     }"#;
 
     const SAME_BODY: &str = r#"{
-        "html_url": "https://github.com/mkckr0/audio-share/releases/tag/v0.4.0",
+        "html_url": "https://github.com/W0n9/audio-share/releases/tag/v0.4.0",
         "tag_name": "v0.4.0"
     }"#;
 
     const OLDER_BODY: &str = r#"{
-        "html_url": "https://github.com/mkckr0/audio-share/releases/tag/v0.3.4",
+        "html_url": "https://github.com/W0n9/audio-share/releases/tag/v0.3.4",
         "tag_name": "v0.3.4"
     }"#;
 
@@ -323,7 +323,7 @@ mod tests {
         assert_eq!(release.tag_name, "v0.4.1");
         assert_eq!(
             release.html_url,
-            "https://github.com/mkckr0/audio-share/releases/tag/v0.4.1"
+            "https://github.com/W0n9/audio-share/releases/tag/v0.4.1"
         );
     }
 
@@ -349,7 +349,7 @@ mod tests {
             evaluate_release(NEWER_BODY, "v0.4.0").unwrap(),
             UpdateCheckResult::Newer {
                 version: "v0.4.1".to_owned(),
-                url: "https://github.com/mkckr0/audio-share/releases/tag/v0.4.1".to_owned(),
+                url: "https://github.com/W0n9/audio-share/releases/tag/v0.4.1".to_owned(),
             }
         );
         assert_eq!(
@@ -368,7 +368,7 @@ mod tests {
             interpret_response(200, NEWER_BODY, "v0.4.0").unwrap(),
             UpdateCheckResult::Newer {
                 version: "v0.4.1".to_owned(),
-                url: "https://github.com/mkckr0/audio-share/releases/tag/v0.4.1".to_owned(),
+                url: "https://github.com/W0n9/audio-share/releases/tag/v0.4.1".to_owned(),
             }
         );
         assert_eq!(

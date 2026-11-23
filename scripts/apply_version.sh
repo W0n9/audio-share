@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Apply the version in VERSION to the Rust workspace and Tauri GUI.
 #
-# Android is intentionally not touched: its version (0.2.0-beta / versionCode
-# 2) is owned by android-client-v2/app/build.gradle.kts so the beta APK can
-# coexist with the released v1 app.
+# Android is intentionally not touched: its version (currently 0.6.1 /
+# versionCode 4) is owned by android-client-v2/app/build.gradle.kts so the v2
+# APK can coexist with the released v1 app.
 #
 # Prerelease versions such as `0.5.0-beta` are supported. The numeric version
 # code comes from scripts/get_version.sh -c, whose prerelease-aware scheme

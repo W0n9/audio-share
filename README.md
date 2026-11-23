@@ -4,14 +4,14 @@
     <img src="metadata/en-US/images/icon.png" width="20%" alt="Audio Share icon">
 </p>
 
-[![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/mkckr0/audio-share?logo=github)](https://github.com/mkckr0/audio-share/releases/latest)
+[![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/W0n9/audio-share?logo=github)](https://github.com/W0n9/audio-share/releases/latest)
 [![F-Droid](https://img.shields.io/f-droid/v/io.github.mkckr0.audio_share_app?logo=F-Droid)](https://f-droid.org/packages/io.github.mkckr0.audio_share_app)
-[![GitHub license](https://img.shields.io/github/license/mkckr0/audio-share)](https://github.com/mkckr0/audio-share/blob/main/LICENSE)
+[![GitHub license](https://img.shields.io/github/license/W0n9/audio-share)](https://github.com/W0n9/audio-share/blob/main/LICENSE)
 
 Audio Share shares a computer's audio with an Android phone over the network,
 so the phone becomes a speaker for the computer.
 
-Version 0.6.0 ships the Rust Server with **two transports**: the frozen,
+Version 0.6.1 ships the Rust Server with **two transports**: the frozen,
 unencrypted v1 Wire Protocol (port 65530) for the existing v0.3.4 Android
 client, and the encrypted, paired **Wire Protocol v2** (QUIC, UDP port 65531)
 for the v2 Android client. The v2 client ships as two separately signed APKs,
@@ -43,7 +43,7 @@ Release artifacts (each with a `sha256sum`-format `.sha256` sidecar):
 
 The v1 APK is unchanged at v0.3.4. Use the [v0.3.4 release](https://github.com/mkckr0/audio-share/releases/tag/v0.3.4)
 or F-Droid if you need it. Verify every download against its SHA-256 sidecar.
-See the [release notes](docs/releases/v0.6.0.md) for compatibility, upgrade
+See the [release notes](docs/releases/v0.6.1.md) for compatibility, upgrade
 notes, and validation limits.
 
 Linux packages depend on WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`), GTK 3, the
@@ -268,7 +268,7 @@ More detail: [build and packaging](docs/server-rewrite/README.md),
   waived; no p95/p99 audible-latency target is claimed. Real-network
   impairment testing, device clock-drift injection, and listening A/B for the
   drift-control change were not run; the impairment matrix was exercised on
-  host only. See the [release notes](docs/releases/v0.6.0.md).
+  host only. See the [release notes](docs/releases/v0.6.1.md).
 - No code signing for Windows binaries, MSI/NSIS installer, or Tauri
   self-updater in this release. The v2 APKs are signed with the project's
   beta key.
@@ -292,6 +292,7 @@ This project is licensed under the [Apache-2.0 license](LICENSE).
 
 ```text
 Copyright 2022-2024 mkckr0 <https://github.com/mkckr0>
+Copyright 2025-2026 Audio Share contributors <https://github.com/W0n9/audio-share>
 ```
 
 ### Used third-party libraries

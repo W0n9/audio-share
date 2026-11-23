@@ -84,7 +84,7 @@
   "update.openRelease": "打开发布页面",
   "about.productName": "Audio Share Server",
   "about.homepage": "主页",
-  "about.copyright": "版权所有 © 2022-2024 mkckr0。保留所有权利。",
+  "about.copyright": "版权所有 © 2022-2026 Audio Share contributors。按 Apache-2.0 许可授权。",
   "notice.migrated": "配置已从版本 {from} 迁移到版本 {to}。",
   "notice.futureVersion": "配置版本 {version} 比此应用更新；已读取设置但未重写，并保留了备份。",
   "notice.recovered": "配置文件已损坏；已恢复默认值并将备份保存为 config.ini.bak。",
