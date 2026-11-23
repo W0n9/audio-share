@@ -725,6 +725,27 @@ fn save_rejects_unusable_server_values() {
 }
 
 #[test]
+fn an_ipv6_host_saves_and_loads_back() {
+    // A Host suggestion offered by #03 is a plain IPv6 literal; the pairing
+    // payload's port/brackets are a separate concern. It must round-trip.
+    let dir = tempdir();
+    let path = config_path(dir.path());
+
+    save(
+        &path,
+        &Config {
+            host: "fd00::1".to_owned(),
+            ..Config::default()
+        },
+    )
+    .expect("save IPv6 host");
+
+    let loaded = load(&path, LoadOptions::default()).expect("reload IPv6 host");
+    assert_eq!(loaded.config.host, "fd00::1");
+    assert!(read(&path).contains("host=fd00::1"));
+}
+
+#[test]
 fn load_options_default_matches_a_plain_load() {
     // The convenience default must not validate endpoints or read a legacy file.
     let dir = tempdir();
