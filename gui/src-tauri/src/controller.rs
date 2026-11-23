@@ -595,6 +595,18 @@ impl ServerController {
             .map_err(|error| format!("cannot revoke client: {error}"))
     }
 
+    /// Permanently delete one **revoked** Client record (ADR-0006).
+    ///
+    /// An active record is refused by the core so a single click cannot both
+    /// terminate a session and erase the audit row.
+    pub fn clients_delete(&self, client_id: &str) -> Result<ClientInfo, String> {
+        let admin = self.pairing_admin()?;
+        admin
+            .delete(client_id)
+            .map(client_info)
+            .map_err(|error| format!("cannot delete client: {error}"))
+    }
+
     /// The running Pairing Core adapter, or a readable reason it is absent.
     fn pairing_admin(&self) -> Result<Arc<dyn PairingAdmin>, String> {
         let state = lock(&self.state);
@@ -656,6 +668,7 @@ fn pending_info(request: PendingRequestView) -> PairingRequestInfo {
         mode: mode_name(request.mode),
         address: request.address,
         sas: request.sas,
+        would_restore: request.would_restore,
     }
 }
 
@@ -669,6 +682,7 @@ fn live_info(request: PresentedRequestView) -> PairingLiveInfo {
         sas: request.sas,
         fingerprint: request.fingerprint,
         expires_in_secs: request.expires_in_secs,
+        would_restore: request.would_restore,
     }
 }
 
@@ -829,8 +843,6 @@ mod tests {
             Ok(client.clone())
         }
 
-        // Compile-only stub for ticket 01: the GUI's delete action is wired in
-        // ticket 02, which owns the device-row controls.
         fn delete(&self, client_id: &str) -> Result<ClientView, String> {
             lock(&self.state).calls.push(format!("delete:{client_id}"));
             let mut state = lock(&self.state);
@@ -1610,6 +1622,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pairing_status_forwards_would_restore_for_revoked_identities() {
+        let (_admin, admin_state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+
+        // A plain identity keeps `None`: the dialog shows the normal card.
+        lock(&admin_state).pending.push(pending_request());
+        lock(&admin_state).presented.push(live_request());
+        let status = controller.pairing_status();
+        assert_eq!(status.pending[0].would_restore, None);
+        assert_eq!(status.live[0].would_restore, None);
+
+        // A revoked identity forwards the saved display name to both views so
+        // the dialog can ask for an explicit Restore (ADR-0006).
+        lock(&admin_state).pending.clear();
+        lock(&admin_state).presented.clear();
+        let mut pending = pending_request();
+        pending.would_restore = Some("Pixel 8 (saved)".to_owned());
+        lock(&admin_state).pending.push(pending);
+        let mut live = live_request();
+        live.would_restore = Some("Pixel 8 (saved)".to_owned());
+        lock(&admin_state).presented.push(live);
+
+        let status = controller.pairing_status();
+        assert_eq!(
+            status.pending[0].would_restore.as_deref(),
+            Some("Pixel 8 (saved)")
+        );
+        assert_eq!(
+            status.live[0].would_restore.as_deref(),
+            Some("Pixel 8 (saved)")
+        );
+
+        controller.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
     async fn pairing_begin_status_approve_and_decline_route_to_the_core() {
         let (admin, admin_state, starter, _stopped) = fake_v2();
         let controller = ServerController::new(test_settings());
@@ -1899,6 +1949,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn clients_delete_routes_to_the_shared_core_and_refuses_active_records() {
+        let (admin, _state, starter, _stopped) = fake_v2();
+        let controller = ServerController::new(test_settings());
+        controller.enable_v2(starter, 0);
+        controller.start(synthetic()).await.expect("start");
+
+        // ADR-0006: an active record must be revoked first, so one click cannot
+        // both close a session and erase the audit row.
+        let error = controller
+            .clients_delete("0011223344556677")
+            .expect_err("active record");
+        assert!(error.contains("revoke"), "error was {error}");
+        assert_eq!(controller.clients_list().expect("list").len(), 1);
+
+        controller
+            .clients_revoke("0011223344556677")
+            .expect("revoke");
+        let deleted = controller
+            .clients_delete("0011223344556677")
+            .expect("delete revoked");
+        assert_eq!(deleted.client_id, "0011223344556677");
+        assert_eq!(deleted.state, "revoked");
+        assert!(admin
+            .calls()
+            .iter()
+            .any(|call| call == "delete:0011223344556677"));
+        assert!(controller.clients_list().expect("list").is_empty());
+
+        let error = controller
+            .clients_delete("deadbeefdeadbeef")
+            .expect_err("unknown client");
+        assert!(error.contains("unknown client"), "error was {error}");
+        controller.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
     async fn device_commands_are_refused_after_stop() {
         let (_admin, _state, starter, _stopped) = fake_v2();
         let controller = ServerController::new(test_settings());
@@ -1910,6 +1996,10 @@ mod tests {
             controller
                 .clients_list()
                 .expect_err("list after stop")
+                .to_string(),
+            controller
+                .clients_delete("0011223344556677")
+                .expect_err("delete after stop")
                 .to_string(),
             controller
                 .pairing_cancel()

@@ -783,6 +783,16 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.pairing-success {
+  margin: 0 0 10px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .pairing-invitation {
   display: flex;
   flex-direction: column;
@@ -893,6 +903,13 @@ button:disabled {
   font-weight: 700;
 }
 
+.pairing-restore-name {
+  margin: 0 0 6px;
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .pairing-code {
   display: flex;
   align-items: center;
@@ -917,6 +934,12 @@ button:disabled {
   gap: 10px;
   padding: 8px 0;
   border-bottom: 1px solid var(--line);
+}
+
+.pairing-device-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .pairing-device-main {

@@ -593,6 +593,15 @@ async fn clients_revoke(
     state.controller.clients_revoke(&client_id)
 }
 
+/// Permanently delete one revoked Client record (ADR-0006).
+#[tauri::command]
+async fn clients_delete(
+    state: State<'_, AppState>,
+    client_id: String,
+) -> Result<ClientInfo, String> {
+    state.controller.clients_delete(&client_id)
+}
+
 /// Open the documentation that replaces the Windows-only maintenance actions
 /// on Linux. The frontend sends a topic id, never a URL, so the webview cannot
 /// use this command to open arbitrary pages.
@@ -721,6 +730,7 @@ fn main() {
             pairing_decline,
             clients_list,
             clients_revoke,
+            clients_delete,
             open_help,
             hide_window,
             exit_app,
