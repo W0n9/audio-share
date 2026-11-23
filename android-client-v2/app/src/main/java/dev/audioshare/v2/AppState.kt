@@ -3,6 +3,18 @@ package dev.audioshare.v2
 /** The five beta screens (ticket 06 "Navigation": HOME, PAIRING, SESSION, ABOUT, SETTINGS). */
 enum class AppScreen { HOME, PAIRING, SESSION, ABOUT, SETTINGS }
 
+/**
+ * Why the PAIRING screen was opened (ticket 04). `First` is the general
+ * pairing page; `RePair` is the dedicated re-pairing flow for one stored
+ * Server, which keeps the failure cause visible and shows the fixed
+ * "ask the Server operator to start pairing" instruction. The five-screen
+ * model is unchanged: both intents share the PAIRING screen.
+ */
+sealed interface PairingIntent {
+    data object First : PairingIntent
+    data class RePair(val serverSpkiSha256Hex: String) : PairingIntent
+}
+
 /** A paired Server as the UI needs it (public credential data only). */
 data class StoredServer(
     val serverSpkiSha256Hex: String,
@@ -106,6 +118,8 @@ data class AppState(
     /** Local button-disable while an asynchronous Stop is in flight. */
     val stopRequested: Boolean = false,
     val pairing: PairingUi? = null,
+    /** Why PAIRING is open: the general page or a stored Server's re-pair. */
+    val pairingIntent: PairingIntent = PairingIntent.First,
     val scanActive: Boolean = false,
     val scanNotice: ScanNotice? = null,
     /**
@@ -180,6 +194,12 @@ sealed interface UiEvent {
     data class PairingCompleted(val record: CredentialRecord) : UiEvent
     data object ShowHome : UiEvent
     data object ShowPairing : UiEvent
+    /**
+     * Open the PAIRING screen in the dedicated re-pairing context for one
+     * stored Server (ticket 04). The address is prefilled from the record and
+     * the failure cause (when one is showing) stays visible.
+     */
+    data class RePairRequested(val serverSpkiSha256Hex: String) : UiEvent
     data object ShowAbout : UiEvent
     data object ShowSettings : UiEvent
     data object RequestScan : UiEvent
@@ -399,12 +419,19 @@ object AppReducer {
 
         is UiEvent.PairingCompleted -> {
             val server = StoredServer.from(event.record)
+            // A successful pairing replaces every record for the same address
+            // (ADR-0006 §3): the new record wins and the stale one on that
+            // host:port disappears from the list too.
             val servers = state.storedServers
-                .filterNot { it.serverSpkiSha256Hex == server.serverSpkiSha256Hex } + server
+                .filterNot {
+                    it.serverSpkiSha256Hex == server.serverSpkiSha256Hex ||
+                        it.address == server.address
+                } + server
             Reduction(
                 state.copy(
                     screen = AppScreen.SESSION,
                     storedServers = servers,
+                    pairingIntent = PairingIntent.First,
                     stopRequested = false,
                     pairing = null,
                     scanActive = false,
@@ -417,11 +444,17 @@ object AppReducer {
         UiEvent.ShowHome -> Reduction(
             state.copy(
                 screen = AppScreen.HOME,
+                pairingIntent = PairingIntent.First,
                 scanActive = false,
                 scanNotice = null,
                 restoredSasInput = "",
             )
         )
+
+        // A repair entry point (Home's Needs re-pairing card or the 204 error
+        // card) opens the same PAIRING screen but keeps the stored pin, the
+        // prefilled address and the visible failure cause (ticket 04).
+        is UiEvent.RePairRequested -> rePair(state, event.serverSpkiSha256Hex)
 
         UiEvent.ShowPairing -> Reduction(
             state.copy(
@@ -501,6 +534,7 @@ object AppReducer {
             outcome = null,
             stopRequested = false,
             pairing = null,
+            pairingIntent = PairingIntent.First,
             scanActive = false,
             scanNotice = null,
             restoredSasInput = "",
@@ -522,6 +556,13 @@ object AppReducer {
                     scanNotice = null,
                 )
             )
+        }
+        // A revoked device must be re-paired, never reconnected (ticket 04).
+        val target = state.storedServers.firstOrNull {
+            it.serverSpkiSha256Hex == state.selectedPin()
+        }
+        if (target?.needsRepairing == true) {
+            return Reduction(state)
         }
         if (!state.hasStoredPairing) {
             return Reduction(
@@ -704,18 +745,47 @@ object AppReducer {
     private fun retry(state: AppState): Reduction {
         val error = state.sessionError
         if (error?.requiresRepairing == true) {
-            return Reduction(
-                state.copy(
-                    screen = AppScreen.PAIRING,
-                    pairing = null,
-                    restoredSasInput = "",
+            // The 204/205/202 card's action is the same dedicated re-pair
+            // context as Home's Needs re-pairing entry. Keep the outcome so
+            // the failure cause stays visible on the PAIRING screen.
+            val pin = state.selectedPin()
+            return if (pin != null) {
+                rePair(state, pin)
+            } else {
+                Reduction(
+                    state.copy(
+                        screen = AppScreen.PAIRING,
+                        pairingIntent = PairingIntent.First,
+                        pairing = null,
+                        restoredSasInput = "",
+                    )
                 )
-            )
+            }
         }
         if (state.hasStoredPairing) {
             return connect(state)
         }
         return Reduction(state.copy(screen = AppScreen.HOME))
+    }
+
+    /** Open PAIRING for one stored Server, prefilling its saved address. */
+    private fun rePair(state: AppState, serverSpkiSha256Hex: String): Reduction {
+        val server = state.storedServers
+            .firstOrNull { it.serverSpkiSha256Hex == serverSpkiSha256Hex }
+            ?: return Reduction(state)
+        val address = server.address
+        return Reduction(
+            state.copy(
+                screen = AppScreen.PAIRING,
+                address = address,
+                addressError = validateAddressInput(address),
+                pairingIntent = PairingIntent.RePair(serverSpkiSha256Hex),
+                pairing = null,
+                scanActive = false,
+                scanNotice = null,
+                restoredSasInput = "",
+            )
+        )
     }
 
     private fun formatSas(raw: String): String {
