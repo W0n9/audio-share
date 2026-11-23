@@ -40,15 +40,33 @@ Wire Protocol v2、音频路径与验证边界不变。发布说明见
 - `NOT RUN`：QR 首次配对、QR 重配、Forget UI、完整手动清单、真机。
 - 这些结果覆盖的是源码与模拟器，不是 0.6.2 产物的真机验收。
 
-## 0.6.2 产物验收（待执行）
+## 0.6.2 产物验收
 
-1. 运行 `Make Release`，`version=0.6.2`，`create_draft=false`；确认 6 个构建作业成功。
-2. 逐一核对 7 个产物与 `.sha256`：APK `0.6.2` / `versionCode 5`、单 ABI、无
-   test-support；Windows exe 版本/Company/LegalCopyright；deb `Version 0.6.2`、
-   `Maintainer: Audio Share contributors`、`Homepage: W0n9/audio-share`；AppImage；
-   Linux/Windows `as-cmd` 版本。
-3. 真机安装与播放、GUI 关于页截图仍按证据政策记录 `PASS` 或 `NOT RUN`。
-4. 远端 tag `v0.6.2` 必须指向实际构建提交，再创建与发布 Release。
+验收运行 [45156050225](https://github.com/W0n9/audio-share/actions/runs/45156050225)（attempt 2），
+`version=0.6.2`、`create_draft=false`，构建提交 `6307671`（tag `v0.6.2`）。
+第一次运行的 Linux 作业在 `Install Linux build dependencies (Tauri + PipeWire)` 处
+超过 30 分钟上限被取消；用 **Re-run failed jobs** 重跑后 6 个构建作业全部成功，
+draft 作业因 `create_draft=false` 跳过。
+
+| 项目 | 结果 |
+| --- | --- |
+| 7 个产物与 7 个 `.sha256` sidecar | `PASS`（逐目录 `sha256sum -c`） |
+| APK：`0.6.2` / `versionCode 5`、单 ABI、无 test-support 标记 | `PASS`（arm64-v8a、x86_64 各自核对） |
+| APK 签名：`CN=Audio Share Beta`，SHA-256 `90bedcd1…a13c` | `PASS`；与 v0.6.0 发布 APK 的证书摘要一致（签名密钥未变） |
+| deb：`Version 0.6.2`、`Maintainer: Audio Share contributors`、`Homepage: W0n9/audio-share` | `PASS` |
+| Windows GUI exe：File/Product `0.6.2`、Company `Audio Share contributors`、`LegalCopyright © 2022-2026` | `PASS` |
+| AppImage：内部二进制含 `0.6.2`、`Audio Share contributors`、`W0n9/audio-share` 更新 URL | `PASS` |
+| Linux `as-cmd`：`version: 0.6.2`、`url: W0n9/audio-share` | `PASS` |
+| Windows `as-cmd`：PE32+ x86-64，含 `0.6.2` 与仓库 URL | `PASS`（exiftool 无法解析该 PE 的数据目录，用 strings 核对） |
+| 0.6.2 产物真机安装与播放 | `NOT RUN` |
+| GUI 关于页界面截图核对 | `NOT RUN` |
+
+## 发布
+
+- 远端 tag `v0.6.2` 指向构建提交 `6307671`。
+- 尚未创建 GitHub Release。创建 draft 时请以 tag 为 ref（`--ref v0.6.2`）或在
+  `create_draft=true` 前确认远端 tag 与所选提交一致。
+- 真机安装/播放与 GUI 截图仍是发布前的人工门禁。
 
 ## 未验证项（沿用 0.6.0/0.6.1 的边界）
 
