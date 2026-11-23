@@ -124,7 +124,7 @@ fun AudioShareApp(
 @Composable
 private fun ForgetServerDialog(state: AppState, onEvent: (UiEvent) -> Unit) {
     val pin = state.pendingForgetPin ?: return
-    val server = state.storedServers.firstOrNull { it.serverSpkiSha256Hex == pin } ?: return
+    val server = state.serverForPin(pin) ?: return
     AlertDialog(
         onDismissRequest = { onEvent(UiEvent.ForgetServerDismissed) },
         title = { Text(stringResource(R.string.forget_server)) },
@@ -296,9 +296,7 @@ private fun HomeScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
     if (state.hasStoredPairing) {
         // A revoked/needs-re-pairing credential cannot connect: the Server has
         // to restore it first (ADR-0006 §4, ticket 04).
-        val selected = state.storedServers.firstOrNull {
-            it.serverSpkiSha256Hex == state.selectedPin()
-        }
+        val selected = state.selectedServer()
         PrimaryButton(
             text = stringResource(R.string.home_connect),
             onClick = { onEvent(UiEvent.ConnectRequested) },
@@ -312,9 +310,9 @@ private fun HomeScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
             // any visible failure cause (ticket 04). Target the same record
             // Connect would use (the typed address wins), else the first.
             onClick = {
-                val pin = state.selectedPin()
-                    ?: state.storedServers.first().serverSpkiSha256Hex
-                onEvent(UiEvent.RePairRequested(pin))
+                state.selectedServer()?.let {
+                    onEvent(UiEvent.RePairRequested(it.serverSpkiSha256Hex))
+                }
             },
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("pair-code"),
         ) {

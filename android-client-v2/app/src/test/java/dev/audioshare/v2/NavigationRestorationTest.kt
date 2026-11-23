@@ -12,8 +12,9 @@ import kotlin.test.assertTrue
 
 /**
  * Ticket 06 §4 restoration contract: a config change saves only screen,
- * address, and SAS input; everything session/pairing-derived replays from the
- * Service; the restored screen is a hint reconciled against that replay.
+ * address, SAS input, and the re-pair context; everything else
+ * session/pairing-derived replays from the Service; the restored screen is a
+ * hint reconciled against that replay.
  *
  * The Bundle round-trip needs Robolectric; the reconcile rules themselves are
  * pure. No MainActivity/Service is launched here (seam: pure functions and the
@@ -40,7 +41,7 @@ class NavigationRestorationTest {
     // ---- config-change bundle ----------------------------------------------
 
     @Test
-    fun config_change_saves_only_screen_address_and_sas_input() {
+    fun config_change_saves_only_screen_address_sas_input_and_repair_context() {
         val state = AppState(
             screen = AppScreen.PAIRING,
             address = "10.0.2.2:65531",
@@ -63,14 +64,15 @@ class NavigationRestorationTest {
         UiStatePersistence.save(bundle, state)
 
         assertEquals(
-            3,
+            4,
             bundle.keySet().size,
-            "only screen, address, and sasInput may be persisted",
+            "only screen, address, sasInput, and the repair context may be persisted",
         )
         val restored = UiStatePersistence.restore(bundle)!!
         assertEquals(AppScreen.PAIRING, restored.screen)
         assertEquals("10.0.2.2:65531", restored.address)
         assertEquals("385587", restored.restoredSasInput)
+        assertEquals(PairingIntent.First, restored.pairingIntent)
         // Everything session/pairing-derived must replay from the Service.
         assertNull(restored.outcome)
         assertNull(restored.pairing)
@@ -79,6 +81,27 @@ class NavigationRestorationTest {
         assertNull(restored.scanNotice)
         assertNull(restored.addressError, "errors are derived, never persisted")
         assertFalse(restored.stopRequested)
+    }
+
+    @Test
+    fun the_repair_context_survives_activity_recreation() {
+        val state = AppState(
+            screen = AppScreen.PAIRING,
+            address = "10.0.2.2:65531",
+            pairingIntent = PairingIntent.RePair("ab".repeat(32)),
+        )
+        val bundle = Bundle()
+
+        UiStatePersistence.save(bundle, state)
+        val restored = UiStatePersistence.restore(bundle)!!
+
+        assertEquals(
+            PairingIntent.RePair("ab".repeat(32)),
+            restored.pairingIntent,
+            "a rotation must not lose the RePair cause/instruction",
+        )
+        assertEquals(AppScreen.PAIRING, restored.screen)
+        assertEquals("10.0.2.2:65531", restored.address)
     }
 
     @Test

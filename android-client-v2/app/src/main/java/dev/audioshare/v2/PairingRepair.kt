@@ -13,15 +13,19 @@ internal fun storedKeyAliasForAddress(
     address: String,
     records: List<CredentialRecord>,
 ): String? {
-    val trimmed = address.trim()
-    if (trimmed.isEmpty()) return null
-    val (host, port) = try {
-        PairingPayload.validateAddress(trimmed)
-    } catch (_: Exception) {
-        return null
-    }
-    return records.firstOrNull { record ->
-        (record.host.isNotEmpty() && record.host == host && record.port == port) ||
-            (record.addressHint.isNotEmpty() && record.addressHint == trimmed)
-    }?.keyAlias
+    val target = ServerAddress.parse(address) ?: return null
+    return records.firstOrNull { it.serverAddress() == target }?.keyAlias
 }
+
+/**
+ * QR re-pairing identity rule (ADR-0006 §2): when the scanned payload's Server
+ * pin matches a stored credential, reuse that record's `keyAlias` -- so a
+ * record created by SAS is re-paired by QR with the same identity and the
+ * Server performs the explicit Restore instead of adding a second row. Returns
+ * `null` when nothing matches, in which case the caller keeps the pin-derived
+ * alias exactly as before.
+ */
+internal fun storedKeyAliasForPin(
+    pinHex: String,
+    records: List<CredentialRecord>,
+): String? = records.firstOrNull { it.serverSpkiSha256Hex == pinHex }?.keyAlias

@@ -6,7 +6,6 @@ import dev.audioshare.v2.CredentialRecord
 import dev.audioshare.v2.CredentialStore
 import dev.audioshare.v2.EndReason
 import dev.audioshare.v2.ErrorGuidanceBook
-import dev.audioshare.v2.LivePhase
 import dev.audioshare.v2.OutcomeSink
 import dev.audioshare.v2.PairingConfirmGate
 import dev.audioshare.v2.PairingSnapshot
@@ -15,7 +14,9 @@ import dev.audioshare.v2.SessionConfiguration
 import dev.audioshare.v2.SessionOutcome
 import dev.audioshare.v2.SessionOutcomeStore
 import dev.audioshare.v2.StopReason
+import dev.audioshare.v2.isSameServerAddressAs
 import dev.audioshare.v2.pairedAtNow
+import dev.audioshare.v2.repairStateForOutcome
 import org.json.JSONObject
 
 /**
@@ -63,6 +64,8 @@ internal class SessionOrchestrator(
 ) {
     private val lock = Any()
     private var engine: SessionEngine? = null
+    /** The Server pin the current session talks to ("" for a SAS exchange). */
+    private var sessionServerPin: String? = null
     /** Ownership token for listener callbacks; also orphans a stopped engine. */
     private var generation = 0L
     private var pairingSource: PairingStateRelay.Source? = null
@@ -90,6 +93,7 @@ internal class SessionOrchestrator(
         val ownerGeneration = synchronized(lock) {
             pairingSource = owningPairingSource
             handoffClaimed = false
+            sessionServerPin = configuration.serverSpkiSha256Hex
             ++generation
         }
         val sink = if (configuration.pairing != null) {
@@ -136,6 +140,7 @@ internal class SessionOrchestrator(
             ++generation
             current = engine
             engine = null
+            sessionServerPin = null
             source = pairingSource
             pairingSource = null
         }
@@ -151,6 +156,24 @@ internal class SessionOrchestrator(
         teardown(reason)
         confirmGate.reset()
         pairing.clear()
+    }
+
+    /**
+     * Local Forget cleanup: stop the current session only when it belongs to
+     * the forgotten Server. Returns true when no session for another Server
+     * remains (stopped or already idle), so the caller may tear the Service
+     * down; false when a different Server's live session must keep running.
+     */
+    fun stopIfOwnedBy(serverSpkiSha256Hex: String): Boolean {
+        val (owns, hasEngine) = synchronized(lock) {
+            val owns = engine != null && sessionServerPin == serverSpkiSha256Hex
+            owns to (engine != null)
+        }
+        if (owns) {
+            stop(StopReason.Shutdown)
+            return true
+        }
+        return !hasEngine
     }
 
     /** Exactly-once per exchange, mirroring the Service's QR confirm gate. */
@@ -221,22 +244,8 @@ internal class SessionOrchestrator(
     ): OutcomeSink = OutcomeSink { outcome ->
         delegate.publish(outcome)
         if (serverSpkiSha256Hex.isNotEmpty() && isCurrent(ownerGeneration)) {
-            when (outcome) {
-                is SessionOutcome.Live -> if (
-                    outcome.phase == LivePhase.READY || outcome.phase == LivePhase.PLAYING
-                ) {
-                    updateNeedsRepairing(serverSpkiSha256Hex, false)
-                }
-
-                is SessionOutcome.Ended -> {
-                    val reason = outcome.reason as? EndReason.Surfaced
-                    val code = reason?.code
-                    if (ErrorGuidanceBook.forCode(code)?.requiresRepairing == true) {
-                        updateNeedsRepairing(serverSpkiSha256Hex, true)
-                    }
-                }
-
-                is SessionOutcome.Reconnecting -> Unit
+            repairStateForOutcome(outcome)?.let { needsRepairing ->
+                updateNeedsRepairing(serverSpkiSha256Hex, needsRepairing)
             }
         }
     }
@@ -273,7 +282,7 @@ internal class SessionOrchestrator(
         val stale = try {
             credentials.all().filter {
                 it.serverSpkiSha256Hex != record.serverSpkiSha256Hex &&
-                    it.isSameAddressAs(record)
+                    it.isSameServerAddressAs(record)
             }
         } catch (e: Exception) {
             log("could not list credentials for address cleanup: ${e.message}")
@@ -288,10 +297,6 @@ internal class SessionOrchestrator(
             }
         }
     }
-
-    private fun CredentialRecord.isSameAddressAs(other: CredentialRecord): Boolean =
-        (host.isNotEmpty() && other.host.isNotEmpty() && host == other.host && port == other.port) ||
-            (addressHint.isNotEmpty() && addressHint == other.addressHint)
 
     private fun persistCredential(
         json: String,

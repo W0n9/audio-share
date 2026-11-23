@@ -149,12 +149,21 @@ data class AppState(
             ?.let { it as? EndReason.Surfaced }
             ?.let { SessionError(it.code, ErrorGuidanceBook.forCode(it.code)) }
 
-    /** Prefer the credential matching the typed address, else the first. */
-    fun selectedPin(): String? {
-        val typed = address.trim()
-        return storedServers.firstOrNull { it.address == typed }?.serverSpkiSha256Hex
-            ?: storedServers.firstOrNull()?.serverSpkiSha256Hex
+    /** The stored Server matching the typed address, else the first. */
+    fun selectedServer(): StoredServer? {
+        val typed = ServerAddress.parse(address)
+        val matching = typed?.let { target ->
+            storedServers.firstOrNull { it.serverAddress() == target }
+        }
+        return matching ?: storedServers.firstOrNull()
     }
+
+    /** The stored Server with this pin, when present. */
+    fun serverForPin(pin: String): StoredServer? =
+        storedServers.firstOrNull { it.serverSpkiSha256Hex == pin }
+
+    /** Prefer the credential matching the typed address, else the first. */
+    fun selectedPin(): String? = selectedServer()?.serverSpkiSha256Hex
 }
 
 sealed interface UiEvent {
@@ -283,9 +292,7 @@ object AppReducer {
             // needs-repairing flag wins over the outcome, so a revoked
             // credential is never reconnected after a cold start even when
             // another saved Server is clean.
-            val selected = state.storedServers.firstOrNull {
-                it.serverSpkiSha256Hex == state.selectedPin()
-            }
+            val selected = state.selectedServer()
             val canStart = state.screen == AppScreen.HOME &&
                 selected != null &&
                 !selected.needsRepairing &&
@@ -425,7 +432,7 @@ object AppReducer {
             val servers = state.storedServers
                 .filterNot {
                     it.serverSpkiSha256Hex == server.serverSpkiSha256Hex ||
-                        it.address == server.address
+                        it.isSameServerAddressAs(server)
                 } + server
             Reduction(
                 state.copy(
@@ -558,11 +565,11 @@ object AppReducer {
             )
         }
         // A revoked device must be re-paired, never reconnected (ticket 04).
-        val target = state.storedServers.firstOrNull {
-            it.serverSpkiSha256Hex == state.selectedPin()
-        }
+        // Route the request into the RePair context instead of silently doing
+        // nothing (this is also SESSION's "Connect again" for a UserStop).
+        val target = state.selectedServer()
         if (target?.needsRepairing == true) {
-            return Reduction(state)
+            return rePair(state, target.serverSpkiSha256Hex)
         }
         if (!state.hasStoredPairing) {
             return Reduction(
@@ -714,7 +721,7 @@ object AppReducer {
      */
     private fun forgetServer(state: AppState): Reduction {
         val pin = state.pendingForgetPin ?: return Reduction(state)
-        val record = state.storedServers.firstOrNull { it.serverSpkiSha256Hex == pin }
+        val record = state.serverForPin(pin)
             ?: return Reduction(state.copy(pendingForgetPin = null))
         val addressMatches = state.address.trim() == record.address
         return Reduction(
@@ -770,8 +777,7 @@ object AppReducer {
 
     /** Open PAIRING for one stored Server, prefilling its saved address. */
     private fun rePair(state: AppState, serverSpkiSha256Hex: String): Reduction {
-        val server = state.storedServers
-            .firstOrNull { it.serverSpkiSha256Hex == serverSpkiSha256Hex }
+        val server = state.serverForPin(serverSpkiSha256Hex)
             ?: return Reduction(state)
         val address = server.address
         return Reduction(
@@ -800,27 +806,7 @@ object AppReducer {
  * lifetime. A saved Server not involved in the session is untouched.
  */
 private fun AppState.projectedRepairState(outcome: SessionOutcome?): List<StoredServer> {
-    val intent: Boolean? = when (outcome) {
-        is SessionOutcome.Live -> if (
-            outcome.phase == LivePhase.READY || outcome.phase == LivePhase.PLAYING
-        ) {
-            false
-        } else {
-            null
-        }
-
-        is SessionOutcome.Ended -> {
-            val reason = outcome.reason as? EndReason.Surfaced
-            if (reason != null && ErrorGuidanceBook.forCode(reason.code)?.requiresRepairing == true) {
-                true
-            } else {
-                null
-            }
-        }
-
-        is SessionOutcome.Reconnecting -> null
-        null -> null
-    }
+    val intent = outcome?.let(::repairStateForOutcome)
     val pin = selectedPin()
     if (intent == null || pin == null) return storedServers
     return storedServers.map {

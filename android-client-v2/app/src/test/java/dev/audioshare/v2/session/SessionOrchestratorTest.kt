@@ -113,6 +113,35 @@ class SessionOrchestratorTest {
     }
 
     @Test
+    fun forget_stops_only_the_session_it_owns() {
+        val fixture = Fixture()
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        val engine = fixture.factory.engines.single()
+        val otherPin = "bb".repeat(32)
+
+        assertFalse(
+            fixture.orchestrator.stopIfOwnedBy(otherPin),
+            "forgetting another Server must not tear this session down",
+        )
+        assertTrue(fixture.orchestrator.hasEngine, "the live session keeps running")
+        assertEquals(emptyList(), engine.stops)
+        assertNull(fixture.outcomes.snapshot(), "no outcome is invented for a non-owner")
+
+        assertTrue(
+            fixture.orchestrator.stopIfOwnedBy(PIN),
+            "the owning Server may stop the session",
+        )
+        assertFalse(fixture.orchestrator.hasEngine)
+        assertEquals(listOf(StopReason.Shutdown), engine.stops)
+    }
+
+    @Test
+    fun forget_with_no_session_reports_nothing_left_running() {
+        val fixture = Fixture()
+        assertTrue(fixture.orchestrator.stopIfOwnedBy(PIN))
+    }
+
+    @Test
     fun confirm_pairing_is_forwarded_once_per_exchange_and_resets_for_a_new_one() {
         val fixture = Fixture()
         fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
