@@ -80,18 +80,19 @@
     <string name="error_action_pair_again">Pair again</string>
 
     <!-- ABOUT -->
-    <string name="about_title">About this beta</string>
+    <string name="about_title">About Audio Share v2</string>
     <string name="version_label">Version %1$s (%2$d)</string>
+    <string name="about_copyright">© 2022-2026 Audio Share contributors · Apache-2.0</string>
     <string name="about_known_limitations">Known limitations</string>
-    <string name="about_limit_jitter">No jitter buffer, concealment, or clock-drift correction. Audio quality is best-effort.</string>
+    <string name="about_limit_jitter">Bounded jitter buffering, loss concealment, and playback clock-drift correction are enabled. Audio quality still depends on network conditions.</string>
     <string name="about_limit_one_client">One Client per Server. Concurrent phones are not supported.</string>
     <string name="about_limit_diagnostics">No diagnostics export, no telemetry, and no raw-audio recording.</string>
     <string name="about_v1_title">About v1</string>
-    <string name="about_v1_warning">The v1 app sends audio without encryption or authentication. Use v1 only on a trusted network. This v2 beta is the encrypted, authenticated client; a v2 failure never downgrades to v1.</string>
+    <string name="about_v1_warning">The v1 app sends audio without encryption or authentication. Use v1 only on a trusted network. This v2 client is the encrypted, authenticated client; a v2 failure never downgrades to v1.</string>
     <string name="about_updates_title">Updates</string>
     <string name="about_updates_body">Updates are manual. Download the new APK from the GitHub Release page and verify its SHA-256 checksum before installing. There is no in-app updater.</string>
     <string name="about_privacy_title">Privacy</string>
-    <string name="about_privacy_body">This beta has no telemetry and does not record raw audio.</string>
+    <string name="about_privacy_body">This app has no telemetry and does not record raw audio.</string>
 
     <!-- SETTINGS (read-only) -->
     <string name="settings_title">Settings</string>
@@ -101,7 +102,7 @@
     <string name="settings_server_fingerprint">Fingerprint</string>
     <string name="settings_empty_body">No Server is paired yet.</string>
     <string name="settings_pair_phone">Pair a phone</string>
-    <string name="settings_about_link">About this beta</string>
+    <string name="settings_about_link">About Audio Share v2</string>
 
     <!-- Foreground notification -->
     <string name="notification_channel_name">Audio Share session</string>

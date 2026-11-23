@@ -51,7 +51,7 @@ fn version_matches_the_old_layout_with_the_rewrite_version() {
                 env!("CARGO_PKG_VERSION")
             )))
             .stdout(predicate::str::contains(
-                "url: https://github.com/mkckr0/audio-share",
+                "url: https://github.com/W0n9/audio-share",
             ));
     }
 }

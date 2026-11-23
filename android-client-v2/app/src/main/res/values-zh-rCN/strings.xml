@@ -75,18 +75,19 @@
     <string name="error_action_pair_again">重新配对</string>
 
     <!-- ABOUT -->
-    <string name="about_title">关于此测试版</string>
+    <string name="about_title">关于 Audio Share v2</string>
     <string name="version_label">版本 %1$s（%2$d）</string>
+    <string name="about_copyright">© 2022-2026 Audio Share contributors · Apache-2.0</string>
     <string name="about_known_limitations">已知限制</string>
-    <string name="about_limit_jitter">没有抖动缓冲、丢包隐藏或时钟漂移校正。音质为尽力而为。</string>
+    <string name="about_limit_jitter">已启用有界抖动缓冲、丢包掩蔽和播放时钟漂移校正。音质仍取决于网络状况。</string>
     <string name="about_limit_one_client">每个服务器仅支持一个客户端。不支持多部手机同时连接。</string>
     <string name="about_limit_diagnostics">不导出诊断信息，不做遥测，也不录制原始音频。</string>
     <string name="about_v1_title">关于 v1</string>
-    <string name="about_v1_warning">v1 应用发送音频时不加密也不认证。请仅在可信网络中使用 v1。此 v2 测试版是加密且经过认证的客户端；v2 失败绝不会降级到 v1。</string>
+    <string name="about_v1_warning">v1 应用发送音频时不加密也不认证。请仅在可信网络中使用 v1。此 v2 客户端是加密且经过认证的客户端；v2 失败绝不会降级到 v1。</string>
     <string name="about_updates_title">更新</string>
     <string name="about_updates_body">更新需手动进行。请从 GitHub Release 页面下载新的 APK，并在安装前校验其 SHA-256 校验和。应用内没有更新程序。</string>
     <string name="about_privacy_title">隐私</string>
-    <string name="about_privacy_body">此测试版不做遥测，也不录制原始音频。</string>
+    <string name="about_privacy_body">此应用不做遥测，也不录制原始音频。</string>
 
     <!-- SETTINGS -->
     <string name="settings_title">设置</string>
@@ -96,7 +97,7 @@
     <string name="settings_server_fingerprint">指纹</string>
     <string name="settings_empty_body">尚未配对任何服务器。</string>
     <string name="settings_pair_phone">配对此手机</string>
-    <string name="settings_about_link">关于此测试版</string>
+    <string name="settings_about_link">关于 Audio Share v2</string>
 
     <!-- 前台通知 -->
     <string name="notification_channel_name">Audio Share 会话</string>

@@ -84,7 +84,7 @@
   "update.openRelease": "Open release page",
   "about.productName": "Audio Share Server",
   "about.homepage": "Home page",
-  "about.copyright": "Copyright © 2022-2024 mkckr0. All rights reserved.",
+  "about.copyright": "Copyright © 2022-2026 Audio Share contributors. Licensed under Apache-2.0.",
   "notice.migrated": "Configuration migrated from version {from} to version {to}.",
   "notice.futureVersion": "Configuration version {version} is newer than this application; settings were read without being rewritten and a backup was kept.",
   "notice.recovered": "The configuration file was damaged; defaults were restored and a backup was saved as config.ini.bak.",

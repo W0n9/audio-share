@@ -9,7 +9,7 @@
   // Application settings persist immediately on change and stay editable
   // while the server runs; `applicationLocked` only covers in-flight saves.
   // Language applies on the next launch, the theme applies at once.
-  const HOMEPAGE = "https://github.com/mkckr0/audio-share";
+  const HOMEPAGE = "https://github.com/W0n9/audio-share";
   const appLocked = $derived(server.applicationLocked);
 
   const THEME_OPTIONS = [

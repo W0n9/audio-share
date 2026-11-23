@@ -21,9 +21,8 @@ val ndkDir = providers.environmentVariable("ANDROID_HOME").orElse(
 ).map { "$it/ndk/27.2.12479018" }
 
 // ABI selection. The production default stays arm64-v8a (real devices).
-// The beta release builds ONE universal APK containing both arm64-v8a and
-// x86_64 with `-PandroidAbis=arm64-v8a,x86_64`; `-PandroidAbi=x86_64`
-// remains supported for emulator development.
+// The release workflow builds one APK per ABI via `-PandroidAbis=<abi>`;
+// `-PandroidAbi=x86_64` remains supported for emulator development.
 val abiToCargoTarget = mapOf(
     "arm64-v8a" to "aarch64-linux-android",
     "x86_64" to "x86_64-linux-android",
@@ -123,12 +122,12 @@ android {
         // v2 Client release: applicationId dev.audioshare.v2 so it coexists
         // with the v1 app (ticket 21 acceptance). The release workflow builds
         // one signed APK per ABI instead of a universal APK.
-        versionCode = 3
-        versionName = "0.6.0"
+        versionCode = 4
+        versionName = "0.6.1"
         testInstrumentationRunner = "dev.audioshare.v2.ControlSessionInstrumentation"
         ndk {
             // arm64-v8a is the real-device scope; x86_64 is the emulator ABI.
-            // The beta universal APK carries both when -PandroidAbis is set.
+            // Release builds select one ABI at a time via -PandroidAbis.
             abiFilters += androidAbis
         }
         // TEST_SUPPORT gates every test-only identity/addressing code path

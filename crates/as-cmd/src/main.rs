@@ -40,7 +40,7 @@ use v2_transport::identity::IdentityConfig;
 use v2_transport::pairing;
 
 /// Homepage printed by `-v/--version`.
-const HOMEPAGE: &str = "https://github.com/mkckr0/audio-share";
+const HOMEPAGE: &str = "https://github.com/W0n9/audio-share";
 
 /// Binary version, from the crate metadata.
 const VERSION: &str = env!("CARGO_PKG_VERSION");

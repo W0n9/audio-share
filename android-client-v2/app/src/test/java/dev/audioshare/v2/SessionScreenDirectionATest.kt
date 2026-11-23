@@ -243,8 +243,8 @@ class SessionScreenDirectionATest : RobolectricComposeTestBase() {
                             address = "10.0.2.2:65531",
                             outcome = SessionOutcome.Live(LivePhase.PLAYING),
                         ),
-                        versionName = "0.2.0-beta",
-                        versionCode = 2,
+                        versionName = "0.6.1",
+                        versionCode = 4,
                     ) { }
                 }
             }
