@@ -2,7 +2,9 @@
   import { server } from "../lib/store.svelte";
   import { t } from "../lib/i18n.svelte";
   import ErrorLine from "../lib/ErrorLine.svelte";
+  import { tick } from "svelte";
   import type {
+    PairingInvitation,
     PairingLiveInfo,
     PairingMode,
     PairingRequestInfo,
@@ -15,6 +17,7 @@
   const pending = $derived(server.pairing?.pending ?? []);
 
   let body: HTMLDivElement | undefined = $state();
+  let invitationEl: HTMLDivElement | undefined = $state();
 
   function begin(mode: PairingMode): void {
     void server.beginPairing(mode);
@@ -35,7 +38,14 @@
   /** Start a fresh invitation for a revoked device; scroll it into view. */
   async function rePair(clientId: string, displayName: string): Promise<void> {
     await server.repairClient(clientId, displayName);
-    body?.scrollTo({ top: 0, behavior: "smooth" });
+    await tick();
+    // Pending/live cards render above the invitation, so scroll to the
+    // invitation itself rather than assuming it is at the top.
+    if (invitationEl) {
+      invitationEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    } else {
+      body?.scrollTo({ top: 0, behavior: "smooth" });
+    }
   }
 
   function remove(clientId: string, displayName: string): void {
@@ -147,6 +157,78 @@
   </div>
 {/snippet}
 
+<!-- Invitation details, rendered below pending/live cards so an approval
+     request is what the operator sees first when the window is small. -->
+{#snippet invitationBlock(inv: PairingInvitation)}
+  <div class="pairing-invitation" bind:this={invitationEl}>
+    {#if inv.state === "active" && inv.qrSvg}
+      <div class="pairing-qr" aria-label={t("pairing.qrAlt")}>
+        {@html inv.qrSvg}
+      </div>
+    {/if}
+    <div class="pairing-row">
+      <span>{t("pairing.mode")}</span>
+      <strong>
+        {inv.mode === "qr" ? t("pairing.modeQr") : t("pairing.modeSas")}
+      </strong>
+    </div>
+    {#if inv.state === "active" && inv.qrUri}
+      <div class="pairing-row pairing-row-stack">
+        <span>{t("pairing.uri")}</span>
+        <code class="pairing-uri">{inv.qrUri}</code>
+      </div>
+    {/if}
+    <div class="pairing-row pairing-row-stack">
+      <span>{t("pairing.fingerprint")}</span>
+      <code class="pairing-fingerprint">{inv.fingerprint}</code>
+    </div>
+    {#if inv.state === "active"}
+      <div class="pairing-row">
+        <span>{t("pairing.expires")}</span>
+        <strong class="pairing-countdown">{countdown(inv.expiresInSecs)}</strong>
+      </div>
+      <p class="pairing-hint">{t("pairing.sasHint")}</p>
+      <!-- QR mode also admits SAS in the same operator-opened window
+           (the admin begin(Qr) path opens both), so a Re-pair row can
+           switch to the pairing code without losing the invitation. -->
+      {#if inv.mode === "qr"}
+        <button
+          class="pairing-secondary"
+          disabled={!v2Ready || server.pairingBusy}
+          onclick={usePairingCode}
+        >
+          {t("pairing.startSas")}
+        </button>
+      {/if}
+    {:else}
+      <p class="pairing-error">
+        {inv.state === "consumed"
+          ? t("pairing.qrConsumed")
+          : t("pairing.qrExpired")}
+      </p>
+      <div class="pairing-actions">
+        <button
+          class="pairing-primary"
+          disabled={server.pairingBusy}
+          onclick={refresh}
+        >
+          {t("pairing.refreshQr")}
+        </button>
+        <button
+          class="pairing-secondary"
+          disabled={!v2Ready || server.pairingBusy}
+          onclick={usePairingCode}
+        >
+          {t("pairing.startSas")}
+        </button>
+      </div>
+    {/if}
+    <button class="pairing-secondary" onclick={cancel}>
+      {t("pairing.cancel")}
+    </button>
+  </div>
+{/snippet}
+
 {#if server.pairingOpen}
   <div class="pairing-backdrop" role="presentation">
     <div
@@ -183,76 +265,15 @@
           </p>
         {/if}
 
-        {#if invitation && (invitation.state === "active" || invitation.mode === "qr")}
-          {#if invitation.state === "active" || !(live.length > 0 || pending.length > 0 || server.pairingInFlight || server.pairingSucceeded)}
-            <div class="pairing-invitation">
-              {#if invitation.state === "active" && invitation.qrSvg}
-                <div class="pairing-qr" aria-label={t("pairing.qrAlt")}>
-                  {@html invitation.qrSvg}
-                </div>
-              {/if}
-              <div class="pairing-row">
-                <span>{t("pairing.mode")}</span>
-                <strong>
-                  {invitation.mode === "qr" ? t("pairing.modeQr") : t("pairing.modeSas")}
-                </strong>
-              </div>
-              {#if invitation.state === "active" && invitation.qrUri}
-                <div class="pairing-row pairing-row-stack">
-                  <span>{t("pairing.uri")}</span>
-                  <code class="pairing-uri">{invitation.qrUri}</code>
-                </div>
-              {/if}
-              <div class="pairing-row pairing-row-stack">
-                <span>{t("pairing.fingerprint")}</span>
-                <code class="pairing-fingerprint">{invitation.fingerprint}</code>
-              </div>
-              {#if invitation.state === "active"}
-                <div class="pairing-row">
-                  <span>{t("pairing.expires")}</span>
-                  <strong class="pairing-countdown">{countdown(invitation.expiresInSecs)}</strong>
-                </div>
-                <p class="pairing-hint">{t("pairing.sasHint")}</p>
-                <!-- QR mode also admits SAS in the same operator-opened window
-                     (the admin begin(Qr) path opens both), so a Re-pair row can
-                     switch to the pairing code without losing the invitation. -->
-                {#if invitation.mode === "qr"}
-                  <button
-                    class="pairing-secondary"
-                    disabled={!v2Ready || server.pairingBusy}
-                    onclick={usePairingCode}
-                  >
-                    {t("pairing.startSas")}
-                  </button>
-                {/if}
-              {:else}
-                <p class="pairing-error">
-                  {invitation.state === "consumed"
-                    ? t("pairing.qrConsumed")
-                    : t("pairing.qrExpired")}
-                </p>
-                <div class="pairing-actions">
-                  <button
-                    class="pairing-primary"
-                    disabled={server.pairingBusy}
-                    onclick={refresh}
-                  >
-                    {t("pairing.refreshQr")}
-                  </button>
-                  <button
-                    class="pairing-secondary"
-                    disabled={!v2Ready || server.pairingBusy}
-                    onclick={usePairingCode}
-                  >
-                    {t("pairing.startSas")}
-                  </button>
-                </div>
-              {/if}
-              <button class="pairing-secondary" onclick={cancel}>
-                {t("pairing.cancel")}
-              </button>
-            </div>
-          {/if}
+        <!-- Approvals and live connections come before the invitation so the
+             operator's next action stays above the fold at the minimum window
+             size (380x560). With no pending/live request the invitation is
+             still the first block, keeping the QR fully scannable. -->
+        {#if pending.length > 0}
+          <div class="pairing-section-title">{t("pairing.pendingTitle")}</div>
+          {#each pending as request (request.approvalId)}
+            {@render requestCard(request, false)}
+          {/each}
         {/if}
 
         {#if live.length > 0}
@@ -266,6 +287,12 @@
             <button class="pairing-secondary" onclick={cancel}>
               {t("pairing.cancel")}
             </button>
+          {/if}
+        {/if}
+
+        {#if invitation && (invitation.state === "active" || invitation.mode === "qr")}
+          {#if invitation.state === "active" || !(live.length > 0 || pending.length > 0 || server.pairingInFlight || server.pairingSucceeded)}
+            {@render invitationBlock(invitation)}
           {/if}
         {/if}
 
@@ -289,13 +316,6 @@
             </button>
           </div>
           <p class="pairing-hint">{t("pairing.sasHint")}</p>
-        {/if}
-
-        {#if pending.length > 0}
-          <div class="pairing-section-title">{t("pairing.pendingTitle")}</div>
-          {#each pending as request (request.approvalId)}
-            {@render requestCard(request, false)}
-          {/each}
         {/if}
 
         <div class="pairing-section-title">{t("pairing.devicesTitle")}</div>
