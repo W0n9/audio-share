@@ -2,11 +2,9 @@
 //! `last_seen_at`, legacy version-1 compatibility, clear/revoke by id, the
 //! headless advisory lock, and the fail-closed identity-reset order.
 
-use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Duration;
 
-use v2_transport::auth_store::{AuthorizationStore, ClientState, StoreLock, StoredClient};
+use v2_transport::auth_store::{AuthorizationStore, ClientState, StoredClient};
 use v2_transport::identity::{IdentityConfig, ServerIdentity};
 use v2_transport::pairing;
 
@@ -111,6 +109,11 @@ fn revoke_by_client_id_keeps_the_record_for_audit() {
 #[test]
 fn headless_lock_is_exclusive_and_0600() {
     use std::os::unix::fs::PermissionsExt as _;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use v2_transport::auth_store::StoreLock;
+
     let dir = tempfile::tempdir().unwrap();
     let lock = StoreLock::acquire(dir.path()).expect("first lock");
     let mode = std::fs::metadata(lock.path()).unwrap().permissions().mode() & 0o777;
@@ -135,6 +138,8 @@ fn headless_lock_is_exclusive_and_0600() {
 #[cfg(unix)]
 #[test]
 fn try_acquire_reports_a_held_lock_without_blocking() {
+    use v2_transport::auth_store::StoreLock;
+
     let dir = tempfile::tempdir().unwrap();
     let held = StoreLock::acquire(dir.path()).expect("first lock");
     assert!(

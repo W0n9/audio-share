@@ -100,8 +100,10 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install build-tools, platform, and NDK
+      - name: Install build-tools, platform, NDK, and protoc
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends protobuf-compiler
           sdkmanager --install \
             "build-tools;36.0.0" \
             "platforms;android-37.0" \
