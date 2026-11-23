@@ -259,10 +259,16 @@ object AppReducer {
         UiEvent.ConnectRequested -> connect(state)
 
         UiEvent.AutoConnectStarted -> {
-            // The persisted needs-repairing flag wins over the outcome: a
-            // revoked credential must not auto-connect after a cold start.
+            // Gate on the record connect() will actually target: the persisted
+            // needs-repairing flag wins over the outcome, so a revoked
+            // credential is never reconnected after a cold start even when
+            // another saved Server is clean.
+            val selected = state.storedServers.firstOrNull {
+                it.serverSpkiSha256Hex == state.selectedPin()
+            }
             val canStart = state.screen == AppScreen.HOME &&
-                state.storedServers.any { !it.needsRepairing } &&
+                selected != null &&
+                !selected.needsRepairing &&
                 AutoConnectPolicy.isEligibleOutcome(state.outcome)
             if (canStart) connect(state) else Reduction(state)
         }

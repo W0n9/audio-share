@@ -146,14 +146,18 @@ class MainActivity : ComponentActivity() {
         if (firstBind) {
             requestNotificationPermissionIfNeeded()
             val credentials = service.credentials()
+            // StartupLoaded has already run, so selectedPin() names the record
+            // connect() would target. Read its persisted flag: a restart must
+            // not auto-connect a device the Server revoked.
+            val selectedPin = state.value.selectedPin()
+            val selectedNeedsRepairing = credentials
+                .firstOrNull { it.serverSpkiSha256Hex == selectedPin }
+                ?.needsRepairing == true
             if (!harnessStarted && AutoConnectPolicy.shouldAutoConnect(
                     savedStatePresent = hadSavedState,
                     hasCredential = credentials.isNotEmpty(),
                     outcome = outcome,
-                    // Persisted state, so a restart cannot auto-connect a
-                    // device the Server revoked.
-                    needsRepairing = credentials.isNotEmpty() &&
-                        credentials.all { it.needsRepairing },
+                    needsRepairing = selectedNeedsRepairing,
                 )
             ) {
                 dispatch(UiEvent.AutoConnectStarted)
