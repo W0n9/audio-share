@@ -36,14 +36,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The app compiles to Java 17 bytecode (jvmToolchain(17)); Robolectric
       # 4.18 runs the SDK 36 sandbox on JDK 21. Install both. setup-java puts
       # the LAST version on PATH, so list 21 last: it is the Gradle default
       # JVM, while 17 stays discoverable as a toolchain.
       - name: Set up JDK 17 toolchain + JDK 21 (default)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: |
@@ -68,7 +68,7 @@ jobs:
 
       - name: Upload JVM test reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-jvm-test-reports
           path: |
@@ -81,13 +81,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history for the .proto base comparison.
           fetch-depth: 0
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"

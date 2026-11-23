@@ -25,10 +25,11 @@ jobs:
   preflight:
     name: Check release inputs
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check product version
         id: version
@@ -64,7 +65,7 @@ jobs:
     outputs:
       apk_name: ${{ steps.package.outputs.apk_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -74,7 +75,7 @@ jobs:
           targets: aarch64-linux-android,x86_64-linux-android
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -136,7 +137,7 @@ jobs:
           printf 'apk_name=%s\n' "$apk_name" >> "$GITHUB_OUTPUT"
 
       - name: Upload signed APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: audio-share-client-v2-android
           path: |
@@ -149,16 +150,17 @@ jobs:
     if: inputs.create_draft
     needs: [preflight, build_server, build_android]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
       APK_NAME: ${{ needs.build_android.outputs.apk_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download packaged artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release_bin
 
