@@ -724,6 +724,11 @@ object AppReducer {
         val record = state.serverForPin(pin)
             ?: return Reduction(state.copy(pendingForgetPin = null))
         val addressMatches = state.address.trim() == record.address
+        // The Service stops only the forgotten Server's session. Clear the
+        // replayable outcome only when this is the Server the session belongs
+        // to (the selected one); forgetting another record must not blank a
+        // live session's UI.
+        val forgettingSessionOwner = state.selectedPin() == pin
         return Reduction(
             state.copy(
                 screen = AppScreen.HOME,
@@ -737,8 +742,8 @@ object AppReducer {
                 } else {
                     state.rememberedAddress
                 },
-                outcome = null,
-                stopRequested = false,
+                outcome = if (forgettingSessionOwner) null else state.outcome,
+                stopRequested = if (forgettingSessionOwner) false else state.stopRequested,
                 pairing = null,
                 scanActive = false,
                 scanNotice = null,

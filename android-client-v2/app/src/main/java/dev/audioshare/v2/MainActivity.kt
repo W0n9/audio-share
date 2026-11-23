@@ -149,10 +149,7 @@ class MainActivity : ComponentActivity() {
             // StartupLoaded has already run, so selectedPin() names the record
             // connect() would target. Read its persisted flag: a restart must
             // not auto-connect a device the Server revoked.
-            val selectedPin = state.value.selectedPin()
-            val selectedNeedsRepairing = credentials
-                .firstOrNull { it.serverSpkiSha256Hex == selectedPin }
-                ?.needsRepairing == true
+            val selectedNeedsRepairing = state.value.selectedServer()?.needsRepairing == true
             if (!harnessStarted && AutoConnectPolicy.shouldAutoConnect(
                     savedStatePresent = hadSavedState,
                     hasCredential = credentials.isNotEmpty(),
