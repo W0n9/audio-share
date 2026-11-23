@@ -5,8 +5,11 @@ no GitHub Release, and no release artifacts built for this version. See the main
 [narrowed stable gate](wire-protocol-v2/roadmap.md#5-发布与迁移-gateexperimental--stable).
 
 The tag points to `675f290`; `ac9482a` is the earlier code and device-evidence baseline.
-The tagged source still has `VERSION=0.5.0-beta`, and the v2 Android app reports
-`0.2.0-beta` (`versionCode 2`). These are not v0.6.0 release artifacts.
+The tagged source still has `VERSION=0.5.0-beta`, and its v2 Android app reports
+`0.2.0-beta` (`versionCode 2`). The review branch bumps the product to `0.6.0` and the
+Android app to `0.6.0` (`versionCode 3`), and the release workflow now produces a
+separate APK per ABI (`arm64-v8a`, `x86_64`). Neither set of artifacts is a v0.6.0
+release artifact until the final commit is built and accepted.
 
 ## What this release is
 

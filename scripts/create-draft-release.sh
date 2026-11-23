@@ -4,26 +4,38 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$ROOT/scripts/lib.sh"
-[[ $# -eq 4 ]] || fail '用法：create-draft-release.sh <artifacts-dir> <version> <apk-name> <commit-sha>'
+[[ $# -eq 3 ]] || fail '用法：create-draft-release.sh <artifacts-dir> <version> <commit-sha>'
 release_dir=$1
 version=$2
-apk_name=$3
-commit=$4
+commit=$3
 bash "$ROOT/scripts/check-release-version.sh" "$version" >/dev/null
-[[ "$apk_name" =~ ^audio-share-client-v2-[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?\.apk$ ]] ||
-    fail "无效的 APK 资产名：$apk_name"
 notes="$ROOT/docs/releases/v${version}.md"
 [[ -s "$notes" ]] || fail "缺少 GitHub 发布说明：$notes"
 
+# Android 每架构一个 APK；两个都必须存在，且目录里不能混入其它 APK。
+apk_dir="$release_dir/audio-share-client-v2-android"
+apk_names=()
+for abi in arm64-v8a x86_64; do
+    name="audio-share-client-v2-${version}-${abi}.apk"
+    require_file "$apk_dir/$name"
+    apk_names+=("$name")
+done
+extra_apks=$(find "$apk_dir" -maxdepth 1 -name '*.apk' ! -name "audio-share-client-v2-${version}-arm64-v8a.apk" \
+    ! -name "audio-share-client-v2-${version}-x86_64.apk")
+[[ -z "$extra_apks" ]] || fail "存在未预期的 APK：$extra_apks"
+
 assets=()
 for path in \
-    "audio-share-client-v2-android/$apk_name" \
+    "${apk_names[0]}" "${apk_names[1]}" \
     'AudioShareServer-windows/AudioShareServer.exe' \
     'audio-share-server-cmd-windows/audio-share-server-cmd-windows.zip' \
     "audio-share-server-deb/AudioShareServer_${version}_amd64.deb" \
     "audio-share-server-appimage/AudioShareServer_${version}_amd64.AppImage" \
     'audio-share-server-cmd-linux/audio-share-server-cmd-linux.tar.gz'; do
-    file="$release_dir/$path"
+    case "$path" in
+    audio-share-client-v2-*.apk) file="$apk_dir/$path" ;;
+    *) file="$release_dir/$path" ;;
+    esac
     require_file "$file"
     require_file "$file.sha256"
     sum=$(sha256sum -- "$file")

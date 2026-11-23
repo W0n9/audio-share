@@ -58,12 +58,10 @@ jobs:
     uses: ./.github/workflows/server-rewrite.yml
 
   build_android:
-    name: Build signed Android v2 APK
+    name: Build signed Android v2 APKs
     needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    outputs:
-      apk_name: ${{ steps.package.outputs.apk_name }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -109,7 +107,8 @@ jobs:
           chmod 600 "$RUNNER_TEMP/audio-share-beta-keys/audio-share-beta.jks"
 
       # 覆盖 native/.cargo/config.toml 中的本机 NDK 路径，不改源码。
-      - name: Build signed universal APK (arm64-v8a + x86_64)
+      # 每个 ABI 单独构建、单独签名、单独校验，产出两个 APK。
+      - name: Build, verify, and package one signed APK per ABI
         working-directory: android-client-v2
         env:
           AUDIO_SHARE_KEYSTORE_FILE: ${{ runner.temp }}/audio-share-beta-keys/audio-share-beta.jks
@@ -125,24 +124,19 @@ jobs:
           export AR_aarch64_linux_android="$NDK/llvm-ar"
           export CC_x86_64_linux_android="$NDK/x86_64-linux-android26-clang"
           export AR_x86_64_linux_android="$NDK/llvm-ar"
-          ./gradlew assembleRelease -PandroidAbis=arm64-v8a,x86_64
+          for abi in arm64-v8a x86_64; do
+            ./gradlew assembleRelease -PandroidAbis="$abi" --console=plain
+            bash ../scripts/package-android-release.sh "$ANDROID_HOME/build-tools/36.0.0" \
+              app/build/outputs/apk/release ../dist-android "$abi"
+          done
 
-      - name: Verify and package signed APK
-        id: package
-        shell: bash
-        run: |
-          set -euo pipefail
-          apk_name=$(bash scripts/package-android-release.sh "$ANDROID_HOME/build-tools/36.0.0" \
-            android-client-v2/app/build/outputs/apk/release dist-android)
-          printf 'apk_name=%s\n' "$apk_name" >> "$GITHUB_OUTPUT"
-
-      - name: Upload signed APK
+      - name: Upload signed APKs
         uses: actions/upload-artifact@v7
         with:
           name: audio-share-client-v2-android
           path: |
-            dist-android/${{ steps.package.outputs.apk_name }}
-            dist-android/${{ steps.package.outputs.apk_name }}.sha256
+            dist-android/*.apk
+            dist-android/*.apk.sha256
           if-no-files-found: error
 
   create_release:
@@ -155,7 +149,6 @@ jobs:
       contents: write
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
-      APK_NAME: ${{ needs.build_android.outputs.apk_name }}
     steps:
       - uses: actions/checkout@v7
 
@@ -165,6 +158,6 @@ jobs:
           path: release_bin
 
       - name: Verify assets and create GitHub draft
-        run: bash scripts/create-draft-release.sh release_bin "$VERSION" "$APK_NAME" "$GITHUB_SHA"
+        run: bash scripts/create-draft-release.sh release_bin "$VERSION" "$GITHUB_SHA"
         env:
           GH_TOKEN: ${{ github.token }}

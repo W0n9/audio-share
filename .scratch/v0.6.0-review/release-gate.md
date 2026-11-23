@@ -8,7 +8,8 @@
 | --- | --- |
 | 代码与复测证据基线 | `ac9482a`；其后至标签的提交只改发布说明、路线图及决策记录。 |
 | 本地 annotated tag `v0.6.0` | `675f290`（含发布说明草稿）；`9fece0d` 是其后的[本地标签记录](../wire-protocol-v2/map.md)，不是标签目标。远端状态本次未复查。 |
-| 标签内产品版本 | [`VERSION`](../../VERSION) 是 `0.5.0-beta`。Android v2 [`versionName` / `versionCode`](../../android-client-v2/app/build.gradle.kts) 是 `0.2.0-beta` / `2`；两组版本独立，Wire Protocol major 也是独立值。 |
+| 分支内产品版本 | 本分支 [`VERSION`](../../VERSION) 已是 `0.6.0`（Cargo/Tauri 已同步）。Android v2 [`versionName` / `versionCode`](../../android-client-v2/app/build.gradle.kts) 是 `0.6.0` / `3`，发布时按 ABI 各出一个 APK（`arm64-v8a`、`x86_64`）；两组版本仍独立于 Wire Protocol major。 |
+| 标签内产品版本 | 本地 `v0.6.0` 标签指向的 `675f290` 仍是 `VERSION=0.5.0-beta`、Android `0.2.0-beta` / `2`，不能作为正式构建提交。 |
 | 已测试产物 | M5-12 是 Windows Server `431997b` 和 Android arm64 **debug** APK `4120cdd`。签名 APK / Server 软件包尚未为 `v0.6.0` 重建并验证，不能把测试产物当发布资产。 |
 
 ## 证据账本
@@ -28,6 +29,6 @@
 
 ## 对外发布前须处理
 
-- [ ] **确定正式构建提交与版本策略。** 当前标签仍指向旧版本源码，本分支不改标签和版本。正式发布提交需将服务器的 `VERSION` 设为 `0.6.0`，并用 `bash scripts/apply_version.sh` 同步 Cargo/Tauri 元数据；Android 应用版本独立，由维护者决定。工作流按实际 APK 版本命名，不要求两者一致。
-- [ ] **先仅打包并验收。** 在正式提交所在的 ref 手动运行 [`Make Release`](../../.github/workflows/release.yml)，输入 `version=0.6.0`，保持 `create_draft=false`。下载 Actions artifacts，核对 Windows/Linux Server 与 Android 签名 APK 的二进制版本、签名、ABI、SHA-256、无 `test-support`；记录配对、播放、停止、升级和兼容性复验。未执行的项目继续记 `NOT RUN`，需要额外豁免时由维护者裁决。
+- [x] **版本策略已定。** 产品与 Android 应用版本均为 `0.6.0`（`versionCode 3`），Rust/Tauri 元数据已通过 `scripts/apply_version.sh` 同步；Android 发布改为按 ABI 各出一个签名 APK。正式构建仍需从包含这些改动的提交进行。
+- [ ] **先仅打包并验收。** 在正式提交所在的 ref 手动运行 [`Make Release`](../../.github/workflows/release.yml)，输入 `version=0.6.0`，保持 `create_draft=false`。下载 Actions artifacts，核对 Windows/Linux Server 与**两个** Android 签名 APK 的二进制版本、签名、单 ABI、SHA-256、无 `test-support`；记录配对、播放、停止、升级和兼容性复验。未执行的项目继续记 `NOT RUN`，需要额外豁免时由维护者裁决。
 - [ ] **确认标签和对外文案，再创建 draft。** 审阅[对外说明](../../docs/releases/v0.6.0.md)与[证据草稿](../release-notes-v0.6.0.md)。确认远端 `v0.6.0` 标签指向正式构建提交后，选择同一提交重新运行 `Make Release`，设 `create_draft=true`。该次运行会重新构建，不复用先前 artifacts；核对 draft 附件的哈希与验收记录，必要时复验最终资产，再手动发布。不把原始日志当发布附件；工作流不会创建标签或自动公开 Release。

@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# 校验签名 APK 与 Gradle 的实际产物元数据，输出发布资产名。
+# 校验单个 ABI 的签名 APK 与 Gradle 元数据，输出发布资产名。
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-[[ $# -eq 3 ]] || fail '用法：package-android-release.sh <build-tools-dir> <apk-dir> <out-dir>'
+[[ $# -eq 4 ]] || fail '用法：package-android-release.sh <build-tools-dir> <apk-dir> <out-dir> <abi>'
 tools=$1
 apk_dir=$2
 out_dir=$3
+abi=$4
+case "$abi" in
+arm64-v8a | x86_64) ;;
+*) fail "不支持的发布 ABI：$abi" ;;
+esac
 apk="$apk_dir/app-release.apk"
 metadata="$apk_dir/output-metadata.json"
 require_file "$apk"
@@ -32,9 +37,9 @@ package=$(sed -n '/^package: /p' <<<"$badging")
 [[ "$package" == "$expected" || "$package" == "$expected "* ]] ||
     fail 'APK 包名或版本与 Gradle 元数据不一致'
 
-# aapt 可能以不同顺序列出 ABI，但必须恰好包含这两种。
-abis=$(sed -n 's/^native-code: //p' <<<"$badging" | tr ' ' '\n' | LC_ALL=C sort)
-[[ "$abis" == $'\'arm64-v8a\'\n\'x86_64\'' ]] || fail "APK 并非预期的双 ABI：$abis"
+# 每个 APK 只能带一个 ABI，且必须与本次构建的 ABI 一致。
+abis=$(sed -n 's/^native-code: //p' <<<"$badging" | tr ' ' '\n')
+[[ "$abis" == "'$abi'" ]] || fail "APK 的 ABI 不是 $abi：$abis"
 
 # 必须读完整个 DEX：grep -q 在 pipefail 下会提前关管道，可能漏掉匹配。
 # 先确认解包/strings 成功，不能把管道失败误当作不存在测试路径。
@@ -45,7 +50,7 @@ if grep -qE 'TestSupportHarness|pinnedSpki|serverKey|smoke-client' "$dex_strings
     fail '生产 APK 中包含 test-support 路径'
 fi
 
-name="audio-share-client-v2-${version_name}.apk"
+name="audio-share-client-v2-${version_name}-${abi}.apk"
 mkdir -p "$out_dir"
 cp "$apk" "$out_dir/$name"
 write_sha256 "$out_dir/$name"
