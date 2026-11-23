@@ -231,7 +231,7 @@ contains `audio-share-server-cmd/{as-cmd.exe,LICENSE,README.md}`.
 | Repair Firewall (UAC approve) creates TCP/UDP inbound rules scoped to the exe, Domain+Private, allow | PASS — verified with `netsh advfirewall firewall show rule ... verbose` |
 | Repair Firewall (UAC cancel) shows a readable error and leaves the GUI responsive | PASS — “Firewall repair was cancelled because administrator permission was not granted.” |
 | A client can connect through the repaired rules | PASS on the server side — local client over the WLAN IP `10.8.144.155:65530` received 120 aligned datagrams; the real Android Client was later executed on one phone (ticket 15) |
-| Sound Panel opens `control.exe /name Microsoft.Sound`; GUI stays responsive | PASS — `#32770` dialog titled “声音” observed and closed |
+| Sound Panel opens `control.exe /name Microsoft.Sound`; GUI stays responsive | PASS — `#32770` dialog titled "Sound" ("声音") observed and closed |
 | en-US and zh-CN render; language persists and applies after restart | PASS — system default zh-CN, switched to en-US, restarted, switched back |
 | About shows 0.4.0, homepage, Apache-2.0; homepage opens the default browser | PASS |
 | `server.log` is created/truncated next to the executable and records startup/start/stop/update errors | PASS |

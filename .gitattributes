@@ -1,0 +1,5 @@
+# Keep agent workflow notes and in-progress scratch material out of source archives.
+# Tracked in git for the local issue-tracker workflow; only GitHub source archives drop them.
+/.scratch export-ignore
+/docs/agents export-ignore
+/AGENTS.md export-ignore

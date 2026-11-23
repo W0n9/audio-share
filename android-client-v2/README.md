@@ -84,12 +84,14 @@ at least 16 KB-aligned, the `GNU_RELRO` end is 0x4000-aligned (or no writable
 data follows it), and `zipalign -c -P 16 4` passes. It exits non-zero unless
 every input prints `ALIGNED`.
 
-## 前台 Service 设备回归
+## Foreground-service device regression
 
-工单 11 的设备工装直接观察真实 Activity 与公开的 `SessionController` outcome
-监听/快照 seam：`setOutcomeListener` 注册时重放当前 `SessionOutcome`，
-`outcomeSnapshot()` 供 Activity 重建时恢复；不模拟 native READY。测试 APK 只使用 Android 平台
-Instrumentation，不增加生产依赖，也不要求提高 API 26 baseline。
+The ticket-11 device harness observes the real Activity and the public
+`SessionController` outcome listener/snapshot seam: `setOutcomeListener`
+replays the current `SessionOutcome` on registration, and `outcomeSnapshot()`
+restores it after an Activity recreation. Native READY is never simulated.
+The test APK uses only Android platform instrumentation: no production
+dependencies are added, and the API 26 baseline is unchanged.
 
 ```sh
 ANDROID_HOME=$HOME/Android/Sdk ./gradlew \
@@ -104,25 +106,29 @@ python3 -I scripts/service-device-test.py --serial "$SERIAL" \
   --test rebind --output "$RESULT_FILE"
 ```
 
-`PUBLIC_CONFIG` 是 JSON，包含本次隔离 Server 的 `host`、整数 `port`、
-`pinnedSpki`（SPKI SHA-256 hex）和 `serverKey`（完整 Ed25519 公钥 hex）。
-不要复制或提交 Server 私钥。Server 必须在隔离测试配置里授权 checked-in
-fixture 的 P-256 **公钥**；测试 APK 的 fixture 身份仍仅在显式
-`-PtestSupport=true` 时编译。
+`PUBLIC_CONFIG` is JSON with the isolated Server's `host`, integer `port`,
+`pinnedSpki` (SPKI SHA-256 hex), and `serverKey` (full Ed25519 public key hex).
+Never copy or commit the Server's private key. The Server must authorize the
+checked-in fixture's P-256 **public key** in the isolated test configuration;
+the test APK's fixture identity is compiled in only with explicit
+`-PtestSupport=true`.
 
-测试用例为 `ready`、`rebind`、`recreate`、`lock`、`stop`。`rebind` 先让真实
-会话到达 READY，再断言注册新监听者时**同步**收到 READY；等待下一次轮询
-不算通过。`recreate` 和 `lock` 还要求 `--server-log`，对比 READY 前后的
-连接计数，避免通过重连掩盖生命周期缺陷。`stop` 通过公开快照和 Android
-实际 foreground 标志检查清理；Server 的 701 关闭码另见设备证据。
+Cases are `ready`, `rebind`, `recreate`, `lock`, and `stop`. `rebind` drives a
+real session to READY, then asserts that registering a new listener receives
+READY **synchronously**; waiting for the next poll does not pass. `recreate`
+and `lock` also require `--server-log` to compare connection counts around
+READY, so a reconnect cannot mask a lifecycle defect. `stop` checks cleanup
+through the public snapshot and Android's actual foreground flag; the Server's
+701 close code is covered by device evidence.
 
-MIUI 可能要求用户确认测试 APK 的 USB 安装，并禁止后台自行弹出 Activity。
-工装通过 `adb am start` 显式打开界面，不修改这些权限、不使用 root 绕过。
-各用例启动前会普通唤醒屏幕并请求 dismiss-keyguard；密码锁仍需用户手动解锁，
-不能把休眠时未绑定的 Activity 当作 native 状态失败。
-`lock` 会实际关闭屏幕并唤醒，失败时也尝试恢复屏幕。
+MIUI may ask the user to confirm USB installation of the test APK and may
+prevent background Activity launches. The harness opens the UI explicitly with
+`adb am start`; it does not change those permissions and does not use root.
+Before each case it wakes the screen and requests dismiss-keyguard; a password
+lock still needs manual unlocking, and an unbound Activity while the screen is
+off is not treated as a native-state failure. `lock` turns the screen off and
+on for real and tries to restore the screen even if the case fails.
 
-`-PdeviceTests=true` 仅保留独立测试 APK 消费的少量 Binder API；仍启用 R8。
-默认 `assembleRelease` 既不使用这些 keep rules，也不包含 fixture 私钥。
-不要发布上述测试构建。2026-11-13 的 RED/GREEN、锁屏及 v0.3.4 smoke 证据见
-[工单 11 证据](../.scratch/wire-protocol-v2/evidence/ticket-11-resume/README.md)。
+`-PdeviceTests=true` keeps only the few Binder APIs consumed by the separate
+test APK; R8 stays enabled. A default `assembleRelease` uses none of those keep
+rules and contains no fixture private key. Never publish these test builds.

@@ -216,6 +216,6 @@ collected.
 
 Windows 11 GUI/headless acceptance steps, artifact transfer, firewall ports, pairing,
 playback, revocation, identity reset, and evidence collection are in
-[`docs/beta-acceptance/windows-handoff.md`](../docs/beta-acceptance/windows-handoff.md).
+[`.scratch/wire-protocol-v2/windows-handoff.md`](wire-protocol-v2/windows-handoff.md).
 The Windows binaries are cross-built on Linux and carried to Windows; the Windows host
 needs no Rust/Node/Visual Studio toolchain.

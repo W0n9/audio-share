@@ -161,7 +161,7 @@ desktop session.
   “Firewall repair was cancelled because administrator permission was not
   granted.”; the GUI stayed responsive and the existing rules were intact.
 - [x] Sound Panel opens `control.exe /name Microsoft.Sound`. Windows 11: the
-  classic `#32770` “声音” dialog opened without freezing the GUI.
+  classic `#32770` "Sound" ("声音") dialog opened without freezing the GUI.
 - [x] Repair Firewall and Sound Panel are hidden on Linux; Linux shows
   documentation links instead. (Ticket 12: Linux settings section and fixed
   help URLs; Windows rows do not render on Linux.)
@@ -189,7 +189,7 @@ Executed on one Android 12 phone on 2026-11-10 (Xiaomi M2007J22C, API 31,
 arm64; released v0.3.4 APK). See
 `docs/server-rewrite/android-v034-acceptance.md` for the matrix and evidence.
 - [x] Client connects, shows the format, and plays audio. The app showed
-  “已开始”/pause and `dumpsys media.audio_flinger` reported the matching active
+  "Started" ("已开始") / pause and `dumpsys media.audio_flinger` reported the matching active
   AudioTrack for every matrix row.
 - [~] All 5 encodings play; mono and stereo; 44.1 and 48 kHz. 48 kHz stereo:
   f32/s8/s16/s24/s32 all PASS. 44.1 kHz requests: `S_FALSE` closest match to

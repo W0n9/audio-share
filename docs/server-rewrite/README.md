@@ -1,9 +1,13 @@
 # Server rewrite documentation
 
-Index for the Rust Server that ships as Audio Share 0.4.0. The earlier
-implementation (C++ Server Core + Windows-only GUI) was removed in the
-big-bang cutover; this directory and the linked references are the current
-maintenance documentation.
+Index for the Rust Server first shipped as Audio Share 0.4.0 and maintained
+through 0.6.0. The earlier implementation (C++ Server Core + Windows-only GUI)
+was removed in the big-bang cutover; this directory and the linked references
+are the current maintenance documentation for the Server side. For the v0.6.0
+encrypted transport and the Android v2 Client, see the
+[Wire Protocol v2 specification](../wire-protocol-v2/spec.md),
+[pairing specification](../wire-protocol-v2/pairing.md), and
+[v2 Client README](../../android-client-v2/README.md).
 
 ## Architecture
 
