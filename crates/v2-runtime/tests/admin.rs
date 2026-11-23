@@ -10,7 +10,9 @@ use v2_runtime::admin::{
     ClientStateView, CorePairingAdmin, InvitationStateView, PairingAdmin, RequestedPairingMode,
 };
 use v2_transport::auth_store::{Authorization, AuthorizationStore};
-use v2_transport::pairing::{self, ApprovalRequest, PairingCore, PairingPresented, NONCE_TTL};
+use v2_transport::pairing::{
+    self, ApprovalDecision, ApprovalRequest, PairingCore, PairingPresented, NONCE_TTL,
+};
 use v2_transport::schema::{PairingMode as WirePairingMode, PairingRequest};
 
 fn admin() -> (
@@ -102,7 +104,7 @@ fn invitation_state_reports_active_consumed_and_expired() {
 fn approval(
     request_id: u64,
     client_id: &str,
-    would_restore: Option<&str>,
+    restore_candidate: Option<&str>,
     core: &PairingCore,
     accepted: Arc<AtomicBool>,
 ) {
@@ -114,10 +116,10 @@ fn approval(
             mode: WirePairingMode::Qr,
             address: "192.168.1.44:50000".to_owned(),
             sas: Some("123 456".to_owned()),
-            would_restore: would_restore.map(str::to_owned),
+            restore_candidate: restore_candidate.map(str::to_owned),
         },
-        Box::new(move |ok| {
-            accepted.store(ok, Ordering::SeqCst);
+        Box::new(move |decision| {
+            accepted.store(decision == ApprovalDecision::Accept, Ordering::SeqCst);
         }),
     );
 }
@@ -185,13 +187,47 @@ fn decline_is_explicit_and_does_not_authorize() {
 }
 
 #[test]
+fn restore_routes_the_explicit_restore_decision_to_the_core() {
+    let (admin, core, _store) = admin();
+    let decision = Arc::new(Mutex::new(None));
+    let sink = Arc::clone(&decision);
+    core.request_approval(
+        ApprovalRequest {
+            approval_id: 43,
+            client_id: "0011223344556677".to_owned(),
+            display_name: "Pixel 8".to_owned(),
+            mode: WirePairingMode::Qr,
+            address: "192.168.1.44:50000".to_owned(),
+            sas: Some("123 456".to_owned()),
+            restore_candidate: Some("Pixel 8".to_owned()),
+        },
+        Box::new(move |choice| {
+            *sink.lock().expect("decision lock") = Some(choice);
+        }),
+    );
+    assert_eq!(
+        admin.pending()[0].restore_candidate.as_deref(),
+        Some("Pixel 8")
+    );
+
+    assert!(admin.restore(43));
+    assert_eq!(
+        *decision.lock().expect("decision lock"),
+        Some(ApprovalDecision::Restore),
+        "Restore is carried as its own decision, never a plain Accept"
+    );
+    assert!(admin.pending().is_empty());
+    assert!(!admin.restore(43), "an approval decision is single-use");
+}
+
+#[test]
 fn clients_list_and_revoke_use_the_shared_store() {
     let (admin, core, store) = admin();
     assert!(admin.clients().is_empty());
 
     let public_key = client_key();
     let persisted = core
-        .persist_client(&public_key, "Pixel 8", false)
+        .persist_client(&public_key, "Pixel 8", pairing::PersistMode::New)
         .expect("persist pairing");
     assert_eq!(persisted.display_name, "Pixel 8");
     assert_eq!(core.clients().len(), 1);
@@ -226,11 +262,11 @@ fn revoke_of_an_unknown_client_is_an_error() {
 }
 
 #[test]
-fn pending_and_presented_views_flag_a_would_restore() {
+fn pending_and_presented_views_flag_a_restore_candidate() {
     let (admin, core, _store) = admin();
     let public_key = client_key();
     let record = core
-        .persist_client(&public_key, "Pixel 8", false)
+        .persist_client(&public_key, "Pixel 8", pairing::PersistMode::New)
         .expect("persist pairing");
     core.revoke(&record.client_id).expect("revoke");
 
@@ -251,13 +287,13 @@ fn pending_and_presented_views_flag_a_would_restore() {
         sas: Some("123 456".to_owned()),
         fingerprint: core.fingerprint(),
         expires_at: Instant::now() + Duration::from_secs(600),
-        would_restore: Some("Pixel 8".to_owned()),
+        restore_candidate: Some("Pixel 8".to_owned()),
     });
 
     let pending = admin.pending();
     assert_eq!(pending.len(), 1);
     assert_eq!(
-        pending[0].would_restore.as_deref(),
+        pending[0].restore_candidate.as_deref(),
         Some("Pixel 8"),
         "a revoked identity flags a restore before approval"
     );
@@ -265,7 +301,7 @@ fn pending_and_presented_views_flag_a_would_restore() {
     let presented = admin.presented();
     assert_eq!(presented.len(), 1);
     assert_eq!(
-        presented[0].would_restore.as_deref(),
+        presented[0].restore_candidate.as_deref(),
         Some("Pixel 8"),
         "the live card also flags a restore"
     );
@@ -284,7 +320,7 @@ fn pending_and_presented_views_flag_a_would_restore() {
         .into_iter()
         .find(|request| request.approval_id == 52)
         .expect("fresh approval");
-    assert!(fresh.would_restore.is_none());
+    assert!(fresh.restore_candidate.is_none());
 }
 
 #[test]
@@ -292,7 +328,7 @@ fn declining_a_restore_keeps_the_record_revoked_and_adds_nothing() {
     let (admin, core, store) = admin();
     let public_key = client_key();
     let record = core
-        .persist_client(&public_key, "Pixel 8", false)
+        .persist_client(&public_key, "Pixel 8", pairing::PersistMode::New)
         .expect("persist pairing");
     core.revoke(&record.client_id).expect("revoke");
 
@@ -304,7 +340,10 @@ fn declining_a_restore_keeps_the_record_revoked_and_adds_nothing() {
         &core,
         Arc::clone(&accepted),
     );
-    assert_eq!(admin.pending()[0].would_restore.as_deref(), Some("Pixel 8"));
+    assert_eq!(
+        admin.pending()[0].restore_candidate.as_deref(),
+        Some("Pixel 8")
+    );
 
     assert!(admin.decline(61));
     assert!(!accepted.load(Ordering::SeqCst));
@@ -322,7 +361,7 @@ fn delete_refuses_active_records_and_removes_revoked_ones() {
     let (admin, core, store) = admin();
     let public_key = client_key();
     let record = core
-        .persist_client(&public_key, "Pixel 8", false)
+        .persist_client(&public_key, "Pixel 8", pairing::PersistMode::New)
         .expect("persist pairing");
 
     let error = admin

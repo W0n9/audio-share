@@ -53,6 +53,15 @@ pub fn pairing_declined(client_id: &str) {
     );
 }
 
+/// The local operator explicitly restored a revoked pairing.
+pub fn pairing_restored(client_id: &str) {
+    tracing::info!(
+        event = %"pairing.restored",
+        client_id = %client_id,
+        "v2 pairing restored"
+    );
+}
+
 /// A Client completed authentication and owns a live session.
 pub fn session_accepted(client_id: &str, session_id: u64) {
     tracing::info!(

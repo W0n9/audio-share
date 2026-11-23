@@ -247,7 +247,7 @@ fn pairing_core_persist_sets_timestamps_and_notifies_explicitly() {
     );
     let mut paired = core.subscribe_paired();
     let record = core
-        .persist_client(&unhex(CLIENT_PUB), "Test Phone", false)
+        .persist_client(&unhex(CLIENT_PUB), "Test Phone", pairing::PersistMode::New)
         .unwrap();
     assert_eq!(record.client_id, "cf7940b474310246");
     assert_eq!(record.created_at.len(), 20);
@@ -262,7 +262,7 @@ fn pairing_core_persist_sets_timestamps_and_notifies_explicitly() {
     assert_eq!(notified.client_id, record.client_id);
     // Re-pairing keeps the original created_at while updating last_seen_at.
     let again = core
-        .persist_client(&unhex(CLIENT_PUB), "Renamed", false)
+        .persist_client(&unhex(CLIENT_PUB), "Renamed", pairing::PersistMode::New)
         .unwrap();
     assert_eq!(again.created_at, record.created_at);
     assert_eq!(again.display_name, "Renamed");
@@ -278,24 +278,24 @@ fn revoked_record_restores_in_place_with_the_saved_identity() {
         Arc::clone(&store),
     );
     let first = core
-        .persist_client(&unhex(CLIENT_PUB), "Test Phone", false)
+        .persist_client(&unhex(CLIENT_PUB), "Test Phone", pairing::PersistMode::New)
         .unwrap();
     let client_id = first.client_id.clone();
     let created_at = first.created_at.clone();
     assert!(
-        core.restore_candidate(&client_id).is_none(),
+        core.restore_candidate(&unhex(CLIENT_PUB)).is_none(),
         "an active record is not a restore"
     );
 
     store.revoke_client(&client_id).unwrap();
     assert_eq!(
-        core.restore_candidate(&client_id).as_deref(),
+        core.restore_candidate(&unhex(CLIENT_PUB)).as_deref(),
         Some("Test Phone"),
         "a revoked record would be restored with its saved name"
     );
 
     let restored = core
-        .persist_client(&unhex(CLIENT_PUB), "Renamed", true)
+        .persist_client(&unhex(CLIENT_PUB), "Renamed", pairing::PersistMode::Restore)
         .expect("explicit restore");
     assert_eq!(restored.client_id, client_id, "the same client id");
     assert_eq!(restored.created_at, created_at, "created_at is preserved");
@@ -307,7 +307,7 @@ fn revoked_record_restores_in_place_with_the_saved_identity() {
     assert_eq!(store.clients().len(), 1, "exactly one record");
     assert_eq!(store.clients()[0].client_id, client_id);
     assert_eq!(store.clients()[0].state, ClientState::Active);
-    assert!(core.restore_candidate(&client_id).is_none());
+    assert!(core.restore_candidate(&unhex(CLIENT_PUB)).is_none());
 }
 
 #[test]
@@ -319,12 +319,12 @@ fn revoked_record_is_not_reactivated_without_restore_confirmation() {
         Arc::clone(&store),
     );
     let first = core
-        .persist_client(&unhex(CLIENT_PUB), "Test Phone", false)
+        .persist_client(&unhex(CLIENT_PUB), "Test Phone", pairing::PersistMode::New)
         .unwrap();
     store.revoke_client(&first.client_id).unwrap();
 
     let error = core
-        .persist_client(&unhex(CLIENT_PUB), "Test Phone", false)
+        .persist_client(&unhex(CLIENT_PUB), "Test Phone", pairing::PersistMode::New)
         .expect_err("a plain pairing must not restore a revoked record");
     assert!(
         matches!(error, PairingError::RestoreNotConfirmed),
@@ -333,4 +333,47 @@ fn revoked_record_is_not_reactivated_without_restore_confirmation() {
     assert_eq!(store.clients().len(), 1, "no record is added");
     assert_eq!(store.clients()[0].client_id, first.client_id);
     assert_eq!(store.clients()[0].state, ClientState::Revoked);
+}
+
+#[test]
+fn an_explicit_restore_of_a_non_revoked_identity_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(AuthorizationStore::open(dir.path()).unwrap());
+    let core = pairing::PairingCore::new(
+        unhex("11b307d9bf3b84b7941e28d31283e0c813fbbed5b4ffd95ae5504120045afc9c"),
+        Arc::clone(&store),
+    );
+
+    // No record at all: Restore must never insert a brand-new identity.
+    let error = core
+        .persist_client(
+            &unhex(CLIENT_PUB),
+            "Test Phone",
+            pairing::PersistMode::Restore,
+        )
+        .expect_err("restore requires a revoked record");
+    assert!(
+        matches!(error, PairingError::RestoreUnavailable),
+        "unexpected error {error}"
+    );
+    assert!(store.clients().is_empty(), "no record is added");
+
+    // An active record: Restore is equally invalid and must not rewrite it.
+    let active = core
+        .persist_client(&unhex(CLIENT_PUB), "Test Phone", pairing::PersistMode::New)
+        .unwrap();
+    let error = core
+        .persist_client(
+            &unhex(CLIENT_PUB),
+            "Test Phone",
+            pairing::PersistMode::Restore,
+        )
+        .expect_err("restore requires a revoked record");
+    assert!(
+        matches!(error, PairingError::RestoreUnavailable),
+        "unexpected error {error}"
+    );
+    assert_eq!(store.clients().len(), 1);
+    assert_eq!(store.clients()[0].client_id, active.client_id);
+    assert_eq!(store.clients()[0].state, ClientState::Active);
 }

@@ -641,10 +641,8 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
                     "\nDevice connected: {} [{}] from {}",
                     request.display_name, request.client_id, request.address
                 );
-                if let Some(saved) = request.would_restore.as_deref() {
-                    println!(
-                        "This identity was revoked; accepting restores the saved pairing for {saved} (no new key)."
-                    );
+                if let Some(saved) = request.restore_candidate.as_deref() {
+                    print_restore_notice(saved);
                 }
                 if let Some(sas) = request.sas.as_deref() {
                     println!("Pairing code: {sas}");
@@ -662,11 +660,9 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
                     "\nIncoming device: {} [{}] from {}",
                     request.display_name, request.client_id, request.address
                 );
-                let restored_name = request.would_restore.clone();
+                let restored_name = request.restore_candidate.clone();
                 if let Some(saved) = restored_name.as_deref() {
-                    println!(
-                        "This identity was revoked. Accepting restores the saved pairing for {saved}; no new key is created."
-                    );
+                    print_restore_notice(saved);
                 }
                 if let Some(sas) = request.sas.as_deref() {
                     println!("Pairing code: {sas}");
@@ -676,15 +672,20 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
                 // ADR-0006: --accept is a plain Accept. It must never silently
                 // restore a revoked identity; that needs an explicit prompt.
                 let accepted = match restored_name.as_deref() {
-                    _ if args.accept && restored_name.is_none() => true,
-                    Some(saved) => confirm(
-                        &format!("Restore {saved}? [y/N]: "),
-                        accept_pairing,
-                    )?,
+                    Some(saved) => {
+                        confirm(&format!("Restore {saved}? [y/N]: "), accept_pairing)?
+                    }
+                    None if args.accept => true,
                     None => confirm("Accept this device? [y/N]: ", accept_pairing)?,
                 };
                 if accepted {
-                    core.approve(request.approval_id);
+                    // A revoked identity is restored only by the explicit
+                    // Restore decision; every other accept is a plain Accept.
+                    if restored_name.is_some() {
+                        core.restore(request.approval_id);
+                    } else {
+                        core.approve(request.approval_id);
+                    }
                     println!("Accepted; waiting for the phone to finish pairing...");
                 } else {
                     core.decline(request.approval_id);
@@ -709,6 +710,13 @@ async fn run_pair(cli: &Cli, args: PairArgs) -> Result<(), String> {
     admin.cancel();
     runtime.stop();
     outcome
+}
+
+/// The one wording for a revoked identity awaiting an explicit Restore.
+fn print_restore_notice(saved: &str) {
+    println!(
+        "This identity was revoked; accepting restores the saved pairing for {saved} (no new key)."
+    );
 }
 
 /// Render a QR as compact UTF-8 half-block terminal art (4-module quiet zone).
