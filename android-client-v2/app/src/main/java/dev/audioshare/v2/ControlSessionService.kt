@@ -225,6 +225,9 @@ class ControlSessionService : Service(), SessionController {
                 return START_STICKY
             }
             ACTION_FORGET_SERVER -> {
+                // dispatch() used startForegroundService(); claim the slot
+                // before the (fast) local cleanup removes it again.
+                startForegroundCompat()
                 forgetServerNow(intent.getStringExtra(EXTRA_SERVER_PIN))
                 return START_NOT_STICKY
             }
@@ -340,6 +343,7 @@ class ControlSessionService : Service(), SessionController {
             orchestrator.reportStoredConnectFailure(
                 code = 205,
                 message = "the stored Client key is gone; re-pair the phone",
+                serverSpkiSha256Hex = record.serverSpkiSha256Hex,
             )
             stopForegroundCompat()
             stopSelf()

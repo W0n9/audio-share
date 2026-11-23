@@ -19,11 +19,11 @@
     <string name="home_subtitle_paired">Connect to the Server you paired on this phone.</string>
     <string name="home_paired_server">Paired Server</string>
     <string name="home_paired_badge">PAIRED</string>
+    <string name="home_re_pair">Re-pair</string>
+    <string name="server_needs_repairing">Needs re-pairing</string>
     <string name="home_connect">Connect</string>
     <string name="home_pair_code">Pair with code</string>
-    <string name="home_pair_new">Pair a new phone</string>
     <string name="home_scan_qr">Scan QR code</string>
-    <string name="home_scan_qr_instead">Scan QR instead</string>
     <string name="server_address_label">Server address</string>
     <string name="server_address_placeholder">host:port</string>
 
@@ -98,9 +98,15 @@
     <string name="settings_paired_server">Paired Server</string>
     <string name="settings_server_name">Name</string>
     <string name="settings_server_address">Address</string>
+    <string name="settings_server_status">Status</string>
     <string name="settings_server_fingerprint">Fingerprint</string>
     <string name="settings_empty_body">No Server is paired yet.</string>
-    <string name="settings_pair_phone">Pair a phone</string>
+    <string name="settings_pair_server">Pair a Server</string>
+    <!-- Forget Server: local removal only; never happens without this confirmation. -->
+    <string name="forget_server">Forget this Server</string>
+    <string name="forget_server_confirm">Forget %1$s? The saved pairing and its key are deleted from this phone.</string>
+    <string name="action_forget">Forget</string>
+    <string name="action_cancel">Cancel</string>
     <string name="settings_about_link">About this beta</string>
 
     <!-- Foreground notification -->
