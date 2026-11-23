@@ -27,6 +27,9 @@ pub struct V2StartInputs {
     pub allow_loose_permissions: bool,
     /// The v2 QUIC port.
     pub port: u16,
+    /// The Host configured in Network settings. It selects the QR `addr`
+    /// advertisement only; v2 still binds the dual-stack wildcard.
+    pub host: String,
     /// The live v1 capture observer (read-only format/health).
     pub capture: CaptureObserver,
     /// The live v1 media tap (PCM chunks for v2 subscribers).
@@ -67,13 +70,24 @@ pub type V2Starter = Arc<dyn Fn(V2StartInputs) -> StartFuture + Send + Sync>;
 pub fn production_starter() -> V2Starter {
     Arc::new(|inputs| {
         Box::pin(async move {
+            // The Host chooses only the advertised QR address. Wildcards,
+            // empty values, and scoped literals yield `None`, so the runtime
+            // keeps its default non-loopback IPv4 fallback and the payload
+            // stays parseable. The port is the v2 port the runtime binds.
+            let addr_hint = v2_runtime::qr_addr_hint(&inputs.host, inputs.port);
+            if addr_hint.is_none() && inputs.host.trim().contains('%') {
+                tracing::warn!(
+                    host = %inputs.host,
+                    "v2 QR address falls back: a scoped IPv6 host cannot be advertised"
+                );
+            }
             let runtime = v2_runtime::V2Runtime::start(
                 v2_runtime::RuntimeConfig {
                     data_dir: inputs.data_dir,
                     allow_loose_permissions: inputs.allow_loose_permissions,
                     bind_host: "::".to_owned(),
                     port: inputs.port,
-                    addr_hint: None,
+                    addr_hint,
                 },
                 Some((inputs.capture, inputs.media_tap)),
             )

@@ -70,6 +70,43 @@ async fn starts_binds_opens_pairing_and_stops() {
 }
 
 #[tokio::test]
+async fn a_configured_host_is_advertised_with_the_bound_port() {
+    // Reserve an ephemeral UDP port (QUIC uses UDP) so the runtime binds the
+    // same port the hint advertises, mirroring the GUI's fixed v2 port.
+    let probe = std::net::UdpSocket::bind(("127.0.0.1", 0)).expect("reserve a UDP port");
+    let port = probe.local_addr().expect("probe address").port();
+    drop(probe);
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let hint = v2_runtime::qr_addr_hint("2001:db8::5", port).expect("IPv6 hint");
+    let runtime = V2Runtime::start(
+        RuntimeConfig {
+            data_dir: dir.path().to_path_buf(),
+            allow_loose_permissions: false,
+            // The Host only changes the advertisement, not the bind address.
+            bind_host: "127.0.0.1".to_owned(),
+            port,
+            addr_hint: Some(hint.clone()),
+        },
+        None,
+    )
+    .await
+    .expect("v2 runtime");
+
+    assert_eq!(runtime.local_addr().port(), port);
+    assert_eq!(runtime.addr_hint(), hint);
+    let invitation = runtime
+        .admin()
+        .begin(RequestedPairingMode::Qr)
+        .expect("begin QR");
+    let parsed =
+        v2_transport::pairing::parse_qr_uri(&invitation.qr_uri.expect("QR URI")).expect("parses");
+    assert_eq!(parsed.addr_hint, hint);
+
+    runtime.stop();
+}
+
+#[tokio::test]
 async fn a_second_core_cannot_share_the_data_dir_and_the_lock_releases_on_drop() {
     use v2_runtime::RuntimeError;
 
