@@ -7,7 +7,7 @@
 **Blocked by:** 无
 
 **Category:** enhancement
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 ## Agent Brief
 
@@ -48,3 +48,4 @@
 ## Comments
 
 - 2026-11-23: triage 由维护者在 v0.6.2 真机测试中报告。维护者确认现象为“只有 IPv4 候选，没有 IPv6”，因此归类为 enhancement。核实：v0.6.2 的枚举路径只接受 `IfAddr::V4` 且过滤 loopback；v0.3.4 对等实现也只覆盖 IPv4。
+- 2026-11-24: code-complete on `integration/v0.6.3-gui-network` (tip `a1681a0`). Automated verification PASS: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (672 passed / 0 failed), `svelte-check` 101 files 0 errors / 0 warnings, Vite production build. Windows 真机下拉复验 `NOT RUN`；ticket 保持 `ready-for-human`。
