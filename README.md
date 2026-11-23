@@ -96,7 +96,9 @@ unencrypted and unauthenticated.
 1. Start `AudioShareServer` (`AudioShareServer.exe` on Windows).
 2. Check the Host and Port (default port `65530`). Host defaults to the first
    address matching v0.3.4's private-network mask; the field also suggests the
-   machine's local IPv4 addresses. Make sure the phone can reach it.
+   machine's local IPv4 and non-loopback IPv6 addresses (link-local addresses,
+   which need a `%scope` suffix, are excluded). Make sure the phone can reach
+   it.
 3. Pick an audio Endpoint and an Encoding, then click **Start Server**.
 4. In the Android Client, enter the same host and port and press play (for v1),
    or pair once and press play (for v2).
