@@ -82,6 +82,15 @@ pub fn client_revoked(client_id: &str) {
     );
 }
 
+/// A revoked Client record was deleted (permanent; ADR-0006).
+pub fn client_deleted(client_id: &str) {
+    tracing::info!(
+        event = %"client.deleted",
+        client_id = %client_id,
+        "v2 client record deleted"
+    );
+}
+
 /// The Server identity was reset; every pairing was invalidated.
 pub fn identity_reset(fingerprint: &str) {
     tracing::info!(

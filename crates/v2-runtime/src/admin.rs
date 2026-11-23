@@ -53,6 +53,10 @@ pub struct PendingRequestView {
     pub address: String,
     /// The per-connection SAS (`123 456`), known only after the device connects.
     pub sas: Option<String>,
+    /// `Some(saved_display_name)` when the identity's stored record is
+    /// revoked: approving restores it in place (ADR-0006), and the saved name
+    /// is the one that comes back. `None` for a new or active identity.
+    pub would_restore: Option<String>,
 }
 
 /// A live pairing presented before the Client's confirmation (ticket 29).
@@ -77,6 +81,9 @@ pub struct PresentedRequestView {
     pub fingerprint: String,
     /// Seconds until the pairing deadline, measured when the view was built.
     pub expires_in_secs: u64,
+    /// `Some(saved_display_name)` when the identity's stored record is
+    /// revoked: approving restores it in place (ADR-0006). `None` otherwise.
+    pub would_restore: Option<String>,
 }
 
 /// Lifecycle of the most recently opened QR invitation, for local operator
@@ -141,6 +148,10 @@ pub trait PairingAdmin: Send + Sync + fmt::Debug {
     fn clients(&self) -> Vec<ClientView>;
     /// Revoke one Client by canonical `client_id`; keeps the record for audit.
     fn revoke(&self, client_id: &str) -> Result<ClientView, String>;
+    /// Delete one **revoked** Client record by canonical `client_id`
+    /// (permanent). An active record is an error and is left unchanged: the
+    /// operator must revoke first (ADR-0006).
+    fn delete(&self, client_id: &str) -> Result<ClientView, String>;
     /// The §7.4 Server SPKI fingerprint.
     fn fingerprint(&self) -> String;
 }
@@ -229,6 +240,7 @@ impl PairingAdmin for CorePairingAdmin {
                     .expires_at
                     .saturating_duration_since(now)
                     .as_secs(),
+                would_restore: presented.would_restore,
             })
             .collect()
     }
@@ -252,6 +264,13 @@ impl PairingAdmin for CorePairingAdmin {
             .map_err(|error| error.to_string())
     }
 
+    fn delete(&self, client_id: &str) -> Result<ClientView, String> {
+        self.core
+            .delete(client_id)
+            .map(client_view)
+            .map_err(|error| error.to_string())
+    }
+
     fn fingerprint(&self) -> String {
         self.core.fingerprint()
     }
@@ -265,6 +284,7 @@ fn pending_view(request: ApprovalRequest) -> PendingRequestView {
         mode: requested_mode(request.mode),
         address: request.address,
         sas: request.sas,
+        would_restore: request.would_restore,
     }
 }
 

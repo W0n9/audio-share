@@ -431,6 +431,11 @@ pub struct ApprovalRequest {
     pub address: String,
     /// The per-connection SAS, when the connection supplied one.
     pub sas: Option<String>,
+    /// `Some(saved_display_name)` when the identity's stored record is
+    /// revoked: approving restores that saved record in place, and the
+    /// operator's approve is the explicit Restore confirmation (ADR-0006).
+    /// `None` for a new or already-active identity.
+    pub would_restore: Option<String>,
 }
 
 /// A live pairing as presented to the local operator.
@@ -459,6 +464,10 @@ pub struct PairingPresented {
     pub fingerprint: String,
     /// The monotonic pairing deadline instant.
     pub expires_at: Instant,
+    /// `Some(saved_display_name)` when the identity's stored record is
+    /// revoked: approving restores that saved record in place (ADR-0006).
+    /// `None` for a new or already-active identity.
+    pub would_restore: Option<String>,
 }
 
 impl fmt::Debug for PairingPresented {
@@ -473,6 +482,7 @@ impl fmt::Debug for PairingPresented {
             .field("sas", &self.sas.as_ref().map(|_| "<redacted>"))
             .field("fingerprint", &self.fingerprint)
             .field("expires_at", &self.expires_at)
+            .field("would_restore", &self.would_restore)
             .finish()
     }
 }
@@ -501,6 +511,10 @@ pub enum PairingError {
     ConcurrentLimit,
     /// Persistence failed; v2 fails closed.
     Store(StoreError),
+    /// A pairing would reactivate a revoked record without the operator's
+    /// explicit restore confirmation (ADR-0006). Fail closed: the record
+    /// stays revoked and no OK result is written.
+    RestoreNotConfirmed,
     /// Identity provisioning failed.
     Identity(IdentityError),
 }
@@ -518,6 +532,12 @@ impl fmt::Display for PairingError {
             Self::RateLimited => write!(f, "pairing failure rate exceeded for this source"),
             Self::ConcurrentLimit => write!(f, "eight pairing sessions are already in flight"),
             Self::Store(error) => write!(f, "authorization store: {error}"),
+            Self::RestoreNotConfirmed => {
+                write!(
+                    f,
+                    "a revoked pairing requires an explicit restore confirmation"
+                )
+            }
             Self::Identity(error) => write!(f, "server identity: {error}"),
         }
     }
@@ -1056,8 +1076,34 @@ impl PairingCore {
         self.paired_tx.subscribe()
     }
 
+    /// The saved display name when a stored record for `client_id` is
+    /// revoked, i.e. an approved pairing would **restore** that record rather
+    /// than create a new one or update an active one; `None` otherwise
+    /// (ADR-0006). Local admin surfaces expose this as `would_restore` so the
+    /// operator can confirm a Restore and see the name that will be restored.
+    pub fn restore_candidate(&self, client_id: &str) -> Option<String> {
+        self.store
+            .clients()
+            .into_iter()
+            .find(|client| client.client_id == client_id && client.state == ClientState::Revoked)
+            .map(|client| client.display_name)
+    }
+
     /// Persist a successful pairing through [`AuthorizationStore::upsert`]
     /// (the production path; never `insert_for_tests`).
+    ///
+    /// `restore` is the operator's explicit restore confirmation, captured
+    /// when the pairing was presented ([`Self::restore_candidate`]). When the
+    /// stored identity is revoked:
+    ///
+    /// - `restore = true`: the saved record becomes active **in place** — the
+    ///   same `client_id`, `created_at`, and display name, with only `state`
+    ///   and `last_seen_at` changing (ADR-0006: Restore is not a new pairing).
+    /// - `restore = false`: an error ([`PairingError::RestoreNotConfirmed`]);
+    ///   a plain pairing never silently reactivates a revoked record.
+    ///
+    /// A new identity inserts a new record; an active identity is re-paired
+    /// exactly as before.
     ///
     /// This method only writes the record. The success broadcast is a separate
     /// step ([`Self::notify_paired`]) so the driver can fire it *after* the
@@ -1068,17 +1114,34 @@ impl PairingCore {
         &self,
         public_key: &[u8],
         display_name: &str,
+        restore: bool,
     ) -> Result<StoredClient, PairingError> {
         if auth::parse_client_public_key(public_key).is_err() {
             return Err(PairingError::Malformed(
                 "client_public_key must be a 33-byte SEC1 point",
             ));
         }
-        let display_name = normalize_display_name(display_name);
         let now = rfc3339_now();
-        let created_at = self
-            .store
-            .record_for(public_key)
+        let existing = self.store.record_for(public_key);
+        if let Some(record) = existing
+            .as_ref()
+            .filter(|record| record.state == ClientState::Revoked)
+        {
+            if !restore {
+                return Err(PairingError::RestoreNotConfirmed);
+            }
+            // Restore the saved record in place: identity, creation time, and
+            // display name are the record's, not the new pairing's.
+            let client = StoredClient {
+                state: ClientState::Active,
+                last_seen_at: now,
+                ..record.clone()
+            };
+            self.store.upsert(client.clone())?;
+            return Ok(client);
+        }
+        let display_name = normalize_display_name(display_name);
+        let created_at = existing
             .map(|record| record.created_at)
             .filter(|created| !created.is_empty())
             .unwrap_or_else(|| now.clone());
@@ -1112,6 +1175,16 @@ impl PairingCore {
     pub fn revoke(&self, client_id: &str) -> Result<StoredClient, StoreError> {
         let client = self.store.revoke_client(client_id)?;
         crate::session_log::client_revoked(&client.client_id);
+        Ok(client)
+    }
+
+    /// Delete a **revoked** client record by canonical `client_id` (ADR-0006:
+    /// revoke first, then delete). An active record is an error and is left
+    /// unchanged. Deletion is permanent; the identity is refused afterwards
+    /// because no record remains.
+    pub fn delete(&self, client_id: &str) -> Result<StoredClient, StoreError> {
+        let client = self.store.delete_client(client_id)?;
+        crate::session_log::client_deleted(&client.client_id);
         Ok(client)
     }
 }

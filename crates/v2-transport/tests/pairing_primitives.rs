@@ -425,6 +425,7 @@ fn approval_is_an_explicit_decision_and_never_a_side_effect() {
         mode: PairingMode::Qr,
         address: "192.168.1.20:65531".to_owned(),
         sas: Some("900 067".to_owned()),
+        would_restore: None,
     };
     let decisions = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&decisions);
@@ -461,6 +462,7 @@ fn concurrent_approvals_with_the_same_wire_request_id_are_independent() {
                 mode: PairingMode::Qr,
                 address: "192.168.1.20:50000".to_owned(),
                 sas: Some(sas.to_owned()),
+                would_restore: None,
             },
             Box::new(move |approved| {
                 sink.lock().unwrap().push((client_id.to_owned(), approved));
@@ -513,6 +515,7 @@ fn presented(approval_id: u64, sas: &str) -> PairingPresented {
         sas: Some(sas.to_owned()),
         fingerprint: "FP".to_owned(),
         expires_at: Instant::now() + Duration::from_secs(600),
+        would_restore: None,
     }
 }
 
@@ -542,6 +545,7 @@ fn presented_pairings_are_published_and_cleared_by_local_decisions() {
             mode: PairingMode::Qr,
             address: "192.168.1.20:65531".to_owned(),
             sas: Some("654 321".to_owned()),
+            would_restore: None,
         },
         Box::new(|_| {}),
     );
@@ -570,6 +574,7 @@ fn cancel_declines_every_pending_approval_and_closes_the_sas_window() {
                 mode: PairingMode::Sas,
                 address: "192.168.1.20:50000".to_owned(),
                 sas: Some("123 456".to_owned()),
+                would_restore: None,
             },
             Box::new(move |approved| {
                 sink.lock().unwrap().push((client_id.to_owned(), approved));

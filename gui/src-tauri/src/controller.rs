@@ -829,6 +829,24 @@ mod tests {
             Ok(client.clone())
         }
 
+        // Compile-only stub for ticket 01: the GUI's delete action is wired in
+        // ticket 02, which owns the device-row controls.
+        fn delete(&self, client_id: &str) -> Result<ClientView, String> {
+            lock(&self.state).calls.push(format!("delete:{client_id}"));
+            let mut state = lock(&self.state);
+            let Some(position) = state
+                .clients
+                .iter()
+                .position(|client| client.client_id == client_id)
+            else {
+                return Err("unknown client".to_owned());
+            };
+            if state.clients[position].state == ClientStateView::Active {
+                return Err("client is active; revoke it before deleting".to_owned());
+            }
+            Ok(state.clients.remove(position))
+        }
+
         fn fingerprint(&self) -> String {
             "FP".to_owned()
         }
@@ -902,6 +920,7 @@ mod tests {
             mode: RequestedPairingMode::Qr,
             address: "192.168.1.44:50000".to_owned(),
             sas: Some("123 456".to_owned()),
+            would_restore: None,
         }
     }
 
@@ -915,6 +934,7 @@ mod tests {
             sas: Some("123 456".to_owned()),
             fingerprint: "FP".to_owned(),
             expires_in_secs: 600,
+            would_restore: None,
         }
     }
 

@@ -10,7 +10,7 @@ use v2_runtime::admin::{
     ClientStateView, CorePairingAdmin, InvitationStateView, PairingAdmin, RequestedPairingMode,
 };
 use v2_transport::auth_store::{Authorization, AuthorizationStore};
-use v2_transport::pairing::{self, ApprovalRequest, PairingCore, NONCE_TTL};
+use v2_transport::pairing::{self, ApprovalRequest, PairingCore, PairingPresented, NONCE_TTL};
 use v2_transport::schema::{PairingMode as WirePairingMode, PairingRequest};
 
 fn admin() -> (
@@ -99,15 +99,22 @@ fn invitation_state_reports_active_consumed_and_expired() {
     assert_eq!(admin.invitation_state(), Some(InvitationStateView::Expired));
 }
 
-fn approval(request_id: u64, core: &PairingCore, accepted: Arc<AtomicBool>) {
+fn approval(
+    request_id: u64,
+    client_id: &str,
+    would_restore: Option<&str>,
+    core: &PairingCore,
+    accepted: Arc<AtomicBool>,
+) {
     core.request_approval(
         ApprovalRequest {
             approval_id: request_id,
-            client_id: "0011223344556677".to_owned(),
+            client_id: client_id.to_owned(),
             display_name: "Pixel 8".to_owned(),
             mode: WirePairingMode::Qr,
             address: "192.168.1.44:50000".to_owned(),
             sas: Some("123 456".to_owned()),
+            would_restore: would_restore.map(str::to_owned),
         },
         Box::new(move |ok| {
             accepted.store(ok, Ordering::SeqCst);
@@ -152,7 +159,7 @@ fn sas_begin_opens_the_window_without_a_qr() {
 fn pending_approvals_are_listed_and_approve_routes_to_the_core() {
     let (admin, core, _store) = admin();
     let accepted = Arc::new(AtomicBool::new(false));
-    approval(41, &core, Arc::clone(&accepted));
+    approval(41, "0011223344556677", None, &core, Arc::clone(&accepted));
 
     let pending = admin.pending();
     assert_eq!(pending.len(), 1);
@@ -170,7 +177,7 @@ fn pending_approvals_are_listed_and_approve_routes_to_the_core() {
 fn decline_is_explicit_and_does_not_authorize() {
     let (admin, core, _store) = admin();
     let accepted = Arc::new(AtomicBool::new(true));
-    approval(42, &core, Arc::clone(&accepted));
+    approval(42, "0011223344556677", None, &core, Arc::clone(&accepted));
 
     assert!(admin.decline(42));
     assert!(!accepted.load(Ordering::SeqCst));
@@ -184,7 +191,7 @@ fn clients_list_and_revoke_use_the_shared_store() {
 
     let public_key = client_key();
     let persisted = core
-        .persist_client(&public_key, "Pixel 8")
+        .persist_client(&public_key, "Pixel 8", false)
         .expect("persist pairing");
     assert_eq!(persisted.display_name, "Pixel 8");
     assert_eq!(core.clients().len(), 1);
@@ -215,5 +222,123 @@ fn revoke_of_an_unknown_client_is_an_error() {
             text if text.contains("unknown") || text.contains("Unknown")
         ),
         "error was {error}"
+    );
+}
+
+#[test]
+fn pending_and_presented_views_flag_a_would_restore() {
+    let (admin, core, _store) = admin();
+    let public_key = client_key();
+    let record = core
+        .persist_client(&public_key, "Pixel 8", false)
+        .expect("persist pairing");
+    core.revoke(&record.client_id).expect("revoke");
+
+    let accepted = Arc::new(AtomicBool::new(false));
+    approval(
+        51,
+        &record.client_id,
+        Some("Pixel 8"),
+        &core,
+        Arc::clone(&accepted),
+    );
+    core.publish_presented(PairingPresented {
+        approval_id: 51,
+        mode: WirePairingMode::Qr,
+        client_id: record.client_id.clone(),
+        display_name: "Pixel 8".to_owned(),
+        address: "192.168.1.44:50000".to_owned(),
+        sas: Some("123 456".to_owned()),
+        fingerprint: core.fingerprint(),
+        expires_at: Instant::now() + Duration::from_secs(600),
+        would_restore: Some("Pixel 8".to_owned()),
+    });
+
+    let pending = admin.pending();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        pending[0].would_restore.as_deref(),
+        Some("Pixel 8"),
+        "a revoked identity flags a restore before approval"
+    );
+    assert_eq!(pending[0].display_name, "Pixel 8");
+    let presented = admin.presented();
+    assert_eq!(presented.len(), 1);
+    assert_eq!(
+        presented[0].would_restore.as_deref(),
+        Some("Pixel 8"),
+        "the live card also flags a restore"
+    );
+    assert_eq!(presented[0].display_name, "Pixel 8");
+
+    // A fresh identity (no stored record) is an ordinary pairing.
+    approval(
+        52,
+        "0011223344556677",
+        None,
+        &core,
+        Arc::new(AtomicBool::new(false)),
+    );
+    let fresh = admin
+        .pending()
+        .into_iter()
+        .find(|request| request.approval_id == 52)
+        .expect("fresh approval");
+    assert!(fresh.would_restore.is_none());
+}
+
+#[test]
+fn declining_a_restore_keeps_the_record_revoked_and_adds_nothing() {
+    let (admin, core, store) = admin();
+    let public_key = client_key();
+    let record = core
+        .persist_client(&public_key, "Pixel 8", false)
+        .expect("persist pairing");
+    core.revoke(&record.client_id).expect("revoke");
+
+    let accepted = Arc::new(AtomicBool::new(true));
+    approval(
+        61,
+        &record.client_id,
+        Some("Pixel 8"),
+        &core,
+        Arc::clone(&accepted),
+    );
+    assert_eq!(admin.pending()[0].would_restore.as_deref(), Some("Pixel 8"));
+
+    assert!(admin.decline(61));
+    assert!(!accepted.load(Ordering::SeqCst));
+    assert_eq!(admin.clients().len(), 1, "no record is added");
+    assert_eq!(admin.clients()[0].client_id, record.client_id);
+    assert_eq!(admin.clients()[0].state, ClientStateView::Revoked);
+    assert!(matches!(
+        store.authorize(&public_key),
+        Authorization::Revoked(_)
+    ));
+}
+
+#[test]
+fn delete_refuses_active_records_and_removes_revoked_ones() {
+    let (admin, core, store) = admin();
+    let public_key = client_key();
+    let record = core
+        .persist_client(&public_key, "Pixel 8", false)
+        .expect("persist pairing");
+
+    let error = admin
+        .delete(&record.client_id)
+        .expect_err("an active record cannot be deleted");
+    assert!(error.contains("revoke"), "error was {error}");
+    assert_eq!(admin.clients().len(), 1, "the active record is unchanged");
+    assert_eq!(admin.clients()[0].state, ClientStateView::Active);
+
+    admin.revoke(&record.client_id).expect("revoke");
+    let deleted = admin.delete(&record.client_id).expect("revoked deletes");
+    assert_eq!(deleted.client_id, record.client_id);
+    assert_eq!(deleted.state, ClientStateView::Revoked);
+    assert!(admin.clients().is_empty());
+    assert!(
+        matches!(store.authorize(&public_key), Authorization::Unknown(_)),
+        "a deleted identity is refused at authentication"
     );
 }
