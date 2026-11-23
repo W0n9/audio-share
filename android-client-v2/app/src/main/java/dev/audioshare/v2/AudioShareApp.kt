@@ -294,16 +294,28 @@ private fun HomeScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
 
     Spacer(Modifier.height(16.dp))
     if (state.hasStoredPairing) {
+        // A revoked/needs-re-pairing credential cannot connect: the Server has
+        // to restore it first (ADR-0006 §4, ticket 04).
+        val selected = state.storedServers.firstOrNull {
+            it.serverSpkiSha256Hex == state.selectedPin()
+        }
         PrimaryButton(
             text = stringResource(R.string.home_connect),
             onClick = { onEvent(UiEvent.ConnectRequested) },
+            enabled = selected?.needsRepairing != true,
             tag = "connect",
         )
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
-            // Re-pair opens the pairing screen; ticket 04 adds the dedicated
-            // re-pair context, so both QR and SAS stay reachable here.
-            onClick = { onEvent(UiEvent.ShowPairing) },
+            // Re-pair opens the same PAIRING screen in its dedicated re-pair
+            // context: the fixed instruction, the saved address prefilled, and
+            // any visible failure cause (ticket 04). Target the same record
+            // Connect would use (the typed address wins), else the first.
+            onClick = {
+                val pin = state.selectedPin()
+                    ?: state.storedServers.first().serverSpkiSha256Hex
+                onEvent(UiEvent.RePairRequested(pin))
+            },
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("pair-code"),
         ) {
             Text(stringResource(R.string.home_re_pair))
@@ -377,15 +389,52 @@ private fun PairingScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(16.dp))
 
         val pairing = state.pairing
+        // The re-pair context (ticket 04) keeps the failure cause and the
+        // fixed operator instruction visible before a new exchange starts.
+        if (state.pairingIntent is PairingIntent.RePair && pairing == null && !state.scanActive) {
+            RepairInstructions(state)
+        }
+        Spacer(Modifier.height(16.dp))
+
         when {
             state.scanActive -> PairingScanner(state, onEvent)
             pairing == null -> PairingEntries(state, onEvent)
             else -> PairingExchange(pairing, onEvent)
         }
     }
+}
+
+/**
+ * Ticket 04: the dedicated re-pairing preamble. The failure cause (when the
+ * flow was entered from a repairing close) stays readable, followed by the
+ * fixed instruction that the Server operator must start a fresh pairing.
+ */
+@Composable
+private fun RepairInstructions(state: AppState) {
+    val cause = state.sessionError
+    if (cause?.code != null) {
+        Spacer(Modifier.height(12.dp))
+        Text(
+            stringResource(ErrorGuidanceResources.titleRes(cause.code)),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.testTag("pairing-repair-cause"),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            stringResource(ErrorGuidanceResources.guidanceRes(cause.code)),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag("pairing-repair-cause-guidance"),
+        )
+    }
+    Spacer(Modifier.height(12.dp))
+    Text(
+        stringResource(R.string.pairing_repair_hint),
+        style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.testTag("pairing-repair-hint"),
+    )
 }
 
 /** Direction A: the not-started entries are only shown when nothing is in flight. */
@@ -712,9 +761,9 @@ private fun PairingFailed(pairing: PairingUi, onEvent: (UiEvent) -> Unit) {
         // camera is never reopened by a snapshot or by recomposition.
         pairing.isBlockingInvitationFailure && pairing.mode == "qr" -> {
             PrimaryButton(
-                text = stringResource(R.string.pairing_scan_again),
+                text = stringResource(R.string.pairing_scan_new_code),
                 onClick = rememberScanStarter(onEvent),
-                tag = "scan-again",
+                tag = "scan-new-code",
             )
             Text(
                 stringResource(R.string.pairing_camera_stays_closed),

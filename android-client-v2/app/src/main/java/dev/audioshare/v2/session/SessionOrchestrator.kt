@@ -264,6 +264,35 @@ internal class SessionOrchestrator(
         }
     }
 
+    /**
+     * A successful pairing replaces records for the same `host:port`
+     * (ADR-0006 §3). Best effort: the new record is already durable, so a
+     * deletion failure only leaves a stale row and must not fail the handoff.
+     */
+    private fun removeStaleRecordsForAddress(record: CredentialRecord) {
+        val stale = try {
+            credentials.all().filter {
+                it.serverSpkiSha256Hex != record.serverSpkiSha256Hex &&
+                    it.isSameAddressAs(record)
+            }
+        } catch (e: Exception) {
+            log("could not list credentials for address cleanup: ${e.message}")
+            return
+        }
+        for (old in stale) {
+            try {
+                credentials.delete(old.serverSpkiSha256Hex)
+                log("removed stale pairing ${old.serverSpkiSha256Hex} for ${record.host}:${record.port}")
+            } catch (e: Exception) {
+                log("could not remove stale pairing ${old.serverSpkiSha256Hex}: ${e.message}")
+            }
+        }
+    }
+
+    private fun CredentialRecord.isSameAddressAs(other: CredentialRecord): Boolean =
+        (host.isNotEmpty() && other.host.isNotEmpty() && host == other.host && port == other.port) ||
+            (addressHint.isNotEmpty() && addressHint == other.addressHint)
+
     private fun persistCredential(
         json: String,
         context: PairingContext?,
@@ -286,6 +315,8 @@ internal class SessionOrchestrator(
                 displayName = obj.optString("display_name").ifEmpty { context.displayName },
                 host = context.host,
                 port = context.port,
+                // A successful pairing is the explicit re-pair: clear the flag.
+                needsRepairing = false,
             )
         } catch (e: Exception) {
             log("credential parse failed: ${e.message}")
@@ -301,6 +332,9 @@ internal class SessionOrchestrator(
             log("credential persistence failed: ${e.message}")
             return
         }
+        // A successful pairing replaces every record for the same address
+        // (ADR-0006 §3); records for a different Server are never touched.
+        removeStaleRecordsForAddress(record)
         log("stored pairing for ${record.displayName} (software_backed=${record.softwareBacked})")
         if (!isCurrent(ownerGeneration)) {
             log("persisted credential belongs to a superseded exchange; not handing off")

@@ -72,6 +72,7 @@
 
     <!-- 错误卡操作 -->
     <string name="error_action_retry">重试</string>
+    <!-- 需要重配的错误（204/205/202）进入专用的重新配对流程。 -->
     <string name="error_action_pair_again">重新配对</string>
 
     <!-- ABOUT -->
@@ -178,10 +179,12 @@
     <string name="pairing_complete_body">正在保存配对。服务器接受此设备后，应用会自动连接。</string>
     <string name="pairing_failed_title">配对失败</string>
     <string name="pairing_error_code">错误码 %1$d</string>
-    <string name="pairing_failed_invitation_qr">邀请已无法复用。请让服务器显示新的二维码。</string>
+    <string name="pairing_failed_invitation_qr">邀请已无法使用。请让服务器操作员刷新二维码，然后扫描新的二维码。</string>
     <string name="pairing_failed_invitation_sas">请先在服务器上重新发起配对，然后再试。</string>
-    <string name="pairing_scan_again">重新扫描</string>
-    <string name="pairing_camera_stays_closed">在你选择“重新扫描”之前，相机保持关闭。</string>
+    <string name="pairing_scan_new_code">扫描新码</string>
+    <string name="pairing_camera_stays_closed">在你选择“扫描新码”之前，相机保持关闭。</string>
+    <!-- 专用重新配对上下文（工单 04）：固定提示。 -->
+    <string name="pairing_repair_hint">请让服务器操作员开始配对，然后扫描新的二维码或使用配对码。</string>
     <string name="pairing_try_again">重试</string>
     <string name="pairing_sas_optional">配对码（可选核对）</string>
 </resources>

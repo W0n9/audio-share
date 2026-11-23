@@ -65,7 +65,7 @@ class HomeScreenTest : RobolectricComposeTestBase() {
     }
 
     @Test
-    fun the_paired_re_pair_action_opens_the_pairing_screen() {
+    fun the_paired_re_pair_action_opens_the_dedicated_repair_context() {
         start(
             AppState(
                 address = "10.0.2.2:65531",
@@ -73,8 +73,50 @@ class HomeScreenTest : RobolectricComposeTestBase() {
             )
         )
         compose.onNodeWithTag("pair-code").performScrollTo().performClick()
-        assertTrue(events.contains(UiEvent.ShowPairing))
-        compose.onNodeWithTag("pairing-title").assertIsDisplayed()
+        assertTrue(events.contains(UiEvent.RePairRequested("ab".repeat(32))))
+        compose.onNodeWithTag("pairing-title").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("pairing-repair-hint")
+            .performScrollTo()
+            .assertTextContains(str(R.string.pairing_repair_hint))
+
+        // The saved address is the one SAS pairing will use.
+        compose.onNodeWithTag("start-code-pairing").performScrollTo().performClick()
+        assertTrue(commands.contains(AppCommand.BeginSas("10.0.2.2:65531")))
+    }
+
+    @Test
+    fun re_pair_targets_the_server_selected_by_the_typed_address() {
+        val first = StoredServer("ab".repeat(32), "Pixel", "10.0.2.2:65531")
+        val typed = StoredServer("cd".repeat(32), "Desk", "other.example:65531")
+        start(
+            AppState(
+                address = "other.example:65531",
+                storedServers = listOf(first, typed),
+            )
+        )
+        compose.onNodeWithTag("pair-code").performScrollTo().performClick()
+        assertTrue(
+            events.contains(UiEvent.RePairRequested("cd".repeat(32))),
+            "Re-pair must open the record Connect would target, not blindly the first",
+        )
+    }
+
+    @Test
+    fun a_server_that_needs_repairing_disables_connect_but_keeps_re_pair_available() {
+        start(
+            AppState(
+                address = "10.0.2.2:65531",
+                storedServers = listOf(storedServer().copy(needsRepairing = true)),
+            )
+        )
+        compose.onNodeWithTag("connect")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertIsNotEnabled()
+        compose.onNodeWithTag("pair-code")
+            .performScrollTo()
+            .assertIsEnabled()
+            .assertTextContains(str(R.string.home_re_pair))
     }
 
     @Test
