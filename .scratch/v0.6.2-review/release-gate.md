@@ -14,14 +14,13 @@ Wire Protocol v2、音频路径与验证边界不变。发布说明见
 | 版本 | `0.6.2`，Android `versionCode 5` |
 | 分支 | `release/v0.6.2` |
 
-## 0.6.1 的实际状态（发布前必须知道）
+## 0.6.1 的状态
 
 - tag `v0.6.1` 已存在并推到 `fork`；CI 运行 `45145447815`（`version=0.6.1`，
   `create_draft=false`）6 个构建作业全部成功，7 个产物与 `.sha256` 已本地核对。
-- **GitHub 上没有 v0.6.1 Release**（`releases/tags/v0.6.1` 为 404），`gh release
-  list` 的 Latest 仍是已发布的 `v0.6.0`。
+- GitHub Release `v0.6.1` 已由另一会话发布（2026-11-23T10:16:43Z），14 个附件，Latest。
 - 0.6.1 的真机安装/播放与 GUI 截图核对为 `NOT RUN`。
-- 因此 0.6.2 的发布说明写明“0.6.1 已打标签/构建但未发 Release，0.6.2 取代它”。
+- 0.6.2 以 v0.6.1 为基线，发布后取代其 Latest 位置。
 
 ## 自动化证据（配对 UX 集成分支）
 
