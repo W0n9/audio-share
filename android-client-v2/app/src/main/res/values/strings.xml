@@ -77,7 +77,8 @@
 
     <!-- Error card actions -->
     <string name="error_action_retry">Retry</string>
-    <string name="error_action_pair_again">Pair again</string>
+    <!-- A repairing close (204/205/202) opens the dedicated re-pair flow. -->
+    <string name="error_action_pair_again">Re-pair</string>
 
     <!-- ABOUT -->
     <string name="about_title">About this beta</string>
@@ -184,10 +185,12 @@
     <string name="pairing_complete_body">Saving this pairing. The app will connect automatically as soon as the Server accepts this device.</string>
     <string name="pairing_failed_title">Pairing failed</string>
     <string name="pairing_error_code">Error code %1$d</string>
-    <string name="pairing_failed_invitation_qr">The invitation cannot be reused. Ask the Server to show a fresh QR code.</string>
+    <string name="pairing_failed_invitation_qr">The invitation can no longer be used. Ask the Server operator to refresh the QR code, then scan the new one.</string>
     <string name="pairing_failed_invitation_sas">Start a new pairing on the Server before trying again.</string>
-    <string name="pairing_scan_again">Scan again</string>
-    <string name="pairing_camera_stays_closed">The camera stays closed until you choose Scan again.</string>
+    <string name="pairing_scan_new_code">Scan new code</string>
+    <string name="pairing_camera_stays_closed">The camera stays closed until you choose Scan new code.</string>
+    <!-- Dedicated re-pairing context (ticket 04): fixed operator instruction. -->
+    <string name="pairing_repair_hint">Ask the Server operator to start pairing. Then scan the new QR code or use the pairing code.</string>
     <string name="pairing_try_again">Try again</string>
     <string name="pairing_sas_optional">Pairing code (optional check)</string>
 </resources>

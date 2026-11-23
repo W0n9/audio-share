@@ -783,6 +783,112 @@ class AppStateReducerTest {
         assertEquals(AppCommand.ForgetServer("ab".repeat(32)), confirmed.command)
     }
 
+    // ---- ticket 04: dedicated re-pair context -------------------------------
+
+    @Test
+    fun re_pair_from_home_carries_the_stored_pin_and_prefills_its_address() {
+        val pin = "ab".repeat(32)
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(
+                rememberedAddress = null,
+                credentials = listOf(record().copy(needsRepairing = true)),
+            ),
+        ).state
+
+        val repair = AppReducer.reduce(startup, UiEvent.RePairRequested(pin))
+
+        assertEquals(AppScreen.PAIRING, repair.state.screen)
+        assertEquals(PairingIntent.RePair(pin), repair.state.pairingIntent)
+        assertEquals("10.0.2.2:65531", repair.state.address, "the address is prefilled from the record")
+        assertNull(repair.state.pairing, "no exchange is in flight yet")
+        assertEquals(AppCommand.None, repair.command)
+    }
+
+    @Test
+    fun a_repairing_close_enters_the_same_re_pair_context_and_keeps_the_cause() {
+        val ended = sessionState(SessionOutcome.Ended(EndReason.Surfaced(204)))
+
+        val repair = AppReducer.reduce(ended, UiEvent.Retry)
+
+        assertEquals(AppScreen.PAIRING, repair.state.screen)
+        assertEquals(PairingIntent.RePair("ab".repeat(32)), repair.state.pairingIntent)
+        assertEquals("10.0.2.2:65531", repair.state.address)
+        assertEquals(204, repair.state.sessionError?.code, "the failure cause stays visible")
+        assertEquals(AppCommand.None, repair.command)
+    }
+
+    @Test
+    fun starting_a_pairing_keeps_the_repair_context() {
+        val repair = AppReducer.reduce(
+            AppState(
+                screen = AppScreen.PAIRING,
+                address = "10.0.2.2:65531",
+                storedServers = listOf(stored()),
+                pairingIntent = PairingIntent.RePair("ab".repeat(32)),
+            ),
+            UiEvent.StartSasPairing,
+        )
+
+        assertEquals(AppCommand.BeginSas("10.0.2.2:65531"), repair.command)
+        assertEquals(PairingIntent.RePair("ab".repeat(32)), repair.state.pairingIntent)
+    }
+
+    @Test
+    fun cancelling_a_re_pair_returns_to_the_first_pairing_context() {
+        val repair = AppState(
+            screen = AppScreen.PAIRING,
+            address = "10.0.2.2:65531",
+            storedServers = listOf(stored()),
+            pairingIntent = PairingIntent.RePair("ab".repeat(32)),
+        )
+
+        val cancelled = AppReducer.reduce(repair, UiEvent.CancelPairing)
+
+        assertEquals(AppScreen.HOME, cancelled.state.screen)
+        assertEquals(PairingIntent.First, cancelled.state.pairingIntent)
+    }
+
+    @Test
+    fun connect_is_refused_while_the_selected_record_needs_repairing() {
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded(
+                rememberedAddress = null,
+                credentials = listOf(record().copy(needsRepairing = true)),
+            ),
+        ).state
+
+        val connect = AppReducer.reduce(startup, UiEvent.ConnectRequested)
+
+        assertEquals(AppScreen.HOME, connect.state.screen, "a revoked device cannot connect")
+        assertEquals(AppCommand.None, connect.command)
+    }
+
+    @Test
+    fun pairing_completed_clears_repairing_and_drops_other_records_on_the_same_address() {
+        val pin = "ab".repeat(32)
+        val sameAddressOtherPin = StoredServer("cd".repeat(32), "Old Pixel", "10.0.2.2:65531")
+        val otherServer = StoredServer("12".repeat(32), "Desk", "other.example:65531")
+        val state = AppState(
+            screen = AppScreen.PAIRING,
+            storedServers = listOf(stored().copy(needsRepairing = true), sameAddressOtherPin, otherServer),
+            pairingIntent = PairingIntent.RePair(pin),
+        )
+
+        val completed = AppReducer.reduce(state, UiEvent.PairingCompleted(record()))
+
+        assertEquals(AppScreen.SESSION, completed.state.screen)
+        assertEquals(PairingIntent.First, completed.state.pairingIntent)
+        assertEquals(
+            setOf("ab".repeat(32), "12".repeat(32)),
+            completed.state.storedServers.map { it.serverSpkiSha256Hex }.toSet(),
+            "the stale record on the re-paired address is removed; the other Server stays",
+        )
+        assertFalse(completed.state.storedServers.single { it.serverSpkiSha256Hex == pin }.needsRepairing)
+        assertEquals(2, completed.state.storedServers.size)
+    }
+
     // ---- startup ------------------------------------------------------------
 
     @Test
