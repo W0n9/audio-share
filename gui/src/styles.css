@@ -903,6 +903,12 @@ button:disabled {
   font-weight: 700;
 }
 
+.pairing-card-device {
+  margin: -2px 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .pairing-restore-name {
   margin: 0 0 6px;
   color: var(--red);

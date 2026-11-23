@@ -62,6 +62,9 @@
     clientId: string;
     wouldRestore: string | null;
   }): string | null {
+    // Only a real restore candidate gets the Restoring label; a Re-pair
+    // invitation alone must not imply that an active/new identity is restored.
+    if (!request.wouldRestore) return null;
     if (server.repairTarget?.clientId === request.clientId) {
       return server.repairTarget.displayName;
     }
@@ -111,7 +114,7 @@
         {/if}
 
         {#if invitation && (invitation.state === "active" || invitation.mode === "qr")}
-          {#if invitation.state === "active" || !(live.length > 0 || pending.length > 0 || server.pairingInFlight || server.pairedName)}
+          {#if invitation.state === "active" || !(live.length > 0 || pending.length > 0 || server.pairingInFlight || server.pairingSucceeded)}
             <div class="pairing-invitation">
               {#if invitation.state === "active" && invitation.qrSvg}
                 <div class="pairing-qr" aria-label={t("pairing.qrAlt")}>
@@ -177,6 +180,7 @@
             <div class="pairing-card pairing-card-live">
               {#if request.wouldRestore}
                 <div class="pairing-card-title">{t("pairing.restoreTitle")}</div>
+                <div class="pairing-card-device">{request.displayName}</div>
                 <p class="pairing-hint">{t("pairing.restoreBody")}</p>
               {:else}
                 <div class="pairing-card-title">{request.displayName}</div>
@@ -210,7 +214,9 @@
           {/if}
         {/if}
 
-        {#if (!invitation || (invitation.mode === "sas" && invitation.state !== "active")) && live.length === 0}
+        <!-- After a successful pairing the QR is consumed and no invitation
+             block remains; offer a fresh start instead of a dead end. -->
+        {#if live.length === 0 && ((server.pairingSucceeded && invitation?.state !== "active") || !invitation || (invitation.mode === "sas" && invitation.state !== "active"))}
           <div class="pairing-actions">
             <button
               class="pairing-primary"
@@ -237,6 +243,7 @@
             <div class="pairing-card">
               {#if request.wouldRestore}
                 <div class="pairing-card-title">{t("pairing.restoreTitle")}</div>
+                <div class="pairing-card-device">{request.displayName}</div>
                 <p class="pairing-hint">{t("pairing.restoreBody")}</p>
               {:else}
                 <div class="pairing-card-title">{request.displayName}</div>
