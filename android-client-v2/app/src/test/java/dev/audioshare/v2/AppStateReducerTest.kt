@@ -871,6 +871,27 @@ class AppStateReducerTest {
     }
 
     @Test
+    fun forgetting_a_non_session_server_keeps_the_live_outcome() {
+        val selected = stored()
+        val other = StoredServer("12".repeat(32), "Desk", "10.0.2.2:65532")
+        val state = AppState(
+            screen = AppScreen.SETTINGS,
+            address = selected.address,
+            storedServers = listOf(selected, other),
+            outcome = SessionOutcome.Live(LivePhase.PLAYING),
+            pendingForgetPin = other.serverSpkiSha256Hex,
+        )
+
+        val reduced = AppReducer.reduce(state, UiEvent.ForgetServerConfirmed)
+
+        // The Service leaves the other Server's session running; the reducer
+        // must keep showing it instead of blanking the UI.
+        assertEquals(SessionOutcome.Live(LivePhase.PLAYING), reduced.state.outcome)
+        assertFalse(reduced.state.stopRequested)
+        assertEquals(listOf(selected), reduced.state.storedServers)
+    }
+
+    @Test
     fun pairing_completed_clears_repairing_and_drops_other_records_on_the_same_address() {
         val pin = "ab".repeat(32)
         val sameAddressOtherPin = StoredServer("cd".repeat(32), "Old Pixel", "10.0.2.2:65531")
