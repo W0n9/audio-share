@@ -122,21 +122,31 @@ final class PairingContract {
         if (awaiting.getSas() == null) throw new AssertionError("pairing code missing");
         if (awaiting.getFingerprint() == null) throw new AssertionError("fingerprint missing");
         sendProgress(instrumentation, "PAIRING_CODE " + awaiting.getSas());
+
+        // The Service publishes COMPLETE and then immediately hands off to the
+        // authenticated session, which calls beginSession() and clears the
+        // pairing snapshot. Await the one-shot handoff (the durable outcome of
+        // the exchange) instead of racing that clear for a COMPLETE poll.
+        final CountDownLatch handedOff = new CountDownLatch(1);
+        final AtomicReference<CredentialRecord> handedOffRecord = new AtomicReference<>();
+        service.setPairingCompletedListener(
+            new kotlin.jvm.functions.Function1<CredentialRecord, kotlin.Unit>() {
+                @Override public kotlin.Unit invoke(CredentialRecord record) {
+                    handedOffRecord.set(record);
+                    handedOff.countDown();
+                    return kotlin.Unit.INSTANCE;
+                }
+            });
         service.confirmPairing();
-        awaitPairingPhase("COMPLETE", 20_000);
+        if (!handedOff.await(20, TimeUnit.SECONDS)) {
+            throw new AssertionError("pairing did not complete the credential handoff");
+        }
         // `as-cmd pair` deliberately exits after persisting, so the paired
         // connection is torn down; the credential must still be captured.
         awaitCredential(service, 10_000);
-        List<CredentialRecord> records = service.credentials();
-        if (records.isEmpty()) throw new AssertionError("pairing credential was not persisted");
-        CredentialRecord record = records.get(records.size() - 1);
+        CredentialRecord record = handedOffRecord.get();
+        if (record == null) throw new AssertionError("handoff carried no credential");
         if (record.getKeyAlias().isEmpty()) throw new AssertionError("credential has no key alias");
-        // A newly bound UI (Activity/window rebuild) must see the same state.
-        PairingSnapshot replay = bindController(instrumentation).pairingSnapshot();
-        if (replay == null || !"COMPLETE".equals(replay.getPhase())) {
-            throw new AssertionError("re-bound controller did not replay COMPLETE: " +
-                (replay == null ? "<none>" : replay.getPhase()));
-        }
         sendProgress(instrumentation, "CREDENTIAL pin=" + record.getServerSpkiSha256Hex().substring(0, 16) +
             " software_backed=" + record.getSoftwareBacked());
         service.disconnect();

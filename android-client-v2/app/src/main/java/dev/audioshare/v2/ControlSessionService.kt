@@ -265,7 +265,12 @@ class ControlSessionService : Service(), SessionController {
             return
         }
         val displayName = deviceDisplayName()
-        val alias = "v2-${payload.pinHex.take(16)}"
+        // A QR re-pair must reuse a stored identity for this Server so the same
+        // record is restored (ADR-0006 §2), including a record originally
+        // created by SAS. Only a Server with no stored record gets the
+        // pin-derived alias.
+        val alias = storedKeyAliasForPin(payload.pinHex, credentials.all())
+            ?: "v2-${payload.pinHex.take(16)}"
         val identity = try {
             ClientIdentity.create(this, alias)
         } catch (e: Exception) {
@@ -376,8 +381,18 @@ class ControlSessionService : Service(), SessionController {
         }
         // Forget is local cleanup, not a user Stop: a Shutdown teardown
         // invalidates the replayable outcome, so Home returns to the
-        // unpaired state without a STOPPED card.
-        orchestrator.stop(StopReason.Shutdown)
+        // unpaired state without a STOPPED card. It stops only the forgotten
+        // Server's session; another Server's live session is left running.
+        val canStopService = if (serverSpkiSha256Hex == null) {
+            orchestrator.stop(StopReason.Shutdown)
+            true
+        } else {
+            orchestrator.stopIfOwnedBy(serverSpkiSha256Hex)
+        }
+        if (!canStopService) {
+            Log.i(TAG, "forget of $serverSpkiSha256Hex left another Server's session running")
+            return
+        }
         releaseMediaSession()
         stopForegroundCompat()
         stopSelf()

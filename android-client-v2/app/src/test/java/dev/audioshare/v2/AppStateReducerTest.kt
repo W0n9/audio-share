@@ -850,7 +850,7 @@ class AppStateReducerTest {
     }
 
     @Test
-    fun connect_is_refused_while_the_selected_record_needs_repairing() {
+    fun connect_routes_a_needs_repairing_record_into_the_re_pair_context() {
         val startup = AppReducer.reduce(
             AppState(),
             UiEvent.StartupLoaded(
@@ -859,10 +859,15 @@ class AppStateReducerTest {
             ),
         ).state
 
+        // SESSION's "Connect again" uses the same event. A revoked device must
+        // not silently no-op: it opens the dedicated RePair context with the
+        // saved address prefilled.
         val connect = AppReducer.reduce(startup, UiEvent.ConnectRequested)
 
-        assertEquals(AppScreen.HOME, connect.state.screen, "a revoked device cannot connect")
-        assertEquals(AppCommand.None, connect.command)
+        assertEquals(AppScreen.PAIRING, connect.state.screen)
+        assertEquals(PairingIntent.RePair("ab".repeat(32)), connect.state.pairingIntent)
+        assertEquals("10.0.2.2:65531", connect.state.address)
+        assertEquals(AppCommand.None, connect.command, "no ConnectStored is issued")
     }
 
     @Test

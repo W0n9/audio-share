@@ -71,4 +71,28 @@ class PairingRepairTest {
         )
         assertEquals("v2-sas-first", alias)
     }
+
+    @Test
+    fun a_hint_only_match_is_not_the_same_address_under_the_strict_rule() {
+        // The addressHint string is never the identity rule; a record without
+        // a stored host:port simply does not match.
+        val hintOnly = record().copy(host = "", port = 0)
+        assertNull(storedKeyAliasForAddress("10.0.2.2:65531", listOf(hintOnly)))
+    }
+
+    @Test
+    fun a_sas_origin_record_is_reused_when_the_qr_pin_matches() {
+        // QR re-pair reaches the same Server by pin, not by address: the
+        // stored SAS identity must be reused so the Server restores the record.
+        val sasOrigin = record(pin = "ab".repeat(32), alias = "v2-sas-origin")
+        assertEquals(
+            "v2-sas-origin",
+            storedKeyAliasForPin("ab".repeat(32), listOf(sasOrigin)),
+        )
+    }
+
+    @Test
+    fun an_unknown_qr_pin_returns_null_so_the_pin_alias_still_applies() {
+        assertNull(storedKeyAliasForPin("cd".repeat(32), listOf(record())))
+    }
 }

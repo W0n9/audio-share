@@ -226,9 +226,7 @@ class MainActivity : ComponentActivity() {
     private fun forgottenAddressFor(event: UiEvent): String? {
         if (event !is UiEvent.ForgetServerConfirmed) return null
         val pin = state.value.pendingForgetPin ?: return null
-        return state.value.storedServers
-            .firstOrNull { it.serverSpkiSha256Hex == pin }
-            ?.address
+        return state.value.serverForPin(pin)?.address
     }
 
     private fun onPairingSnapshot(snapshot: PairingSnapshot?) {
