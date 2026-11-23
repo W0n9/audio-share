@@ -146,10 +146,18 @@ class MainActivity : ComponentActivity() {
         if (firstBind) {
             requestNotificationPermissionIfNeeded()
             val credentials = service.credentials()
+            // StartupLoaded has already run, so selectedPin() names the record
+            // connect() would target. Read its persisted flag: a restart must
+            // not auto-connect a device the Server revoked.
+            val selectedPin = state.value.selectedPin()
+            val selectedNeedsRepairing = credentials
+                .firstOrNull { it.serverSpkiSha256Hex == selectedPin }
+                ?.needsRepairing == true
             if (!harnessStarted && AutoConnectPolicy.shouldAutoConnect(
                     savedStatePresent = hadSavedState,
                     hasCredential = credentials.isNotEmpty(),
                     outcome = outcome,
+                    needsRepairing = selectedNeedsRepairing,
                 )
             ) {
                 dispatch(UiEvent.AutoConnectStarted)
@@ -178,8 +186,14 @@ class MainActivity : ComponentActivity() {
     // ---- reducer plumbing --------------------------------------------------
 
     private fun dispatch(event: UiEvent) {
+        // Resolve the forgotten record before the reducer clears it: its
+        // address must stop being restored on the next cold start.
+        val forgottenAddress = forgottenAddressFor(event)
         val reduction = AppReducer.reduce(state.value, event)
         state.value = reduction.state
+        if (forgottenAddress != null && prefs.lastAddress() == forgottenAddress) {
+            prefs.clearLastAddress()
+        }
         execute(reduction.command)
         if (event is UiEvent.AddressChanged &&
             event.text.isNotBlank() &&
@@ -204,7 +218,17 @@ class MainActivity : ComponentActivity() {
             AppCommand.CancelPairing -> controller.cancelPairing()
             is AppCommand.ConnectStored -> controller.connectStored(command.serverSpkiSha256Hex)
             AppCommand.Stop -> controller.disconnect()
+            is AppCommand.ForgetServer -> controller.forgetServer(command.serverSpkiSha256Hex)
         }
+    }
+
+    /** The address of the record the confirm event is about, if any. */
+    private fun forgottenAddressFor(event: UiEvent): String? {
+        if (event !is UiEvent.ForgetServerConfirmed) return null
+        val pin = state.value.pendingForgetPin ?: return null
+        return state.value.storedServers
+            .firstOrNull { it.serverSpkiSha256Hex == pin }
+            ?.address
     }
 
     private fun onPairingSnapshot(snapshot: PairingSnapshot?) {

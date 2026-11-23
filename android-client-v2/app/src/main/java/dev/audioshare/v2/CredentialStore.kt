@@ -21,6 +21,13 @@ data class CredentialRecord(
     /** The Server host the record was created against (editable hint). */
     val host: String = "",
     val port: Int = 65531,
+    /**
+     * Persisted "needs re-pairing" state (ADR-0006 §4). Set by a surfaced
+     * close whose [ErrorGuidance.requiresRepairing] is true; cleared by a
+     * successful authentication or pairing. Old records without the field
+     * decode to false.
+     */
+    val needsRepairing: Boolean = false,
 )
 
 /** Client-side pairing store (one record per paired Server). */
@@ -72,6 +79,7 @@ object CredentialCodec {
         put("display_name", record.displayName ?: "")
         put("host", record.host)
         put("port", record.port)
+        put("needs_repairing", record.needsRepairing)
     }
 
     fun decode(obj: JSONObject): CredentialRecord? {
@@ -92,6 +100,9 @@ object CredentialCodec {
             displayName = obj.optString("display_name").ifEmpty { null },
             host = obj.optString("host"),
             port = obj.optInt("port", 65531),
+            // Version 1 records written before ticket 03 have no field; that
+            // is a normal paired record, never a repair-required one.
+            needsRepairing = obj.optBoolean("needs_repairing", false),
         )
     }
 }
