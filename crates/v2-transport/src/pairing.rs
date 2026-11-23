@@ -265,7 +265,10 @@ pub fn parse_qr_uri(uri: &str) -> Result<QrPayload, QrPayloadError> {
 
 /// Validate the §4.2 `addr` hint: IPv4 dotted quad, bracketed IPv6, or a DNS
 /// name, followed by `:` and a port in 1–65535. No percent-encoding.
-fn validate_addr_hint(value: &str) -> Result<(), QrPayloadError> {
+///
+/// Public so callers that compose an `addr` hint (such as the runtime's
+/// configured-Host advertisement) can reject it exactly as the parser would.
+pub fn validate_addr_hint(value: &str) -> Result<(), QrPayloadError> {
     if value.is_empty() || value.contains('%') || value.chars().any(char::is_whitespace) {
         return Err(QrPayloadError::Addr(value.to_owned()));
     }
