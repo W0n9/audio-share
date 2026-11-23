@@ -881,6 +881,38 @@ button:disabled {
   cursor: default;
 }
 
+/* Destructive confirmation: same surface language, stacked above pairing. */
+.pairing-backdrop-stacked {
+  z-index: 60;
+}
+
+.pairing-confirm {
+  width: min(360px, 100%);
+}
+
+.pairing-confirm-body {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.pairing-confirm-actions {
+  justify-content: flex-end;
+  margin: 0;
+}
+
+.pairing-primary.danger {
+  border-color: var(--red);
+  background: var(--red);
+  color: var(--accent-contrast);
+}
+
+.pairing-primary.danger:hover:not(:disabled) {
+  background: var(--red);
+  filter: brightness(0.92);
+}
+
 .pairing-section-title {
   margin: 16px 0 8px;
   color: var(--muted);
