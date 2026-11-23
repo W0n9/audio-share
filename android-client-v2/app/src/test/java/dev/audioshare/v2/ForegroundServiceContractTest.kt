@@ -40,13 +40,15 @@ class ForegroundServiceContractTest {
         assertFalse(manifest.contains("<receiver"))
     }
 
-    /** Ticket 21 acceptance: coexist with v1 and ship the beta version. */
+    /** Ticket 21 acceptance: coexist with v1 and ship the current release. */
     @Test
     fun beta_application_id_and_version() {
         val gradle = File("build.gradle.kts").readText()
         assertTrue(gradle.contains("applicationId = \"dev.audioshare.v2\""))
-        assertTrue(gradle.contains("versionCode = 2"))
-        assertTrue(gradle.contains("versionName = \"0.2.0-beta\""))
+        // The release commit (fc20099) moved the product to 0.6.0/3; this
+        // contract had gone stale and broke the suite on integration.
+        assertTrue(gradle.contains("versionCode = 3"))
+        assertTrue(gradle.contains("versionName = \"0.6.0\""))
     }
 
     /**

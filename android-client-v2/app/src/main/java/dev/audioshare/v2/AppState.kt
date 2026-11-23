@@ -123,9 +123,6 @@ data class AppState(
 ) {
     val hasStoredPairing: Boolean get() = storedServers.isNotEmpty()
 
-    /** A saved pairing that still needs an explicit re-pair. */
-    val hasRecordNeedingRepair: Boolean get() = storedServers.any { it.needsRepairing }
-
     /**
      * The surfaced-close presentation, derived from the outcome only. [code]
      * is the close code the card prints (null when native recorded none);
