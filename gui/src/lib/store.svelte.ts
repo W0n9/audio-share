@@ -82,6 +82,12 @@ class ServerStore {
   /** One-line confirmation shown once an approved pairing is persisted. */
   pairedName = $state<string | null>(null);
   /**
+   * The current invitation has already produced a persisted pairing. A
+   * consumed QR is then expected, not a failure, even after the success line
+   * is dismissed by reopening the dialog.
+   */
+  pairingSucceeded = $state(false);
+  /**
    * Approved device awaiting persistence. The driver persists asynchronously,
    * so the poll waits for the device list to show it active before reporting
    * success; otherwise the list and the success line race.
@@ -92,6 +98,8 @@ class ServerStore {
     ticks: number;
   } | null>(null);
   private pairingTimer: ReturnType<typeof setInterval> | null = null;
+  /** The current `pairingError` came from polling, so a good poll may clear it. */
+  private pairingErrorFromPoll = false;
 
   /** True while an approval is waiting for the device list to reflect it. */
   get pairingInFlight(): boolean {
@@ -352,7 +360,9 @@ class ServerStore {
       this.clients = [];
       this.repairTarget = null;
       this.pairedName = null;
+      this.pairingSucceeded = false;
       this.pendingPaired = null;
+      this.pairingErrorFromPoll = false;
     }
   }
 
@@ -397,9 +407,20 @@ class ServerStore {
   async refreshPairing(): Promise<void> {
     try {
       this.pairing = await api.pairingPoll();
-      this.pairingError = null;
+      // A poll error is transient; an action error stays until the next action.
+      if (this.pairingErrorFromPoll) {
+        this.pairingError = null;
+        this.pairingErrorFromPoll = false;
+      }
+      // A new attempt invalidates the previous success context: do not let an
+      // old success line (or a consumed-QR suppression) outlive its invitation.
+      if (this.pairing.live.length > 0 || this.pairing.pending.length > 0) {
+        this.pairedName = null;
+        this.pairingSucceeded = false;
+      }
     } catch (error) {
       this.pairingError = String(error);
+      this.pairingErrorFromPoll = true;
     }
   }
 
@@ -415,9 +436,10 @@ class ServerStore {
       this.pairing = await api.pairingBegin(mode);
       if (!keepRepairTarget) this.repairTarget = null;
       this.pairedName = null;
+      this.pairingSucceeded = false;
       this.pendingPaired = null;
     } catch (error) {
-      this.pairingError = String(error);
+      this.failAction(error);
     } finally {
       this.pairingBusy = false;
     }
@@ -432,9 +454,10 @@ class ServerStore {
       this.pairing = await api.pairingBegin("qr");
       this.repairTarget = { clientId, displayName };
       this.pairedName = null;
+      this.pairingSucceeded = false;
       this.pendingPaired = null;
     } catch (error) {
-      this.pairingError = String(error);
+      this.failAction(error);
     } finally {
       this.pairingBusy = false;
     }
@@ -448,9 +471,10 @@ class ServerStore {
       this.pairing = await api.pairingCancel();
       this.repairTarget = null;
       this.pairedName = null;
+      this.pairingSucceeded = false;
       this.pendingPaired = null;
     } catch (error) {
-      this.pairingError = String(error);
+      this.failAction(error);
     } finally {
       this.pairingBusy = false;
     }
@@ -463,6 +487,8 @@ class ServerStore {
     );
     this.pairingBusy = true;
     this.pairingError = null;
+    this.pairedName = null;
+    this.pairingSucceeded = false;
     try {
       this.pairing = await api.pairingApprove(approvalId);
       // The driver persists after `decide` returns, so the device list may
@@ -474,10 +500,9 @@ class ServerStore {
           ticks: 0,
         };
       }
-      this.repairTarget = null;
       await this.confirmPaired();
     } catch (error) {
-      this.pairingError = String(error);
+      this.failAction(error);
     } finally {
       this.pairingBusy = false;
     }
@@ -488,9 +513,16 @@ class ServerStore {
     const pending = this.pendingPaired;
     if (!pending) return;
     await this.refreshClients();
+    // A begin, cancel, stop, or newer approval may have replaced the attempt
+    // while the list was in flight; never resurrect stale success state.
+    if (this.pendingPaired !== pending) return;
     const client = this.clients.find((item) => item.clientId === pending.clientId);
     if (client?.state === "active") {
       this.pairedName = pending.name;
+      this.pairingSucceeded = true;
+      if (this.repairTarget?.clientId === pending.clientId) {
+        this.repairTarget = null;
+      }
       this.pendingPaired = null;
       return;
     }
@@ -498,6 +530,12 @@ class ServerStore {
     // Persistence failures fail closed and never reach the device list; stop
     // waiting instead of showing success for a pairing the store rejected.
     if (pending.ticks > 15) this.pendingPaired = null;
+  }
+
+  /** Record a command failure; only the next action (not a poll) clears it. */
+  private failAction(error: unknown): void {
+    this.pairingError = String(error);
+    this.pairingErrorFromPoll = false;
   }
 
   async declinePairing(approvalId: number): Promise<void> {
@@ -508,7 +546,7 @@ class ServerStore {
       this.pairing = await api.pairingDecline(approvalId);
       this.pairedName = null;
     } catch (error) {
-      this.pairingError = String(error);
+      this.failAction(error);
     } finally {
       this.pairingBusy = false;
     }
@@ -533,7 +571,7 @@ class ServerStore {
         client.clientId === revoked.clientId ? revoked : client,
       );
     } catch (error) {
-      this.pairingError = String(error);
+      this.failAction(error);
     } finally {
       this.revokingClientId = null;
     }
@@ -556,7 +594,7 @@ class ServerStore {
         this.repairTarget = null;
       }
     } catch (error) {
-      this.pairingError = String(error);
+      this.failAction(error);
     } finally {
       this.deletingClientId = null;
     }
