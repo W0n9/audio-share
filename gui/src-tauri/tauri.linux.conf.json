@@ -1,7 +1,7 @@
 {
   "bundle": {
     "targets": ["deb", "appimage"],
-    "publisher": "Audio Share maintainers",
+    "publisher": "Audio Share contributors",
     "homepage": "https://github.com/W0n9/audio-share",
     "shortDescription": "Audio Share Server",
     "longDescription": "Desktop server that shares system audio with the Audio Share Android client.",
