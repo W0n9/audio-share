@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -112,6 +113,46 @@ fun AudioShareApp(
             }
         }
     }
+
+    ForgetServerDialog(state, onEvent)
+}
+
+/**
+ * The one destructive confirmation in the app. It is a dialog, not a screen:
+ * the five-screen model is unchanged. Delete happens only on Forget.
+ */
+@Composable
+private fun ForgetServerDialog(state: AppState, onEvent: (UiEvent) -> Unit) {
+    val pin = state.pendingForgetPin ?: return
+    val server = state.storedServers.firstOrNull { it.serverSpkiSha256Hex == pin } ?: return
+    AlertDialog(
+        onDismissRequest = { onEvent(UiEvent.ForgetServerDismissed) },
+        title = { Text(stringResource(R.string.forget_server)) },
+        text = {
+            Text(
+                stringResource(
+                    R.string.forget_server_confirm,
+                    server.displayName ?: server.address,
+                ),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onEvent(UiEvent.ForgetServerConfirmed) },
+                modifier = Modifier.testTag("forget-confirm"),
+            ) {
+                Text(stringResource(R.string.action_forget))
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = { onEvent(UiEvent.ForgetServerDismissed) },
+                modifier = Modifier.testTag("forget-cancel"),
+            ) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        },
+    )
 }
 
 /**
@@ -210,9 +251,20 @@ private fun HomeScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
                     )
                 }
                 Text(
-                    stringResource(R.string.home_paired_badge),
+                    stringResource(
+                        if (server.needsRepairing) {
+                            R.string.server_needs_repairing
+                        } else {
+                            R.string.home_paired_badge
+                        },
+                    ),
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (server.needsRepairing) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    modifier = Modifier.testTag("home-server-status"),
                 )
             }
         }
@@ -249,22 +301,12 @@ private fun HomeScreen(state: AppState, onEvent: (UiEvent) -> Unit) {
         )
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
-            onClick = { onEvent(UiEvent.StartSasPairing) },
-            enabled = canStartPairing(state),
+            // Re-pair opens the pairing screen; ticket 04 adds the dedicated
+            // re-pair context, so both QR and SAS stay reachable here.
+            onClick = { onEvent(UiEvent.ShowPairing) },
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("pair-code"),
         ) {
-            Text(stringResource(R.string.home_pair_new))
-        }
-        Spacer(Modifier.height(8.dp))
-        TextButton(
-            onClick = rememberScanStarter(onEvent),
-            modifier = Modifier.heightIn(min = 48.dp).testTag("scan-qr"),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                horizontal = 16.dp,
-                vertical = 8.dp,
-            ),
-        ) {
-            Text(stringResource(R.string.home_scan_qr_instead))
+            Text(stringResource(R.string.home_re_pair))
         }
     } else {
         PrimaryButton(
@@ -988,7 +1030,7 @@ private fun SettingsScreen(
         )
         Spacer(Modifier.height(16.dp))
         PrimaryButton(
-            text = stringResource(R.string.settings_pair_phone),
+            text = stringResource(R.string.settings_pair_server),
             onClick = { onEvent(UiEvent.ShowHome) },
             tag = "settings-pair",
         )
@@ -1009,12 +1051,28 @@ private fun SettingsScreen(
                     label = stringResource(R.string.settings_server_address),
                     value = server.address,
                 )
+                if (server.needsRepairing) {
+                    LabeledValue(
+                        label = stringResource(R.string.settings_server_status),
+                        value = stringResource(R.string.server_needs_repairing),
+                        valueTag = "settings-needs-repairing",
+                    )
+                }
                 LabeledValue(
                     label = stringResource(R.string.settings_server_fingerprint),
                     value = server.serverSpkiSha256Hex,
                     valueTag = "settings-fingerprint",
                 )
             }
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = {
+                onEvent(UiEvent.ForgetServerRequested(server.serverSpkiSha256Hex))
+            },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("settings-forget"),
+        ) {
+            Text(stringResource(R.string.forget_server))
         }
     }
     Spacer(Modifier.height(16.dp))

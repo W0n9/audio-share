@@ -48,6 +48,37 @@ class CredentialStoreTest {
     }
 
     @Test
+    fun needs_repairing_defaults_to_false_and_round_trips() {
+        val decoded = CredentialCodec.decodeList(CredentialCodec.encodeList(listOf(record()))).single()
+        assertFalse(decoded.needsRepairing, "a paired record is not awaiting repair")
+
+        val flagged = record().copy(needsRepairing = true)
+        val roundTripped =
+            CredentialCodec.decodeList(CredentialCodec.encodeList(listOf(flagged))).single()
+        assertTrue(roundTripped.needsRepairing)
+        assertEquals(flagged, roundTripped)
+    }
+
+    @Test
+    fun legacy_json_without_needs_repairing_still_decodes() {
+        val legacy = """{"version":1,"credentials":[{
+            "server_spki_sha256":"${"a".repeat(64)}",
+            "server_public_key":"${"11".repeat(32)}",
+            "address_hint":"192.168.1.20:65531",
+            "key_alias":"v2-key",
+            "paired_at":"2026-11-16T12:00:00Z",
+            "software_backed":true,
+            "client_id":"cf7940b474310246",
+            "display_name":"Test Phone",
+            "host":"192.168.1.20",
+            "port":65531
+        }]}"""
+        val decoded = CredentialCodec.decodeList(legacy).single()
+        assertFalse(decoded.needsRepairing, "a missing field means the legacy paired state")
+        assertEquals(record(), decoded, "every legacy field keeps its old meaning")
+    }
+
+    @Test
     fun pair_record_keeps_software_backed_marker() {
         val k = record()
         val decoded = CredentialCodec.decodeList(CredentialCodec.encodeList(listOf(k))).single()
