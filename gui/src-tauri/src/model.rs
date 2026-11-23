@@ -444,7 +444,7 @@ pub fn bootstrap(
         locale: locale.tag().to_owned(),
         status: status.clone(),
         settings: settings.clone(),
-        host_addresses: audio_share_core::server::local_addresses()
+        host_addresses: audio_share_core::server::local_host_addresses()
             .into_iter()
             .map(|address| address.to_string())
             .collect(),
