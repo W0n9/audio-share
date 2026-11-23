@@ -228,7 +228,7 @@ impl ServerController {
     /// The state lock is held only to validate the transition, then to install
     /// the handle; capture negotiation and socket binding run unlocked.
     pub async fn start(&self, backend: Arc<dyn CaptureBackend>) -> Result<ServerStatus, String> {
-        let (server_config, capture_config, starting) = {
+        let (server_config, capture_config, configured_host, starting) = {
             let mut state = lock(&self.state);
             match state.status.state {
                 ServerState::Stopped => {}
@@ -247,6 +247,7 @@ impl ServerController {
             (
                 settings.server_config(),
                 settings.capture_config(),
+                settings.host.clone(),
                 state.status.clone(),
             )
         };
@@ -273,6 +274,7 @@ impl ServerController {
                             data_dir,
                             allow_loose_permissions: false,
                             port: *lock(&self.v2_port),
+                            host: configured_host.clone(),
                             capture: handle.capture_observer(),
                             media_tap: handle.media_tap().clone(),
                         };
@@ -1542,6 +1544,30 @@ mod tests {
             controller.status().v2.state,
             crate::model::V2State::Disabled
         );
+    }
+
+    #[tokio::test]
+    async fn start_passes_the_configured_host_and_the_v2_port_to_the_starter() {
+        let seen: Arc<Mutex<Option<(String, u16)>>> = Arc::new(Mutex::new(None));
+        let recorder = Arc::clone(&seen);
+        let starter: V2Starter = Arc::new(move |inputs| {
+            *lock(&recorder) = Some((inputs.host.clone(), inputs.port));
+            Box::pin(async { Err("not starting in this test".to_owned()) })
+        });
+        let mut settings = test_settings();
+        // `test_settings` uses port 0 for v1; the starter must see the v2 port.
+        settings.host = "127.0.0.1".to_owned();
+        let controller = ServerController::new(settings);
+        controller.enable_v2(starter, 65_531);
+
+        controller.start(synthetic()).await.expect("v1 starts");
+        assert_eq!(
+            *lock(&seen),
+            Some(("127.0.0.1".to_owned(), 65_531)),
+            "the starter receives settings.host and the v2 port"
+        );
+
+        controller.stop().await.expect("stop");
     }
 
     #[tokio::test]
