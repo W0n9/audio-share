@@ -135,6 +135,9 @@ class AudioShareAppTest {
             .performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("retry").performScrollTo().performClick()
         compose.onNodeWithText(str(R.string.pairing_title)).assertIsDisplayed()
+        compose.onNodeWithTag("pairing-repair-hint")
+            .performScrollTo()
+            .assertTextContains(str(R.string.pairing_repair_hint))
     }
 
     @Test
@@ -282,7 +285,10 @@ class AudioShareAppTest {
             .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(str(R.string.error_201_guidance))
             .performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("scan-again").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithTag("scan-new-code")
+            .performScrollTo()
+            .assertTextContains(str(R.string.pairing_scan_new_code))
+            .performClick()
         assertTrue(events.contains(UiEvent.RequestScan))
     }
 

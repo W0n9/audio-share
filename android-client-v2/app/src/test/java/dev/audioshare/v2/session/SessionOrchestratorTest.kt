@@ -291,6 +291,37 @@ class SessionOrchestratorTest {
         )
     }
 
+    // ---- ticket 04: successful pairing replaces the address ----------------
+
+    @Test
+    fun a_successful_pairing_removes_other_credentials_on_the_same_address() {
+        val fixture = Fixture()
+        val staleOnSameAddress = credentialRecord().copy(
+            serverSpkiSha256Hex = "cc".repeat(32),
+            clientId = "old-client",
+        )
+        val otherServer = credentialRecord().copy(
+            serverSpkiSha256Hex = "dd".repeat(32),
+            host = "198.51.100.7",
+            addressHint = "198.51.100.7:65531",
+        )
+        fixture.seed(credentialRecord().copy(needsRepairing = true))
+        fixture.seed(staleOnSameAddress)
+        fixture.seed(otherServer)
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+
+        fixture.factory.engines.single().listener.onCredential(credentialJson("client-1"))
+
+        assertEquals(
+            setOf(PIN, "dd".repeat(32)),
+            fixture.credentials.all().map { it.serverSpkiSha256Hex }.toSet(),
+            "same host:port records are replaced; a different Server is kept",
+        )
+        val repaired = fixture.credentials.find(PIN)!!
+        assertFalse(repaired.needsRepairing, "a successful pairing clears needs-repairing")
+        assertEquals("client-1", repaired.clientId, "the new identity replaces the old record")
+    }
+
     @Test
     fun a_missing_key_stored_connect_failure_marks_the_record() {
         val fixture = Fixture()

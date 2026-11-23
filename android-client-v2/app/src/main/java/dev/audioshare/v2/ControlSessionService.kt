@@ -293,9 +293,12 @@ class ControlSessionService : Service(), SessionController {
             return
         }
         val displayName = deviceDisplayName()
-        // The SAS pin is unknown until PairingResponse; use a unique alias and
-        // persist it in the credential record.
-        val alias = "v2-sas-${UUID.randomUUID().toString().take(13)}"
+        // Re-pairing the same address must keep the same Client identity
+        // (ADR-0006 §2): reuse the stored record's alias so the Server can
+        // correlate the existing (revoked) record. A new Server gets a fresh
+        // random alias; the SAS pin is unknown until PairingResponse.
+        val alias = storedKeyAliasForAddress(address ?: "", credentials.all())
+            ?: "v2-sas-${UUID.randomUUID().toString().take(13)}"
         val identity = try {
             ClientIdentity.create(this, alias)
         } catch (e: Exception) {
