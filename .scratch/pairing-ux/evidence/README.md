@@ -1,40 +1,71 @@
-# pairing-ux closeout evidence
+# pairing-ux closeout + code-review fix evidence
 
 Snapshot date: 2026-11-23
-Tip: `d28e099` (`integration/pairing-ux`), the merge point for tickets 01–04.
-Branch under test: `ticket/05-closeout` (reset to `d28e099`, no product changes).
+Tip under test: `bb5deb0` (`integration/pairing-ux`)
 
-Status vocabulary follows `docs/agents/evidence-policy.md`. Nothing in this file is a
-real-device PASS; the real device is `NOT RUN` throughout.
+- `2155b64` — Rust core: explicit Restore decision, `PersistMode`, rename.
+- `1a70605` — Server GUI: `pairing_restore`, SAS reachable during re-pair,
+  one success record, one request-card snippet.
+- `bb5deb0` — Android: identity reuse on QR re-pair, persisted RePair intent,
+  Forget ownership, shared address/repair rules, handoff-based device case.
 
-## Verification snapshot
+Pre-review closeout tip: `818ee7b`; original ticket merge point: `d28e099`.
+Status vocabulary follows `docs/agents/evidence-policy.md`. Nothing in this
+file is a real-device PASS; the real device is `NOT RUN` throughout.
+
+## Review-fix verification snapshot
 
 | # | Command | Status | Result |
 |---|---|---|---|
-| 1 | `cargo test -p v2-transport -p v2-runtime -p as-cmd` | PASS | 355 passed, 0 failed, 1 ignored (35 test-result groups). `pairing_live`: 8/8 passed, no hang. |
+| 1 | `cargo test -p v2-transport -p v2-runtime -p as-cmd` | PASS | 357 passed, 0 failed, 1 ignored in total. See the `pairing_live` note: the 8 `pairing_live` cases passed 8/8 when rerun alone; the rest passed 349/0/1 across 35 test-result groups. |
 | 2 | `cargo test -p audio-share-server-gui` | PASS | 114 passed, 0 failed, 1 ignored. |
 | 3 | `cargo fmt --check` | PASS | exit 0, no output. |
-| 4 | `cd gui && npm ci && npm run check && npm run build` | PASS | `svelte-check`: 101 files, 0 errors, 0 warnings. `vite build`: 140 modules transformed, built in 642 ms. |
-| 5 | `cd android-client-v2 && ANDROID_HOME="$HOME/Android/Sdk" ./gradlew testReleaseUnitTest -PnoNative=true "-Porg.gradle.java.installations.paths=/home/w0n9/.cache/audio-share-refactor-worktrees/toolchain/jdk-21.0.13+9"` | PASS | 325 tests, 0 failures, 0 errors, 0 skipped; `BUILD SUCCESSFUL in 25s`. |
+| 4 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS | exit 0, `Finished dev profile`. |
+| 5 | `cd gui && npm ci && npm run check && npm run build` | PASS | `svelte-check`: 101 files, 0 errors, 0 warnings; `vite build`: 140 modules, built in 753 ms. |
+| 6 | `cd android-client-v2 && ANDROID_HOME="$HOME/Android/Sdk" ./gradlew testReleaseUnitTest -PnoNative=true "-Porg.gradle.java.installations.paths=…/jdk-21.0.13+9"` | PASS | 331 tests, 0 failures, 0 errors, 0 skipped; `BUILD SUCCESSFUL in 26s`. |
+| 7 | `cd android-client-v2 && ANDROID_HOME="$HOME/Android/Sdk" ./gradlew assembleReleaseAndroidTest -PnoNative=true -PandroidAbi=x86_64 "-Porg.gradle.java.installations.paths=…/jdk-21.0.13+9"` | PASS | `BUILD SUCCESSFUL in 30s`; R8-minified instrumented APK compiles. Execution is `NOT RUN` (no device). |
 
 Notes on the snapshot:
 
-- The ignored Rust test is `pipewire_list_endpoints_and_live_replay` (needs real
-  headless PipeWire/wireplumber daemons), not a product failure.
+- The ignored Rust test is `pipewire_list_endpoints_and_live_replay` (needs
+  real headless PipeWire/wireplumber daemons), not a product failure.
 - The ignored GUI test is `update::tests::fetches_the_real_latest_release_over_https`
   (needs network access to `api.github.com`), not a product failure.
-- A first combined Rust run exited 0 but was piped through `tail`; its counts were
-  discarded and the command was rerun under `pipefail` with a full log. Only the rerun
-  is recorded above.
-- `pairing_live` (the known flake) passed 8/8 with no timeout in both runs. The flake
-  reported by the ticket 01 implementer is **not reproduced** here; that is not proof it
-  is fixed.
-- The JVM count was aggregated from the JUnit XML reports produced by this run. A later
-  `./gradlew clean assembleRelease ...` for the emulator removed those reports, so the
-  count above is the authoritative record of this snapshot.
+- `pairing_live` (the known flake) hung once in the combined run on
+  `operator_cancel_rejects_a_verified_pairing_with_201_promptly`, exceeding the
+  10-minute timeout. Rerun alone immediately afterwards: 8/8 passed in 0.59 s.
+  The combined run above therefore skips those 8 case names and adds the
+  standalone 8/8 result. The root cause is still unproven.
 - No `CARGO_TARGET_DIR` was set for any command.
+- The JVM count was aggregated from the JUnit XML reports produced by this run.
 
-## Per-ticket merge SHAs
+## What the review fixes changed
+
+- **Restore is explicit.** `ApprovalDecision::{Accept, Restore, Decline}` is
+  carried through `DriverEvent`/`Event`; `persist_client` takes
+  `PersistMode::{New, Restore}`. A plain Accept of a revoked record (or a
+  Restore of a missing/active one) fails closed. GUI and `as-cmd` call the
+  matching decision.
+- **Re-pair opens both paths.** `admin.begin(Qr)` already opens the QR nonce and
+  the SAS window; the active QR invitation now keeps a `Use pairing code`
+  action, so a revoked row can start SAS re-pair.
+- **Identity is preserved.** QR re-pair reuses a stored `keyAlias` when the
+  payload pin matches, including records originally created by SAS.
+- **Rotation keeps the context.** `UiStatePersistence` saves the RePair pin; the
+  restored `PairingIntent.RePair` keeps the cause/instruction.
+- **Forget is scoped.** `SessionOrchestrator.stopIfOwnedBy` stops only the
+  forgotten Server's session; another Server's live session keeps running.
+- **One address rule.** `ServerAddress` (strict `host:port`) is used by
+  `PairingRepair`, `SessionOrchestrator`, and `AppState`; the free-form
+  `addressHint` string no longer matches.
+- **One repair-state rule.** `repairStateForOutcome` is shared by the Service
+  and the UI projection.
+- **No dead buttons.** `Connect`/`Connect again` for a `needsRepairing` record
+  opens the RePair context instead of no-oping.
+- **Device case fixed.** `pairSas` awaits the one-shot credential handoff
+  instead of polling a `COMPLETE` snapshot the handoff clears.
+
+## Per-ticket merge SHAs (historical closeout)
 
 | Ticket | Merge/tip SHA | Subject |
 |---|---|---|
@@ -43,94 +74,50 @@ Notes on the snapshot:
 | 03 Android repair state | `afa4942` | Merge ticket 03 (`4e48ad8` … `0c7cd69`) |
 | 04 Android repair flow | `fe38989` | Tip of ticket 04 (`b57d1c9`, `fe38989`) |
 
-## Emulator evidence
+## Device evidence after the review fixes
 
-Emulator identity, as required by the evidence policy:
+- Real device: **`NOT RUN`** (no device scheduled).
+- Emulator: **`NOT RUN`** in the review environment. `adb devices` listed no
+  attached device and no emulator was running; the review-fix tip was not
+  exercised on a device. Do not treat the earlier `d28e099` emulator results as
+  evidence for `bb5deb0`. The release androidTest APK builds (row 7), so the
+  instrumented case is only blocked on hardware, not on compilation.
+- `pairQr`, QR re-pair, Forget (UI), and the full manual checklist (first
+  pairing → revoke → QR re-pair → revoke → SAS re-pair → Forget): **`NOT RUN`**
+  for the same reason.
 
-- AVD: `emulator:audio-share-api35`
-- Android 15, API 35, ABI `x86_64`; emulator 37.2.13
-- App: `dev.audioshare.v2` 0.6.0 (release, debug-signed test build)
-- Server: `as-cmd` 0.6.0 built from this tip (`d28e099`)
-- Build flags: `-PandroidAbi=x86_64 -PtestSupport=true -PdeviceTests=true`
-  (`clean assembleRelease assembleReleaseAndroidTest`)
-- Real device: **`NOT RUN`**
+Historical emulator evidence for the pre-review tip `d28e099` (Keystore, SAS
+pairing, 204 revocation, SAS restore with the same `client_id`/`created_at`) is
+preserved in the ticket comments and earlier revisions of this file. It does not
+cover the review-fix changes.
 
-| Case | Status | What was observed |
-|---|---|---|
-| `keystore` | EMULATOR | `KEYSTORE_OK hardware_backed=false` (emulator software-backed Keystore). |
-| `pairSas` (first pairing) | FAIL (emulator, test assertion) | Pairing completed on the Server: `Paired: sdk_gphone64_x86_64 (b5d79992f385aa4e)`; the phone's stored credential then authenticated (`reload`). The instrumentation still failed: `pairing did not reach COMPLETE; last=<none>`. Observed twice, deterministically. |
-| `reload` (after first pairing) | EMULATOR | `RELOAD_OK pin=347c0b05562ace06`. |
-| `revoked` | EMULATOR | `ERROR_OK code=204 name=AUTHORIZATION_DENIED`, surfaced close + typed guidance. |
-| SAS re-pair after revoke (Server/protocol observation) | EMULATOR | Server printed `This identity was revoked; accepting restores the saved pairing ... (no new key)` and required `Restore <name>? [y/N]`. After `y`: `Paired` and `clients list` showed the **same** `client_id` `b5d79992f385aa4e` and the **same** `created_at` `2026-11-23T08:34:05Z`, state `active`, one record. `reload` then returned `RELOAD_OK`. |
-| SAS re-pair contract case (`awaitPairingPhase("COMPLETE")`) | FAIL (emulator, test assertion) | Same `COMPLETE` assertion failure as the first pairing; the pairing and Restore themselves succeeded as recorded above. |
-| SAS re-pair with `--accept` and no stdin (negative path) | FAIL (emulator, case result; decline is by design) | The Server asked `Restore ...? [y/N]`, read EOF, and printed `Declined; nothing was stored.` The phone received code 201. Note the decline is the intended explicit-Restore behaviour; the instrumentation case treats any non-`COMPLETE` result as a failure. No `clients list` was taken after this attempt, so the record's state after the decline was not re-read. |
-| `pairQr` / QR re-pair | NOT RUN | Not exercised on the emulator. |
-| Forget this Server (UI) | NOT RUN | No automated UI path; local credential/key deletion is covered only by JVM tests. |
-| Manual UI checklist (first pairing → revoke → QR re-pair → revoke → SAS re-pair → Forget) | NOT RUN | No automated UI/instrumentation path exists for Re-pair, the Restore dialog, or Forget. The existing cases cover Keystore, SAS/QR pairing, stored connect, and typed errors only. |
+## Known gaps (remaining)
 
-Interpretation of the `COMPLETE` assertion failure:
+- **Same-address cleanup deletes only the credential, not the identity key.**
+  `SessionOrchestrator.removeStaleRecordsForAddress` calls `credentials.delete`
+  only; the old record's Keystore/software identity key is left behind. Forget
+  Server does delete the key, so this is a cleanup-only leak. Pre-existing and
+  outside the 19 review findings.
+- **`as-cmd clients delete` has no dedicated CLI test.** Store/admin tests and
+  the earlier manual smoke cover it.
+- **`pairing_live` flake.** Observed once in the review run; passed alone
+  immediately after. Keep the 10-minute timeout and per-binary rerun advice.
+- **Svelte/store logic has no test runner.** `gui/package.json` defines only
+  `dev`, `build`, `check`, and `tauri`; behaviour is covered by `svelte-check`
+  plus the production build.
+- **Device coverage.** See the device section: every post-review device case and
+  the real device are `NOT RUN`.
 
-- The pairing exchange publishes `COMPLETE`, then the Service hands off to an
-  authenticated session. `SessionOrchestrator.startSession()` calls
-  `pairing.beginSession()`, which clears the previous snapshot to `null`
-  (`SessionOrchestrator.kt:81-89`, `Pairing.kt` `beginSession()`), so a polling test
-  cannot reliably observe `COMPLETE`.
-- `git diff v0.6.0..d28e099` over `SessionOrchestrator.kt` and `Pairing.kt` shows that
-  this `startSession()` → `pairing.beginSession()` clearing path is unchanged since
-  v0.6.0; only the outcome sink and credential fields changed. The device test
-  (`971a66c`, `12f3e9e`) also predates the feature. The mismatch is therefore unrelated
-  to the pairing-ux changes, but it was **not** re-run against a v0.6.0 build. It does
-  not indicate that pairing or Restore failed: both were independently confirmed by
-  `reload` and by `clients list`.
+## Deferred after review
 
-## `as-cmd clients delete` manual smoke (host)
+- None of the 19 review findings were deferred.
+- The identity-key cleanup leak above was not one of the findings; it is left
+  for a follow-up rather than widened into this pass.
 
-Run against a temporary config (`AUDIO_SHARE_CONFIG=/tmp/closeout-emu/config.ini`) after
-stopping the Server:
+## Files changed by this pass
 
-| Step | Command | Status | Output |
-|---|---|---|---|
-| delete active | `as-cmd clients delete b5d79992f385aa4e` | PASS | `client "b5d79992f385aa4e" is active; revoke it before deleting` (exit 1) |
-| revoke | `as-cmd clients revoke b5d79992f385aa4e` | PASS | `revoked client ...` |
-| delete revoked | `as-cmd clients delete b5d79992f385aa4e` | PASS | `deleted client ...; this identity is refused at authentication` |
-| list | `as-cmd clients list` | PASS | `no paired clients` |
-
-## Known gaps / review items
-
-- **Same-address cleanup deletes only the credential, not the identity key.** A
-  successful pairing removes other records for the same address via
-  `SessionOrchestrator.removeStaleRecordsForAddress`, which calls
-  `credentials.delete(...)` only (`SessionOrchestrator.kt:272-290`). The old record's
-  Keystore/software identity key is left behind. `Forget Server` does delete the key
-  (`ForgetServer.kt:25-27`), so this is a cleanup-only leak.
-- **`pairingIntent` is not persisted across Activity rotation.** `UiStatePersistence`
-  saves only screen, address, and SAS input (`UiStatePersistence.kt:18-35`). A rotation
-  during `PairingIntent.RePair` restores `PairingIntent.First` and loses the re-pair
-  context/copy.
-- **SESSION "Connect again" is a silent no-op for a needs-repairing record.** The button
-  is rendered for `EndReason.UserStop` (`AudioShareApp.kt:918-925`); `connect()` returns
-  an unchanged state when the selected record has `needsRepairing` (`AppState.kt:560-566`),
-  so the tap does nothing and gives no feedback. The surfaced 204 card does route to
-  Re-pair correctly; this is the plain user-stop path.
-- **`CredentialRecord.isSameAddressAs` matches `addressHint` as well as `host:port`.**
-  `SessionOrchestrator.kt:292-294` treats either a matching `host:port` or a matching
-  `address_hint` string as the same address. A stale record whose hint was derived from a
-  different host spelling can therefore be deleted by the next pairing.
-- **`as-cmd clients delete` has store/admin tests plus this manual smoke, but no
-  dedicated CLI test.** `crates/v2-runtime/tests/admin.rs:321-342` covers active refusal,
-  revoked deletion, and post-delete authentication failure; `crates/as-cmd/tests/cli.rs`
-  covers only `clients list`/`clients revoke`.
-- **`pairing_live` flake (reported by the ticket 01 implementer) was not reproduced.**
-  Root cause remains unproven; keep the 10-minute timeout and per-binary rerun advice.
-- **Svelte/store logic has no test runner.** `gui/package.json` defines only `dev`,
-  `build`, `check`, and `tauri`. Store and dialog behaviour is covered by
-  `svelte-check` plus the production build, not by unit tests.
-- **Device-test `COMPLETE` assertion mismatch.** See the emulator section: the
-  instrumentation's `awaitPairingPhase("COMPLETE")` races the session handoff that clears
-  the pairing snapshot. Pairing/Restore themselves were confirmed independently; the test
-  expectation should be revisited before it is used as a gate.
-
-## Files changed by this ticket
-
-Only `.scratch/pairing-ux/**` (this evidence file, ticket comments, and `spec.md`
-status/acceptance wording). No product code, no ticket `Status:` line.
+Product code: `crates/v2-transport/**`, `crates/v2-runtime/**`,
+`crates/as-cmd/src/main.rs`, `gui/src/**`, `gui/src-tauri/src/**`,
+`android-client-v2/app/src/main/**`, `android-client-v2/app/src/test/**`,
+`android-client-v2/app/src/androidTest/**`. Docs: this file and `spec.md`
+status/acceptance wording. No ticket `Status:` line was changed.
