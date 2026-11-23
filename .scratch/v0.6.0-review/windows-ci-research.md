@@ -41,6 +41,11 @@ Windows `Clippy` 31 秒、`Test workspace` 27 秒，整个 Windows Rust 作业 1
 - 在 Linux 上重复运行 25 次、每次 8 个 live 测试全部通过（整个文件 0.62 秒），
   说明是 Windows 环境或平台行为，不是普通竞态。
 - 已给 Rust 矩阵作业加 `timeout-minutes: 30`，避免再次占用 6 小时。
+- **间歇性，而非必现**：升级 Actions 后的运行
+  [45100003428](https://github.com/W0n9/audio-share/actions/runs/45100003428) 里同一测试
+  通过，Windows `Test workspace` 168 秒、`Clippy` 105 秒，全部作业成功。
+  因此暂不能把「每次都会挂」写进结论；10 秒握手超时与 30 分钟作业上限保留为守卫，
+  下次再挂会直接给出阶段。
 
 ## 是否需要交叉编译
 
@@ -98,6 +103,11 @@ Node 20 时间线（[GitHub 变更日志](https://github.blog/changelog/2025-09-
 - `server-rewrite.yml`：Rust 矩阵作业加 `timeout-minutes: 30`。
 - `release.yml`：preflight 10 分钟、draft 15 分钟上限。
 - `pairing_live.rs`：`connect()` 加 10 秒握手超时，失败信息带阶段。
+
+升级后运行 [45100003428](https://github.com/W0n9/audio-share/actions/runs/45100003428)
+全部作业成功（`create_draft=false`，draft 作业按预期跳过）；日志中不再出现
+`Node.js 20 is deprecated`。Windows 产物 `AudioShareServer.exe` 与
+`audio-share-server-cmd-windows.zip` 的 SHA-256 清单已在下载后核对通过。
 
 真机与 Windows 上的挂起根因仍需在 Windows 上复现：
 
