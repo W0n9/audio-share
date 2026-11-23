@@ -22,3 +22,15 @@
 - `gui/src-tauri/src/controller.rs:526-598`（begin/cancel/approve/decline/revoke）
 - `gui/src-tauri/src/controller.rs:471-520`（失败态只剩刷新）
 - `gui/src/lib/store.svelte.ts:334-452`（poll 与 clients 刷新）
+
+## Comments
+
+- Merge: `d28e099` (rows `3e6f050`, `cba8a91`, `f64294c`, `d28e099`).
+- Closeout snapshot (`d28e099`): **PASS**.
+- GUI: `npm ci && npm run check && npm run build` → `svelte-check` 101 files, 0 errors,
+  0 warnings; Vite production build 140 modules, built in 642 ms.
+- GUI Rust crate: `cargo test -p audio-share-server-gui` → 114 passed, 0 failed,
+  1 ignored (the ignored case needs GitHub network access).
+- Limitation: Svelte/store behaviour has no test runner; it is covered by `svelte-check`
+  plus the production build only. Real device: not applicable / `NOT RUN`.
+- Details: `.scratch/pairing-ux/evidence/README.md`.

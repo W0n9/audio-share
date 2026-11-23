@@ -23,3 +23,15 @@
 - `android-client-v2/app/src/main/java/dev/audioshare/v2/AppState.kt:203-219`（`AutoConnectPolicy` 把 null outcome 当可连接）
 - `android-client-v2/app/src/main/java/dev/audioshare/v2/AudioShareApp.kt:244-268,972-1040`（Home/Settings 文案与只读设置）
 - `android-client-v2/app/src/main/res/values/strings.xml:24,103`（`Pair a new phone` / `Pair a phone`）
+
+## Comments
+
+- Merge: `afa4942` (commits `4e48ad8` … `0c7cd69`).
+- Closeout snapshot (`d28e099`): **PASS**.
+- JVM: `./gradlew testReleaseUnitTest -PnoNative=true` (JDK 21) → 325 tests, 0 failures,
+  0 errors, 0 skipped; `BUILD SUCCESSFUL in 25s`.
+- Emulator (`emulator:audio-share-api35`, API 35, x86_64, `EMULATOR`): a revoked stored
+  credential surfaces the typed 204 guidance; real device `NOT RUN`.
+- Known gaps: `pairingIntent` is not saved by `UiStatePersistence`, and SESSION's
+  "Connect again" silently no-ops for a needs-repairing record. See the evidence README.
+- Details: `.scratch/pairing-ux/evidence/README.md`.
