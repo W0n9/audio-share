@@ -1,5 +1,7 @@
 # v0.6.0 发布边界与放行清单
 
+> **历史记录（2026-11-23 状态）。** 本表中的标签/版本字段描述的是当时的快照，已不随代码更新。实际对外发布已改走 **v0.6.1**：GUI 与 v2 Android 关于页的 beta 文案、版权方与主页/更新 URL 已更正，产品版本升到 `0.6.1`（Android `versionCode 4`）。当前发布说明见 [`docs/releases/v0.6.1.md`](../../docs/releases/v0.6.1.md)。下表用于追溯 v0.6.0 的裁决与证据边界，不能据此构建或发布。
+
 ## 裁决与构建是两件事
 
 [2026-11-22 维护者裁决](../wire-protocol-v2/roadmap.md#5-发布与迁移-gateexperimental--stable)只收窄这一次的 stable 门槛，不修改[协议规范](../../docs/wire-protocol-v2/spec.md)或完成 M6/M7。本次可描述为「经认证与加密的单 Client PCM，含已裁决的 M5 抖动缓冲、丢包掩蔽和漂移处理」；不能承诺多 Client 隔离、完整真实网络损伤恢复、端到端可听时延预算或全量 stable 验收。v2 失败不会回退到 v1、明文或匿名加密。v1 仅适用于受信网络。
@@ -41,13 +43,18 @@
 | deb `0.6.0`、`as-cmd --version` 自报 `0.6.0`、Windows exe 含 `0.6.0` | `PASS` |
 | 真机安装播放、Windows 运行、升级路径 | `NOT RUN` |
 
-**Draft（2026-11-23）**：本地与 fork 的 `v0.6.0` annotated 标签已指向 `c502981`；
-在标签 ref 上运行
-[45114429469](https://github.com/W0n9/audio-share/actions/runs/45114429469) 创建了
-**未发布 draft**，14 个附件（7 个文件 + 7 个校验和）。7 个文件的 sidecar 与 GitHub
-记录的附件摘要逐一比对一致。首次运行时 Ubuntu 作业在
-`v2_media::reported_playback_diagnostics_are_observable` 挂起，触发了 30 分钟作业上限；
-重跑通过。挂起与 Windows 上此前的 live 测试挂起共用无超时的 QUIC 握手路径，仍需单独排查。
+**Draft（2026-11-23，最终重建）**：文档整理提交 `88f6f07` 已推 fork 分支，
+`v0.6.0` annotated 标签（原 `6499c2d` → 新 `812aeb1`）已 force-move 到该提交；旧 draft
+及其 14 个附件已删除。在标签 ref 上运行
+[45128075877](https://github.com/W0n9/audio-share/actions/runs/45128075877)
+（`version=0.6.0`、`create_draft=true`）重新创建了**未发布 draft**：7 个构建文件 +
+7 个 `.sha256` sidecar，共 14 个附件；正文由 `docs/releases/v0.6.0.md` 生成，包含下载表、
+校验命令与验证边界。所有构建作业成功，标签对象解引用到 `88f6f07`。
+此前的 [45114429469](https://github.com/W0n9/audio-share/actions/runs/45114429469)
+draft 已被替换，其附件摘要核对记录不再适用于当前 draft。
+
+**仍为 `NOT RUN`**：最终 draft 产物的真机安装播放、Windows 运行与升级路径。
+发布前必须补做，或由维护者明确裁决豁免。
 
 ## 对外发布前须处理
 
