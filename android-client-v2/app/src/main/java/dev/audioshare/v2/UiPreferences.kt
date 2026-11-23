@@ -9,6 +9,9 @@ import android.content.Context
 interface UiPreferences {
     fun lastAddress(): String?
     fun saveLastAddress(address: String)
+
+    /** Stop restoring a Server address after that Server is forgotten. */
+    fun clearLastAddress()
 }
 
 class SharedPreferencesUiPreferences(context: Context) : UiPreferences {
@@ -20,6 +23,10 @@ class SharedPreferencesUiPreferences(context: Context) : UiPreferences {
 
     override fun saveLastAddress(address: String) {
         prefs.edit().putString(KEY_LAST_ADDRESS, address.trim()).apply()
+    }
+
+    override fun clearLastAddress() {
+        prefs.edit().remove(KEY_LAST_ADDRESS).apply()
     }
 
     companion object {

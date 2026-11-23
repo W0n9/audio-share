@@ -216,6 +216,122 @@ class SessionOrchestratorTest {
         assertNull(fixture.outcomes.snapshot())
     }
 
+    // ---- ticket 03: needs-repairing persistence ---------------------------
+
+    @Test
+    fun a_repairing_surfaced_close_persists_needs_repairing_on_the_credential() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord())
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        val engine = fixture.factory.engines.single()
+
+        engine.sink.publish(SessionOutcome.Ended(EndReason.Surfaced(204)))
+
+        assertTrue(fixture.credentials.find(PIN)!!.needsRepairing)
+    }
+
+    @Test
+    fun a_non_repairing_surfaced_close_leaves_the_credential_paired() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord())
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+
+        fixture.factory.engines.single().sink.publish(
+            SessionOutcome.Ended(EndReason.Surfaced(601)),
+        )
+
+        assertFalse(fixture.credentials.find(PIN)!!.needsRepairing)
+    }
+
+    @Test
+    fun successful_authentication_clears_needs_repairing_once() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord().copy(needsRepairing = true))
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        val engine = fixture.factory.engines.single()
+        val upsertsAfterSeed = fixture.credentials.upserts
+
+        engine.sink.publish(SessionOutcome.Live(LivePhase.READY))
+        assertFalse(fixture.credentials.find(PIN)!!.needsRepairing)
+        assertEquals(upsertsAfterSeed + 1, fixture.credentials.upserts)
+
+        engine.sink.publish(SessionOutcome.Live(LivePhase.PLAYING))
+        engine.sink.publish(SessionOutcome.Live(LivePhase.READY))
+        assertEquals(
+            upsertsAfterSeed + 1,
+            fixture.credentials.upserts,
+            "a session that is already repaired must not commit on every tick",
+        )
+    }
+
+    @Test
+    fun authenticating_is_not_success_and_does_not_clear_the_flag() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord().copy(needsRepairing = true))
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+
+        fixture.factory.engines.single().sink.publish(
+            SessionOutcome.Live(LivePhase.AUTHENTICATING),
+        )
+
+        assertTrue(fixture.credentials.find(PIN)!!.needsRepairing)
+    }
+
+    @Test
+    fun pairing_persists_a_record_with_needs_repairing_cleared() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord().copy(needsRepairing = true))
+        fixture.orchestrator.startSession(pairingConfiguration(), pairingContext())
+
+        fixture.factory.engines.single().listener.onCredential(credentialJson("client-1"))
+
+        assertFalse(
+            fixture.credentials.find(PIN)!!.needsRepairing,
+            "a successful pairing is the explicit re-pair",
+        )
+    }
+
+    @Test
+    fun a_missing_key_stored_connect_failure_marks_the_record() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord())
+
+        fixture.orchestrator.reportStoredConnectFailure(
+            code = 205,
+            message = "the stored Client key is gone",
+            serverSpkiSha256Hex = PIN,
+        )
+
+        assertTrue(fixture.credentials.find(PIN)!!.needsRepairing)
+    }
+
+    @Test
+    fun a_non_repairing_stored_connect_failure_does_not_mark_the_record() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord())
+
+        fixture.orchestrator.reportStoredConnectFailure(
+            code = 601,
+            message = "network failure",
+            serverSpkiSha256Hex = PIN,
+        )
+
+        assertFalse(fixture.credentials.find(PIN)!!.needsRepairing)
+    }
+
+    @Test
+    fun a_superseded_engine_cannot_change_the_repair_state() {
+        val fixture = Fixture()
+        fixture.seed(credentialRecord())
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        val first = fixture.factory.engines.single()
+
+        fixture.orchestrator.startSession(authenticatedConfiguration(), null)
+        first.sink.publish(SessionOutcome.Ended(EndReason.Surfaced(204)))
+
+        assertFalse(fixture.credentials.find(PIN)!!.needsRepairing)
+    }
+
     // ---- ticket 17: Service-owned pairing handoff --------------------------
 
     @Test
@@ -349,6 +465,9 @@ class SessionOrchestratorTest {
             onPairingCompleted = { completed += it },
         )
 
+        /** Seed a previously paired record, as a cold start would load it. */
+        fun seed(record: CredentialRecord) = credentials.upsert(record)
+
         /** Run the tasks the Service's main-thread handler would run. */
         fun drain() {
             while (pending.isNotEmpty()) pending.removeFirst()()
@@ -382,6 +501,19 @@ class SessionOrchestratorTest {
             port = 65531,
             displayName = "phone",
             mode = "qr",
+        )
+
+        fun credentialRecord() = CredentialRecord(
+            serverSpkiSha256Hex = PIN,
+            serverPublicKeyHex = SERVER_KEY,
+            addressHint = "192.0.2.10:65531",
+            keyAlias = "v2-test",
+            pairedAt = "2026-11-16T00:00:00Z",
+            softwareBacked = true,
+            clientId = "client-1",
+            displayName = "phone",
+            host = "192.0.2.10",
+            port = 65531,
         )
 
         fun credentialJson(clientId: String) = JSONObject().apply {
@@ -422,11 +554,14 @@ private object FakeSigner : ClientSigner {
 private class InMemoryCredentialStore : CredentialStore {
     private val records = mutableListOf<CredentialRecord>()
     var failUpsert = false
+    var upserts = 0
+        private set
 
     override fun upsert(record: CredentialRecord) {
         if (failUpsert) throw IllegalStateException("credential store unavailable")
         records.removeAll { it.serverSpkiSha256Hex == record.serverSpkiSha256Hex }
         records += record
+        upserts += 1
     }
 
     override fun all(): List<CredentialRecord> = records.toList()
