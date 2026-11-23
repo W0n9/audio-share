@@ -6,7 +6,7 @@
 //! caller so a v2 failure never disables v1.
 
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -301,6 +301,52 @@ pub async fn resolve_bind_address(host: &str, port: u16) -> Result<SocketAddr, R
         .map_err(|error| RuntimeError::Resolve(format!("{host}:{port}: {error}")))?
         .min_by_key(SocketAddr::is_ipv4)
         .ok_or_else(|| RuntimeError::Resolve(format!("{host}:{port} resolved to no addresses")))
+}
+
+/// Format a configured Host as the QR `addr` hint for `port`.
+///
+/// The Host only chooses the advertised address; the runtime still binds the
+/// dual-stack wildcard. IPv6 literals are bracketed (`[addr]:port`), matching
+/// the payload validator and the Android client.
+///
+/// Returns `None` when the caller must fall back to the runtime's default
+/// non-loopback IPv4: an empty host, a wildcard (`0.0.0.0`/`::`), a scoped
+/// IPv6 literal (`%scope` cannot appear in a pairing payload), a value that is
+/// not a valid payload host, or `port == 0`. Fallback keeps the emitted hint
+/// parseable instead of producing an invalid payload.
+pub fn qr_addr_hint(host: &str, port: u16) -> Option<String> {
+    let host = host.trim();
+    if host.is_empty() || port == 0 || host.contains('%') {
+        return None;
+    }
+    let unbracketed = match host.strip_prefix('[') {
+        Some(rest) => rest.strip_suffix(']')?,
+        None => host,
+    };
+    if let Ok(address) = unbracketed.parse::<Ipv6Addr>() {
+        if address.is_unspecified() {
+            return None;
+        }
+        return Some(format!("[{address}]:{port}"));
+    }
+    if host.starts_with('[') {
+        // Brackets are only valid around an IPv6 literal.
+        return None;
+    }
+    if let Ok(address) = unbracketed.parse::<Ipv4Addr>() {
+        if address.is_unspecified() {
+            return None;
+        }
+        return Some(format!("{address}:{port}"));
+    }
+    // A DNS name must match the payload validator's host alphabet.
+    if !unbracketed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return None;
+    }
+    Some(format!("{unbracketed}:{port}"))
 }
 
 /// The §9.2 revocation poll interval the driver uses. Revocation is effective

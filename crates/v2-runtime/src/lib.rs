@@ -18,7 +18,7 @@ pub use capture::{
     capture_media_source, v2_capture_snapshot, v2_capture_source, CaptureMediaSource,
 };
 pub use runtime::{
-    data_dir_for_config, resolve_bind_address, RuntimeConfig, RuntimeError, V2Runtime,
-    REVOCATION_POLL_INTERVAL,
+    data_dir_for_config, qr_addr_hint, resolve_bind_address, RuntimeConfig, RuntimeError,
+    V2Runtime, REVOCATION_POLL_INTERVAL,
 };
 pub use v2_transport::codes::DEFAULT_V2_PORT;
