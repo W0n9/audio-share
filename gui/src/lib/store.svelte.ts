@@ -73,7 +73,30 @@ class ServerStore {
   pairingBusy = $state(false);
   pairingError = $state<string | null>(null);
   revokingClientId = $state<string | null>(null);
+  deletingClientId = $state<string | null>(null);
+  /**
+   * Revoked device the current invitation was opened for. Matching live and
+   * pending connections are labelled with its saved name (spec: Re-pairing).
+   */
+  repairTarget = $state<{ clientId: string; displayName: string } | null>(null);
+  /** One-line confirmation shown once an approved pairing is persisted. */
+  pairedName = $state<string | null>(null);
+  /**
+   * Approved device awaiting persistence. The driver persists asynchronously,
+   * so the poll waits for the device list to show it active before reporting
+   * success; otherwise the list and the success line race.
+   */
+  private pendingPaired = $state<{
+    clientId: string;
+    name: string;
+    ticks: number;
+  } | null>(null);
   private pairingTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** True while an approval is waiting for the device list to reflect it. */
+  get pairingInFlight(): boolean {
+    return this.pendingPaired !== null;
+  }
 
   get version(): string {
     return this.bootstrap?.version ?? "unknown";
@@ -327,6 +350,9 @@ class ServerStore {
       this.stopPairingPoll();
       this.pairing = null;
       this.clients = [];
+      this.repairTarget = null;
+      this.pairedName = null;
+      this.pendingPaired = null;
     }
   }
 
@@ -334,6 +360,7 @@ class ServerStore {
   openPairing(): void {
     this.pairingOpen = true;
     this.pairingError = null;
+    this.pairedName = null;
     void this.refreshPairing();
     void this.refreshClients();
     this.startPairingPoll();
@@ -352,9 +379,12 @@ class ServerStore {
     this.stopPairingPoll();
     // Poll rather than bridge a broadcast channel: the command surface stays
     // the single seam, and pending requests appear within one second.
-    this.pairingTimer = setInterval(() => {
-      void this.refreshPairing();
-    }, 1000);
+    this.pairingTimer = setInterval(() => this.poll(), 1000);
+  }
+
+  private poll(): void {
+    void this.refreshPairing();
+    if (this.pendingPaired) void this.confirmPaired();
   }
 
   private stopPairingPoll(): void {
@@ -373,12 +403,36 @@ class ServerStore {
     }
   }
 
-  async beginPairing(mode: PairingMode): Promise<void> {
+  /**
+   * Open a fresh invitation. `keepRepairTarget` keeps the revoked-device label
+   * when refreshing an in-progress Re-pair invitation.
+   */
+  async beginPairing(mode: PairingMode, keepRepairTarget = false): Promise<void> {
     if (this.pairingBusy) return;
     this.pairingBusy = true;
     this.pairingError = null;
     try {
       this.pairing = await api.pairingBegin(mode);
+      if (!keepRepairTarget) this.repairTarget = null;
+      this.pairedName = null;
+      this.pendingPaired = null;
+    } catch (error) {
+      this.pairingError = String(error);
+    } finally {
+      this.pairingBusy = false;
+    }
+  }
+
+  /** Start a fresh invitation for a revoked device (ADR-0006 Re-pairing). */
+  async repairClient(clientId: string, displayName: string): Promise<void> {
+    if (this.pairingBusy) return;
+    this.pairingBusy = true;
+    this.pairingError = null;
+    try {
+      this.pairing = await api.pairingBegin("qr");
+      this.repairTarget = { clientId, displayName };
+      this.pairedName = null;
+      this.pendingPaired = null;
     } catch (error) {
       this.pairingError = String(error);
     } finally {
@@ -392,6 +446,9 @@ class ServerStore {
     this.pairingError = null;
     try {
       this.pairing = await api.pairingCancel();
+      this.repairTarget = null;
+      this.pairedName = null;
+      this.pendingPaired = null;
     } catch (error) {
       this.pairingError = String(error);
     } finally {
@@ -401,16 +458,46 @@ class ServerStore {
 
   async approvePairing(approvalId: number): Promise<void> {
     if (this.pairingBusy) return;
+    const request = this.pairing?.pending.find(
+      (item) => item.approvalId === approvalId,
+    );
     this.pairingBusy = true;
     this.pairingError = null;
     try {
       this.pairing = await api.pairingApprove(approvalId);
-      await this.refreshClients();
+      // The driver persists after `decide` returns, so the device list may
+      // still be stale here. Wait for it in `confirmPaired`.
+      if (request) {
+        this.pendingPaired = {
+          clientId: request.clientId,
+          name: request.wouldRestore ?? request.displayName,
+          ticks: 0,
+        };
+      }
+      this.repairTarget = null;
+      await this.confirmPaired();
     } catch (error) {
       this.pairingError = String(error);
     } finally {
       this.pairingBusy = false;
     }
+  }
+
+  /** Wait for an approved device to appear active, then show the success line. */
+  private async confirmPaired(): Promise<void> {
+    const pending = this.pendingPaired;
+    if (!pending) return;
+    await this.refreshClients();
+    const client = this.clients.find((item) => item.clientId === pending.clientId);
+    if (client?.state === "active") {
+      this.pairedName = pending.name;
+      this.pendingPaired = null;
+      return;
+    }
+    pending.ticks += 1;
+    // Persistence failures fail closed and never reach the device list; stop
+    // waiting instead of showing success for a pairing the store rejected.
+    if (pending.ticks > 15) this.pendingPaired = null;
   }
 
   async declinePairing(approvalId: number): Promise<void> {
@@ -419,6 +506,7 @@ class ServerStore {
     this.pairingError = null;
     try {
       this.pairing = await api.pairingDecline(approvalId);
+      this.pairedName = null;
     } catch (error) {
       this.pairingError = String(error);
     } finally {
@@ -448,6 +536,29 @@ class ServerStore {
       this.pairingError = String(error);
     } finally {
       this.revokingClientId = null;
+    }
+  }
+
+  /**
+   * Permanently delete a revoked device record (ADR-0006). An active record is
+   * refused by the core, so the device row offers this only after Revoke.
+   */
+  async deleteClient(clientId: string): Promise<void> {
+    if (this.deletingClientId !== null) return;
+    this.deletingClientId = clientId;
+    this.pairingError = null;
+    try {
+      const deleted = await api.clientsDelete(clientId);
+      this.clients = this.clients.filter(
+        (client) => client.clientId !== deleted.clientId,
+      );
+      if (this.repairTarget?.clientId === deleted.clientId) {
+        this.repairTarget = null;
+      }
+    } catch (error) {
+      this.pairingError = String(error);
+    } finally {
+      this.deletingClientId = null;
     }
   }
 

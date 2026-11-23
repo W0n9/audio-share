@@ -129,6 +129,11 @@ export interface PairingRequestInfo {
   mode: PairingMode;
   address: string;
   sas: string | null;
+  /**
+   * Saved display name when approving restores a revoked record in place
+   * (ADR-0006); null for a new or active identity.
+   */
+  wouldRestore: string | null;
 }
 
 /** A live pairing shown before the Client confirms. */
@@ -142,6 +147,8 @@ export interface PairingLiveInfo {
   fingerprint: string;
   /** Seconds until the pairing deadline; refreshed by polling. */
   expiresInSecs: number;
+  /** Saved display name when approving restores a revoked record in place. */
+  wouldRestore: string | null;
 }
 
 /** The polled pairing dialog state. */
@@ -194,6 +201,9 @@ export const api = {
   clientsList: () => invoke<ClientInfo[]>("clients_list"),
   clientsRevoke: (clientId: string) =>
     invoke<ClientInfo>("clients_revoke", { clientId }),
+  /** Permanently delete a revoked record (ADR-0006). */
+  clientsDelete: (clientId: string) =>
+    invoke<ClientInfo>("clients_delete", { clientId }),
   hideWindow: () => invoke<void>("hide_window"),
   exit: () => invoke<void>("exit_app"),
   checkUpdate: () => invoke<UpdateCheckResult>("check_update"),

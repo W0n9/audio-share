@@ -161,6 +161,10 @@ pub struct PairingRequestInfo {
     pub address: String,
     /// The connection-derived SAS (`123 456`), once the device connects.
     pub sas: Option<String>,
+    /// `Some(saved_display_name)` when approving restores a revoked record in
+    /// place (ADR-0006); the dialog asks for explicit confirmation instead of
+    /// offering a plain Accept. `None` for a new or active identity.
+    pub would_restore: Option<String>,
 }
 
 /// A live pairing shown before the Client's confirmation.
@@ -183,6 +187,9 @@ pub struct PairingLiveInfo {
     pub fingerprint: String,
     /// Seconds until the pairing deadline, refreshed by polling.
     pub expires_in_secs: u64,
+    /// `Some(saved_display_name)` when approving restores a revoked record in
+    /// place (ADR-0006). `None` for a new or active identity.
+    pub would_restore: Option<String>,
 }
 
 /// The pairing dialog's complete polled state.
@@ -624,6 +631,7 @@ mod tests {
                 sas: Some("123 456".to_owned()),
                 fingerprint: "FP".to_owned(),
                 expires_in_secs: 600,
+                would_restore: Some("Pixel 8 (saved)".to_owned()),
             }],
             pending: vec![PairingRequestInfo {
                 approval_id: 7,
@@ -632,6 +640,7 @@ mod tests {
                 mode: "qr".to_owned(),
                 address: "192.168.1.44:50000".to_owned(),
                 sas: Some("123 456".to_owned()),
+                would_restore: Some("Pixel 8 (saved)".to_owned()),
             }],
             v2: V2Status::running("10.0.0.2:65531".to_owned(), "FP".to_owned()),
         };
@@ -641,6 +650,14 @@ mod tests {
         assert_eq!(json["invitation"]["expiresInSecs"], 42);
         assert_eq!(json["pending"][0]["approvalId"], 7);
         assert_eq!(json["pending"][0]["sas"], "123 456");
+        assert_eq!(
+            json["pending"][0]["wouldRestore"], "Pixel 8 (saved)",
+            "the pending card needs the saved name to offer Restore"
+        );
+        assert_eq!(
+            json["live"][0]["wouldRestore"], "Pixel 8 (saved)",
+            "the live card needs the saved name before the Client confirms"
+        );
 
         let client = ClientInfo {
             client_id: "0011223344556677".to_owned(),
