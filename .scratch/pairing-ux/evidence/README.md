@@ -1,13 +1,15 @@
 # pairing-ux closeout + code-review fix evidence
 
 Snapshot date: 2026-11-23
-Tip under test: `bb5deb0` (`integration/pairing-ux`)
+Tip under test: `fd2df50` (code tip, `integration/pairing-ux`; docs follow).
 
 - `2155b64` — Rust core: explicit Restore decision, `PersistMode`, rename.
 - `1a70605` — Server GUI: `pairing_restore`, SAS reachable during re-pair,
   one success record, one request-card snippet.
 - `bb5deb0` — Android: identity reuse on QR re-pair, persisted RePair intent,
   Forget ownership, shared address/repair rules, handoff-based device case.
+- `fd2df50` — Android: Forget keeps a non-selected Server's live outcome; the
+  cold-start repair flag reads the selected Server.
 
 Pre-review closeout tip: `818ee7b`; original ticket merge point: `d28e099`.
 Status vocabulary follows `docs/agents/evidence-policy.md`. Nothing in this
@@ -22,8 +24,8 @@ file is a real-device PASS; the real device is `NOT RUN` throughout.
 | 3 | `cargo fmt --check` | PASS | exit 0, no output. |
 | 4 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS | exit 0, `Finished dev profile`. |
 | 5 | `cd gui && npm ci && npm run check && npm run build` | PASS | `svelte-check`: 101 files, 0 errors, 0 warnings; `vite build`: 140 modules, built in 753 ms. |
-| 6 | `cd android-client-v2 && ANDROID_HOME="$HOME/Android/Sdk" ./gradlew testReleaseUnitTest -PnoNative=true "-Porg.gradle.java.installations.paths=…/jdk-21.0.13+9"` | PASS | 331 tests, 0 failures, 0 errors, 0 skipped; `BUILD SUCCESSFUL in 26s`. |
-| 7 | `cd android-client-v2 && ANDROID_HOME="$HOME/Android/Sdk" ./gradlew assembleReleaseAndroidTest -PnoNative=true -PandroidAbi=x86_64 "-Porg.gradle.java.installations.paths=…/jdk-21.0.13+9"` | PASS | `BUILD SUCCESSFUL in 30s`; R8-minified instrumented APK compiles. Execution is `NOT RUN` (no device). |
+| 6 | `cd android-client-v2 && ANDROID_HOME="$HOME/Android/Sdk" ./gradlew testReleaseUnitTest -PnoNative=true "-Porg.gradle.java.installations.paths=…/jdk-21.0.13+9"` | PASS | 332 tests, 0 failures, 0 errors, 0 skipped; `BUILD SUCCESSFUL in 19s`. |
+| 7 | `cd android-client-v2 && ANDROID_HOME="$HOME/Android/Sdk" ./gradlew assembleReleaseAndroidTest -PnoNative=true -PandroidAbi=x86_64 "-Porg.gradle.java.installations.paths=…/jdk-21.0.13+9"` | PASS | `BUILD SUCCESSFUL in 25s`; R8-minified instrumented APK compiles. Execution is `NOT RUN` (no device). |
 
 Notes on the snapshot:
 
@@ -50,11 +52,14 @@ Notes on the snapshot:
   the SAS window; the active QR invitation now keeps a `Use pairing code`
   action, so a revoked row can start SAS re-pair.
 - **Identity is preserved.** QR re-pair reuses a stored `keyAlias` when the
-  payload pin matches, including records originally created by SAS.
+  payload pin matches, including records originally created by SAS. The rule is
+  unit-tested at the pure seam; the `ControlSessionService.beginQr` wiring needs
+  Keystore, so it is code-reviewed only.
 - **Rotation keeps the context.** `UiStatePersistence` saves the RePair pin; the
   restored `PairingIntent.RePair` keeps the cause/instruction.
 - **Forget is scoped.** `SessionOrchestrator.stopIfOwnedBy` stops only the
-  forgotten Server's session; another Server's live session keeps running.
+  forgotten Server's session; the reducer likewise keeps a non-selected
+  Server's live outcome on screen.
 - **One address rule.** `ServerAddress` (strict `host:port`) is used by
   `PairingRepair`, `SessionOrchestrator`, and `AppState`; the free-form
   `addressHint` string no longer matches.
@@ -80,7 +85,7 @@ Notes on the snapshot:
 - Emulator: **`NOT RUN`** in the review environment. `adb devices` listed no
   attached device and no emulator was running; the review-fix tip was not
   exercised on a device. Do not treat the earlier `d28e099` emulator results as
-  evidence for `bb5deb0`. The release androidTest APK builds (row 7), so the
+  evidence for `fd2df50`. The release androidTest APK builds (row 7), so the
   instrumented case is only blocked on hardware, not on compilation.
 - `pairQr`, QR re-pair, Forget (UI), and the full manual checklist (first
   pairing → revoke → QR re-pair → revoke → SAS re-pair → Forget): **`NOT RUN`**
@@ -113,6 +118,9 @@ cover the review-fix changes.
 - None of the 19 review findings were deferred.
 - The identity-key cleanup leak above was not one of the findings; it is left
   for a follow-up rather than widened into this pass.
+- Home and Settings still show the first stored Server's card rather than
+  `selectedServer()`; choosing among several Servers is explicitly out of scope
+  for this feature (`spec.md` "不在本轮": multi-Server selector).
 
 ## Files changed by this pass
 

@@ -1,7 +1,8 @@
 # 配对、撤销与重新配对的交互
 
-Status: ready-for-human (2026-11-23); code review fixes applied. Remaining human gate:
-the full manual UI checklist (pairQr, QR re-pair, Forget) and a real device.
+Status: ready-for-human
+Remaining human gate: the full manual UI checklist (pairQr, QR re-pair, Forget)
+and a real device.
 Feature: pairing-ux
 
 ## 问题
