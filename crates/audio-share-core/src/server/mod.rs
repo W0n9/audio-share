@@ -99,6 +99,58 @@ pub fn local_addresses() -> Vec<std::net::Ipv4Addr> {
     )
 }
 
+/// Every usable local address, deduplicated, with [`default_host`]'s IPv4
+/// choice first and usable IPv6 addresses after the IPv4 block.
+///
+/// Usable IPv6 means non-loopback, non-unspecified, non-multicast, and not
+/// link-local: a link-local address needs a `%scope` suffix, which the pairing
+/// payload cannot carry, so it must not be offered as a Host suggestion.
+pub fn local_host_addresses() -> Vec<std::net::IpAddr> {
+    let Ok(interfaces) = if_addrs::get_if_addrs() else {
+        return Vec::new();
+    };
+    let mut ipv4 = Vec::new();
+    let mut ipv6 = Vec::new();
+    for interface in interfaces {
+        match interface.addr {
+            if_addrs::IfAddr::V4(address) => ipv4.push(address.ip),
+            if_addrs::IfAddr::V6(address) => ipv6.push(address.ip),
+        }
+    }
+    arrange_host_addresses(ipv4, ipv6)
+}
+
+/// Order usable local addresses: [`arrange_addresses`]' IPv4 result first,
+/// then the usable IPv6 addresses in enumeration order, deduplicated.
+pub fn arrange_host_addresses(
+    ipv4: impl IntoIterator<Item = std::net::Ipv4Addr>,
+    ipv6: impl IntoIterator<Item = std::net::Ipv6Addr>,
+) -> Vec<std::net::IpAddr> {
+    let mut addresses: Vec<std::net::IpAddr> =
+        arrange_addresses(ipv4.into_iter().filter(|address| !address.is_loopback()))
+            .into_iter()
+            .map(std::net::IpAddr::V4)
+            .collect();
+    for address in ipv6 {
+        if !is_usable_ipv6(address) {
+            continue;
+        }
+        let address = std::net::IpAddr::V6(address);
+        if !addresses.contains(&address) {
+            addresses.push(address);
+        }
+    }
+    addresses
+}
+
+/// Whether `address` can be offered as a Host suggestion without a scope id.
+fn is_usable_ipv6(address: std::net::Ipv6Addr) -> bool {
+    !address.is_loopback()
+        && !address.is_unspecified()
+        && !address.is_unicast_link_local()
+        && !address.is_multicast()
+}
+
 /// Deduplicate addresses and move the v0.3.4 default choice to the front.
 fn arrange_addresses(
     addresses: impl IntoIterator<Item = std::net::Ipv4Addr>,
@@ -689,7 +741,7 @@ fn media_format(format: &AudioFormat) -> MediaFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::Ipv4Addr;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn server_config_defaults_match_v034_timing_and_port() {
@@ -740,6 +792,62 @@ mod tests {
     #[test]
     fn local_addresses_of_a_machine_without_addresses_is_empty() {
         assert!(arrange_addresses(std::iter::empty::<Ipv4Addr>()).is_empty());
+    }
+
+    #[test]
+    fn host_addresses_place_usable_ipv6_after_ipv4() {
+        let public = Ipv4Addr::new(8, 8, 8, 8);
+        let private = Ipv4Addr::new(192, 168, 1, 2);
+        let global: Ipv6Addr = "2001:db8::1".parse().unwrap();
+        let ula: Ipv6Addr = "fd00::1".parse().unwrap();
+
+        assert_eq!(
+            arrange_host_addresses([public, private], [global, ula]),
+            vec![
+                IpAddr::V4(private),
+                IpAddr::V4(public),
+                IpAddr::V6(global),
+                IpAddr::V6(ula),
+            ]
+        );
+    }
+
+    #[test]
+    fn host_addresses_of_an_ipv4_only_machine_keep_the_default_first() {
+        let public = Ipv4Addr::new(8, 8, 8, 8);
+        let private = Ipv4Addr::new(192, 168, 1, 2);
+
+        assert_eq!(
+            arrange_host_addresses([public, private, public], []),
+            vec![IpAddr::V4(private), IpAddr::V4(public)]
+        );
+    }
+
+    #[test]
+    fn host_addresses_of_a_loopback_only_machine_are_empty() {
+        assert!(arrange_host_addresses([Ipv4Addr::LOCALHOST], [Ipv6Addr::LOCALHOST]).is_empty());
+    }
+
+    #[test]
+    fn host_addresses_deduplicate_ipv6_in_enumeration_order() {
+        let global: Ipv6Addr = "2001:db8::1".parse().unwrap();
+        let ula: Ipv6Addr = "fd00::1".parse().unwrap();
+
+        assert_eq!(
+            arrange_host_addresses([], [global, ula, global]),
+            vec![IpAddr::V6(global), IpAddr::V6(ula)]
+        );
+    }
+
+    #[test]
+    fn host_addresses_exclude_link_local_and_unspecified_ipv6() {
+        let global: Ipv6Addr = "2001:db8::1".parse().unwrap();
+        let link_local: Ipv6Addr = "fe80::1".parse().unwrap();
+
+        assert_eq!(
+            arrange_host_addresses([], [link_local, Ipv6Addr::UNSPECIFIED, global, link_local]),
+            vec![IpAddr::V6(global)]
+        );
     }
 
     #[test]
