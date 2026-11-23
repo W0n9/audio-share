@@ -27,6 +27,20 @@
 | M6 / M7 | 不构成本次门槛：双真机并发、60 分钟 Server soak、Windows 长跑、v0.6.0 的 v1 回归为 `NOT RUN`；完整迁移指南与回滚方案未交付。旧 beta 的[真机与 v1 共存记录](../wire-protocol-v2/evidence/ticket-25/ticket-25-result.md)适用于当时的产物，不外推。 |
 | 旧 v2 beta 就地升级（205） | 修复与回归 `WAIVED`。记录的绕行是先卸载旧 v2 beta，再安装并重新配对；这是升级提示，不是完整迁移指南。见[工单 34 的 map 裁决](../wire-protocol-v2/map.md#decisions-so-far)。 |
 
+## 0.6.0 构建试跑记录（2026-11-23）
+
+运行 [45107105796](https://github.com/W0n9/audio-share/actions/runs/45107105796)，提交
+`f05452a`，参数 `version=0.6.0`、`create_draft=false`。首次 Android 作业因 Maven
+依赖瞬时不可达失败，重跑后全部作业成功；draft 作业按预期跳过。
+
+| 项目 | 状态 |
+| --- | --- |
+| CI 构建与打包（Server 四类 + 两个 ABI APK） | `PASS` |
+| 产物 SHA-256 与 sidecar 一致性（本地下载后复核） | `PASS` |
+| APK：`0.6.0` / `versionCode 3`、单 ABI、`CN=Audio Share Beta`、无 test-support | `PASS` |
+| deb `0.6.0`、`as-cmd --version` 自报 `0.6.0`、Windows exe 含 `0.6.0` | `PASS` |
+| 真机安装播放、Windows 运行、升级路径 | `NOT RUN` |
+
 ## 对外发布前须处理
 
 - [x] **版本策略已定。** 产品与 Android 应用版本均为 `0.6.0`（`versionCode 3`），Rust/Tauri 元数据已通过 `scripts/apply_version.sh` 同步；Android 发布改为按 ABI 各出一个签名 APK。正式构建仍需从包含这些改动的提交进行。
