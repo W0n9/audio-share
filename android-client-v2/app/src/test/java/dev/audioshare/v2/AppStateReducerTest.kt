@@ -685,6 +685,36 @@ class AppStateReducerTest {
     }
 
     @Test
+    fun auto_connect_never_reaches_a_flagged_record_selected_by_address() {
+        val flagged = record().copy(needsRepairing = true)
+        val clean = record(pin = "12".repeat(32), address = "other.example:65531")
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded("10.0.2.2:65531", listOf(clean, flagged)),
+        ).state
+        assertEquals("ab".repeat(32), startup.selectedPin(), "the typed address picks the flagged Server")
+
+        val auto = AppReducer.reduce(startup, UiEvent.AutoConnectStarted)
+
+        assertEquals(AppCommand.None, auto.command)
+        assertEquals(AppScreen.HOME, auto.state.screen)
+    }
+
+    @Test
+    fun auto_connect_targets_the_clean_record_matched_by_address() {
+        val flagged = record().copy(needsRepairing = true)
+        val clean = record(pin = "12".repeat(32), address = "other.example:65531")
+        val startup = AppReducer.reduce(
+            AppState(),
+            UiEvent.StartupLoaded("other.example:65531", listOf(flagged, clean)),
+        ).state
+
+        val auto = AppReducer.reduce(startup, UiEvent.AutoConnectStarted)
+
+        assertEquals(AppCommand.ConnectStored("12".repeat(32)), auto.command)
+    }
+
+    @Test
     fun auto_connect_still_fires_for_a_paired_record() {
         val startup = AppReducer.reduce(
             AppState(),
