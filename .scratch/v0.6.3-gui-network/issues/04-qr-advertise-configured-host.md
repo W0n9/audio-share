@@ -7,7 +7,7 @@
 **Blocked by:** 无
 
 **Category:** bug
-**Status:** ready-for-human
+**Status:** resolved
 
 ## Agent Brief
 
@@ -65,3 +65,4 @@
 - 2026-11-24: code-complete on `integration/v0.6.3-gui-network` (tip `a1681a0`). Automated verification PASS: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (672 passed / 0 failed), `svelte-check` 101 files 0 errors / 0 warnings, Vite production build. `%scope` 现已在 Host 字段下给出用户可见提示（ticket 05）。Windows 真机 QR 配对 `NOT RUN`；ticket 保持 `ready-for-human`。
 - 2026-11-24: Windows 真机复验发现两个问题：(1) “清空 Host → 回落”这个测试步骤本身无效，GUI 前端与 `Config::validate` 都拒绝空 Host，第一条“主机不能为空”是正确行为；回落只适用于 QR 地址提示与配置/CLI。(2) 真 bug：保存失败后 `persist()` 没有回滚，界面与后端分叉，启动使用旧 Host 并报 `WSAHOST_NOT_FOUND`。ticket 重新打开为 `ready-for-agent`，补充保存期规范化/校验与状态一致性验收。
 - 2026-11-24: 修复已合入 `integration/v0.6.3-gui-network`（merge `168264b`）。全量验证 PASS（676 passed / 0 failed；svelte-check/Vite 通过）。GUI 保存路径新增规范化：去方括号、拒绝空/`%scope`/非法主机名；失败回滚到上次保存值；新增 4 个 Rust 测试（含 `[2001:db8::5]` → `2001:db8::5` → QR `[2001:db8::5]:65531`）。配置/CLI 的 `%scope` 回落行为未改。Windows 真机用有效 IPv6 Host 的 QR 配对仍待复验。
+- 2026-11-24: 维护者报告按复验清单通过（CI exe `4d43e376…`，run 45337047683）；方括号规范化、`%scope`/空值拒绝与回滚、启动一致性等细节未逐项记录；Android 端 QR 配对所用设备与 APK 版本未记录。ticket 收口为 `resolved`。

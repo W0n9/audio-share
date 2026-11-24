@@ -7,7 +7,7 @@
 **Blocked by:** 01
 
 **Category:** bug
-**Status:** ready-for-human
+**Status:** resolved
 
 ## Agent Brief
 
@@ -51,3 +51,4 @@
 
 - 2026-11-23: triage 由维护者在 v0.6.2 真机测试中报告（点击撤销设备后提示框显示不全）。核实：v0.6.2 的撤销与删除各有一处 `window.confirm`（配对对话框）；Windows 视觉复现待记录。
 - 2026-11-24: code-complete on `integration/v0.6.3-gui-network` (tip `a1681a0`). Automated verification PASS: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (672 passed / 0 failed), `svelte-check` 101 files 0 errors / 0 warnings, Vite production build. Review 修复了确认后按钮 disabled 时的焦点 fallback（ticket 05）。Windows 真机/视觉验收 `NOT RUN`；ticket 保持 `ready-for-human`。
+- 2026-11-24: 维护者报告按复验清单通过（CI exe `095f2d65…`，run 45302650376）；Escape/取消/确认等逐项细节未单独记录。ticket 收口为 `resolved`。
