@@ -73,3 +73,14 @@
 - Make Release run 45373863456 attempt 1 全绿（CI 中 tag 前置检查通过），`create_draft=true`。
 - GitHub draft release 已创建：v0.6.3，14 个附件（7 产物 + 7 `.sha256`），`isDraft=true`。URL: https://github.com/W0n9/audio-share/releases/tag/untagged-022ea23635a81b253310
 - 真机冒烟（`NOT RUN`）与合回 main / fork main 策略仍未完成/未决定。
+
+## 正式发布
+
+- 发布前发现 draft 产物来自 run 45373863456，SHA 与先前验收的 run 45366095967 产物不同（7 个全部不同，正常：构建非字节可复现）。
+- 已从 draft 重新下载全部 7 个产物独立验收：7 个 SHA 与 draft sidecar 全部 `PASS`；APK `0.6.3` / `versionCode 6` / 证书 `CN=Audio Share Beta` `90bedcd1…a13c`；deb Version 0.6.3；exe 与 AppImage 内部二进制含 `0.6.3` 与贡献者署名；Linux/Windows `as-cmd` 版本 0.6.3。
+- 发布产物 SHA-256（run 45373863456）：
+  - `audio-share-client-v2-0.6.3-arm64-v8a.apk` — `ba850736e9868fa93e98d83c055e21787392cd72c346b1d93b67879bb4ba096c`
+  - `AudioShareServer.exe` — `644a3a54c69ca49a1ad34347ea5504821fedf4cb098deae772582981cb6097eb`
+- 2026-11-24T10:40:44Z：`gh release edit v0.6.3 --draft=false --latest` 发布成功。Release URL: https://github.com/W0n9/audio-share/releases/tag/v0.6.3；`isDraft=false`，14 个附件，Latest；v0.6.2 不再是 Latest。
+- tag `v0.6.3` 仍指向 `bc60e6a`，未移动。
+- 真机安装/播放与 GUI 截图仍为 `NOT RUN`；01/02/05 未在最终 exe 上复测。合回 main / fork main 未决定。
