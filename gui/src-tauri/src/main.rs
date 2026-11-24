@@ -20,8 +20,8 @@ use audio_share_server_gui::help::HelpTopic;
 use audio_share_server_gui::i18n::{self, Locale};
 use audio_share_server_gui::logging;
 use audio_share_server_gui::model::{
-    bootstrap, notice_messages, tray_enabled, ApplicationSettings, Bootstrap, ClientInfo, Notice,
-    PairingStatus, ServerState, ServerStatus, Settings,
+    bootstrap, host_suggestions, notice_messages, tray_enabled, ApplicationSettings, Bootstrap,
+    ClientInfo, Notice, PairingStatus, ServerState, ServerStatus, Settings,
 };
 use audio_share_server_gui::options::GuiOptions;
 use audio_share_server_gui::strings;
@@ -654,6 +654,9 @@ fn main() {
         "configuration file: {}",
         resolved_paths.config.display()
     ));
+    // Distinguish "the backend enumerated no IPv6" from "the UI did not show
+    // it" during Windows revalidation: this is exactly what the frontend gets.
+    logging::info(format!("host suggestions: {:?}", host_suggestions()));
 
     // Windows: resolve WebView2 before any startup work. Tauri would otherwise
     // fail late (and, in a release build, panic after its own error dialog).

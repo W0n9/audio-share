@@ -103,9 +103,10 @@ pub fn local_addresses() -> Vec<std::net::Ipv4Addr> {
 /// Every usable local address, deduplicated, with [`default_host`]'s IPv4
 /// choice first and usable IPv6 addresses after the IPv4 block.
 ///
-/// Usable IPv6 means non-loopback, non-unspecified, non-multicast, and not
-/// link-local: a link-local address needs a `%scope` suffix, which the pairing
-/// payload cannot carry, so it must not be offered as a Host suggestion.
+/// Usable IPv6 means non-loopback, non-unspecified, non-multicast, not
+/// link-local, and not Teredo: a link-local address needs a `%scope` suffix,
+/// which the pairing payload cannot carry, and a Teredo tunnel is not
+/// reachable from the LAN, so neither may be offered as a Host suggestion.
 pub fn local_host_addresses() -> Vec<std::net::IpAddr> {
     let Ok(interfaces) = if_addrs::get_if_addrs() else {
         return Vec::new();
@@ -145,11 +146,22 @@ fn arrange_host_addresses(
 }
 
 /// Whether `address` can be offered as a Host suggestion without a scope id.
+///
+/// Teredo (`2001:0::/32`) is excluded: Windows lists it when the Teredo
+/// tunnel is enabled, but a phone on the LAN cannot reach the Server through
+/// it, so offering it only produces an unroutable QR address.
 fn is_usable_ipv6(address: std::net::Ipv6Addr) -> bool {
     !address.is_loopback()
         && !address.is_unspecified()
         && !address.is_unicast_link_local()
         && !address.is_multicast()
+        && !is_teredo(address)
+}
+
+/// Whether `address` is in Teredo's `2001:0::/32` prefix.
+fn is_teredo(address: std::net::Ipv6Addr) -> bool {
+    let segments = address.segments();
+    segments[0] == 0x2001 && segments[1] == 0
 }
 
 /// Deduplicate addresses and move the v0.3.4 default choice to the front.
@@ -848,6 +860,22 @@ mod tests {
         assert_eq!(
             arrange_host_addresses([], [link_local, Ipv6Addr::UNSPECIFIED, global, link_local]),
             vec![IpAddr::V6(global)]
+        );
+    }
+
+    #[test]
+    fn host_addresses_exclude_teredo_and_keep_global_and_ula_ipv6() {
+        // Windows exposes a Teredo tunnel address (`2001:0::/32`) alongside
+        // real global unicast and Tailscale ULA addresses. It cannot be
+        // reached by a phone on the LAN, so it must not be a Host suggestion.
+        let global: Ipv6Addr = "2409:8a34:1234:5678::1".parse().unwrap();
+        let ula: Ipv6Addr = "fd7a:115c:a1e0::1".parse().unwrap();
+        let teredo: Ipv6Addr = "2001:0:4136:e378:8000:63bf:3fff:fdd2".parse().unwrap();
+        let link_local: Ipv6Addr = "fe80::1".parse().unwrap();
+
+        assert_eq!(
+            arrange_host_addresses([], [global, teredo, link_local, ula]),
+            vec![IpAddr::V6(global), IpAddr::V6(ula)]
         );
     }
 
