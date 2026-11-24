@@ -51,3 +51,21 @@
 ## Comments
 
 - 2026-11-24: 由 v0.6.3 集成分支的 CI 验证发现。Run `45302650376` attempt 1 失败，attempt 2 通过；失败日志保存在该运行的 `Rust (windows-latest)` job。与 v0.6.3 的 GUI/网络修复无关。
+
+
+## Linux runner: `sudo apt-get update` 偶发超时（2026-11-24 并入）
+
+同属 CI runner 偶发失败，与产品代码无关，一并记录在此 ticket，处理优先级低于 Windows UDP 端口问题。
+
+**证据：**
+- v0.6.2 发布 run [45156050225](https://github.com/W0n9/audio-share/actions/runs/45156050225) attempt 1：`Build and package Server / Rust (ubuntu-24.04)` 在 `Install Linux build dependencies (Tauri + PipeWire)` 步骤超过 30 分钟上限被取消；attempt 2 重跑后通过。
+- v0.6.3 集成分支 run [45347340500](https://github.com/W0n9/audio-share/actions/runs/45347340500) attempt 1：同一 job 卡在 `sudo apt-get update` 约 29 分钟（07:21–07:50），撞上 30 分钟上限被取消；取消时 `cargo test --workspace` 已出结果的部分全部通过；attempt 2 重跑后全绿。
+
+**期望行为（待实现）：**
+- `sudo apt-get update` 增加重试或超时上限，避免在单个 runner 网络问题上耗尽整个 job 的 30 分钟预算。
+- 重试耗尽后给出明确的“runner 网络/apt 源不可用”诊断，而不是超时取消。
+- 不修改 Linux 构建依赖本身。
+
+**验收：**
+- [ ] 至少一次完整的 Make Release run 在 Linux job 上无需人工重跑即通过；若仍需重跑，如实记录。
+- [ ] 重试/超时逻辑有可重复验证或 CI 运行记录。

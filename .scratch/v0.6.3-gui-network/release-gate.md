@@ -9,7 +9,7 @@
 | 基线 | `integration/v0.6.3-gui-network`（`d6d1879`），基于 `release/v0.6.2` |
 | 版本 | `0.6.3`，Android `versionCode 6` |
 | 发布分支 | `release/v0.6.3`（本地，未推送） |
-| 构建提交 | `5772466`（`release: 准备 0.6.3 发布`） |
+| 构建提交 | squash 后的发布 tip（推送后以远端 tag `v0.6.3` 为准） |
 
 ## 自动化证据
 
@@ -40,6 +40,6 @@
 
 ## 待决
 
-- `worktree-agent-*` merge 提交是否需在推送前 squash（会重写本地分支历史）。
-- 是否将 Linux apt 超时并入 CI 稳定性 ticket。
+- `worktree-agent-*` merge 提交已在本地 squash（tree 与 squash 前完全一致）；`integration/v0.6.3-gui-network` 保持原历史不动。
+- Linux apt 超时已并入 `.scratch/ci-stability/issues/01-windows-udp-port-flake.md`。
 - 是否合回 main / fork main。
