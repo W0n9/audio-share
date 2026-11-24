@@ -318,7 +318,8 @@ pub struct Bootstrap {
     pub status: ServerStatus,
     /// Persisted settings.
     pub settings: Settings,
-    /// Local IPv4 addresses offered as Host suggestions, default first.
+    /// Local addresses offered as Host suggestions: default IPv4 first, then
+    /// usable IPv6.
     pub host_addresses: Vec<String>,
     /// Structured migration/recovery warnings; empty when clean.
     pub config_notices: Vec<Notice>,
@@ -430,6 +431,18 @@ impl ApplicationSettings {
     }
 }
 
+/// Local addresses offered as Host suggestions, default IPv4 first then
+/// usable IPv6 (see [`audio_share_core::server::local_host_addresses`]).
+///
+/// Used by [`bootstrap`] and by the startup log, so an operator can tell a
+/// backend that enumerated no IPv6 from a frontend that failed to show it.
+pub fn host_suggestions() -> Vec<String> {
+    audio_share_core::server::local_host_addresses()
+        .into_iter()
+        .map(|address| address.to_string())
+        .collect()
+}
+
 /// Build the bootstrap payload for the frontend.
 pub fn bootstrap(
     settings: &Settings,
@@ -444,10 +457,7 @@ pub fn bootstrap(
         locale: locale.tag().to_owned(),
         status: status.clone(),
         settings: settings.clone(),
-        host_addresses: audio_share_core::server::local_host_addresses()
-            .into_iter()
-            .map(|address| address.to_string())
-            .collect(),
+        host_addresses: host_suggestions(),
         config_notices: notices.to_vec(),
         update,
     }
