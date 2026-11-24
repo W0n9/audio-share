@@ -168,7 +168,7 @@ export interface Bootstrap {
   locale: Locale;
   status: ServerStatus;
   settings: Settings;
-  /** Local IPv4 addresses offered as Host suggestions, default first. */
+  /** Local addresses offered as Host suggestions: IPv4 first, then IPv6. */
   hostAddresses: string[];
   /** Structured migration/recovery warnings; empty when the config was clean. */
   configNotices: Notice[];
