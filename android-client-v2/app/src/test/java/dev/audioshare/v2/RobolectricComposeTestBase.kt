@@ -70,8 +70,8 @@ abstract class RobolectricComposeTestBase {
             AudioShareTheme {
                 AudioShareApp(
                     state = state,
-                    versionName = "0.6.2",
-                    versionCode = 5,
+                    versionName = "0.6.3",
+                    versionCode = 6,
                     onEvent = handle,
                 )
             }

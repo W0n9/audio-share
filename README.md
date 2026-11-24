@@ -11,7 +11,7 @@
 Audio Share shares a computer's audio with an Android phone over the network,
 so the phone becomes a speaker for the computer.
 
-Version 0.6.2 ships the Rust Server with **two transports**: the frozen,
+Version 0.6.3 ships the Rust Server with **two transports**: the frozen,
 unencrypted v1 Wire Protocol (port 65530) for the existing v0.3.4 Android
 client, and the encrypted, paired **Wire Protocol v2** (QUIC, UDP port 65531)
 for the v2 Android client. The v2 client ships as two separately signed APKs,
