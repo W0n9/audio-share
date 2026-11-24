@@ -7,7 +7,7 @@
 **Blocked by:** 无
 
 **Category:** bug
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 ## Agent Brief
 
@@ -57,3 +57,4 @@
 - 2026-11-23: triage 由维护者在 v0.6.2 真机测试中报告。维护者确认现象为“只有 IPv4 候选，没有 IPv6”，因此归类为 enhancement。核实：v0.6.2 的枚举路径只接受 `IfAddr::V4` 且过滤 loopback；v0.3.4 对等实现也只覆盖 IPv4。
 - 2026-11-24: code-complete on `integration/v0.6.3-gui-network` (tip `a1681a0`). Automated verification PASS: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (672 passed / 0 failed), `svelte-check` 101 files 0 errors / 0 warnings, Vite production build. Windows 真机下拉复验 `NOT RUN`；ticket 保持 `ready-for-human`。
 - 2026-11-24: Windows 真机复验 **FAIL**：CI exe（SHA-256 已确认）上 Host 下拉仍只有 IPv4。机器存在全局 IPv6（以太网 `2409:8a34:…`）、Tailscale ULA（`fd7a:115c:…`）和 Teredo（`2001:0:…`），`if-addrs 0.13.4` 在 Windows 使用 `GetAdaptersAddresses(AF_UNSPEC)`，因此不能排除后端枚举；最可能是 datalist 按当前值过滤。维护者选择 combobox（枚举 + 显式自定义），并决定 IPv6 排除 Teredo、保留全局/ULA。ticket 重新打开为 `ready-for-agent`。
+- 2026-11-24: 修复已合入 `integration/v0.6.3-gui-network`（merge `168264b`）。全量验证 PASS：fmt、clippy `-D warnings`、`cargo test --workspace`（676 passed / 0 failed）、svelte-check（101 files，0 errors / 0 warnings）、Vite 构建。Host 改为 combobox（枚举 + 显式自定义）；IPv6 排除 Teredo，保留全局/ULA；启动日志写 `host suggestions: [...]`；保存失败回滚。Windows 真机复验待做：确认下拉含 IPv6/ULA、无 Teredo，且 `server.log` 的 `host suggestions` 与下拉一致。
