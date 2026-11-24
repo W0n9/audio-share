@@ -6,40 +6,62 @@
   import ErrorLine from "../lib/ErrorLine.svelte";
   import Icon from "../lib/Icon.svelte";
 
-  const state = $derived(server.status.state);
-  const running = $derived(state === "running");
-  const transitioning = $derived(state === "starting" || state === "stopping");
+  const serverState = $derived(server.status.state);
+  const running = $derived(serverState === "running");
+  const transitioning = $derived(
+    serverState === "starting" || serverState === "stopping",
+  );
   /** Stop keeps its own visual while the stop request is in flight. */
-  const showStop = $derived(running || state === "stopping");
+  const showStop = $derived(running || serverState === "stopping");
   const locked = $derived(server.settingsLocked);
   /**
-   * Mirrors the QR fallback: a Host carrying a `%scope` suffix cannot be
-   * encoded in the pairing payload, so the runtime advertises the default
-   * address instead. Surface that to the operator where they typed it.
+   * Sentinel for the explicit custom-entry option. The main control lists
+   * every enumerated address; it never accepts free text itself.
    */
-  const hostHasScope = $derived(server.settings.host.includes("%"));
+  const HOST_CUSTOM = "__custom__";
+  /**
+   * Custom entry is active either because the operator chose it or because
+   * the saved Host is not one of the enumerated addresses (for example a
+   * hostname or an address from a hand-edited config).
+   */
+  let customMode = $state(false);
+  const hostIsCustom = $derived(
+    customMode || !server.hostAddresses.includes(server.settings.host),
+  );
+  const hostSelectValue = $derived(
+    hostIsCustom ? HOST_CUSTOM : server.settings.host,
+  );
+  let hostSelect: HTMLSelectElement | null = $state(null);
+  // A plain `value` attribute on <select> is not reactive; keep the native
+  // control in sync with the derived choice after a rollback or a save.
+  $effect(() => {
+    const value = hostSelectValue;
+    if (hostSelect) hostSelect.value = value;
+  });
   const address = $derived(
     running && server.status.address
       ? server.status.address
       : `${server.settings.host}:${server.settings.port}`,
   );
   const error = $derived(server.error ?? server.status.lastError);
-  const statusText = $derived(statusLabel(state));
+  const statusText = $derived(statusLabel(serverState));
   const actionText = $derived(
-    state === "running"
+    serverState === "running"
       ? t("action.stop")
-      : state === "starting"
+      : serverState === "starting"
         ? t("action.starting")
-        : state === "stopping"
+        : serverState === "stopping"
           ? t("action.stopping")
           : t("action.start"),
   );
-  const footerHint = $derived(state === "stopped" ? t("main.hintReady") : t("main.hintLocked"));
+  const footerHint = $derived(
+    serverState === "stopped" ? t("main.hintReady") : t("main.hintLocked"),
+  );
 
   async function toggleServer(): Promise<void> {
     if (running) {
       await server.stop();
-    } else if (state === "stopped") {
+    } else if (serverState === "stopped") {
       await server.start();
     }
   }
@@ -48,7 +70,29 @@
     void server.persist();
   }
 
+  /** Enumerated choices save immediately; the custom entry opens its input. */
+  function onHostSelect(event: Event): void {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    if (value === HOST_CUSTOM) {
+      customMode = true;
+      return;
+    }
+    customMode = false;
+    server.settings.host = value;
+    persist();
+  }
+
+  /** Persist a custom hostname/IP on change and return to the dropdown when
+   * the saved (or rolled-back) value is enumerated again. */
+  async function onCustomHostChange(): Promise<void> {
+    await server.persist();
+    if (server.hostAddresses.includes(server.settings.host)) {
+      customMode = false;
+    }
+  }
+
   function reset(): void {
+    customMode = false;
     void server.reset();
   }
 </script>
@@ -137,23 +181,29 @@
         <div class="network-row">
           <div class="field">
             <label for="host">{t("field.host")}</label>
-            <input
+            <select
               id="host"
-              type="text"
-              list="host-addresses"
-              bind:value={server.settings.host}
+              bind:this={hostSelect}
               disabled={locked}
-              aria-describedby={hostHasScope ? "host-scope-hint" : undefined}
-              onchange={persist}
-            />
-            <datalist id="host-addresses">
+              onchange={onHostSelect}
+            >
               {#each server.hostAddresses as address (address)}
-                <option value={address}></option>
+                <option value={address}>{address}</option>
               {/each}
-            </datalist>
-            {#if hostHasScope}
-              <p class="sub" id="host-scope-hint">
-                {t("field.hostScopeHint")}
+              <option value={HOST_CUSTOM}>{t("field.hostCustomOption")}</option>
+            </select>
+            {#if hostIsCustom}
+              <input
+                id="host-custom"
+                type="text"
+                bind:value={server.settings.host}
+                disabled={locked}
+                aria-label={t("field.hostCustomLabel")}
+                aria-describedby="host-custom-hint"
+                onchange={onCustomHostChange}
+              />
+              <p class="sub" id="host-custom-hint">
+                {t("field.hostCustomHint")}
               </p>
             {/if}
           </div>

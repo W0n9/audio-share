@@ -154,6 +154,7 @@ impl ServerController {
             return Err("stop the server before changing settings".to_owned());
         }
         settings.running = state.settings.running;
+        settings.host = normalize_gui_host(&settings.host)?;
         settings.validate().map_err(|error| error.to_string())?;
         if let Some(endpoints) = endpoints {
             let known = settings.endpoint == DEFAULT_ENDPOINT
@@ -710,6 +711,68 @@ fn client_info(client: ClientView) -> ClientInfo {
     }
 }
 
+/// Trim and validate a Host entered in the GUI, returning the value to store.
+///
+/// Only the GUI save path calls this. A hand-edited `config.ini` may still
+/// carry a scoped link-local Host: the config loader accepts it and the QR
+/// path falls back to the default address. Rejecting it here keeps the UI from
+/// persisting a value that can never produce a valid pairing payload, and
+/// bracketed IPv6 input (`[addr]`) is stored unbracketed so the QR hint adds
+/// exactly one pair of brackets.
+fn normalize_gui_host(host: &str) -> Result<String, String> {
+    let host = host.trim();
+    if host.is_empty() {
+        return Err("host must not be empty".to_owned());
+    }
+    if host.contains('%') {
+        return Err("host must not include a %scope suffix".to_owned());
+    }
+    let host = match host.strip_prefix('[') {
+        Some(rest) => {
+            let inner = rest.strip_suffix(']').ok_or_else(invalid_gui_host_error)?;
+            inner
+                .parse::<std::net::Ipv6Addr>()
+                .map_err(|_| invalid_gui_host_error())?;
+            inner
+        }
+        None => host,
+    };
+    if host.parse::<std::net::IpAddr>().is_ok() || is_valid_hostname(host) {
+        return Ok(host.to_owned());
+    }
+    Err(invalid_gui_host_error())
+}
+
+fn invalid_gui_host_error() -> String {
+    "host must be an IPv4/IPv6 address or a hostname".to_owned()
+}
+
+/// Whether `host` has DNS hostname shape: dot-separated labels of 1-63 ASCII
+/// letters, digits, or hyphens, not starting or ending with a hyphen.
+///
+/// This is the alphabet the pairing payload validator accepts; underscores,
+/// spaces, and other URL punctuation are refused.
+fn is_valid_hostname(host: &str) -> bool {
+    if host.is_empty() || host.len() > 253 {
+        return false;
+    }
+    host.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            && label
+                .as_bytes()
+                .first()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            && label
+                .as_bytes()
+                .last()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
@@ -1109,6 +1172,94 @@ mod tests {
                 .expect_err("invalid settings must be refused");
             assert!(error.contains(expected), "error was {error}");
             assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn save_settings_normalizes_a_bracketed_ipv6_host_for_the_qr_hint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.ini");
+        let controller = ServerController::with_config(test_settings(), path.clone());
+
+        let saved = controller
+            .save_settings(Settings {
+                host: "  [2001:db8::5]  ".to_owned(),
+                port: 12_345,
+                ..test_settings()
+            })
+            .expect("a bracketed IPv6 host is normalized and accepted");
+
+        assert_eq!(saved.host, "2001:db8::5");
+        assert_eq!(controller.settings().host, "2001:db8::5");
+        assert_eq!(load_config(&path).host, "2001:db8::5");
+        assert_eq!(
+            v2_runtime::qr_addr_hint(&saved.host, 65_531).as_deref(),
+            Some("[2001:db8::5]:65531"),
+            "the saved unbracketed host still yields a bracketed QR addr"
+        );
+    }
+
+    #[test]
+    fn save_settings_rejects_scoped_and_invalid_hosts_without_touching_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.ini");
+        let controller = ServerController::with_config(test_settings(), path.clone());
+        controller
+            .save_settings(Settings {
+                port: 12_345,
+                ..test_settings()
+            })
+            .unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        for (host, expected) in [
+            ("fe80::1%eth0", "scope"),
+            ("[fe80::1%eth0]", "scope"),
+            ("bad host", "host"),
+            ("host_with_underscore", "host"),
+            ("[not-an-ipv6]", "host"),
+            ("", "host"),
+            ("   ", "host"),
+        ] {
+            let error = controller
+                .save_settings(Settings {
+                    host: host.to_owned(),
+                    port: 12_345,
+                    ..test_settings()
+                })
+                .expect_err("an unusable host must be refused");
+            assert!(error.contains(expected), "host {host:?} error was {error}");
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                before,
+                "host {host:?} must not touch the file"
+            );
+        }
+    }
+
+    #[test]
+    fn save_settings_accepts_hostnames_wildcards_and_ip_literals() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.ini");
+        let controller = ServerController::with_config(test_settings(), path.clone());
+
+        for (host, expected) in [
+            ("audio-share.local", "audio-share.local"),
+            ("my-host", "my-host"),
+            ("0.0.0.0", "0.0.0.0"),
+            ("::", "::"),
+            ("[::]", "::"),
+            ("[2409:8a34:1234:5678::1]", "2409:8a34:1234:5678::1"),
+        ] {
+            let saved = controller
+                .save_settings(Settings {
+                    host: host.to_owned(),
+                    port: 12_345,
+                    ..test_settings()
+                })
+                .unwrap_or_else(|error| panic!("host {host:?} must be accepted: {error}"));
+            assert_eq!(saved.host, expected);
+            assert_eq!(load_config(&path).host, expected);
         }
     }
 

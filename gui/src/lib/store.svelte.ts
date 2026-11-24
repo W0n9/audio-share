@@ -63,7 +63,7 @@ class ServerStore {
   settings = $state<Settings>({ ...DEFAULT_SETTINGS });
   bootstrap = $state<Bootstrap | null>(null);
   endpoints = $state<Endpoint[]>([]);
-  /** Local IPv4 addresses offered as Host suggestions, default first. */
+  /** Local addresses offered as Host suggestions: IPv4 first, then IPv6. */
   hostAddresses = $state<string[]>([]);
   /** Structured migration/recovery warnings shown in the banner. */
   notices = $state<Notice[]>([]);
@@ -193,19 +193,22 @@ class ServerStore {
 
   /**
    * Persist the current Server fields immediately. Invalid local input is
-   * reported without a command round-trip; a Rust-side validation error
-   * restores the last saved values so the UI never lies about the file.
+   * reported without a command round-trip; in both the local and Rust-side
+   * failure paths the last saved settings are restored so the UI never lies
+   * about the file.
    */
   async persist(): Promise<void> {
     if (this.settingsLocked) return;
-    const host = this.settings.host.trim();
+    const { host, error } = normalizeHost(this.settings.host);
     const port = Number(this.settings.port);
-    if (!host) {
-      this.saveError = t("settings.errorHost");
+    if (error) {
+      this.saveError = t(error);
+      await this.restoreSavedSettings();
       return;
     }
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       this.saveError = t("settings.errorPort");
+      await this.restoreSavedSettings();
       return;
     }
 
@@ -213,15 +216,21 @@ class ServerStore {
     this.saveError = null;
     try {
       this.settings = await api.saveSettings({ ...this.settings, host, port });
+      this.saveError = null;
     } catch (error) {
       this.saveError = String(error);
-      try {
-        this.settings = await api.getSettings();
-      } catch {
-        // Keep the user's input visible; the message already explains failure.
-      }
+      await this.restoreSavedSettings();
     } finally {
       this.saving = false;
+    }
+  }
+
+  /** Restore the backend's saved settings after a refused or failed save. */
+  private async restoreSavedSettings(): Promise<void> {
+    try {
+      this.settings = await api.getSettings();
+    } catch {
+      // Keep the user's input visible; the message already explains failure.
     }
   }
 
@@ -682,6 +691,47 @@ class ServerStore {
       this.busy = false;
     }
   }
+}
+
+/**
+ * Trim a GUI Host, strip paired brackets around an IPv6 literal, and return
+ * the first localization key when it cannot be saved. Rust enforces the same
+ * rules authoritatively in `save_settings_with_endpoints`; these checks exist
+ * so the message is localized and the rollback happens without a round-trip.
+ */
+function normalizeHost(raw: string): { host: string; error: string | null } {
+  let host = raw.trim();
+  if (host.startsWith("[") && host.endsWith("]")) {
+    const inner = host.slice(1, -1);
+    if (inner.includes(":")) host = inner;
+  }
+  if (!host) return { host, error: "settings.errorHost" };
+  if (host.includes("%")) return { host, error: "settings.errorHostScope" };
+  if (!isValidHost(host)) return { host, error: "settings.errorHostInvalid" };
+  return { host, error: null };
+}
+
+/** IPv4/hostname alphabet, or a syntactically valid IPv6 literal. */
+function isValidHost(host: string): boolean {
+  if (host.includes(":")) {
+    if (host.includes("[") || host.includes("]")) return false;
+    try {
+      // The URL parser validates IPv6 grammar, so a malformed literal gets
+      // the localized error instead of a raw Rust save error.
+      new URL(`http://[${host}]/`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (host.length > 253) return false;
+  return host.split(".").every(
+    (label) =>
+      label.length > 0 &&
+      label.length <= 63 &&
+      /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(label) &&
+      /[A-Za-z0-9]$/.test(label),
+  );
 }
 
 /** Avoid `Update check failed: update check failed: ...` duplication. */
