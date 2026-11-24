@@ -87,8 +87,8 @@ class AudioShareAppTest {
             AudioShareTheme {
                 AudioShareApp(
                     state = state,
-                    versionName = "0.6.2",
-                    versionCode = 5,
+                    versionName = "0.6.3",
+                    versionCode = 6,
                 ) { event ->
                     events += event
                     state = AppReducer.reduce(state, event).state
@@ -306,7 +306,7 @@ class AudioShareAppTest {
         compose.onNodeWithTag("settings-title").assertIsDisplayed()
         compose.onNodeWithText("Pixel").assertIsDisplayed()
         compose.onNodeWithTag("settings-version")
-            .assertTextContains("0.6.2", substring = true)
+            .assertTextContains("0.6.3", substring = true)
         assertTrue(events.contains(UiEvent.ShowSettings))
         compose.onNodeWithTag("settings-about").performScrollTo().performClick()
         assertTrue(events.contains(UiEvent.ShowAbout))
@@ -367,7 +367,7 @@ class AudioShareAppTest {
     @Test
     fun about_screen_states_the_version_limits_and_v1_warning() {
         start(AppState(screen = AppScreen.ABOUT))
-        compose.onNodeWithTag("about-version").assertTextContains("0.6.2", substring = true)
+        compose.onNodeWithTag("about-version").assertTextContains("0.6.3", substring = true)
         compose.onNodeWithTag("about-copyright")
             .assertTextContains("Audio Share contributors", substring = true)
         compose.onNodeWithText(str(R.string.about_known_limitations)).assertIsDisplayed()

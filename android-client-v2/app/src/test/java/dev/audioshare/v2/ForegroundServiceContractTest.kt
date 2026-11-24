@@ -45,8 +45,8 @@ class ForegroundServiceContractTest {
     fun application_id_and_version() {
         val gradle = File("build.gradle.kts").readText()
         assertTrue(gradle.contains("applicationId = \"dev.audioshare.v2\""))
-        assertTrue(gradle.contains("versionCode = 5"))
-        assertTrue(gradle.contains("versionName = \"0.6.2\""))
+        assertTrue(gradle.contains("versionCode = 6"))
+        assertTrue(gradle.contains("versionName = \"0.6.3\""))
     }
 
     /**

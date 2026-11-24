@@ -122,8 +122,8 @@ android {
         // v2 Client release: applicationId dev.audioshare.v2 so it coexists
         // with the v1 app (ticket 21 acceptance). The release workflow builds
         // one signed APK per ABI instead of a universal APK.
-        versionCode = 5
-        versionName = "0.6.2"
+        versionCode = 6
+        versionName = "0.6.3"
         testInstrumentationRunner = "dev.audioshare.v2.ControlSessionInstrumentation"
         ndk {
             // arm64-v8a is the real-device scope; x86_64 is the emulator ABI.
