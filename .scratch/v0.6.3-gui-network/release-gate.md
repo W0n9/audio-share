@@ -66,3 +66,10 @@
 - `worktree-agent-*` merge 提交已在本地 squash（tree 与 squash 前完全一致）；`integration/v0.6.3-gui-network` 保持原历史不动。
 - Linux apt 超时已并入 `.scratch/ci-stability/issues/01-windows-udp-port-flake.md`。
 - 待决：是否创建 GitHub Release / draft、是否合回 main / fork main、正式产物真机冒烟。
+
+## GitHub draft
+
+- 文档提交 `9e455c1` 已推送 fork `release/v0.6.3`；tag `v0.6.3` 仍指向 `bc60e6a`，未移动。
+- Make Release run 45373863456 attempt 1 全绿（CI 中 tag 前置检查通过），`create_draft=true`。
+- GitHub draft release 已创建：v0.6.3，14 个附件（7 产物 + 7 `.sha256`），`isDraft=true`。URL: https://github.com/W0n9/audio-share/releases/tag/untagged-022ea23635a81b253310
+- 真机冒烟（`NOT RUN`）与合回 main / fork main 策略仍未完成/未决定。
