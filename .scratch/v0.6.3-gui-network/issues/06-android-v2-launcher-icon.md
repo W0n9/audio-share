@@ -7,7 +7,7 @@
 **Blocked by:** 无
 
 **Category:** bug
-**Status:** ready-for-human
+**Status:** resolved
 
 ## Agent Brief
 
@@ -46,3 +46,4 @@
 - 2026-11-24: 修复已落地：Manifest 加 `android:icon` / `android:roundIcon`；从 `gui/src-tauri/icons/android/` 复制全密度启动器/圆形/前景图、自适应图标定义与背景色到 v2 `res/`；补 `ic_launcher_round.xml`。验证 PASS：JDK 21 + ANDROID_HOME `:app:assembleDebug`（离线）成功；本地 `:app:testDebugUnitTest` 332 tests / 0 failures / 0 errors / 0 skipped。CI 签名 release 构建 PASS（Make Release run 45347340500，Build signed Android v2 APKs）；APK 中 `application: label='audio-share v2' icon='res/BW.xml'`（release 资源路径缩短），`aapt2 dump xmltree --file res/BW.xml` 确认根节点为 `adaptive-icon`，含 foreground/background；arm64-v8a SHA-256 `b059271fc32285ddf30c46ae688747f3921059174d1455539fab0ce6a219cb72`，签名证书 `CN=Audio Share Beta` SHA-256 `90bedcd1d815a0d772897e928eb2c9894f6d1ca038c5519a36da6db27aa7a13c`，与 v0.6.2 已发布 APK 证书一致，可直接覆盖安装保留配对数据。该 run 整体结论 `cancelled`：Ubuntu Rust job 卡在 `sudo apt-get update` 约 29 分钟撞上 30 分钟上限，与本次改动无关；Android/Windows 打包/Windows Rust job 均 PASS。圆形蒙版预览仅为本地模拟，不计入证据。真机启动器视觉检查 `NOT RUN`，待维护者安装确认。ticket 保持 `ready-for-human`（待真机确认）。
 - 2026-11-24: 维护者反馈图标已显示，但比例与 v1 不同。根因：首版用了 Tauri 的 foreground PNG，白色图案占画布宽约 74.5%，而 v1 矢量前景约 48.3%；且 Tauri PNG 把绿底烤进前景，覆盖了 `ic_launcher_background`，蒙版后图案几乎贴边。改为直接复用 v1 全套图标资源（矢量前景、绿底、各密度 WebP、含 monochrome 的自适应图标定义），删除刚加的 Tauri PNG。验证 PASS：JDK 21 离线 `assembleDebug` + `testDebugUnitTest`（332 tests / 0 failures / 0 errors / 0 skipped）；`aapt2 dump xmltree` 确认 adaptive-icon 的 foreground 指向矢量 drawable 且含 monochrome。该改动尚未推送，需新 CI 构建才能给维护者复验；首次 CI run 45347340500 attempt 2 已全绿（Ubuntu Rust job 重跑通过），但跑在旧 SHA `9a86841`，不含本次比例修复。真机比例视觉检查 `NOT RUN`（旧版比例不一致由维护者报告）。
 - 2026-11-24: 比例修复已推送（tip `8e41314`），新 Make Release run 45359916642 attempt 1 **全绿**（7 个 job 全部 PASS，无取消）。新签名 APK arm64-v8a SHA-256 `4421e54badfe54598e674e98b8735d7356edf68d4ea5e6ebb76ea977f5df57fe`；证书 `CN=Audio Share Beta` SHA-256 `90bedcd1…a13c`（与 v0.6.2 一致，可直接覆盖安装）；`application-icon` 指向自适应图标（含 foreground/background/monochrome）。APK 存放于 `.build-artifacts/v0.6.3-gui-network-r4/`。真机比例与图标显示复验 `NOT RUN`，待维护者安装新 APK 确认。
+- 2026-11-24: 维护者安装新签名 APK 后确认：图标正常显示，比例与 v1 Client 一致。真机视觉复验 **PASS**。ticket 收口为 `resolved`。
