@@ -23,3 +23,20 @@ keystore.properties
 .scratch/**/*.apk
 .scratch/**/*.exe
 .scratch/**/*.zip
+
+# IDE files (Eclipse / Buildship)
+.project
+.classpath
+.settings/
+
+# Local-only evidence, prototypes, and machine-specific handoff material
+/.scratch/**/evidence/
+/.scratch/**/evidence-archive/
+/.scratch/**/windows-handoff/
+/.scratch/**/prototypes/
+/.scratch/**/briefs/
+/.scratch/android-signing/
+/.scratch/server-rewrite/process.md
+/.scratch/server-rewrite/bin/
+/.scratch/wire-protocol-v2/l1-handoff/*.log
+/.scratch/wire-protocol-v2/l1-handoff/analyze.py
